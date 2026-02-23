@@ -13,6 +13,7 @@ public final class AppConstants {
   public static final String JOB_TYPE = "job_type";
   public static final String JOB_STATE = "job_state";
   public static final String ORPHAN_FILE_COUNT = "orphan_file_count";
+  public static final String ORPHAN_FILE_BYTES = "orphan_file_bytes";
   public static final String STAGED_FILE_COUNT = "staged_file_count";
   public static final String ORPHAN_DIRECTORY_COUNT = "orphan_directory_count";
   public static final String STAGED_DIRECTORY_COUNT = "staged_directory_count";

@@ -26,6 +26,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
@@ -109,6 +110,21 @@ public final class Operations implements AutoCloseable {
       boolean backupEnabled,
       String backupDir,
       int concurrentDeletes) {
+    return deleteOrphanFilesWithMetrics(
+            table, olderThanTimestampMillis, backupEnabled, backupDir, concurrentDeletes)
+        .getIcebergResult();
+  }
+
+  /**
+   * Same as {@link #deleteOrphanFiles} but also tracks and returns the total bytes deleted,
+   * suitable for callers that emit byte-level metrics (e.g. batched OFD).
+   */
+  public OrphanFilesResult deleteOrphanFilesWithMetrics(
+      Table table,
+      long olderThanTimestampMillis,
+      boolean backupEnabled,
+      String backupDir,
+      int concurrentDeletes) {
 
     DeleteOrphanFiles operation = SparkActions.get(spark).deleteOrphanFiles(table);
     // if time filter is not provided it defaults to 3 days
@@ -121,6 +137,7 @@ public final class Operations implements AutoCloseable {
     Map<String, Boolean> dataManifestsCache = new ConcurrentHashMap<>();
     Path backupDirRoot = new Path(table.location(), backupDir);
     Path dataDirRoot = new Path(table.location(), "data");
+    AtomicLong bytesAccumulator = new AtomicLong(0);
     operation =
         operation.deleteWith(
             file -> {
@@ -140,6 +157,7 @@ public final class Operations implements AutoCloseable {
                 Path backupFilePath = getTrashPath(table, file, backupDir);
                 log.info("Moving orphan file {} to {}", file, backupFilePath);
                 try {
+                  bytesAccumulator.addAndGet(fs().getFileStatus(new Path(file)).getLen());
                   rename(new Path(file), backupFilePath);
                   // update modification time to current time
                   fs().setTimes(backupFilePath, System.currentTimeMillis(), -1);
@@ -149,13 +167,41 @@ public final class Operations implements AutoCloseable {
               } else {
                 log.info("Deleting orphan file {}", file);
                 try {
+                  bytesAccumulator.addAndGet(fs().getFileStatus(new Path(file)).getLen());
                   fs().delete(new Path(file), false);
                 } catch (IOException e) {
                   log.error(String.format("Delete operation failed for file: %s", file), e);
                 }
               }
             });
-    return operation.execute();
+    DeleteOrphanFiles.Result icebergResult = operation.execute();
+    return new OrphanFilesResult(icebergResult, bytesAccumulator.get());
+  }
+
+  /**
+   * Result of a {@link #deleteOrphanFilesWithMetrics} call, augmenting the Iceberg result with byte
+   * count.
+   */
+  public static class OrphanFilesResult {
+    private final DeleteOrphanFiles.Result result;
+    private final long bytesDeleted;
+
+    public OrphanFilesResult(DeleteOrphanFiles.Result result, long bytesDeleted) {
+      this.result = result;
+      this.bytesDeleted = bytesDeleted;
+    }
+
+    public DeleteOrphanFiles.Result getIcebergResult() {
+      return result;
+    }
+
+    public Iterable<String> orphanFileLocations() {
+      return result.orphanFileLocations();
+    }
+
+    public long getBytesDeleted() {
+      return bytesDeleted;
+    }
   }
 
   private ExecutorService removeFilesService(int concurrentDeletes) {
