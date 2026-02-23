@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.jobs.spark;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
@@ -35,13 +37,20 @@ import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.iceberg.Table;
 
 /**
- * Batched orphan file deletion job that processes multiple tables in parallel.
+ * Runs orphan file deletion for a batch of tables in one Spark session.
  *
- * <p>Example invocation: com.linkedin.openhouse.jobs.spark.BatchedOrphanFilesDeletionSparkApp
- * --tableNames db.table1,db.table2,db.table3 --parallelism 10
+ * <p>Spinning up a Spark session per table is expensive. This app amortizes that cost by processing
+ * many tables in a single job, using a driver-side thread pool so each table's deletion runs
+ * concurrently without competing for executors.
+ *
+ * <p>When {@code --resultsEndpoint} is supplied, each table's outcome is PATCHed directly to the
+ * optimizer service as it completes, letting the service track per-table status independently of
+ * the overall job.
  */
 @Slf4j
 public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
   private final List<String> tableNames;
   private final int parallelism;
   private final long ttlSeconds;
@@ -129,8 +138,6 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
                       Lists.newArrayList(result.orphanFileLocations().iterator());
                   long durationMs = System.currentTimeMillis() - startTime;
 
-                  long bytesDeleted = result.getBytesDeleted();
-
                   log.info(
                       "Successfully processed table {}: {} orphan files deleted in {}ms",
                       tableName,
@@ -138,7 +145,7 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
                       durationMs);
 
                   return OrphanDeletionResult.success(
-                      tableName, orphanFiles.size(), bytesDeleted, durationMs);
+                      tableName, orphanFiles.size(), result.getBytesDeleted(), durationMs);
 
                 } catch (Exception e) {
                   long durationMs = System.currentTimeMillis() - startTime;
@@ -166,28 +173,14 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
 
   private void reportResults(
       List<OrphanDeletionResult> results, Map<String, Long> tableToOperationId) throws Exception {
-    int successCount = 0;
+    HttpClient client =
+        resultsEndpoint != null
+            ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+            : null;
+
     int failureCount = 0;
-    long totalOrphanFiles = 0;
-    long totalBytesDeleted = 0;
-
-    List<TableResultEntry> tableResultEntries = new ArrayList<>();
-
     for (OrphanDeletionResult result : results) {
       if (result.isSuccess()) {
-        successCount++;
-        totalOrphanFiles += result.getOrphanFilesDeleted();
-        totalBytesDeleted += result.getBytesDeleted();
-
-        tableResultEntries.add(
-            TableResultEntry.builder()
-                .fqtn(result.getTableName())
-                .status("SUCCESS")
-                .orphanFilesDeleted((long) result.getOrphanFilesDeleted())
-                .bytesDeleted(result.getBytesDeleted())
-                .durationMs(result.getDurationMs())
-                .build());
-
         otelEmitter.count(
             METRICS_SCOPE,
             AppConstants.ORPHAN_FILE_COUNT,
@@ -195,51 +188,34 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
             Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), result.getTableName()));
       } else {
         failureCount++;
-        tableResultEntries.add(
-            TableResultEntry.builder()
-                .fqtn(result.getTableName())
-                .status("FAILED")
-                .errorMessage(result.getErrorMessage())
-                .errorType(result.getErrorType())
-                .durationMs(result.getDurationMs())
-                .build());
+      }
+
+      if (client != null) {
+        Long opId = tableToOperationId.get(result.getTableName());
+        if (opId != null) {
+          patchOperationStatus(client, opId, result);
+        }
       }
     }
 
-    log.info(
-        "Batch completed: {} succeeded, {} failed, {} total orphan files, {} bytes deleted",
-        successCount,
-        failureCount,
-        totalOrphanFiles,
-        totalBytesDeleted);
-
-    otelEmitter.count(METRICS_SCOPE, "batch_success_count", successCount, null);
-    otelEmitter.count(METRICS_SCOPE, "batch_failure_count", failureCount, null);
-    otelEmitter.count(METRICS_SCOPE, "batch_total_orphan_files", totalOrphanFiles, null);
-    otelEmitter.gauge(METRICS_SCOPE, "batch_total_bytes_deleted", totalBytesDeleted, null);
-
-    if (resultsEndpoint == null) {
-      if (failureCount > 0) {
-        throw new RuntimeException(failureCount + " table(s) failed in batch");
-      }
-      return;
+    if (client == null && failureCount > 0) {
+      throw new RuntimeException(failureCount + " table(s) failed in batch");
     }
-
-    HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
-    for (TableResultEntry entry : tableResultEntries) {
-      Long opId = tableToOperationId.get(entry.getFqtn());
-      if (opId != null) {
-        patchOperationStatus(client, opId, entry);
-      }
-    }
-    if (successCount == 0) {
+    if (client != null && failureCount == results.size()) {
       throw new RuntimeException("All tables failed in batch");
     }
   }
 
-  private void patchOperationStatus(HttpClient client, Long id, TableResultEntry entry)
+  private void patchOperationStatus(HttpClient client, Long id, OrphanDeletionResult result)
       throws Exception {
-    String json = buildPatchJson(entry);
+    OperationPatch patch =
+        result.isSuccess()
+            ? OperationPatch.success(
+                result.getOrphanFilesDeleted(), result.getBytesDeleted(), result.getDurationMs())
+            : OperationPatch.failure(
+                result.getErrorMessage(), result.getErrorType(), result.getDurationMs());
+
+    String json = OBJECT_MAPPER.writeValueAsString(patch);
     HttpResponse<Void> response =
         client.send(
             HttpRequest.newBuilder()
@@ -253,54 +229,6 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
     if (status < 200 || status >= 300) {
       throw new RuntimeException("PATCH operation/" + id + " returned HTTP " + status);
     }
-  }
-
-  private String buildPatchJson(TableResultEntry entry) {
-    if ("SUCCESS".equals(entry.getStatus())) {
-      return String.format(
-          "{\"status\":\"SUCCESS\",\"orphanFilesDeleted\":%d,\"bytesDeleted\":%d,\"durationMs\":%d}",
-          entry.getOrphanFilesDeleted(), entry.getBytesDeleted(), entry.getDurationMs());
-    } else {
-      return String.format(
-          "{\"status\":\"FAILED\",\"durationMs\":%d,\"errorMessage\":\"%s\",\"errorType\":\"%s\"}",
-          entry.getDurationMs(),
-          jsonEscape(entry.getErrorMessage()),
-          jsonEscape(entry.getErrorType()));
-    }
-  }
-
-  private static String jsonEscape(String s) {
-    if (s == null) return "";
-    StringBuilder sb = new StringBuilder();
-    for (char c : s.toCharArray()) {
-      switch (c) {
-        case '"':
-          sb.append("\\\"");
-          break;
-        case '\\':
-          sb.append("\\\\");
-          break;
-        case '\n':
-          sb.append("\\n");
-          break;
-        case '\r':
-          sb.append("\\r");
-          break;
-        case '\t':
-          sb.append("\\t");
-          break;
-        case '\b':
-          sb.append("\\b");
-          break;
-        case '\f':
-          sb.append("\\f");
-          break;
-        default:
-          if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
-          else sb.append(c);
-      }
-    }
-    return sb.toString();
   }
 
   /** Result of orphan deletion for a single table. */
@@ -339,17 +267,39 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
     }
   }
 
-  /** Table result entry for Jobs Service API. */
-  @Value
-  @Builder
-  public static class TableResultEntry implements Serializable {
-    String fqtn;
-    String status;
-    Long orphanFilesDeleted;
-    Long bytesDeleted;
-    Long durationMs;
-    String errorMessage;
-    String errorType;
+  /** PATCH payload sent to the optimizer service for each table's operation. */
+  @JsonInclude(JsonInclude.Include.NON_NULL)
+  static class OperationPatch {
+    public final String status;
+    public final Long orphanFilesDeleted;
+    public final Long bytesDeleted;
+    public final Long durationMs;
+    public final String errorMessage;
+    public final String errorType;
+
+    private OperationPatch(
+        String status,
+        Long orphanFilesDeleted,
+        Long bytesDeleted,
+        Long durationMs,
+        String errorMessage,
+        String errorType) {
+      this.status = status;
+      this.orphanFilesDeleted = orphanFilesDeleted;
+      this.bytesDeleted = bytesDeleted;
+      this.durationMs = durationMs;
+      this.errorMessage = errorMessage;
+      this.errorType = errorType;
+    }
+
+    static OperationPatch success(long orphanFilesDeleted, long bytesDeleted, long durationMs) {
+      return new OperationPatch(
+          "SUCCESS", orphanFilesDeleted, bytesDeleted, durationMs, null, null);
+    }
+
+    static OperationPatch failure(String errorMessage, String errorType, long durationMs) {
+      return new OperationPatch("FAILED", null, null, durationMs, errorMessage, errorType);
+    }
   }
 
   public static void main(String[] args) {
