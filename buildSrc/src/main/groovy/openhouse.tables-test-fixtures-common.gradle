@@ -123,7 +123,12 @@ shadowJar {
     relocate('org.HdrHistogram', 'openhouse.relocated.org.HdrHistogram')
 
 
-    relocate('com.fasterxml', 'openhouse.relocated.com.fasterxml')
+    relocate('com.fasterxml', 'openhouse.relocated.com.fasterxml') {
+      exclude 'com.fasterxml.jackson.databind.**'
+      exclude 'com.fasterxml.jackson.core.**'
+      exclude 'com.fasterxml.jackson.module.**'
+      exclude 'com.fasterxml.jackson.annotation.**'
+    }
 
     relocate('reactor', 'openhouse.relocated.reactor')
 
