@@ -22,6 +22,12 @@ services:
     build:
       context: ../../../..
       dockerfile: jobs-scheduler.Dockerfile
+  openhouse-optimizer:
+    build:
+      context: ../../../..
+      dockerfile: optimizer-service.Dockerfile
+    ports:
+      - 8003:8080
   prometheus:
     image: prom/prometheus:v2.21.0
     ports:

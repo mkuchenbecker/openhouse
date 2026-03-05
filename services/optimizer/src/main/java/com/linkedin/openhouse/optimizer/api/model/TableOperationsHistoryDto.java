@@ -1,0 +1,35 @@
+package com.linkedin.openhouse.optimizer.api.model;
+
+import java.time.Instant;
+import java.util.Map;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/** DTO for {@code table_operations_history} — append-only Spark job results. */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class TableOperationsHistoryDto {
+
+  /** Auto-increment; server-assigned. */
+  private Long id;
+
+  private String databaseName;
+  private String tableName;
+  private String operationType;
+
+  /** When the Spark job was submitted / ran. */
+  private Instant submittedAt;
+
+  /** {@code SUCCESS} or {@code FAILED}. */
+  private String status;
+
+  /** Spark job ID. */
+  private String jobId;
+
+  /** Result payload: {@code error_message}, {@code error_type}. */
+  private Map<String, Object> result;
+}
