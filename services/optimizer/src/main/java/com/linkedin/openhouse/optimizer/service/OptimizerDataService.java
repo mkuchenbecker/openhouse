@@ -3,23 +3,10 @@ package com.linkedin.openhouse.optimizer.service;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
-import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
 import java.util.List;
-import java.util.Optional;
 
 /** Service interface for optimizer data operations. */
 public interface OptimizerDataService {
-
-  // --- TableStats ---
-
-  /** Return the latest stats for a table, or empty if no stats have been recorded. */
-  Optional<TableStatsDto> getTableStats(String databaseName, String tableName);
-
-  /**
-   * Upsert stats for a table. Delta fields ({@code numFilesAdded}, {@code numFilesDeleted}) are
-   * accumulated; all other fields are overwritten with the incoming values.
-   */
-  TableStatsDto upsertTableStats(TableStatsDto dto);
 
   // --- TableOperations ---
 

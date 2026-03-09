@@ -1,16 +1,5 @@
 -- Optimizer Service Schema (H2 — test only)
-CREATE TABLE
-  IF NOT EXISTS table_stats (
-    table_uuid VARCHAR(100) NOT NULL,
-    database_name VARCHAR(255) NOT NULL,
-    table_name VARCHAR(255) NOT NULL,
-    last_updated_at TIMESTAMP(6),
-    version BIGINT,
-    stats VARCHAR(4096),
-    PRIMARY KEY (table_uuid),
-    UNIQUE (database_name, table_name)
-  );
-
+-- Note: table_stats lives in the housetables service.
 CREATE TABLE
   IF NOT EXISTS table_operations (
     id VARCHAR(36) NOT NULL,

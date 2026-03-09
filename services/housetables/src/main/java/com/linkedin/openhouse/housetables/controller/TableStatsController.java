@@ -1,7 +1,7 @@
-package com.linkedin.openhouse.optimizer.api.controller;
+package com.linkedin.openhouse.housetables.controller;
 
-import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
-import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
+import com.linkedin.openhouse.housetables.dto.model.TableStatsDto;
+import com.linkedin.openhouse.housetables.services.TableStatsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,35 +14,34 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** REST controller for {@code table_stats}. */
 @RestController
-@RequestMapping("/v1/table-stats")
+@RequestMapping("/v1/hts/table-stats")
 @RequiredArgsConstructor
 public class TableStatsController {
 
-  private final OptimizerDataService service;
+  private final TableStatsService service;
 
   /**
-   * Upsert stats for a table. Called by the Ingestion pipeline after each CommitEvent.
+   * Upsert stats for a table. Called by the ingestion pipeline after each commit event.
    *
-   * <p>The request body must include {@code tableUuid} so the row can be keyed correctly on first
-   * insert. On subsequent calls for the same {@code (databaseName, tableName)} the UUID is ignored
-   * and the existing row is updated in place.
+   * <p>The path variables are authoritative for identity. Delta fields ({@code numFilesAdded},
+   * {@code numFilesDeleted}) are accumulated; all other fields are overwritten.
    */
-  @PutMapping("/{databaseName}/{tableName}")
+  @PutMapping("/{databaseId}/{tableId}")
   public ResponseEntity<TableStatsDto> upsertTableStats(
-      @PathVariable String databaseName,
-      @PathVariable String tableName,
+      @PathVariable String databaseId,
+      @PathVariable String tableId,
       @RequestBody TableStatsDto dto) {
-    dto.setDatabaseName(databaseName);
-    dto.setTableName(tableName);
+    dto.setDatabaseId(databaseId);
+    dto.setTableId(tableId);
     return ResponseEntity.ok(service.upsertTableStats(dto));
   }
 
   /** Return the latest stats for a table, or 404 if no stats have been recorded yet. */
-  @GetMapping("/{databaseName}/{tableName}")
+  @GetMapping("/{databaseId}/{tableId}")
   public ResponseEntity<TableStatsDto> getTableStats(
-      @PathVariable String databaseName, @PathVariable String tableName) {
+      @PathVariable String databaseId, @PathVariable String tableId) {
     return service
-        .getTableStats(databaseName, tableName)
+        .getTableStats(databaseId, tableId)
         .map(ResponseEntity::ok)
         .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
   }
