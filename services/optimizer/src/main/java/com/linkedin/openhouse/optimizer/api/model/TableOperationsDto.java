@@ -1,7 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.model;
 
 import java.time.Instant;
-import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -19,10 +18,10 @@ public class TableOperationsDto {
 
   private String databaseName;
   private String tableName;
-  private String operationType;
+  private OperationType operationType;
 
   /** {@code PENDING} or {@code SCHEDULED}. Defaults to {@code PENDING} on creation. */
-  private String status;
+  private OperationStatus status;
 
   /** Server-set when the row is first created by the Analyzer. */
   private Instant createdAt;
@@ -30,9 +29,6 @@ public class TableOperationsDto {
   /** Set by the Scheduler when claiming; {@code null} while PENDING. */
   private Instant scheduledAt;
 
-  /**
-   * Denormalized stats snapshot: {@code table_size_bytes}, {@code num_snapshots}, {@code
-   * num_files_added}, {@code num_files_deleted}.
-   */
-  private Map<String, Object> metrics;
+  /** Denormalized stats snapshot captured at analysis time. */
+  private OperationMetrics metrics;
 }

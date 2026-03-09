@@ -2,9 +2,8 @@ package com.linkedin.openhouse.optimizer.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.linkedin.openhouse.optimizer.api.model.TableStats;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,9 +20,8 @@ class TableStatsRepositoryTest {
 
   @Test
   void saveAndFindByDatabaseAndTable() {
-    Map<String, Object> stats = new HashMap<>();
-    stats.put("num_snapshots", 5);
-    stats.put("table_size_bytes", 1024L);
+    TableStats stats =
+        TableStats.builder().numSnapshots(5).tableSizeBytes(1024L).clusterId("cluster-1").build();
 
     TableStatsRow row =
         TableStatsRow.builder()
@@ -35,15 +33,16 @@ class TableStatsRepositoryTest {
 
     repository.save(row);
 
-    Optional<TableStatsRow> found = repository.findByDatabaseNameAndTableName("db1", "tbl1");
+    Optional<TableStatsRow> found = repository.find("db1", "tbl1");
     assertThat(found).isPresent();
     assertThat(found.get().getTableUuid()).isEqualTo("uuid-001");
-    assertThat(found.get().getStats()).containsKey("num_snapshots");
+    assertThat(found.get().getStats().getNumSnapshots()).isEqualTo(5);
+    assertThat(found.get().getStats().getTableSizeBytes()).isEqualTo(1024L);
   }
 
   @Test
-  void findByDatabaseAndTable_returnsEmpty_whenNotFound() {
-    Optional<TableStatsRow> found = repository.findByDatabaseNameAndTableName("ghost", "missing");
+  void find_returnsEmpty_whenNotFound() {
+    Optional<TableStatsRow> found = repository.find("ghost", "missing");
     assertThat(found).isEmpty();
   }
 }

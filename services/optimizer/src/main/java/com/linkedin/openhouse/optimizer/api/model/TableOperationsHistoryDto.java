@@ -1,7 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.model;
 
 import java.time.Instant;
-import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -19,17 +18,17 @@ public class TableOperationsHistoryDto {
 
   private String databaseName;
   private String tableName;
-  private String operationType;
+  private OperationType operationType;
 
   /** When the Spark job was submitted / ran. */
   private Instant submittedAt;
 
   /** {@code SUCCESS} or {@code FAILED}. */
-  private String status;
+  private OperationHistoryStatus status;
 
   /** Spark job ID. */
   private String jobId;
 
-  /** Result payload: {@code error_message}, {@code error_type}. */
-  private Map<String, Object> result;
+  /** Job result payload; both fields null on success. */
+  private JobResult result;
 }

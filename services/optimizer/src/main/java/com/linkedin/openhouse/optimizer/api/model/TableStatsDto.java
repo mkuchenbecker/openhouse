@@ -1,7 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.model;
 
 import java.time.Instant;
-import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,9 +23,8 @@ public class TableStatsDto {
   private Instant lastUpdatedAt;
 
   /**
-   * Stats payload: {@code cluster_id}, {@code table_version}, {@code num_snapshots}, {@code
-   * table_location}, {@code operation_type}, {@code num_files_added}, {@code num_files_deleted},
-   * {@code table_size_bytes}.
+   * Stats payload. Delta fields are accumulated across commit events; snapshot fields are
+   * overwritten. See {@link TableStats} for the field-level contract.
    */
-  private Map<String, Object> stats;
+  private TableStats stats;
 }

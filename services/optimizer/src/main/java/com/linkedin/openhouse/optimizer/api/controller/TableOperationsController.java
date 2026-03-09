@@ -1,6 +1,8 @@
 package com.linkedin.openhouse.optimizer.api.controller;
 
+import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
+import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -25,18 +27,18 @@ public class TableOperationsController {
    * Upsert an operation recommendation. Called by the Analyzer after each analysis pass.
    *
    * <p>Creates the row on first call; on subsequent calls for the same {@code (databaseName,
-   * tableName, operationType)} and updates the metrics snapshot.
+   * tableName, operationType)} updates the metrics snapshot. The path variables are authoritative —
+   * the body carries only the {@code metrics} payload.
    */
   @PutMapping("/{databaseName}/{tableName}/{operationType}")
   public ResponseEntity<TableOperationsDto> upsertTableOperation(
       @PathVariable String databaseName,
       @PathVariable String tableName,
-      @PathVariable String operationType,
-      @RequestBody TableOperationsDto dto) {
-    dto.setDatabaseName(databaseName);
-    dto.setTableName(tableName);
-    dto.setOperationType(operationType);
-    return ResponseEntity.ok(service.upsertTableOperation(dto));
+      @PathVariable OperationType operationType,
+      @RequestBody UpsertTableOperationsRequest request) {
+    TableOperationsDto dto = TableOperationsDto.builder().metrics(request.getMetrics()).build();
+    return ResponseEntity.ok(
+        service.upsertTableOperation(databaseName, tableName, operationType, dto));
   }
 
   /**
@@ -46,7 +48,7 @@ public class TableOperationsController {
    */
   @GetMapping
   public ResponseEntity<List<TableOperationsDto>> listTableOperations(
-      @RequestParam(required = false) String operationType) {
+      @RequestParam(required = false) OperationType operationType) {
     return ResponseEntity.ok(service.getAllTableOperations(operationType));
   }
 }

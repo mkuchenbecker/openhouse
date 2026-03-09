@@ -2,11 +2,12 @@ package com.linkedin.openhouse.optimizer.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.linkedin.openhouse.optimizer.api.model.JobResult;
+import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
+import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,29 +30,24 @@ class TableOperationsHistoryRepositoryTest {
         TableOperationsHistoryRow.builder()
             .databaseName("db1")
             .tableName("tbl1")
-            .operationType("ORPHAN_FILES_DELETION")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
             .submittedAt(t1)
-            .status("SUCCESS")
+            .status(OperationHistoryStatus.SUCCESS)
             .jobId("job-001")
             .build());
-
-    Map<String, Object> errorResult = new HashMap<>();
-    errorResult.put("error_message", "out of memory");
-    errorResult.put("error_type", "OOM");
 
     repository.save(
         TableOperationsHistoryRow.builder()
             .databaseName("db1")
             .tableName("tbl1")
-            .operationType("ORPHAN_FILES_DELETION")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
             .submittedAt(t2)
-            .status("FAILED")
+            .status(OperationHistoryStatus.FAILED)
             .jobId("job-002")
-            .result(errorResult)
+            .result(JobResult.builder().errorMessage("out of memory").errorType("OOM").build())
             .build());
 
-    List<TableOperationsHistoryRow> rows =
-        repository.findByDatabaseNameAndTableNameOrderBySubmittedAtDesc("db1", "tbl1");
+    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl1", 10);
 
     assertThat(rows).hasSize(2);
     // Newest first
@@ -67,14 +63,31 @@ class TableOperationsHistoryRepositoryTest {
           TableOperationsHistoryRow.builder()
               .databaseName("db1")
               .tableName("tbl2")
-              .operationType("ORPHAN_FILES_DELETION")
+              .operationType(OperationType.ORPHAN_FILES_DELETION)
               .submittedAt(now.plusSeconds(i))
-              .status("SUCCESS")
+              .status(OperationHistoryStatus.SUCCESS)
               .build());
     }
 
-    List<TableOperationsHistoryRow> rows =
-        repository.findByDatabaseNameAndTableNameOrderBySubmittedAtDesc("db1", "tbl2");
+    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl2", 10);
+    assertThat(rows).hasSize(3);
+  }
+
+  @Test
+  void find_respectsLimit() {
+    Instant now = Instant.now();
+    for (int i = 0; i < 5; i++) {
+      repository.save(
+          TableOperationsHistoryRow.builder()
+              .databaseName("db1")
+              .tableName("tbl3")
+              .operationType(OperationType.ORPHAN_FILES_DELETION)
+              .submittedAt(now.plusSeconds(i))
+              .status(OperationHistoryStatus.SUCCESS)
+              .build());
+    }
+
+    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl3", 3);
     assertThat(rows).hasSize(3);
   }
 }

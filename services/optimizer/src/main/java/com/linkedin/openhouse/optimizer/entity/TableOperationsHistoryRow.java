@@ -1,9 +1,15 @@
 package com.linkedin.openhouse.optimizer.entity;
 
+import com.linkedin.openhouse.optimizer.api.model.JobResult;
+import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
+import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.config.JobResultConverter;
 import java.time.Instant;
-import java.util.Map;
 import javax.persistence.Column;
+import javax.persistence.Convert;
 import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
@@ -15,7 +21,6 @@ import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.Type;
 
 /**
  * Append-only record of a completed Spark maintenance job.
@@ -52,26 +57,25 @@ public class TableOperationsHistoryRow {
   @Column(name = "table_name", nullable = false, length = 255)
   private String tableName;
 
+  @Enumerated(EnumType.STRING)
   @Column(name = "operation_type", nullable = false, length = 50)
-  private String operationType;
+  private OperationType operationType;
 
   /** When the Spark job was submitted / ran, as reported by the job itself. */
   @Column(name = "submitted_at", nullable = false)
   private Instant submittedAt;
 
   /** {@code SUCCESS} or {@code FAILED}. */
+  @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 20)
-  private String status;
+  private OperationHistoryStatus status;
 
   /** Spark job ID; indexed for job → result lookups. */
   @Column(name = "job_id", length = 255)
   private String jobId;
 
-  /**
-   * JSON result payload: {@code error_message}, {@code error_type}. Intentionally schema-free so
-   * additional fields can be added without migrations.
-   */
-  @Type(type = "json")
-  @Column(name = "result", columnDefinition = "json")
-  private Map<String, Object> result;
+  /** Job result: error details on failure, both fields null on success. */
+  @Convert(converter = JobResultConverter.class)
+  @Column(name = "result")
+  private JobResult result;
 }

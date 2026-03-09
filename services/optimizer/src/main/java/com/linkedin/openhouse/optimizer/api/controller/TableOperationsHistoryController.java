@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** REST controller for {@code table_operations_history}. */
@@ -28,10 +29,12 @@ public class TableOperationsHistoryController {
     return ResponseEntity.status(HttpStatus.CREATED).body(service.appendHistory(dto));
   }
 
-  /** Return the full history for a table, newest first. */
+  /** Return the most recent history for a table, newest first, up to {@code limit} rows. */
   @GetMapping("/{databaseName}/{tableName}")
   public ResponseEntity<List<TableOperationsHistoryDto>> getHistory(
-      @PathVariable String databaseName, @PathVariable String tableName) {
-    return ResponseEntity.ok(service.getHistory(databaseName, tableName));
+      @PathVariable String databaseName,
+      @PathVariable String tableName,
+      @RequestParam(defaultValue = "100") int limit) {
+    return ResponseEntity.ok(service.getHistory(databaseName, tableName, limit));
   }
 }

@@ -1,8 +1,10 @@
 package com.linkedin.openhouse.optimizer.entity;
 
+import com.linkedin.openhouse.optimizer.api.model.TableStats;
+import com.linkedin.openhouse.optimizer.config.TableStatsConverter;
 import java.time.Instant;
-import java.util.Map;
 import javax.persistence.Column;
+import javax.persistence.Convert;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.Index;
@@ -15,16 +17,16 @@ import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
 /**
  * JPA entity recording the latest known stats for a table.
  *
  * <p>PK is {@code table_uuid} — the stable Iceberg-assigned UUID. One row per table; the {@code
- * idx_db_table} unique index on {@code (database_name, table_name)} prevents duplicates. Stats
- * fields that do not appear in {@code WHERE} or {@code ORDER BY} clauses are folded into the {@code
- * stats} JSON column so the schema stays stable as the payload evolves.
+ * idx_db_table} unique index on {@code (database_name, table_name)} prevents duplicates.
+ *
+ * <p>The {@code stats} column holds a mix of delta and snapshot fields; see {@link TableStats} for
+ * the accumulation contract.
  */
 @Entity
 @Table(
@@ -62,11 +64,10 @@ public class TableStatsRow {
   private Long version;
 
   /**
-   * JSON payload carrying non-indexed stats fields: {@code cluster_id}, {@code table_version},
-   * {@code num_snapshots}, {@code table_location}, {@code operation_type}, {@code num_files_added},
-   * {@code num_files_deleted}, {@code table_size_bytes}.
+   * Stats payload. Delta fields ({@code numFilesAdded}, {@code numFilesDeleted}) are accumulated
+   * across commit events; all other fields are overwritten on each upsert.
    */
-  @Type(type = "json")
-  @Column(name = "stats", columnDefinition = "json")
-  private Map<String, Object> stats;
+  @Convert(converter = TableStatsConverter.class)
+  @Column(name = "stats")
+  private TableStats stats;
 }

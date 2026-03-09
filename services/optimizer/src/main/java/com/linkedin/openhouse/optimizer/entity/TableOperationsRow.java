@@ -1,9 +1,15 @@
 package com.linkedin.openhouse.optimizer.entity;
 
+import com.linkedin.openhouse.optimizer.api.model.OperationMetrics;
+import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
+import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.config.OperationMetricsConverter;
 import java.time.Instant;
-import java.util.Map;
 import javax.persistence.Column;
+import javax.persistence.Convert;
 import javax.persistence.Entity;
+import javax.persistence.EnumType;
+import javax.persistence.Enumerated;
 import javax.persistence.Id;
 import javax.persistence.Index;
 import javax.persistence.Table;
@@ -15,7 +21,6 @@ import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.Type;
 
 /**
  * JPA entity representing an Analyzer recommendation for a table maintenance operation.
@@ -60,12 +65,14 @@ public class TableOperationsRow {
   @Column(name = "table_name", nullable = false, length = 255)
   private String tableName;
 
+  @Enumerated(EnumType.STRING)
   @Column(name = "operation_type", nullable = false, length = 50)
-  private String operationType;
+  private OperationType operationType;
 
   /** {@code PENDING} until the Scheduler claims the row; then {@code SCHEDULED}. */
+  @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 20)
-  private String status;
+  private OperationStatus status;
 
   /** When the Analyzer first created this row. Set by the service on insert; never updated. */
   @Column(name = "created_at", nullable = false)
@@ -80,10 +87,10 @@ public class TableOperationsRow {
   private Long version;
 
   /**
-   * Denormalized stats snapshot captured at analysis time: {@code table_size_bytes}, {@code
-   * num_snapshots}, {@code num_files_added}, {@code num_files_deleted}.
+   * Denormalized stats snapshot captured at analysis time: table size, snapshot count, and file
+   * counts as of the moment the Analyzer ran.
    */
-  @Type(type = "json")
-  @Column(name = "metrics", columnDefinition = "json")
-  private Map<String, Object> metrics;
+  @Convert(converter = OperationMetricsConverter.class)
+  @Column(name = "metrics")
+  private OperationMetrics metrics;
 }

@@ -1,9 +1,12 @@
 package com.linkedin.openhouse.optimizer.service;
 
+import com.linkedin.openhouse.optimizer.api.mapper.OptimizerMapper;
+import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
+import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
+import com.linkedin.openhouse.optimizer.api.model.TableStats;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
-import com.linkedin.openhouse.optimizer.entity.OperationStatus;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsRow;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
@@ -27,12 +30,13 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   private final TableStatsRepository statsRepository;
   private final TableOperationsRepository operationsRepository;
   private final TableOperationsHistoryRepository historyRepository;
+  private final OptimizerMapper mapper;
 
   // --- TableStats ---
 
   @Override
   public Optional<TableStatsDto> getTableStats(String databaseName, String tableName) {
-    return statsRepository.findByDatabaseNameAndTableName(databaseName, tableName).map(this::toDto);
+    return statsRepository.find(databaseName, tableName).map(mapper::toDto);
   }
 
   @Override
@@ -40,8 +44,8 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   public TableStatsDto upsertTableStats(TableStatsDto dto) {
     TableStatsRow row =
         statsRepository
-            .findByDatabaseNameAndTableName(dto.getDatabaseName(), dto.getTableName())
-            .map(existing -> existing.toBuilder().stats(dto.getStats()).build())
+            .find(dto.getDatabaseName(), dto.getTableName())
+            .map(existing -> mergeStats(existing, dto))
             .orElse(
                 TableStatsRow.builder()
                     .tableUuid(dto.getTableUuid())
@@ -49,41 +53,67 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                     .tableName(dto.getTableName())
                     .stats(dto.getStats())
                     .build());
-    return toDto(statsRepository.save(row));
+    return mapper.toDto(statsRepository.save(row));
+  }
+
+  /**
+   * Merge incoming stats into an existing row. Delta fields are accumulated (added to the existing
+   * total); snapshot fields are overwritten with the incoming values.
+   */
+  private TableStatsRow mergeStats(TableStatsRow existing, TableStatsDto incoming) {
+    TableStats prev = existing.getStats() != null ? existing.getStats() : new TableStats();
+    TableStats next = incoming.getStats() != null ? incoming.getStats() : new TableStats();
+
+    TableStats merged =
+        TableStats.builder()
+            // Snapshot fields — overwrite with incoming values
+            .clusterId(next.getClusterId())
+            .tableVersion(next.getTableVersion())
+            .tableLocation(next.getTableLocation())
+            .numSnapshots(next.getNumSnapshots())
+            .tableSizeBytes(next.getTableSizeBytes())
+            // Delta fields — accumulate
+            .numFilesAdded(accumulate(prev.getNumFilesAdded(), next.getNumFilesAdded()))
+            .numFilesDeleted(accumulate(prev.getNumFilesDeleted(), next.getNumFilesDeleted()))
+            .build();
+
+    return existing.toBuilder().stats(merged).build();
+  }
+
+  private long accumulate(Long existing, Long incoming) {
+    return (existing != null ? existing : 0L) + (incoming != null ? incoming : 0L);
   }
 
   // --- TableOperations ---
 
   @Override
-  public List<TableOperationsDto> getAllTableOperations(String operationType) {
-    if (operationType != null) {
-      return operationsRepository.findByOperationType(operationType).stream()
-          .map(this::toDto)
-          .collect(Collectors.toList());
-    }
-    return operationsRepository.findAll().stream().map(this::toDto).collect(Collectors.toList());
+  public List<TableOperationsDto> getAllTableOperations(OperationType operationType) {
+    return operationsRepository.findAll().stream()
+        .filter(r -> operationType == null || operationType.equals(r.getOperationType()))
+        .map(mapper::toDto)
+        .collect(Collectors.toList());
   }
 
   @Override
   @Transactional
-  public TableOperationsDto upsertTableOperation(TableOperationsDto dto) {
+  public TableOperationsDto upsertTableOperation(
+      String databaseName, String tableName, OperationType operationType, TableOperationsDto dto) {
     Instant now = Instant.now();
     TableOperationsRow row =
         operationsRepository
-            .findByDatabaseNameAndTableNameAndOperationType(
-                dto.getDatabaseName(), dto.getTableName(), dto.getOperationType())
+            .findByDatabaseNameAndTableNameAndOperationType(databaseName, tableName, operationType)
             .map(existing -> existing.toBuilder().metrics(dto.getMetrics()).build())
             .orElse(
                 TableOperationsRow.builder()
                     .id(UUID.randomUUID().toString())
-                    .databaseName(dto.getDatabaseName())
-                    .tableName(dto.getTableName())
-                    .operationType(dto.getOperationType())
-                    .status(OperationStatus.PENDING.name())
+                    .databaseName(databaseName)
+                    .tableName(tableName)
+                    .operationType(operationType)
+                    .status(OperationStatus.PENDING)
                     .createdAt(now)
                     .metrics(dto.getMetrics())
                     .build());
-    return toDto(operationsRepository.save(row));
+    return mapper.toDto(operationsRepository.save(row));
   }
 
   // --- TableOperationsHistory ---
@@ -101,52 +131,14 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
             .jobId(dto.getJobId())
             .result(dto.getResult())
             .build();
-    return toDto(historyRepository.save(row));
+    return mapper.toDto(historyRepository.save(row));
   }
 
   @Override
-  public List<TableOperationsHistoryDto> getHistory(String databaseName, String tableName) {
-    return historyRepository
-        .findByDatabaseNameAndTableNameOrderBySubmittedAtDesc(databaseName, tableName).stream()
-        .map(this::toDto)
+  public List<TableOperationsHistoryDto> getHistory(
+      String databaseName, String tableName, int limit) {
+    return historyRepository.find(databaseName, tableName, limit).stream()
+        .map(mapper::toDto)
         .collect(Collectors.toList());
-  }
-
-  // --- Mappers ---
-
-  private TableStatsDto toDto(TableStatsRow row) {
-    return TableStatsDto.builder()
-        .tableUuid(row.getTableUuid())
-        .databaseName(row.getDatabaseName())
-        .tableName(row.getTableName())
-        .lastUpdatedAt(row.getLastUpdatedAt())
-        .stats(row.getStats())
-        .build();
-  }
-
-  private TableOperationsDto toDto(TableOperationsRow row) {
-    return TableOperationsDto.builder()
-        .id(row.getId())
-        .databaseName(row.getDatabaseName())
-        .tableName(row.getTableName())
-        .operationType(row.getOperationType())
-        .status(row.getStatus())
-        .createdAt(row.getCreatedAt())
-        .scheduledAt(row.getScheduledAt())
-        .metrics(row.getMetrics())
-        .build();
-  }
-
-  private TableOperationsHistoryDto toDto(TableOperationsHistoryRow row) {
-    return TableOperationsHistoryDto.builder()
-        .id(row.getId())
-        .databaseName(row.getDatabaseName())
-        .tableName(row.getTableName())
-        .operationType(row.getOperationType())
-        .submittedAt(row.getSubmittedAt())
-        .status(row.getStatus())
-        .jobId(row.getJobId())
-        .result(row.getResult())
-        .build();
   }
 }
