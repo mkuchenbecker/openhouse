@@ -3,6 +3,7 @@ package com.linkedin.openhouse.housetables.e2e.tablestats;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.housetables.dto.model.TableStats;
 import com.linkedin.openhouse.housetables.e2e.SpringH2HtsApplication;
 import com.linkedin.openhouse.housetables.model.TableStatsRow;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.TableStatsHtsJdbcRepository;
@@ -25,45 +26,76 @@ public class TableStatsRepositoryTest {
   }
 
   @Test
-  public void testSaveAndFindByDatabaseAndTable() {
+  public void testSaveAndFindByUuid() {
+    TableStats stats =
+        TableStats.builder()
+            .snapshot(
+                TableStats.SnapshotMetrics.builder().numSnapshots(5).tableSizeBytes(1024L).build())
+            .delta(TableStats.CommitDelta.builder().numFilesAdded(10L).numFilesDeleted(2L).build())
+            .build();
+
     TableStatsRow row =
         TableStatsRow.builder()
-            .databaseId("db1")
-            .tableId("tbl1")
             .tableUuid("uuid-001")
-            .clusterId("cluster-1")
-            .numSnapshots(5)
-            .tableSizeBytes(1024L)
-            .numFilesAdded(10L)
-            .numFilesDeleted(2L)
+            .databaseId("db1")
+            .tableName("tbl1")
+            .stats(stats)
             .build();
 
     repository.save(row);
 
-    Optional<TableStatsRow> found = repository.findByDatabaseIdAndTableId("db1", "tbl1");
+    Optional<TableStatsRow> found = repository.findById("uuid-001");
     assertThat(found).isPresent();
-    assertThat(found.get().getTableUuid()).isEqualTo("uuid-001");
-    assertThat(found.get().getNumSnapshots()).isEqualTo(5);
-    assertThat(found.get().getNumFilesAdded()).isEqualTo(10L);
+    assertThat(found.get().getDatabaseId()).isEqualTo("db1");
+    assertThat(found.get().getTableName()).isEqualTo("tbl1");
+    assertThat(found.get().getStats().getSnapshot().getNumSnapshots()).isEqualTo(5);
+    assertThat(found.get().getStats().getDelta().getNumFilesAdded()).isEqualTo(10L);
   }
 
   @Test
   public void testFindReturnsEmpty_whenNotFound() {
-    Optional<TableStatsRow> found = repository.findByDatabaseIdAndTableId("ghost", "missing");
+    Optional<TableStatsRow> found = repository.findById("unknown-uuid");
     assertThat(found).isEmpty();
   }
 
   @Test
   public void testUpdate_incrementsVersion() {
     TableStatsRow row =
-        TableStatsRow.builder().databaseId("db1").tableId("tbl2").tableSizeBytes(512L).build();
+        TableStatsRow.builder()
+            .tableUuid("uuid-002")
+            .databaseId("db1")
+            .tableName("tbl2")
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().tableSizeBytes(512L).build())
+                    .build())
+            .build();
 
     TableStatsRow saved = repository.save(row);
     assertThat(saved.getVersion()).isEqualTo(0L);
 
-    TableStatsRow updated = saved.toBuilder().tableSizeBytes(2048L).build();
+    TableStatsRow updated =
+        saved
+            .toBuilder()
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().tableSizeBytes(2048L).build())
+                    .build())
+            .build();
     TableStatsRow resaved = repository.save(updated);
     assertThat(resaved.getVersion()).isGreaterThan(0L);
-    assertThat(resaved.getTableSizeBytes()).isEqualTo(2048L);
+    assertThat(resaved.getStats().getSnapshot().getTableSizeBytes()).isEqualTo(2048L);
+  }
+
+  @Test
+  public void testStatsArePersisted_whenNull() {
+    TableStatsRow row =
+        TableStatsRow.builder().tableUuid("uuid-003").databaseId("db1").tableName("tbl3").build();
+
+    repository.save(row);
+
+    Optional<TableStatsRow> found = repository.findById("uuid-003");
+    assertThat(found).isPresent();
+    assertThat(found.get().getStats()).isNull();
   }
 }

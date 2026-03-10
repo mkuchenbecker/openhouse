@@ -17,25 +17,27 @@ public class OperationMetricsConverter implements AttributeConverter<OperationMe
 
   @Override
   public String convertToDatabaseColumn(OperationMetrics attribute) {
+    // Null metrics are valid for PENDING operations that have not yet produced output.
     if (attribute == null) {
       return null;
     }
     try {
       return OBJECT_MAPPER.writeValueAsString(attribute);
     } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException("Failed to serialize OperationMetrics to JSON", e);
+      throw new IllegalStateException("Failed to serialize OperationMetrics to JSON", e);
     }
   }
 
   @Override
   public OperationMetrics convertToEntityAttribute(String dbData) {
+    // Null is stored for PENDING rows; return null so the entity reflects that state.
     if (dbData == null) {
       return null;
     }
     try {
       return OBJECT_MAPPER.readValue(dbData, OperationMetrics.class);
     } catch (IOException e) {
-      throw new IllegalArgumentException(
+      throw new IllegalStateException(
           "Failed to deserialize OperationMetrics from JSON: " + dbData, e);
     }
   }

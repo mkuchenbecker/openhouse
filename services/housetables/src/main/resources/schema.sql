@@ -59,16 +59,11 @@ CREATE TABLE IF NOT EXISTS soft_deleted_user_table_row (
 );
 
 CREATE TABLE IF NOT EXISTS table_stats_row (
+    table_uuid          VARCHAR (100)     NOT NULL,
     database_id         VARCHAR (128)     NOT NULL,
-    table_id            VARCHAR (128)     NOT NULL,
+    table_name          VARCHAR (128)     NOT NULL,
     version             BIGINT            ,
-    table_uuid          VARCHAR (100)     ,
-    cluster_id          VARCHAR (128)     ,
-    table_version       VARCHAR (512)     ,
-    table_location      VARCHAR (512)     ,
-    num_snapshots       INT               ,
-    table_size_bytes    BIGINT            ,
-    num_files_added     BIGINT            ,
-    num_files_deleted   BIGINT            ,
-    PRIMARY KEY (database_id, table_id)
+    stats               TEXT              ,
+    PRIMARY KEY (table_uuid),
+    UNIQUE (database_id, table_name)
 );

@@ -9,18 +9,18 @@ public interface TableStatsService {
   /**
    * Return the latest stats for a table, or empty if none have been recorded.
    *
-   * @param databaseId the database namespace
-   * @param tableId the table name
+   * @param tableUuid Iceberg's stable UUID for the table
    */
-  Optional<TableStatsDto> getTableStats(String databaseId, String tableId);
+  Optional<TableStatsDto> getTableStats(String tableUuid);
 
   /**
    * Upsert stats for a table.
    *
-   * <p>Delta fields ({@code numFilesAdded}, {@code numFilesDeleted}) are accumulated; all other
-   * fields are overwritten with the incoming values.
+   * <p>{@link TableStatsDto#getStats()} snapshot fields are overwritten; delta fields are
+   * accumulated across commit events.
    *
-   * @param dto the incoming stats payload; {@code databaseId} and {@code tableId} must be set
+   * @param dto the incoming stats; {@code tableUuid}, {@code databaseId}, and {@code tableName}
+   *     must be set
    * @return the persisted stats
    */
   TableStatsDto upsertTableStats(TableStatsDto dto);

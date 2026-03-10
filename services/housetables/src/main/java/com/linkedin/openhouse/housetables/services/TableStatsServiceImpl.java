@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.housetables.services;
 
 import com.linkedin.openhouse.housetables.dto.mapper.TableStatsMapper;
+import com.linkedin.openhouse.housetables.dto.model.TableStats;
 import com.linkedin.openhouse.housetables.dto.model.TableStatsDto;
 import com.linkedin.openhouse.housetables.model.TableStatsRow;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.TableStatsHtsJdbcRepository;
@@ -18,35 +19,56 @@ public class TableStatsServiceImpl implements TableStatsService {
   private final TableStatsMapper mapper;
 
   @Override
-  public Optional<TableStatsDto> getTableStats(String databaseId, String tableId) {
-    return repository.findByDatabaseIdAndTableId(databaseId, tableId).map(mapper::toDto);
+  public Optional<TableStatsDto> getTableStats(String tableUuid) {
+    return repository.findById(tableUuid).map(mapper::toDto);
   }
 
   @Override
   @Transactional
+  // TODO: catch OptimisticLockException and retry — high-frequency write paths can collide
   public TableStatsDto upsertTableStats(TableStatsDto dto) {
-    Optional<TableStatsRow> existing =
-        repository.findByDatabaseIdAndTableId(dto.getDatabaseId(), dto.getTableId());
+    Optional<TableStatsRow> existing = repository.findById(dto.getTableUuid());
     TableStatsRow row;
     if (existing.isPresent()) {
       TableStatsRow e = existing.get();
       row =
           e.toBuilder()
-              // Snapshot fields — overwrite with incoming values
-              .tableUuid(dto.getTableUuid())
-              .clusterId(dto.getClusterId())
-              .tableVersion(dto.getTableVersion())
-              .tableLocation(dto.getTableLocation())
-              .numSnapshots(dto.getNumSnapshots())
-              .tableSizeBytes(dto.getTableSizeBytes())
-              // Delta fields — accumulate
-              .numFilesAdded(accumulate(e.getNumFilesAdded(), dto.getNumFilesAdded()))
-              .numFilesDeleted(accumulate(e.getNumFilesDeleted(), dto.getNumFilesDeleted()))
+              .databaseId(dto.getDatabaseId())
+              .tableName(dto.getTableName())
+              .stats(merge(e.getStats(), dto.getStats()))
               .build();
     } else {
       row = mapper.toRow(dto);
     }
     return mapper.toDto(repository.save(row));
+  }
+
+  private TableStats merge(TableStats existing, TableStats incoming) {
+    if (existing == null) {
+      return incoming;
+    }
+    if (incoming == null) {
+      return existing;
+    }
+    TableStats.CommitDelta existingDelta =
+        existing.getDelta() != null
+            ? existing.getDelta()
+            : TableStats.CommitDelta.builder().build();
+    TableStats.CommitDelta incomingDelta =
+        incoming.getDelta() != null
+            ? incoming.getDelta()
+            : TableStats.CommitDelta.builder().build();
+    return TableStats.builder()
+        .snapshot(incoming.getSnapshot())
+        .delta(
+            TableStats.CommitDelta.builder()
+                .numFilesAdded(
+                    accumulate(existingDelta.getNumFilesAdded(), incomingDelta.getNumFilesAdded()))
+                .numFilesDeleted(
+                    accumulate(
+                        existingDelta.getNumFilesDeleted(), incomingDelta.getNumFilesDeleted()))
+                .build())
+        .build();
   }
 
   private long accumulate(Long existing, Long incoming) {
