@@ -9,6 +9,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
+import com.linkedin.openhouse.tables.config.HtsTableStatsClient;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapperImpl;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -45,6 +46,8 @@ public class IcebergSnapshotsServiceTest {
 
   @MockBean private TableUUIDGenerator tableUUIDGenerator;
 
+  @MockBean private HtsTableStatsClient htsTableStatsClient;
+
   private OpenHouseInternalRepository mockRepository;
 
   @Captor ArgumentCaptor<TableDto> tableDtoArgumentCaptor;
@@ -75,7 +78,16 @@ public class IcebergSnapshotsServiceTest {
     final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
     final TableDtoPrimaryKey key =
         TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
-    final TableDto tableDto = TableDto.builder().databaseId(dbId).tableId(tableId).build();
+    final String testUuid = "test-uuid-001";
+    final TableDto tableDto =
+        TableDto.builder()
+            .databaseId(dbId)
+            .tableId(tableId)
+            .tableUUID(testUuid)
+            .clusterId("cl1")
+            .tableVersion("v1")
+            .tableLocation("/loc")
+            .build();
 
     Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
         .thenReturn(UUID.randomUUID());
@@ -86,6 +98,57 @@ public class IcebergSnapshotsServiceTest {
         service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
     Assertions.assertEquals(tableDto, result.getFirst(), "Returned DTO must be the mock value");
     Assertions.assertTrue(result.getSecond(), "Table must be created");
+
+    Mockito.verify(htsTableStatsClient, Mockito.times(1))
+        .reportCommitStats(
+            Mockito.eq(testUuid),
+            Mockito.eq(dbId),
+            Mockito.eq(tableId),
+            Mockito.eq("cl1"),
+            Mockito.eq("v1"),
+            Mockito.eq("/loc"),
+            Mockito.eq(requestBody.getJsonSnapshots()));
+
+    verifyCalls(key, TEST_TABLE_CREATOR, requestBody.getCreateUpdateTableRequestBody());
+  }
+
+  @Test
+  public void testTableUpdated() {
+    final IcebergSnapshotsRequestBody requestBody = TEST_ICEBERG_SNAPSHOTS_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final String testUuid = "test-uuid-002";
+    final TableDto tableDto =
+        tablesMapper.toTableDto(
+            TableDto.builder()
+                .clusterId(requestBody.getCreateUpdateTableRequestBody().getClusterId())
+                .databaseId(dbId)
+                .tableId(tableId)
+                .tableUUID(testUuid)
+                .tableLocation(requestBody.getBaseTableVersion())
+                .tableCreator(TEST_TABLE_CREATOR)
+                .build(),
+            requestBody);
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.of(tableDto));
+    Mockito.when(mockRepository.save(tableDtoArgumentCaptor.capture())).thenReturn(tableDto);
+
+    Pair<TableDto, Boolean> result = service.putIcebergSnapshots(dbId, tableId, requestBody, null);
+    Assertions.assertEquals(tableDto, result.getFirst(), "Returned DTO must be the mock value");
+    Assertions.assertFalse(result.getSecond(), "Table must be found in repository");
+
+    Mockito.verify(htsTableStatsClient, Mockito.times(1))
+        .reportCommitStats(
+            Mockito.eq(testUuid),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.eq(requestBody.getJsonSnapshots()));
 
     verifyCalls(key, TEST_TABLE_CREATOR, requestBody.getCreateUpdateTableRequestBody());
   }
@@ -99,24 +162,31 @@ public class IcebergSnapshotsServiceTest {
     final TableDtoPrimaryKey key =
         TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
 
-    // Mocking exception and ensure it is propogated to the right layer
     Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
         .thenThrow(RequestValidationFailureException.class);
-
     Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
     Assertions.assertThrows(
         RequestValidationFailureException.class,
         () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
 
-    // Mocking Concurrency failure
     Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
         .thenReturn(UUID.randomUUID());
     Mockito.when(mockRepository.save(Mockito.any(TableDto.class)))
         .thenThrow(CommitFailedException.class);
-
     Assertions.assertThrows(
         EntityConcurrentModificationException.class,
         () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
+
+    // stats client must not be called when save throws
+    Mockito.verify(htsTableStatsClient, Mockito.never())
+        .reportCommitStats(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any());
   }
 
   @Test
@@ -137,35 +207,16 @@ public class IcebergSnapshotsServiceTest {
     Assertions.assertThrows(
         RequestValidationFailureException.class,
         () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
-  }
 
-  @Test
-  public void testTableUpdated() {
-    final IcebergSnapshotsRequestBody requestBody = TEST_ICEBERG_SNAPSHOTS_REQUEST_BODY;
-    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
-    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
-    final TableDtoPrimaryKey key =
-        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
-    final TableDto tableDto =
-        tablesMapper.toTableDto(
-            TableDto.builder()
-                .clusterId(requestBody.getCreateUpdateTableRequestBody().getClusterId())
-                .databaseId(dbId)
-                .tableId(tableId)
-                .tableLocation(requestBody.getBaseTableVersion())
-                .tableCreator(TEST_TABLE_CREATOR)
-                .build(),
-            requestBody);
-    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
-        .thenReturn(UUID.randomUUID());
-    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.of(tableDto));
-    Mockito.when(mockRepository.save(tableDtoArgumentCaptor.capture())).thenReturn(tableDto);
-
-    Pair<TableDto, Boolean> result = service.putIcebergSnapshots(dbId, tableId, requestBody, null);
-    Assertions.assertEquals(tableDto, result.getFirst(), "Returned DTO must be the mock value");
-    Assertions.assertFalse(result.getSecond(), "Table must be found in repository");
-
-    verifyCalls(key, TEST_TABLE_CREATOR, requestBody.getCreateUpdateTableRequestBody());
+    Mockito.verify(htsTableStatsClient, Mockito.never())
+        .reportCommitStats(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any());
   }
 
   @Test

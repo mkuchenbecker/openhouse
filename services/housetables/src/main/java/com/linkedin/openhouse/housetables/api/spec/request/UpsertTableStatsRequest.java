@@ -7,10 +7,10 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Request body for {@code PUT /v1/hts/table-stats/{databaseId}/{tableName}}.
+ * Request body for {@code PUT /v1/hts/table-stats/{tableUuid}}.
  *
- * <p>Carries only the fields the caller controls. {@code databaseId} and {@code tableName} come
- * from the path variables and are not accepted in the body.
+ * <p>{@code tableUuid} is the authoritative identity and comes from the path variable. {@code
+ * databaseId} and {@code tableName} are denormalized display columns carried in the body.
  */
 @Data
 @Builder
@@ -18,8 +18,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpsertTableStatsRequest {
 
-  /** Iceberg-assigned stable UUID for the table. Required to identify the stats row. */
-  private String tableUuid;
+  /** Database namespace — denormalized display column. */
+  private String databaseId;
+
+  /** Table name — mutable display column; updated on rename via the next commit. */
+  private String tableName;
 
   /** Stats payload. Snapshot fields overwrite existing values; delta fields accumulate. */
   private TableStats stats;

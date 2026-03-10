@@ -24,19 +24,17 @@ public class TableStatsController {
   /**
    * Upsert stats for a table.
    *
-   * <p>The path variables are authoritative for table identity. Snapshot fields are overwritten;
-   * delta fields are accumulated across commit events.
+   * <p>The path variable {@code tableUuid} is the authoritative identity. Snapshot fields are
+   * overwritten; delta fields are accumulated across commit events.
    */
-  @PutMapping("/{databaseId}/{tableName}")
+  @PutMapping("/{tableUuid}")
   public ResponseEntity<TableStatsDto> upsertTableStats(
-      @PathVariable String databaseId,
-      @PathVariable String tableName,
-      @RequestBody UpsertTableStatsRequest req) {
+      @PathVariable String tableUuid, @RequestBody UpsertTableStatsRequest req) {
     TableStatsDto dto =
         TableStatsDto.builder()
-            .tableUuid(req.getTableUuid())
-            .databaseId(databaseId)
-            .tableName(tableName)
+            .tableUuid(tableUuid)
+            .databaseId(req.getDatabaseId())
+            .tableName(req.getTableName())
             .stats(req.getStats())
             .build();
     return ResponseEntity.ok(service.upsertTableStats(dto));
