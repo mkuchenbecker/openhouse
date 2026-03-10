@@ -24,13 +24,15 @@ class TableOperationsRepositoryTest {
   @Autowired TableOperationsRepository repository;
 
   @Test
-  void saveAndFindByTriple() {
+  void saveAndFindById() {
     OperationMetrics metrics =
         OperationMetrics.builder().numSnapshots(10).tableSizeBytes(2048L).build();
+    String id = UUID.randomUUID().toString();
 
     TableOperationsRow row =
         TableOperationsRow.builder()
-            .id(UUID.randomUUID().toString())
+            .id(id)
+            .tableUuid(UUID.randomUUID().toString())
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -41,39 +43,53 @@ class TableOperationsRepositoryTest {
 
     repository.save(row);
 
-    Optional<TableOperationsRow> found =
-        repository.findByDatabaseNameAndTableNameAndOperationType(
-            "db1", "tbl1", OperationType.ORPHAN_FILES_DELETION);
+    Optional<TableOperationsRow> found = repository.findById(id);
     assertThat(found).isPresent();
     assertThat(found.get().getStatus()).isEqualTo(OperationStatus.PENDING);
     assertThat(found.get().getMetrics().getNumSnapshots()).isEqualTo(10L);
   }
 
   @Test
-  void findByOperationTypeAndCreatedAtAfter_returnsMatchingRows() {
-    Instant base = Instant.parse("2024-01-01T00:00:00Z");
+  void find_returnsPendingAndScheduledOnly() {
+    String tableUuid1 = UUID.randomUUID().toString();
+    String tableUuid2 = UUID.randomUUID().toString();
+    String tableUuid3 = UUID.randomUUID().toString();
 
     repository.save(
         TableOperationsRow.builder()
             .id(UUID.randomUUID().toString())
+            .tableUuid(tableUuid1)
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
             .status(OperationStatus.PENDING)
-            .createdAt(base.plusSeconds(10))
+            .createdAt(Instant.now())
             .build());
     repository.save(
         TableOperationsRow.builder()
             .id(UUID.randomUUID().toString())
+            .tableUuid(tableUuid2)
             .databaseName("db1")
             .tableName("tbl2")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.PENDING)
-            .createdAt(base.plusSeconds(20))
+            .status(OperationStatus.SCHEDULED)
+            .createdAt(Instant.now())
+            .build());
+    repository.save(
+        TableOperationsRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(tableUuid3)
+            .databaseName("db1")
+            .tableName("tbl3")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.SUCCESS)
+            .createdAt(Instant.now())
             .build());
 
-    List<TableOperationsRow> rows =
-        repository.findByOperationTypeAndCreatedAtAfter(OperationType.ORPHAN_FILES_DELETION, base);
+    List<TableOperationsRow> rows = repository.find(OperationType.ORPHAN_FILES_DELETION);
     assertThat(rows).hasSize(2);
+    assertThat(rows)
+        .extracting(TableOperationsRow::getStatus)
+        .containsExactlyInAnyOrder(OperationStatus.PENDING, OperationStatus.SCHEDULED);
   }
 }

@@ -6,11 +6,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * PUT request body for {@code /v1/table-operations/{db}/{table}/{operationType}}.
+ * PUT request body for {@code /v1/table-operations/{id}}.
  *
- * <p>Carries only the fields the Analyzer supplies at upsert time. {@code databaseName}, {@code
- * tableName}, and {@code operationType} are authoritative from the URL path and are never read from
- * this body.
+ * <p>The Analyzer supplies the operation {@code id} (client-generated UUID) in the path and all
+ * table-identifying fields in this body. The service upserts by {@code id}: creates on first call,
+ * updates {@code metrics} on subsequent calls with the same {@code id}.
  */
 @Data
 @Builder
@@ -18,5 +18,9 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpsertTableOperationsRequest {
 
+  private String tableUuid;
+  private String databaseName;
+  private String tableName;
+  private OperationType operationType;
   private OperationMetrics metrics;
 }

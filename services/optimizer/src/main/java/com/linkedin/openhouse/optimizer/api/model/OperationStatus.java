@@ -7,5 +7,11 @@ public enum OperationStatus {
   PENDING,
 
   /** Claimed and submitted to Spark by the Scheduler. */
-  SCHEDULED
+  SCHEDULED,
+
+  /** The Spark job completed successfully. */
+  SUCCESS,
+
+  /** The Spark job failed or was lost without a response. */
+  FAILED
 }

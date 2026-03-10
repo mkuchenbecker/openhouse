@@ -8,8 +8,10 @@ export TOKEN=$(cat services/common/src/main/resources/dummy.token)
 # ---------------------------------------------------------------------------
 
 echo "=== PUT table-operations ==="
-curl -sf -X PUT http://localhost:8003/v1/table-operations/db1/tbl1/ORPHAN_FILES_DELETION \
-  -H "Content-Type: application/json" -d '{}'
+OP_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+curl -sf -X PUT "http://localhost:8003/v1/table-operations/$OP_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"tableUuid\":\"00000000-0000-0000-0000-000000000001\",\"databaseName\":\"db1\",\"tableName\":\"tbl1\",\"operationType\":\"ORPHAN_FILES_DELETION\"}"
 echo
 
 echo "=== GET table-operations ==="
@@ -19,11 +21,11 @@ echo
 echo "=== POST table-operations-history ==="
 curl -sf -X POST http://localhost:8003/v1/table-operations-history \
   -H "Content-Type: application/json" \
-  -d '{"databaseName":"db1","tableName":"tbl1","operationType":"ORPHAN_FILES_DELETION","status":"SUCCESS","submittedAt":"2026-03-09T00:00:00Z"}'
+  -d '{"tableUuid":"00000000-0000-0000-0000-000000000001","databaseName":"db1","tableName":"tbl1","operationType":"ORPHAN_FILES_DELETION","status":"SUCCESS","submittedAt":"2026-03-09T00:00:00Z"}'
 echo
 
 echo "=== GET table-operations-history ==="
-curl -sf http://localhost:8003/v1/table-operations-history/db1/tbl1
+curl -sf http://localhost:8003/v1/table-operations-history/00000000-0000-0000-0000-000000000001
 echo
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,9 @@ run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('1', 'a')"
 echo "=== Insert commit 2 ==="
 run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('2', 'b')"
 
+echo "=== Set OFD opt-in property ==="
+run_sql "ALTER TABLE openhouse.db1.smoke_tbl SET TBLPROPERTIES ('maintenance.optimizer.ofd.enabled'='true')"
+
 echo "=== Delete Livy session ==="
 curl -sf -X DELETE "http://localhost:9003/sessions/$SESSION_ID"
 echo
@@ -112,3 +117,16 @@ echo "$RESULT"
 ADDED=$(echo "$RESULT" | jq -r '.stats.delta.numFilesAdded')
 [ "$ADDED" -ge 1 ] 2>/dev/null || { echo "FAIL: expected numFilesAdded>=1, got $ADDED"; exit 1; }
 echo "PASS: numFilesAdded=$ADDED"
+
+echo "=== Run optimizer analyzer ==="
+docker compose \
+  -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml \
+  --profile run-analyzer \
+  run --build --rm openhouse-optimizer-analyzer
+
+echo "=== Assert analyzer created PENDING row ==="
+OFD_STATUS=$(curl -sf \
+  "http://localhost:8003/v1/table-operations?operationType=ORPHAN_FILES_DELETION" \
+  | jq -r --arg uuid "$TABLE_UUID" '.[] | select(.tableUuid == $uuid) | .status')
+[ "$OFD_STATUS" = "PENDING" ] || { echo "FAIL: expected PENDING, got '$OFD_STATUS'"; exit 1; }
+echo "PASS: analyzer created PENDING row for table UUID $TABLE_UUID"

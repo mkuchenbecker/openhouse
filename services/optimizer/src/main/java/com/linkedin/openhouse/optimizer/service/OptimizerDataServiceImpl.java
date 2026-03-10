@@ -5,13 +5,13 @@ import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
+import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsRow;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsHistoryRepository;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,30 +30,37 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
 
   @Override
   public List<TableOperationsDto> getAllTableOperations(OperationType operationType) {
+    if (operationType != null) {
+      return operationsRepository.find(operationType).stream()
+          .map(mapper::toDto)
+          .collect(Collectors.toList());
+    }
     return operationsRepository.findAll().stream()
-        .filter(r -> operationType == null || operationType.equals(r.getOperationType()))
+        .filter(
+            r ->
+                r.getStatus() == OperationStatus.PENDING
+                    || r.getStatus() == OperationStatus.SCHEDULED)
         .map(mapper::toDto)
         .collect(Collectors.toList());
   }
 
   @Override
   @Transactional
-  public TableOperationsDto upsertTableOperation(
-      String databaseName, String tableName, OperationType operationType, TableOperationsDto dto) {
-    Instant now = Instant.now();
+  public TableOperationsDto upsertTableOperation(String id, UpsertTableOperationsRequest request) {
     TableOperationsRow row =
         operationsRepository
-            .findByDatabaseNameAndTableNameAndOperationType(databaseName, tableName, operationType)
-            .map(existing -> existing.toBuilder().metrics(dto.getMetrics()).build())
+            .findById(id)
+            .map(existing -> existing.toBuilder().metrics(request.getMetrics()).build())
             .orElse(
                 TableOperationsRow.builder()
-                    .id(UUID.randomUUID().toString())
-                    .databaseName(databaseName)
-                    .tableName(tableName)
-                    .operationType(operationType)
+                    .id(id)
+                    .tableUuid(request.getTableUuid())
+                    .databaseName(request.getDatabaseName())
+                    .tableName(request.getTableName())
+                    .operationType(request.getOperationType())
                     .status(OperationStatus.PENDING)
-                    .createdAt(now)
-                    .metrics(dto.getMetrics())
+                    .createdAt(Instant.now())
+                    .metrics(request.getMetrics())
                     .build());
     return mapper.toDto(operationsRepository.save(row));
   }
@@ -65,6 +72,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   public TableOperationsHistoryDto appendHistory(TableOperationsHistoryDto dto) {
     TableOperationsHistoryRow row =
         TableOperationsHistoryRow.builder()
+            .tableUuid(dto.getTableUuid())
             .databaseName(dto.getDatabaseName())
             .tableName(dto.getTableName())
             .operationType(dto.getOperationType())
@@ -77,9 +85,8 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   }
 
   @Override
-  public List<TableOperationsHistoryDto> getHistory(
-      String databaseName, String tableName, int limit) {
-    return historyRepository.find(databaseName, tableName, limit).stream()
+  public List<TableOperationsHistoryDto> getHistory(String tableUuid, int limit) {
+    return historyRepository.find(tableUuid, limit).stream()
         .map(mapper::toDto)
         .collect(Collectors.toList());
   }

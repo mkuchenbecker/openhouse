@@ -30,11 +30,9 @@ public class TableOperationsHistoryController {
   }
 
   /** Return the most recent history for a table, newest first, up to {@code limit} rows. */
-  @GetMapping("/{databaseName}/{tableName}")
+  @GetMapping("/{tableUuid}")
   public ResponseEntity<List<TableOperationsHistoryDto>> getHistory(
-      @PathVariable String databaseName,
-      @PathVariable String tableName,
-      @RequestParam(defaultValue = "100") int limit) {
-    return ResponseEntity.ok(service.getHistory(databaseName, tableName, limit));
+      @PathVariable String tableUuid, @RequestParam(defaultValue = "100") int limit) {
+    return ResponseEntity.ok(service.getHistory(tableUuid, limit));
   }
 }

@@ -24,25 +24,20 @@ public class TableOperationsController {
   private final OptimizerDataService service;
 
   /**
-   * Upsert an operation recommendation. Called by the Analyzer after each analysis pass.
+   * Create or update an operation recommendation.
    *
-   * <p>Creates the row on first call; on subsequent calls for the same {@code (databaseName,
-   * tableName, operationType)} updates the metrics snapshot. The path variables are authoritative —
-   * the body carries only the {@code metrics} payload.
+   * <p>{@code id} is a client-generated UUID. On first call a new row is created with {@code
+   * status=PENDING}. On subsequent calls with the same {@code id} the metrics snapshot is
+   * refreshed. Idempotent: retrying with the same {@code id} is safe.
    */
-  @PutMapping("/{databaseName}/{tableName}/{operationType}")
+  @PutMapping("/{id}")
   public ResponseEntity<TableOperationsDto> upsertTableOperation(
-      @PathVariable String databaseName,
-      @PathVariable String tableName,
-      @PathVariable OperationType operationType,
-      @RequestBody UpsertTableOperationsRequest request) {
-    TableOperationsDto dto = TableOperationsDto.builder().metrics(request.getMetrics()).build();
-    return ResponseEntity.ok(
-        service.upsertTableOperation(databaseName, tableName, operationType, dto));
+      @PathVariable String id, @RequestBody UpsertTableOperationsRequest request) {
+    return ResponseEntity.ok(service.upsertTableOperation(id, request));
   }
 
   /**
-   * List all operation recommendations. The Scheduler calls this for bin-packing.
+   * List all active (PENDING or SCHEDULED) operation recommendations.
    *
    * @param operationType optional filter; omit to return all operation types
    */

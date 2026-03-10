@@ -13,8 +13,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TableOperationsDto {
 
-  /** UUID; server-assigned on creation, returned in responses. */
+  /** Client-generated UUID identifying this specific operation recommendation. */
   private String id;
+
+  /** Stable table identity from the Tables Service. */
+  private String tableUuid;
 
   private String databaseName;
   private String tableName;

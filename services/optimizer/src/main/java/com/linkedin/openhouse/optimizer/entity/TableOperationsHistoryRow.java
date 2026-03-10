@@ -33,7 +33,7 @@ import lombok.NoArgsConstructor;
 @Table(
     name = "table_operations_history",
     indexes = {
-      @Index(name = "idx_db_table_hist", columnList = "database_name,table_name"),
+      @Index(name = "idx_table_uuid_hist", columnList = "table_uuid"),
       @Index(name = "idx_op_type_hist", columnList = "operation_type"),
       @Index(name = "idx_submitted_at", columnList = "submitted_at"),
       @Index(name = "idx_status_hist", columnList = "status"),
@@ -50,6 +50,9 @@ public class TableOperationsHistoryRow {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   @Column(name = "id")
   private Long id;
+
+  @Column(name = "table_uuid", nullable = false, length = 36)
+  private String tableUuid;
 
   @Column(name = "database_name", nullable = false, length = 255)
   private String databaseName;

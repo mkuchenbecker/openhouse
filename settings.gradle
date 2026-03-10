@@ -24,6 +24,7 @@ pluginManagement {
 
 include ':apps:spark'
 include ':apps:spark-3.5'
+include ':apps:optimizer-analyzer'
 
 include ':client:common'
 include ':client:hts'

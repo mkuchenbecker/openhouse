@@ -15,21 +15,18 @@ public interface TableOperationsHistoryRepository
     extends JpaRepository<TableOperationsHistoryRow, Long> {
 
   /**
-   * Return the most recent history rows for a table, newest first, up to {@code limit} rows.
+   * Return the most recent history rows for a table UUID, newest first, up to {@code limit} rows.
    *
-   * @param databaseName the database namespace
-   * @param tableName the table name
+   * @param tableUuid the stable table UUID
    * @param limit maximum number of rows to return
    * @return history rows ordered by {@code submitted_at} descending
    */
   @Query(
       value =
           "SELECT * FROM table_operations_history "
-              + "WHERE database_name = :databaseName AND table_name = :tableName "
+              + "WHERE table_uuid = :tableUuid "
               + "ORDER BY submitted_at DESC LIMIT :limit",
       nativeQuery = true)
   List<TableOperationsHistoryRow> find(
-      @Param("databaseName") String databaseName,
-      @Param("tableName") String tableName,
-      @Param("limit") int limit);
+      @Param("tableUuid") String tableUuid, @Param("limit") int limit);
 }

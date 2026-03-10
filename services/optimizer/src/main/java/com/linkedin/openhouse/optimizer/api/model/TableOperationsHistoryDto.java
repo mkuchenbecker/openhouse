@@ -16,6 +16,9 @@ public class TableOperationsHistoryDto {
   /** Auto-increment; server-assigned. */
   private Long id;
 
+  /** Stable table identity from the Tables Service. */
+  private String tableUuid;
+
   private String databaseName;
   private String tableName;
   private OperationType operationType;

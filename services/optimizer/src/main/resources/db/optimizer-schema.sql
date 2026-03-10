@@ -3,6 +3,7 @@
 -- Note: table_stats lives in the housetables service.
 CREATE TABLE IF NOT EXISTS table_operations (
   id             VARCHAR(36)   NOT NULL,
+  table_uuid     VARCHAR(36)   NOT NULL,
   database_name  VARCHAR(255)  NOT NULL,
   table_name     VARCHAR(255)  NOT NULL,
   operation_type VARCHAR(50)   NOT NULL,
@@ -11,12 +12,12 @@ CREATE TABLE IF NOT EXISTS table_operations (
   scheduled_at   TIMESTAMP(6),
   version        BIGINT,
   metrics        TEXT,
-  PRIMARY KEY (id),
-  UNIQUE (database_name, table_name, operation_type)
+  PRIMARY KEY (id)
 );
 
 CREATE TABLE IF NOT EXISTS table_operations_history (
   id             BIGINT        NOT NULL AUTO_INCREMENT,
+  table_uuid     VARCHAR(36)   NOT NULL,
   database_name  VARCHAR(255)  NOT NULL,
   table_name     VARCHAR(255)  NOT NULL,
   operation_type VARCHAR(50)   NOT NULL,

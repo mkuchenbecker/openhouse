@@ -8,6 +8,7 @@ import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,12 +23,14 @@ class TableOperationsHistoryRepositoryTest {
   @Autowired TableOperationsHistoryRepository repository;
 
   @Test
-  void appendAndFindByTable() {
+  void appendAndFindByTableUuid() {
     Instant t1 = Instant.parse("2024-01-01T10:00:00Z");
     Instant t2 = Instant.parse("2024-01-02T10:00:00Z");
+    String tableUuid = UUID.randomUUID().toString();
 
     repository.save(
         TableOperationsHistoryRow.builder()
+            .tableUuid(tableUuid)
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -38,6 +41,7 @@ class TableOperationsHistoryRepositoryTest {
 
     repository.save(
         TableOperationsHistoryRow.builder()
+            .tableUuid(tableUuid)
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -47,7 +51,7 @@ class TableOperationsHistoryRepositoryTest {
             .result(JobResult.builder().errorMessage("out of memory").errorType("OOM").build())
             .build());
 
-    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl1", 10);
+    List<TableOperationsHistoryRow> rows = repository.find(tableUuid, 10);
 
     assertThat(rows).hasSize(2);
     // Newest first
@@ -58,9 +62,11 @@ class TableOperationsHistoryRepositoryTest {
   @Test
   void appendIsNonDestructive_multipleRunsRetained() {
     Instant now = Instant.now();
+    String tableUuid = UUID.randomUUID().toString();
     for (int i = 0; i < 3; i++) {
       repository.save(
           TableOperationsHistoryRow.builder()
+              .tableUuid(tableUuid)
               .databaseName("db1")
               .tableName("tbl2")
               .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -69,16 +75,18 @@ class TableOperationsHistoryRepositoryTest {
               .build());
     }
 
-    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl2", 10);
+    List<TableOperationsHistoryRow> rows = repository.find(tableUuid, 10);
     assertThat(rows).hasSize(3);
   }
 
   @Test
   void find_respectsLimit() {
     Instant now = Instant.now();
+    String tableUuid = UUID.randomUUID().toString();
     for (int i = 0; i < 5; i++) {
       repository.save(
           TableOperationsHistoryRow.builder()
+              .tableUuid(tableUuid)
               .databaseName("db1")
               .tableName("tbl3")
               .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -87,7 +95,7 @@ class TableOperationsHistoryRepositoryTest {
               .build());
     }
 
-    List<TableOperationsHistoryRow> rows = repository.find("db1", "tbl3", 3);
+    List<TableOperationsHistoryRow> rows = repository.find(tableUuid, 3);
     assertThat(rows).hasSize(3);
   }
 }

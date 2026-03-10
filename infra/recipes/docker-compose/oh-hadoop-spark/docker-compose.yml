@@ -67,6 +67,20 @@ services:
     environment:
       - OPTIMIZER_DB_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
 
+  openhouse-optimizer-analyzer:
+    container_name: local.openhouse-optimizer-analyzer
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer-analyzer
+    environment:
+      - TABLES_BASE_URI=http://openhouse-tables:8080
+      - OPTIMIZER_BASE_URI=http://openhouse-optimizer:8080
+    depends_on:
+      - openhouse-tables
+      - openhouse-optimizer
+    profiles:
+      - run-analyzer
+
   prometheus:
     extends:
       file: ../common/oh-services.yml
