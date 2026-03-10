@@ -55,6 +55,18 @@ services:
       - HTS_DB_USER=oh_user
       - HTS_DB_PASSWORD=oh_password
 
+  openhouse-optimizer:
+    container_name: local.openhouse-optimizer
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer
+    volumes:
+      - ./:/var/config/
+    depends_on:
+      - mysql
+    environment:
+      - OPTIMIZER_DB_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
+
   prometheus:
     extends:
       file: ../common/oh-services.yml
