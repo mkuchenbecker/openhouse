@@ -41,6 +41,7 @@ class AnalyzerRunnerTest {
     GetTableResponseBody table = mock(GetTableResponseBody.class);
     when(table.getTableUUID()).thenReturn("uuid-1");
     when(table.getTableId()).thenReturn("tbl1");
+    when(table.getDatabaseId()).thenReturn("db1");
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
     when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
@@ -62,6 +63,7 @@ class AnalyzerRunnerTest {
     GetTableResponseBody table = mock(GetTableResponseBody.class);
     when(table.getTableUUID()).thenReturn("uuid-1");
     when(table.getTableId()).thenReturn("tbl1");
+    when(table.getDatabaseId()).thenReturn("db1");
 
     TableOperationView existingOp = new TableOperationView();
     existingOp.setId("existing-op-id");
@@ -132,7 +134,6 @@ class AnalyzerRunnerTest {
   void run_skipsTable_whenTableUuidIsNull() {
     GetTableResponseBody table = mock(GetTableResponseBody.class);
     when(table.getTableUUID()).thenReturn(null);
-    when(table.getTableId()).thenReturn("tbl1");
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
     when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));

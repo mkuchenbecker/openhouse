@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
@@ -32,39 +33,48 @@ public class AnalyzerRunner implements CommandLineRunner {
     List<String> databases = tablesClient.getDatabases();
     log.info("Found {} databases", databases.size());
 
-    for (OperationAnalyzer analyzer : analyzers) {
-      String operationType = analyzer.getOperationType();
-      Map<String, TableOperationView> opsByUuid =
-          optimizerClient.getOperationsByType(operationType);
-      log.info("Analyzer {} found {} active operations", operationType, opsByUuid.size());
+    // Fetch all tables once; reused across all analyzers.
+    List<GetTableResponseBody> allTables =
+        databases.stream()
+            .flatMap(db -> tablesClient.getAllTables(db).stream())
+            .collect(Collectors.toList());
 
-      for (String database : databases) {
-        List<GetTableResponseBody> tables = tablesClient.getAllTables(database);
-        for (GetTableResponseBody table : tables) {
-          if (!analyzer.isEnabled(table)) {
-            continue;
-          }
-          String tableUuid = table.getTableUUID();
-          if (tableUuid == null) {
-            log.warn("Table {}.{} has no UUID, skipping", database, table.getTableId());
-            continue;
-          }
-          Optional<TableOperationView> currentOp = Optional.ofNullable(opsByUuid.get(tableUuid));
-          if (analyzer.shouldSchedule(table, currentOp)) {
-            String operationId =
-                currentOp.map(TableOperationView::getId).orElse(UUID.randomUUID().toString());
-            optimizerClient.upsertOperation(
-                operationId, tableUuid, database, table.getTableId(), operationType);
-            log.info(
-                "Upserted {} operation {} for table {}.{}",
-                operationType,
-                operationId,
-                database,
-                table.getTableId());
-          }
-        }
-      }
-    }
+    analyzers.forEach(
+        analyzer -> {
+          String operationType = analyzer.getOperationType();
+          Map<String, TableOperationView> opsByUuid =
+              optimizerClient.getOperationsByType(operationType);
+          log.info("Analyzer {} found {} active operations", operationType, opsByUuid.size());
+
+          allTables.stream()
+              .filter(analyzer::isEnabled)
+              .filter(table -> table.getTableUUID() != null)
+              .forEach(
+                  table -> {
+                    String tableUuid = table.getTableUUID();
+                    Optional<TableOperationView> currentOp =
+                        Optional.ofNullable(opsByUuid.get(tableUuid));
+                    if (analyzer.shouldSchedule(table, currentOp)) {
+                      String operationId =
+                          currentOp
+                              .map(TableOperationView::getId)
+                              .orElse(UUID.randomUUID().toString());
+                      optimizerClient.upsertOperation(
+                          operationId,
+                          tableUuid,
+                          table.getDatabaseId(),
+                          table.getTableId(),
+                          operationType);
+                      log.info(
+                          "Upserted {} operation {} for table {}.{}",
+                          operationType,
+                          operationId,
+                          table.getDatabaseId(),
+                          table.getTableId());
+                    }
+                  });
+        });
+
     log.info("Analysis complete");
   }
 }

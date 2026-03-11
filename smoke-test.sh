@@ -3,37 +3,8 @@ set -e
 
 export TOKEN=$(cat services/common/src/main/resources/dummy.token)
 
-# ---------------------------------------------------------------------------
-# Optimizer service
-# ---------------------------------------------------------------------------
-
-echo "=== PUT table-operations ==="
-OP_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
-curl -sf -X PUT "http://localhost:8003/v1/table-operations/$OP_ID" \
-  -H "Content-Type: application/json" \
-  -d "{\"tableUuid\":\"00000000-0000-0000-0000-000000000001\",\"databaseName\":\"db1\",\"tableName\":\"tbl1\",\"operationType\":\"ORPHAN_FILES_DELETION\"}"
-echo
-
-echo "=== GET table-operations ==="
-curl -sf "http://localhost:8003/v1/table-operations?operationType=ORPHAN_FILES_DELETION"
-echo
-
-echo "=== POST table-operations-history ==="
-curl -sf -X POST http://localhost:8003/v1/table-operations-history \
-  -H "Content-Type: application/json" \
-  -d '{"tableUuid":"00000000-0000-0000-0000-000000000001","databaseName":"db1","tableName":"tbl1","operationType":"ORPHAN_FILES_DELETION","status":"SUCCESS","submittedAt":"2026-03-09T00:00:00Z"}'
-echo
-
-echo "=== GET table-operations-history ==="
-curl -sf http://localhost:8003/v1/table-operations-history/00000000-0000-0000-0000-000000000001
-echo
-
-# ---------------------------------------------------------------------------
-# Table stats — driven by real Spark commits through the OpenHouse catalog
-# ---------------------------------------------------------------------------
-
-echo "=== Create Livy session ==="
-SESSION_BODY=$(jq -n --arg token "$TOKEN" '{
+# Spark catalog conf shared between setup and teardown sessions
+SPARK_CONF=$(jq -n --arg token "$TOKEN" '{
   kind: "sql",
   conf: {
     "spark.jars": "local:/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar",
@@ -46,22 +17,28 @@ SESSION_BODY=$(jq -n --arg token "$TOKEN" '{
     "spark.sql.catalog.openhouse.cluster": "LocalHadoopCluster"
   }
 }')
-SESSION_ID=$(curl -sf -X POST http://localhost:9003/sessions \
-  -H "Content-Type: application/json" \
-  -d "$SESSION_BODY" | jq -r '.id')
-echo "Session ID: $SESSION_ID"
 
-echo "=== Wait for session to be idle ==="
-for i in $(seq 1 60); do
-  SESSION_STATE=$(curl -sf "http://localhost:9003/sessions/$SESSION_ID/state" | jq -r '.state')
-  echo "  state: $SESSION_STATE"
-  [ "$SESSION_STATE" = "idle" ] && break
-  if [ "$SESSION_STATE" = "error" ] || [ "$SESSION_STATE" = "dead" ]; then
-    echo "FAIL: Livy session state=$SESSION_STATE"; exit 1
-  fi
-  sleep 5
-done
-[ "$SESSION_STATE" = "idle" ] || { echo "FAIL: session never became idle"; exit 1; }
+livy_session_start() {
+  SESSION_ID=$(curl -sf -X POST http://localhost:9003/sessions \
+    -H "Content-Type: application/json" \
+    -d "$SPARK_CONF" | jq -r '.id')
+  echo "Session ID: $SESSION_ID"
+  for i in $(seq 1 60); do
+    SESSION_STATE=$(curl -sf "http://localhost:9003/sessions/$SESSION_ID/state" | jq -r '.state')
+    echo "  state: $SESSION_STATE"
+    [ "$SESSION_STATE" = "idle" ] && break
+    if [ "$SESSION_STATE" = "error" ] || [ "$SESSION_STATE" = "dead" ]; then
+      echo "FAIL: Livy session state=$SESSION_STATE"; exit 1
+    fi
+    sleep 5
+  done
+  [ "$SESSION_STATE" = "idle" ] || { echo "FAIL: session never became idle"; exit 1; }
+}
+
+livy_session_stop() {
+  curl -sf -X DELETE "http://localhost:9003/sessions/$SESSION_ID"
+  echo
+}
 
 run_sql() {
   local sql="$1"
@@ -84,49 +61,70 @@ run_sql() {
   [ "$status" = "ok" ] || { echo "FAIL: statement error for: $sql"; exit 1; }
 }
 
-echo "=== Create table via Spark ==="
-run_sql "DROP TABLE IF EXISTS openhouse.db1.smoke_tbl"
-run_sql "CREATE TABLE openhouse.db1.smoke_tbl (id STRING, val STRING)"
-
-echo "=== Insert commit 1 ==="
-run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('1', 'a')"
-
-echo "=== Insert commit 2 ==="
-run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('2', 'b')"
-
-echo "=== Set OFD opt-in property ==="
-run_sql "ALTER TABLE openhouse.db1.smoke_tbl SET TBLPROPERTIES ('maintenance.optimizer.ofd.enabled'='true')"
-
-echo "=== Delete Livy session ==="
-curl -sf -X DELETE "http://localhost:9003/sessions/$SESSION_ID"
+# ---------------------------------------------------------------------------
+# Step 1: Setup — optimizer API smoke, create table with data and OFD opt-in
+# ---------------------------------------------------------------------------
+echo "=== [setup] Optimizer API ==="
+OP_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
+curl -sf -X PUT "http://localhost:8003/v1/table-operations/$OP_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"tableUuid\":\"00000000-0000-0000-0000-000000000001\",\"databaseName\":\"db1\",\"tableName\":\"tbl1\",\"operationType\":\"ORPHAN_FILES_DELETION\"}"
+echo
+curl -sf "http://localhost:8003/v1/table-operations?operationType=ORPHAN_FILES_DELETION"
+echo
+curl -sf -X POST http://localhost:8003/v1/table-operations-history \
+  -H "Content-Type: application/json" \
+  -d '{"tableUuid":"00000000-0000-0000-0000-000000000001","databaseName":"db1","tableName":"tbl1","operationType":"ORPHAN_FILES_DELETION","status":"SUCCESS","submittedAt":"2026-03-09T00:00:00Z"}'
+echo
+curl -sf http://localhost:8003/v1/table-operations-history/00000000-0000-0000-0000-000000000001
 echo
 
-echo "=== Get table UUID from tables service ==="
+echo "=== [setup] Create table with OFD opt-in ==="
+livy_session_start
+run_sql "DROP TABLE IF EXISTS openhouse.db1.smoke_tbl"
+run_sql "CREATE TABLE openhouse.db1.smoke_tbl (id STRING, val STRING)"
+run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('1', 'a')"
+run_sql "INSERT INTO openhouse.db1.smoke_tbl VALUES ('2', 'b')"
+run_sql "ALTER TABLE openhouse.db1.smoke_tbl SET TBLPROPERTIES ('maintenance.optimizer.ofd.enabled'='true')"
+livy_session_stop
+
+echo "=== [setup] Get table UUID ==="
 TABLE_UUID=$(curl -sf \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   "http://localhost:8000/v1/databases/db1/tables/smoke_tbl" | jq -r '.tableUUID')
 echo "Table UUID: $TABLE_UUID"
 
-echo "=== Wait for async stats to propagate ==="
+echo "=== [setup] Assert table-stats populated ==="
 sleep 5
-
-echo "=== GET table-stats ==="
 RESULT=$(curl -sf "http://localhost:8001/v1/hts/table-stats/$TABLE_UUID")
 echo "$RESULT"
 ADDED=$(echo "$RESULT" | jq -r '.stats.delta.numFilesAdded')
 [ "$ADDED" -ge 1 ] 2>/dev/null || { echo "FAIL: expected numFilesAdded>=1, got $ADDED"; exit 1; }
 echo "PASS: numFilesAdded=$ADDED"
 
-echo "=== Run optimizer analyzer ==="
+# ---------------------------------------------------------------------------
+# Step 2: Run — execute the analyzer
+# ---------------------------------------------------------------------------
+echo "=== [run] Run optimizer analyzer ==="
 docker compose \
   -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml \
   --profile run-analyzer \
   run --build --rm openhouse-optimizer-analyzer
 
-echo "=== Assert analyzer created PENDING row ==="
+# ---------------------------------------------------------------------------
+# Step 3: Teardown — assert result, drop table
+# ---------------------------------------------------------------------------
+echo "=== [teardown] Assert analyzer created PENDING row ==="
 OFD_STATUS=$(curl -sf \
   "http://localhost:8003/v1/table-operations?operationType=ORPHAN_FILES_DELETION" \
   | jq -r --arg uuid "$TABLE_UUID" '.[] | select(.tableUuid == $uuid) | .status')
 [ "$OFD_STATUS" = "PENDING" ] || { echo "FAIL: expected PENDING, got '$OFD_STATUS'"; exit 1; }
 echo "PASS: analyzer created PENDING row for table UUID $TABLE_UUID"
+
+echo "=== [teardown] Drop smoke table ==="
+livy_session_start
+run_sql "DROP TABLE IF EXISTS openhouse.db1.smoke_tbl"
+livy_session_stop
+
+echo "DONE"

@@ -6,6 +6,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
@@ -43,13 +44,9 @@ public class OptimizerServiceClient {
         return Collections.emptyMap();
       }
 
-      Map<String, TableOperationView> result = new HashMap<>();
-      for (TableOperationView op : ops) {
-        if (op.getTableUuid() != null) {
-          result.put(op.getTableUuid(), op);
-        }
-      }
-      return result;
+      return ops.stream()
+          .filter(op -> op.getTableUuid() != null)
+          .collect(Collectors.toMap(TableOperationView::getTableUuid, op -> op, (a, b) -> b));
     } catch (Exception e) {
       log.error("Failed to fetch operations for type {}", operationType, e);
       return Collections.emptyMap();

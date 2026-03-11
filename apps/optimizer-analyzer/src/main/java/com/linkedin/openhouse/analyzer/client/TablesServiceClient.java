@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -62,23 +63,22 @@ public class TablesServiceClient {
                 return Optional.ofNullable(response == null ? null : response.getResults())
                     .orElse(Collections.emptyList());
               });
-      List<GetTableResponseBody> full = new java.util.ArrayList<>();
-      for (GetTableResponseBody summary : summaries) {
-        try {
-          GetTableResponseBody detail =
-              retryTemplate.execute(
-                  ctx -> tableApi.getTableV1(databaseId, summary.getTableId()).block(TIMEOUT));
-          if (detail != null) {
-            full.add(detail);
-          }
-        } catch (Exception e) {
-          log.warn("Failed to fetch details for table {}.{}", databaseId, summary.getTableId(), e);
-        }
-      }
-      return full;
+      return summaries.stream()
+          .map(summary -> fetchDetail(databaseId, summary.getTableId()))
+          .filter(Objects::nonNull)
+          .collect(Collectors.toList());
     } catch (Exception e) {
       log.error("Failed to fetch tables for database {}", databaseId, e);
       return Collections.emptyList();
+    }
+  }
+
+  private GetTableResponseBody fetchDetail(String databaseId, String tableId) {
+    try {
+      return retryTemplate.execute(ctx -> tableApi.getTableV1(databaseId, tableId).block(TIMEOUT));
+    } catch (Exception e) {
+      log.warn("Failed to fetch details for table {}.{}", databaseId, tableId, e);
+      return null;
     }
   }
 }
