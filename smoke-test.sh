@@ -103,6 +103,12 @@ ADDED=$(echo "$RESULT" | jq -r '.stats.delta.numFilesAdded')
 [ "$ADDED" -ge 1 ] 2>/dev/null || { echo "FAIL: expected numFilesAdded>=1, got $ADDED"; exit 1; }
 echo "PASS: numFilesAdded=$ADDED"
 
+echo "=== [setup] Update HTS tableProperties with OFD opt-in ==="
+curl -sf -X PUT "http://localhost:8001/v1/hts/table-stats/$TABLE_UUID" \
+  -H "Content-Type: application/json" \
+  -d "{\"databaseId\":\"db1\",\"tableName\":\"smoke_tbl\",\"tableProperties\":{\"maintenance.optimizer.ofd.enabled\":\"true\"}}"
+echo "DONE: tableProperties updated in HTS"
+
 # ---------------------------------------------------------------------------
 # Step 2: Run — execute the analyzer
 # ---------------------------------------------------------------------------

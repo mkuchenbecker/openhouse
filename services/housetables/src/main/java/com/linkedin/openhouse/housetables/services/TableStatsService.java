@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.housetables.services;
 
 import com.linkedin.openhouse.housetables.dto.model.TableStatsDto;
+import java.util.List;
 import java.util.Optional;
 
 /** Service for reading and writing table stats. */
@@ -12,6 +13,9 @@ public interface TableStatsService {
    * @param tableUuid Iceberg's stable UUID for the table
    */
   Optional<TableStatsDto> getTableStats(String tableUuid);
+
+  /** Return stats for all tables. */
+  List<TableStatsDto> getAllTableStats();
 
   /**
    * Upsert stats for a table.

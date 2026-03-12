@@ -3,6 +3,7 @@ package com.linkedin.openhouse.housetables.controller;
 import com.linkedin.openhouse.housetables.api.spec.request.UpsertTableStatsRequest;
 import com.linkedin.openhouse.housetables.dto.model.TableStatsDto;
 import com.linkedin.openhouse.housetables.services.TableStatsService;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,8 +37,15 @@ public class TableStatsController {
             .databaseId(req.getDatabaseId())
             .tableName(req.getTableName())
             .stats(req.getStats())
+            .tableProperties(req.getTableProperties())
             .build();
     return ResponseEntity.ok(service.upsertTableStats(dto));
+  }
+
+  /** Return stats for all tables. */
+  @GetMapping
+  public ResponseEntity<List<TableStatsDto>> getAllTableStats() {
+    return ResponseEntity.ok(service.getAllTableStats());
   }
 
   /** Return the latest stats for a table, or 404 if no stats have been recorded yet. */

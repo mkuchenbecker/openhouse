@@ -5,7 +5,10 @@ import com.linkedin.openhouse.housetables.dto.model.TableStats;
 import com.linkedin.openhouse.housetables.dto.model.TableStatsDto;
 import com.linkedin.openhouse.housetables.model.TableStatsRow;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.TableStatsHtsJdbcRepository;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,6 +27,13 @@ public class TableStatsServiceImpl implements TableStatsService {
   }
 
   @Override
+  public List<TableStatsDto> getAllTableStats() {
+    return StreamSupport.stream(repository.findAll().spliterator(), false)
+        .map(mapper::toDto)
+        .collect(Collectors.toList());
+  }
+
+  @Override
   @Transactional
   // TODO: catch OptimisticLockException and retry — high-frequency write paths can collide
   public TableStatsDto upsertTableStats(TableStatsDto dto) {
@@ -36,6 +46,7 @@ public class TableStatsServiceImpl implements TableStatsService {
               .databaseId(dto.getDatabaseId())
               .tableName(dto.getTableName())
               .stats(merge(e.getStats(), dto.getStats()))
+              .tableProperties(dto.getTableProperties())
               .build();
     } else {
       row = mapper.toRow(dto);

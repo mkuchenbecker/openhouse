@@ -1,7 +1,9 @@
 package com.linkedin.openhouse.tables.config;
 
+import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import java.util.Map;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +54,8 @@ public class HtsTableStatsClient {
       String tableLocation,
       long numFilesAdded,
       long numFilesDeleted,
-      Long tableSizeBytes) {
+      Long tableSizeBytes,
+      Map<String, String> tableProperties) {
     JsonObject body =
         buildRequestBody(
             databaseId,
@@ -62,7 +65,8 @@ public class HtsTableStatsClient {
             tableLocation,
             numFilesAdded,
             numFilesDeleted,
-            tableSizeBytes);
+            tableSizeBytes,
+            tableProperties);
 
     webClient
         .put()
@@ -92,7 +96,8 @@ public class HtsTableStatsClient {
       String tableLocation,
       long numFilesAdded,
       long numFilesDeleted,
-      Long tableSizeBytes) {
+      Long tableSizeBytes,
+      Map<String, String> tableProperties) {
     JsonObject snapshotMetrics = new JsonObject();
     snapshotMetrics.addProperty("clusterId", clusterId);
     snapshotMetrics.addProperty("tableVersion", tableVersion);
@@ -113,6 +118,9 @@ public class HtsTableStatsClient {
     body.addProperty("databaseId", databaseId);
     body.addProperty("tableName", tableName);
     body.add("stats", stats);
+    if (tableProperties != null && !tableProperties.isEmpty()) {
+      body.add("tableProperties", new Gson().toJsonTree(tableProperties));
+    }
 
     return body;
   }

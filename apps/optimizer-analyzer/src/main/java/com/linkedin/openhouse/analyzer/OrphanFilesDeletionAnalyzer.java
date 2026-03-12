@@ -4,6 +4,7 @@ import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
 import java.time.Duration;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -16,6 +17,7 @@ public class OrphanFilesDeletionAnalyzer implements OperationAnalyzer {
 
   private final CadencePolicy cadencePolicy;
 
+  @Autowired
   public OrphanFilesDeletionAnalyzer(
       @Value("${ofd.success-retry-hours:24}") long successRetryHours,
       @Value("${ofd.failure-retry-hours:1}") long failureRetryHours) {

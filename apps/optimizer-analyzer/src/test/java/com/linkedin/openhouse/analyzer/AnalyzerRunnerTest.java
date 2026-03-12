@@ -1,143 +1,146 @@
 package com.linkedin.openhouse.analyzer;
 
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.linkedin.openhouse.analyzer.client.OptimizerServiceClient;
-import com.linkedin.openhouse.analyzer.client.TablesServiceClient;
+import com.linkedin.openhouse.analyzer.client.HtsClient;
+import com.linkedin.openhouse.analyzer.entity.TableOperationEntity;
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
+import com.linkedin.openhouse.analyzer.repository.TableOperationsRepository;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class AnalyzerRunnerTest {
 
-  @Mock private TablesServiceClient tablesClient;
-  @Mock private OptimizerServiceClient optimizerClient;
+  @Mock private HtsClient htsClient;
+  @Mock private TableOperationsRepository repo;
   @Mock private OperationAnalyzer analyzer;
 
   private AnalyzerRunner runner;
 
   @BeforeEach
   void setUp() {
-    runner = new AnalyzerRunner(List.of(analyzer), tablesClient, optimizerClient);
+    runner = new AnalyzerRunner(List.of(analyzer), htsClient, repo);
   }
 
   @Test
-  void run_upsertsOperation_forEligibleTable() {
+  void run_insertsNewRow_forEligibleTableWithNoActiveOp() {
     TableSummary table =
         TableSummary.builder().tableUuid("uuid-1").databaseId("db1").tableId("tbl1").build();
 
-    when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
-    when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
+    when(htsClient.getAllTableStats()).thenReturn(List.of(table));
     when(analyzer.getOperationType()).thenReturn("ORPHAN_FILES_DELETION");
-    when(optimizerClient.getOperationsByType("ORPHAN_FILES_DELETION"))
-        .thenReturn(Collections.emptyMap());
+    when(repo.findActiveByType("ORPHAN_FILES_DELETION")).thenReturn(Collections.emptyList());
     when(analyzer.isEnabled(table)).thenReturn(true);
-    when(analyzer.shouldSchedule(eq(table), eq(Optional.empty()))).thenReturn(true);
+    when(analyzer.shouldSchedule(table, Optional.empty())).thenReturn(true);
 
     runner.run();
 
-    verify(optimizerClient)
-        .upsertOperation(
-            anyString(), eq("uuid-1"), eq("db1"), eq("tbl1"), eq("ORPHAN_FILES_DELETION"));
+    ArgumentCaptor<TableOperationEntity> captor =
+        ArgumentCaptor.forClass(TableOperationEntity.class);
+    verify(repo).save(captor.capture());
+    TableOperationEntity saved = captor.getValue();
+    assertThat(saved.getTableUuid()).isEqualTo("uuid-1");
+    assertThat(saved.getDatabaseName()).isEqualTo("db1");
+    assertThat(saved.getTableName()).isEqualTo("tbl1");
+    assertThat(saved.getOperationType()).isEqualTo("ORPHAN_FILES_DELETION");
+    assertThat(saved.getStatus()).isEqualTo("PENDING");
+    assertThat(saved.getId()).isNotNull();
   }
 
   @Test
-  void run_reusesExistingId_forPendingOperation() {
+  void run_noOp_whenActivePendingOperationExists() {
     TableSummary table =
         TableSummary.builder().tableUuid("uuid-1").databaseId("db1").tableId("tbl1").build();
 
-    TableOperationRecord existingOp = new TableOperationRecord();
-    existingOp.setId("existing-op-id");
-    existingOp.setStatus("PENDING");
-    existingOp.setTableUuid("uuid-1");
+    TableOperationEntity existingEntity = new TableOperationEntity();
+    existingEntity.setId("existing-op-id");
+    existingEntity.setStatus("PENDING");
+    existingEntity.setTableUuid("uuid-1");
+    existingEntity.setOperationType("ORPHAN_FILES_DELETION");
 
-    Map<String, TableOperationRecord> opsByUuid = new HashMap<>();
-    opsByUuid.put("uuid-1", existingOp);
-
-    when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
-    when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
+    when(htsClient.getAllTableStats()).thenReturn(List.of(table));
     when(analyzer.getOperationType()).thenReturn("ORPHAN_FILES_DELETION");
-    when(optimizerClient.getOperationsByType("ORPHAN_FILES_DELETION")).thenReturn(opsByUuid);
+    when(repo.findActiveByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(existingEntity));
     when(analyzer.isEnabled(table)).thenReturn(true);
-    when(analyzer.shouldSchedule(eq(table), eq(Optional.of(existingOp)))).thenReturn(true);
+
+    TableOperationRecord existingRecord = new TableOperationRecord();
+    existingRecord.setId("existing-op-id");
+    existingRecord.setStatus("PENDING");
+    existingRecord.setTableUuid("uuid-1");
+    existingRecord.setOperationType("ORPHAN_FILES_DELETION");
+    when(analyzer.shouldSchedule(table, Optional.of(existingRecord))).thenReturn(true);
 
     runner.run();
 
-    verify(optimizerClient)
-        .upsertOperation(
-            eq("existing-op-id"), eq("uuid-1"), eq("db1"), eq("tbl1"), eq("ORPHAN_FILES_DELETION"));
+    // PENDING already exists — no new row should be inserted
+    verify(repo, never()).save(any());
   }
 
   @Test
   void run_skipsTable_whenNotEnabled() {
     TableSummary table = TableSummary.builder().tableUuid("uuid-1").build();
 
-    when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
-    when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
+    when(htsClient.getAllTableStats()).thenReturn(List.of(table));
     when(analyzer.getOperationType()).thenReturn("ORPHAN_FILES_DELETION");
-    when(optimizerClient.getOperationsByType("ORPHAN_FILES_DELETION"))
-        .thenReturn(Collections.emptyMap());
+    when(repo.findActiveByType("ORPHAN_FILES_DELETION")).thenReturn(Collections.emptyList());
     when(analyzer.isEnabled(table)).thenReturn(false);
 
     runner.run();
 
-    verify(optimizerClient, never())
-        .upsertOperation(anyString(), anyString(), anyString(), anyString(), anyString());
+    verify(repo, never()).save(any());
   }
 
   @Test
   void run_skipsTable_whenShouldScheduleReturnsFalse() {
     TableSummary table = TableSummary.builder().tableUuid("uuid-1").build();
 
-    TableOperationRecord scheduled = new TableOperationRecord();
+    TableOperationEntity scheduled = new TableOperationEntity();
     scheduled.setId("op-id");
     scheduled.setStatus("SCHEDULED");
     scheduled.setTableUuid("uuid-1");
+    scheduled.setOperationType("ORPHAN_FILES_DELETION");
 
-    Map<String, TableOperationRecord> opsByUuid = new HashMap<>();
-    opsByUuid.put("uuid-1", scheduled);
-
-    when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
-    when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
+    when(htsClient.getAllTableStats()).thenReturn(List.of(table));
     when(analyzer.getOperationType()).thenReturn("ORPHAN_FILES_DELETION");
-    when(optimizerClient.getOperationsByType("ORPHAN_FILES_DELETION")).thenReturn(opsByUuid);
+    when(repo.findActiveByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(scheduled));
     when(analyzer.isEnabled(table)).thenReturn(true);
-    when(analyzer.shouldSchedule(eq(table), eq(Optional.of(scheduled)))).thenReturn(false);
+
+    TableOperationRecord scheduledRecord = new TableOperationRecord();
+    scheduledRecord.setId("op-id");
+    scheduledRecord.setStatus("SCHEDULED");
+    scheduledRecord.setTableUuid("uuid-1");
+    scheduledRecord.setOperationType("ORPHAN_FILES_DELETION");
+    when(analyzer.shouldSchedule(table, Optional.of(scheduledRecord))).thenReturn(false);
 
     runner.run();
 
-    verify(optimizerClient, never())
-        .upsertOperation(anyString(), anyString(), anyString(), anyString(), anyString());
+    verify(repo, never()).save(any());
   }
 
   @Test
   void run_skipsTable_whenTableUuidIsNull() {
     TableSummary table = TableSummary.builder().tableUuid(null).build();
 
-    when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
-    when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
+    when(htsClient.getAllTableStats()).thenReturn(List.of(table));
     when(analyzer.getOperationType()).thenReturn("ORPHAN_FILES_DELETION");
-    when(optimizerClient.getOperationsByType("ORPHAN_FILES_DELETION"))
-        .thenReturn(Collections.emptyMap());
+    when(repo.findActiveByType("ORPHAN_FILES_DELETION")).thenReturn(Collections.emptyList());
     when(analyzer.isEnabled(table)).thenReturn(true);
 
     runner.run();
 
-    verify(optimizerClient, never())
-        .upsertOperation(anyString(), anyString(), anyString(), anyString(), anyString());
+    verify(repo, never()).save(any());
   }
 }

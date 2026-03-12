@@ -109,6 +109,7 @@ public class IcebergSnapshotsServiceTest {
             Mockito.eq("/loc"),
             Mockito.anyLong(),
             Mockito.anyLong(),
+            Mockito.any(),
             Mockito.any());
 
     verifyCalls(key, TEST_TABLE_CREATOR, requestBody.getCreateUpdateTableRequestBody());
@@ -152,6 +153,7 @@ public class IcebergSnapshotsServiceTest {
             Mockito.any(),
             Mockito.anyLong(),
             Mockito.anyLong(),
+            Mockito.any(),
             Mockito.any());
 
     verifyCalls(key, TEST_TABLE_CREATOR, requestBody.getCreateUpdateTableRequestBody());
@@ -192,6 +194,7 @@ public class IcebergSnapshotsServiceTest {
             Mockito.any(),
             Mockito.anyLong(),
             Mockito.anyLong(),
+            Mockito.any(),
             Mockito.any());
   }
 
@@ -224,6 +227,7 @@ public class IcebergSnapshotsServiceTest {
             Mockito.any(),
             Mockito.anyLong(),
             Mockito.anyLong(),
+            Mockito.any(),
             Mockito.any());
   }
 

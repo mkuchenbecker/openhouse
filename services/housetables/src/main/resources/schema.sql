@@ -64,5 +64,6 @@ CREATE TABLE IF NOT EXISTS table_stats_row (
     table_name          VARCHAR (128)     NOT NULL,
     version             BIGINT            ,
     stats               TEXT              ,
+    table_properties    TEXT              ,
     PRIMARY KEY (table_uuid)
 );

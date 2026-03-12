@@ -122,6 +122,48 @@ public class TableStatsControllerTest {
   }
 
   @Test
+  void testGetAllTableStats_returnsAllRows() throws Exception {
+    String body =
+        "{"
+            + "\"databaseId\":\"db1\","
+            + "\"tableName\":\"t1\","
+            + "\"stats\":{\"delta\":{\"numFilesAdded\":1,\"numFilesDeleted\":0}}"
+            + "}";
+    mvc.perform(
+        MockMvcRequestBuilders.put("/v1/hts/table-stats/bulk-uuid-1")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+    mvc.perform(
+        MockMvcRequestBuilders.put("/v1/hts/table-stats/bulk-uuid-2")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+
+    mvc.perform(MockMvcRequestBuilders.get("/v1/hts/table-stats"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(2));
+  }
+
+  @Test
+  void testPutTableStats_persistsTableProperties() throws Exception {
+    String body =
+        "{"
+            + "\"databaseId\":\"db1\","
+            + "\"tableName\":\"t1\","
+            + "\"stats\":{\"delta\":{\"numFilesAdded\":0,\"numFilesDeleted\":0}},"
+            + "\"tableProperties\":{\"maintenance.optimizer.ofd.enabled\":\"true\"}"
+            + "}";
+    mvc.perform(
+        MockMvcRequestBuilders.put("/v1/hts/table-stats/props-uuid")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+
+    mvc.perform(MockMvcRequestBuilders.get("/v1/hts/table-stats/props-uuid"))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("$.tableProperties['maintenance.optimizer.ofd.enabled']").value("true"));
+  }
+
+  @Test
   void testPutTableStats_snapshotFieldsOverwritten() throws Exception {
     String first =
         "{"

@@ -119,7 +119,8 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
             savedDto.getTableLocation(),
             numFilesAdded,
             numFilesDeleted,
-            tableSizeBytes);
+            tableSizeBytes,
+            savedDto.getTableProperties());
       }
       return Pair.of(savedDto, !tableDto.isPresent());
     } catch (BadRequestException e) {

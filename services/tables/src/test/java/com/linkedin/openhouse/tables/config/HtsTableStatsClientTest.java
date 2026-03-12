@@ -22,7 +22,10 @@ public class HtsTableStatsClientTest {
 
   @Test
   void testBuildRequestBody_setsAllFields() {
-    JsonObject body = client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 3L, 1L, 1024L);
+    java.util.Map<String, String> props =
+        java.util.Map.of("maintenance.optimizer.ofd.enabled", "true");
+    JsonObject body =
+        client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 3L, 1L, 1024L, props);
 
     assertThat(body.get("databaseId").getAsString()).isEqualTo("db1");
     assertThat(body.get("tableName").getAsString()).isEqualTo("t1");
@@ -36,13 +39,20 @@ public class HtsTableStatsClientTest {
     assertThat(snap.get("clusterId").getAsString()).isEqualTo("cl1");
     assertThat(snap.get("tableVersion").getAsString()).isEqualTo("v1");
     assertThat(snap.get("tableLocation").getAsString()).isEqualTo("/loc");
+
+    assertThat(
+            body.getAsJsonObject("tableProperties")
+                .get("maintenance.optimizer.ofd.enabled")
+                .getAsString())
+        .isEqualTo("true");
   }
 
   @Test
   void testBuildRequestBody_nullTableSizeBytes_omitsField() {
-    JsonObject body = client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 0L, 0L, null);
+    JsonObject body = client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 0L, 0L, null, null);
 
     JsonObject snap = body.getAsJsonObject("stats").getAsJsonObject("snapshot");
     assertThat(snap.has("tableSizeBytes")).isFalse();
+    assertThat(body.has("tableProperties")).isFalse();
   }
 }

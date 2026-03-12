@@ -1,7 +1,9 @@
 package com.linkedin.openhouse.housetables.model;
 
+import com.linkedin.openhouse.housetables.config.TablePropertiesConverter;
 import com.linkedin.openhouse.housetables.config.TableStatsConverter;
 import com.linkedin.openhouse.housetables.dto.model.TableStats;
+import java.util.Map;
 import javax.persistence.Column;
 import javax.persistence.Convert;
 import javax.persistence.Entity;
@@ -52,4 +54,12 @@ public class TableStatsRow {
   @Convert(converter = TableStatsConverter.class)
   @Column(columnDefinition = "text")
   TableStats stats;
+
+  /**
+   * Table properties snapshot captured at commit time. Overwritten on each upsert so the analyzer
+   * always sees the latest opt-in flags without calling the Tables Service.
+   */
+  @Convert(converter = TablePropertiesConverter.class)
+  @Column(name = "table_properties", columnDefinition = "text")
+  Map<String, String> tableProperties;
 }

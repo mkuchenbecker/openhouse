@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.housetables.api.spec.request;
 
 import com.linkedin.openhouse.housetables.dto.model.TableStats;
+import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,4 +27,7 @@ public class UpsertTableStatsRequest {
 
   /** Stats payload. Snapshot fields overwrite existing values; delta fields accumulate. */
   private TableStats stats;
+
+  /** Table properties snapshot — overwritten on each commit so the analyzer sees current state. */
+  private Map<String, String> tableProperties;
 }
