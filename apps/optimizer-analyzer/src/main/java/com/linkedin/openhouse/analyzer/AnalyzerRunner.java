@@ -2,8 +2,8 @@ package com.linkedin.openhouse.analyzer;
 
 import com.linkedin.openhouse.analyzer.client.OptimizerServiceClient;
 import com.linkedin.openhouse.analyzer.client.TablesServiceClient;
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
-import com.linkedin.openhouse.tables.client.model.GetTableResponseBody;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
+import com.linkedin.openhouse.analyzer.model.TableSummary;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,7 +34,7 @@ public class AnalyzerRunner implements CommandLineRunner {
     log.info("Found {} databases", databases.size());
 
     // Fetch all tables once; reused across all analyzers.
-    List<GetTableResponseBody> allTables =
+    List<TableSummary> allTables =
         databases.stream()
             .flatMap(db -> tablesClient.getAllTables(db).stream())
             .collect(Collectors.toList());
@@ -42,22 +42,22 @@ public class AnalyzerRunner implements CommandLineRunner {
     analyzers.forEach(
         analyzer -> {
           String operationType = analyzer.getOperationType();
-          Map<String, TableOperationView> opsByUuid =
+          Map<String, TableOperationRecord> opsByUuid =
               optimizerClient.getOperationsByType(operationType);
           log.info("Analyzer {} found {} active operations", operationType, opsByUuid.size());
 
           allTables.stream()
               .filter(analyzer::isEnabled)
-              .filter(table -> table.getTableUUID() != null)
+              .filter(table -> table.getTableUuid() != null)
               .forEach(
                   table -> {
-                    String tableUuid = table.getTableUUID();
-                    Optional<TableOperationView> currentOp =
+                    String tableUuid = table.getTableUuid();
+                    Optional<TableOperationRecord> currentOp =
                         Optional.ofNullable(opsByUuid.get(tableUuid));
                     if (analyzer.shouldSchedule(table, currentOp)) {
                       String operationId =
                           currentOp
-                              .map(TableOperationView::getId)
+                              .map(TableOperationRecord::getId)
                               .orElse(UUID.randomUUID().toString());
                       optimizerClient.upsertOperation(
                           operationId,

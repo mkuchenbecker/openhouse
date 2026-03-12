@@ -1,11 +1,10 @@
 package com.linkedin.openhouse.analyzer;
 
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
-import com.linkedin.openhouse.tables.client.model.GetTableResponseBody;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
+import com.linkedin.openhouse.analyzer.model.TableSummary;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /** Analyzer for the {@code ORPHAN_FILES_DELETION} operation type. */
@@ -14,8 +13,20 @@ public class OrphanFilesDeletionAnalyzer implements OperationAnalyzer {
 
   static final String OPERATION_TYPE = "ORPHAN_FILES_DELETION";
   static final String OFD_ENABLED_PROPERTY = "maintenance.optimizer.ofd.enabled";
-  static final Duration SUCCESS_RETRY_INTERVAL = Duration.ofHours(24);
-  static final Duration FAILURE_RETRY_INTERVAL = Duration.ofHours(1);
+
+  private final CadencePolicy cadencePolicy;
+
+  public OrphanFilesDeletionAnalyzer(
+      @Value("${ofd.success-retry-hours:24}") long successRetryHours,
+      @Value("${ofd.failure-retry-hours:1}") long failureRetryHours) {
+    this.cadencePolicy =
+        new CadencePolicy(Duration.ofHours(successRetryHours), Duration.ofHours(failureRetryHours));
+  }
+
+  /** Package-private for tests that supply a pre-built {@link CadencePolicy}. */
+  OrphanFilesDeletionAnalyzer(CadencePolicy cadencePolicy) {
+    this.cadencePolicy = cadencePolicy;
+  }
 
   @Override
   public String getOperationType() {
@@ -23,35 +34,12 @@ public class OrphanFilesDeletionAnalyzer implements OperationAnalyzer {
   }
 
   @Override
-  public boolean isEnabled(GetTableResponseBody table) {
-    Map<String, String> props = table.getTableProperties();
-    return props != null && "true".equals(props.get(OFD_ENABLED_PROPERTY));
+  public boolean isEnabled(TableSummary table) {
+    return "true".equals(table.getTableProperties().get(OFD_ENABLED_PROPERTY));
   }
 
   @Override
-  public boolean shouldSchedule(
-      GetTableResponseBody table, Optional<TableOperationView> currentOp) {
-    if (currentOp.isEmpty()) {
-      return true;
-    }
-    TableOperationView op = currentOp.get();
-    switch (op.getStatus()) {
-      case "PENDING":
-        return true;
-      case "SCHEDULED":
-        return false;
-      case "SUCCESS":
-        return op.getScheduledAt() == null
-            || Duration.between(op.getScheduledAt(), Instant.now())
-                    .compareTo(SUCCESS_RETRY_INTERVAL)
-                > 0;
-      case "FAILED":
-        return op.getScheduledAt() == null
-            || Duration.between(op.getScheduledAt(), Instant.now())
-                    .compareTo(FAILURE_RETRY_INTERVAL)
-                > 0;
-      default:
-        return true;
-    }
+  public boolean shouldSchedule(TableSummary table, Optional<TableOperationRecord> currentOp) {
+    return cadencePolicy.shouldSchedule(currentOp);
   }
 }

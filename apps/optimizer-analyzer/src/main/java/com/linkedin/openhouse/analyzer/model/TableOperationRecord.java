@@ -6,13 +6,13 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Client-side view of a table operation record returned by the Optimizer Service. Mirrors the
- * fields in {@code TableOperationsDto} that the Analyzer needs; unknown fields are ignored.
+ * Client-side representation of a table operation record returned by the Optimizer Service. Mirrors
+ * the fields in {@code TableOperationsDto} that the Analyzer needs; unknown fields are ignored.
  */
 @Data
 @NoArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class TableOperationView {
+public class TableOperationRecord {
 
   private String id;
   private String tableUuid;

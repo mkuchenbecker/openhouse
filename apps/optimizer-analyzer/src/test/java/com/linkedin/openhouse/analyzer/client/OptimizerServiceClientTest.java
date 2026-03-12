@@ -2,11 +2,12 @@ package com.linkedin.openhouse.analyzer.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import java.util.Map;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import okhttp3.mockwebserver.SocketPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,7 +40,7 @@ class OptimizerServiceClientTest {
                     + "{\"id\":\"op-2\",\"tableUuid\":\"uuid-2\",\"operationType\":\"ORPHAN_FILES_DELETION\",\"status\":\"SCHEDULED\"}]")
             .addHeader("Content-Type", "application/json"));
 
-    Map<String, TableOperationView> result = client.getOperationsByType("ORPHAN_FILES_DELETION");
+    Map<String, TableOperationRecord> result = client.getOperationsByType("ORPHAN_FILES_DELETION");
 
     assertThat(result).hasSize(2);
     assertThat(result.get("uuid-1").getStatus()).isEqualTo("PENDING");
@@ -55,7 +56,16 @@ class OptimizerServiceClientTest {
   void getOperationsByType_returnsEmptyMap_onServerError() {
     server.enqueue(new MockResponse().setResponseCode(500));
 
-    Map<String, TableOperationView> result = client.getOperationsByType("ORPHAN_FILES_DELETION");
+    Map<String, TableOperationRecord> result = client.getOperationsByType("ORPHAN_FILES_DELETION");
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void getOperationsByType_returnsEmptyMap_onConnectionError() {
+    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
+
+    Map<String, TableOperationRecord> result = client.getOperationsByType("ORPHAN_FILES_DELETION");
 
     assertThat(result).isEmpty();
   }
@@ -84,6 +94,14 @@ class OptimizerServiceClientTest {
   @Test
   void upsertOperation_doesNotThrow_onServerError() {
     server.enqueue(new MockResponse().setResponseCode(500));
+
+    // should log and swallow, not throw
+    client.upsertOperation("op-id-1", "uuid-1", "db1", "tbl1", "ORPHAN_FILES_DELETION");
+  }
+
+  @Test
+  void upsertOperation_doesNotThrow_onConnectionError() {
+    server.enqueue(new MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START));
 
     // should log and swallow, not throw
     client.upsertOperation("op-id-1", "uuid-1", "db1", "tbl1", "ORPHAN_FILES_DELETION");

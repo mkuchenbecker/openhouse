@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.linkedin.openhouse.analyzer.model.TableSummary;
 import com.linkedin.openhouse.tables.client.api.DatabaseApi;
 import com.linkedin.openhouse.tables.client.api.TableApi;
 import com.linkedin.openhouse.tables.client.model.GetAllDatabasesResponseBody;
@@ -60,7 +61,7 @@ class TablesServiceClientTest {
   }
 
   @Test
-  void getAllTables_returnsTableList() {
+  void getAllTables_returnsTableSummaryList() {
     // searchTablesV1 returns sparse summaries (tableUUID/tableProperties are null)
     GetTableResponseBody summary1 = mock(GetTableResponseBody.class);
     when(summary1.getTableId()).thenReturn("t1");
@@ -73,23 +74,28 @@ class TablesServiceClientTest {
 
     // getTableV1 returns full detail objects
     GetTableResponseBody detail1 = mock(GetTableResponseBody.class);
+    when(detail1.getTableUUID()).thenReturn("uuid-1");
+    when(detail1.getDatabaseId()).thenReturn("db1");
     when(detail1.getTableId()).thenReturn("t1");
     GetTableResponseBody detail2 = mock(GetTableResponseBody.class);
+    when(detail2.getTableUUID()).thenReturn("uuid-2");
+    when(detail2.getDatabaseId()).thenReturn("db1");
     when(detail2.getTableId()).thenReturn("t2");
     when(tableApi.getTableV1("db1", "t1")).thenReturn(Mono.just(detail1));
     when(tableApi.getTableV1("db1", "t2")).thenReturn(Mono.just(detail2));
 
-    List<GetTableResponseBody> tables = client.getAllTables("db1");
+    List<TableSummary> tables = client.getAllTables("db1");
 
     assertThat(tables).hasSize(2);
-    assertThat(tables).extracting(GetTableResponseBody::getTableId).containsExactly("t1", "t2");
+    assertThat(tables).extracting(TableSummary::getTableId).containsExactly("t1", "t2");
+    assertThat(tables).extracting(TableSummary::getTableUuid).containsExactly("uuid-1", "uuid-2");
   }
 
   @Test
   void getAllTables_returnsEmptyList_onError() {
     when(tableApi.searchTablesV1("db1")).thenReturn(Mono.error(new RuntimeException("timeout")));
 
-    List<GetTableResponseBody> tables = client.getAllTables("db1");
+    List<TableSummary> tables = client.getAllTables("db1");
 
     assertThat(tables).isEmpty();
   }

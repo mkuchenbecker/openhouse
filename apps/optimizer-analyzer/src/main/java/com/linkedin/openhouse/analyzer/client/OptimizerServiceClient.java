@@ -1,6 +1,6 @@
 package com.linkedin.openhouse.analyzer.client;
 
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
@@ -11,6 +11,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /** Client for the Optimizer Service's {@code /v1/table-operations} endpoint. */
 @Slf4j
@@ -25,9 +27,9 @@ public class OptimizerServiceClient {
    * Returns active (PENDING or SCHEDULED) operation records for the given operation type, indexed
    * by {@code tableUuid}.
    */
-  public Map<String, TableOperationView> getOperationsByType(String operationType) {
+  public Map<String, TableOperationRecord> getOperationsByType(String operationType) {
     try {
-      List<TableOperationView> ops =
+      List<TableOperationRecord> ops =
           webClient
               .get()
               .uri(
@@ -37,7 +39,7 @@ public class OptimizerServiceClient {
                           .queryParam("operationType", operationType)
                           .build())
               .retrieve()
-              .bodyToMono(new ParameterizedTypeReference<List<TableOperationView>>() {})
+              .bodyToMono(new ParameterizedTypeReference<List<TableOperationRecord>>() {})
               .block(TIMEOUT);
 
       if (ops == null) {
@@ -46,8 +48,8 @@ public class OptimizerServiceClient {
 
       return ops.stream()
           .filter(op -> op.getTableUuid() != null)
-          .collect(Collectors.toMap(TableOperationView::getTableUuid, op -> op, (a, b) -> b));
-    } catch (Exception e) {
+          .collect(Collectors.toMap(TableOperationRecord::getTableUuid, op -> op, (a, b) -> b));
+    } catch (WebClientResponseException | WebClientRequestException | IllegalStateException e) {
       log.error("Failed to fetch operations for type {}", operationType, e);
       return Collections.emptyMap();
     }
@@ -78,7 +80,7 @@ public class OptimizerServiceClient {
           .retrieve()
           .bodyToMono(Void.class)
           .block(TIMEOUT);
-    } catch (Exception e) {
+    } catch (WebClientResponseException | WebClientRequestException | IllegalStateException e) {
       log.error("Failed to upsert operation {} for table {}", operationType, tableUuid, e);
     }
   }

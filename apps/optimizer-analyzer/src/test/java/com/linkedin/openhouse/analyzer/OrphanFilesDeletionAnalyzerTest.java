@@ -1,11 +1,10 @@
 package com.linkedin.openhouse.analyzer;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
-import com.linkedin.openhouse.tables.client.model.GetTableResponseBody;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
+import com.linkedin.openhouse.analyzer.model.TableSummary;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.Map;
@@ -15,11 +14,15 @@ import org.junit.jupiter.api.Test;
 
 class OrphanFilesDeletionAnalyzerTest {
 
+  private static final Duration SUCCESS_INTERVAL = Duration.ofHours(24);
+  private static final Duration FAILURE_INTERVAL = Duration.ofHours(1);
+
   private OrphanFilesDeletionAnalyzer analyzer;
 
   @BeforeEach
   void setUp() {
-    analyzer = new OrphanFilesDeletionAnalyzer();
+    analyzer =
+        new OrphanFilesDeletionAnalyzer(new CadencePolicy(SUCCESS_INTERVAL, FAILURE_INTERVAL));
   }
 
   // --- isEnabled ---
@@ -40,9 +43,8 @@ class OrphanFilesDeletionAnalyzerTest {
   }
 
   @Test
-  void isEnabled_returnsFalse_whenTablePropertiesNull() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    when(table.getTableProperties()).thenReturn(null);
+  void isEnabled_returnsFalse_whenTablePropertiesEmpty() {
+    TableSummary table = TableSummary.builder().tableUuid("uuid").build();
     assertThat(analyzer.isEnabled(table)).isFalse();
   }
 
@@ -71,8 +73,7 @@ class OrphanFilesDeletionAnalyzerTest {
 
   @Test
   void shouldSchedule_successBeforeInterval_returnsFalse() {
-    Instant recentlyScheduled =
-        Instant.now().minus(OrphanFilesDeletionAnalyzer.SUCCESS_RETRY_INTERVAL).plusSeconds(60);
+    Instant recentlyScheduled = Instant.now().minus(SUCCESS_INTERVAL).plusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("SUCCESS", recentlyScheduled))))
@@ -81,8 +82,7 @@ class OrphanFilesDeletionAnalyzerTest {
 
   @Test
   void shouldSchedule_successAfterInterval_returnsTrue() {
-    Instant longAgo =
-        Instant.now().minus(OrphanFilesDeletionAnalyzer.SUCCESS_RETRY_INTERVAL).minusSeconds(60);
+    Instant longAgo = Instant.now().minus(SUCCESS_INTERVAL).minusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("SUCCESS", longAgo))))
@@ -91,8 +91,7 @@ class OrphanFilesDeletionAnalyzerTest {
 
   @Test
   void shouldSchedule_failedBeforeInterval_returnsFalse() {
-    Instant recentlyScheduled =
-        Instant.now().minus(OrphanFilesDeletionAnalyzer.FAILURE_RETRY_INTERVAL).plusSeconds(60);
+    Instant recentlyScheduled = Instant.now().minus(FAILURE_INTERVAL).plusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("FAILED", recentlyScheduled))))
@@ -101,8 +100,7 @@ class OrphanFilesDeletionAnalyzerTest {
 
   @Test
   void shouldSchedule_failedAfterInterval_returnsTrue() {
-    Instant longAgo =
-        Instant.now().minus(OrphanFilesDeletionAnalyzer.FAILURE_RETRY_INTERVAL).minusSeconds(60);
+    Instant longAgo = Instant.now().minus(FAILURE_INTERVAL).minusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("FAILED", longAgo))))
@@ -119,19 +117,21 @@ class OrphanFilesDeletionAnalyzerTest {
 
   // --- helpers ---
 
-  private GetTableResponseBody tableWithProperty(String value) {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    if (value == null) {
-      when(table.getTableProperties()).thenReturn(Collections.emptyMap());
-    } else {
-      when(table.getTableProperties())
-          .thenReturn(Map.of(OrphanFilesDeletionAnalyzer.OFD_ENABLED_PROPERTY, value));
-    }
-    return table;
+  private TableSummary tableWithProperty(String value) {
+    Map<String, String> props =
+        value == null
+            ? Collections.emptyMap()
+            : Map.of(OrphanFilesDeletionAnalyzer.OFD_ENABLED_PROPERTY, value);
+    return TableSummary.builder()
+        .tableUuid("test-uuid")
+        .databaseId("db1")
+        .tableId("tbl1")
+        .tableProperties(props)
+        .build();
   }
 
-  private TableOperationView opWithStatus(String status, Instant scheduledAt) {
-    TableOperationView op = new TableOperationView();
+  private TableOperationRecord opWithStatus(String status, Instant scheduledAt) {
+    TableOperationRecord op = new TableOperationRecord();
     op.setStatus(status);
     op.setScheduledAt(scheduledAt);
     return op;

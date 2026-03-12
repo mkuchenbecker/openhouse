@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.analyzer.client;
 
+import com.linkedin.openhouse.analyzer.model.TableSummary;
 import com.linkedin.openhouse.tables.client.api.DatabaseApi;
 import com.linkedin.openhouse.tables.client.api.TableApi;
 import com.linkedin.openhouse.tables.client.model.GetAllDatabasesResponseBody;
@@ -10,6 +11,7 @@ import java.time.Duration;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -48,12 +50,13 @@ public class TablesServiceClient {
   }
 
   /**
-   * Returns all tables for the given database with full details (UUID, properties).
+   * Returns all tables for the given database with full details (UUID, properties), mapped to the
+   * internal {@link TableSummary} model.
    *
    * <p>The search endpoint returns only sparse table summaries (tableUUID and tableProperties are
    * null), so each table is fetched individually via the single-table GET endpoint.
    */
-  public List<GetTableResponseBody> getAllTables(String databaseId) {
+  public List<TableSummary> getAllTables(String databaseId) {
     try {
       List<GetTableResponseBody> summaries =
           retryTemplate.execute(
@@ -66,6 +69,7 @@ public class TablesServiceClient {
       return summaries.stream()
           .map(summary -> fetchDetail(databaseId, summary.getTableId()))
           .filter(Objects::nonNull)
+          .map(TablesServiceClient::toTableSummary)
           .collect(Collectors.toList());
     } catch (Exception e) {
       log.error("Failed to fetch tables for database {}", databaseId, e);
@@ -80,5 +84,16 @@ public class TablesServiceClient {
       log.warn("Failed to fetch details for table {}.{}", databaseId, tableId, e);
       return null;
     }
+  }
+
+  private static TableSummary toTableSummary(GetTableResponseBody r) {
+    Map<String, String> props =
+        r.getTableProperties() != null ? r.getTableProperties() : Collections.emptyMap();
+    return TableSummary.builder()
+        .tableUuid(r.getTableUUID())
+        .databaseId(r.getDatabaseId())
+        .tableId(r.getTableId())
+        .tableProperties(props)
+        .build();
   }
 }

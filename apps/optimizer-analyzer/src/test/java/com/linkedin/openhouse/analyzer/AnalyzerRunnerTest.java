@@ -2,15 +2,14 @@ package com.linkedin.openhouse.analyzer;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.linkedin.openhouse.analyzer.client.OptimizerServiceClient;
 import com.linkedin.openhouse.analyzer.client.TablesServiceClient;
-import com.linkedin.openhouse.analyzer.model.TableOperationView;
-import com.linkedin.openhouse.tables.client.model.GetTableResponseBody;
+import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
+import com.linkedin.openhouse.analyzer.model.TableSummary;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -38,10 +37,8 @@ class AnalyzerRunnerTest {
 
   @Test
   void run_upsertsOperation_forEligibleTable() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    when(table.getTableUUID()).thenReturn("uuid-1");
-    when(table.getTableId()).thenReturn("tbl1");
-    when(table.getDatabaseId()).thenReturn("db1");
+    TableSummary table =
+        TableSummary.builder().tableUuid("uuid-1").databaseId("db1").tableId("tbl1").build();
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
     when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
@@ -60,17 +57,15 @@ class AnalyzerRunnerTest {
 
   @Test
   void run_reusesExistingId_forPendingOperation() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    when(table.getTableUUID()).thenReturn("uuid-1");
-    when(table.getTableId()).thenReturn("tbl1");
-    when(table.getDatabaseId()).thenReturn("db1");
+    TableSummary table =
+        TableSummary.builder().tableUuid("uuid-1").databaseId("db1").tableId("tbl1").build();
 
-    TableOperationView existingOp = new TableOperationView();
+    TableOperationRecord existingOp = new TableOperationRecord();
     existingOp.setId("existing-op-id");
     existingOp.setStatus("PENDING");
     existingOp.setTableUuid("uuid-1");
 
-    Map<String, TableOperationView> opsByUuid = new HashMap<>();
+    Map<String, TableOperationRecord> opsByUuid = new HashMap<>();
     opsByUuid.put("uuid-1", existingOp);
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
@@ -89,7 +84,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void run_skipsTable_whenNotEnabled() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
+    TableSummary table = TableSummary.builder().tableUuid("uuid-1").build();
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
     when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
@@ -106,15 +101,14 @@ class AnalyzerRunnerTest {
 
   @Test
   void run_skipsTable_whenShouldScheduleReturnsFalse() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    when(table.getTableUUID()).thenReturn("uuid-1");
+    TableSummary table = TableSummary.builder().tableUuid("uuid-1").build();
 
-    TableOperationView scheduled = new TableOperationView();
+    TableOperationRecord scheduled = new TableOperationRecord();
     scheduled.setId("op-id");
     scheduled.setStatus("SCHEDULED");
     scheduled.setTableUuid("uuid-1");
 
-    Map<String, TableOperationView> opsByUuid = new HashMap<>();
+    Map<String, TableOperationRecord> opsByUuid = new HashMap<>();
     opsByUuid.put("uuid-1", scheduled);
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
@@ -132,8 +126,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void run_skipsTable_whenTableUuidIsNull() {
-    GetTableResponseBody table = mock(GetTableResponseBody.class);
-    when(table.getTableUUID()).thenReturn(null);
+    TableSummary table = TableSummary.builder().tableUuid(null).build();
 
     when(tablesClient.getDatabases()).thenReturn(List.of("db1"));
     when(tablesClient.getAllTables("db1")).thenReturn(List.of(table));
