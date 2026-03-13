@@ -7,7 +7,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/** Internal representation of a table, decoupled from the Tables Service API response model. */
+/** Internal representation of a table, decoupled from any external API response model. */
 @Data
 @Builder
 @NoArgsConstructor
@@ -19,4 +19,7 @@ public class TableSummary {
   private String tableId;
 
   @Builder.Default private Map<String, String> tableProperties = Collections.emptyMap();
+
+  /** Commit stats from the optimizer {@code table_stats} table. Null if no stats recorded yet. */
+  private TableStats stats;
 }

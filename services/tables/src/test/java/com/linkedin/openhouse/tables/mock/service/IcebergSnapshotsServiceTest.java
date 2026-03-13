@@ -9,7 +9,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
-import com.linkedin.openhouse.tables.config.HtsTableStatsClient;
+import com.linkedin.openhouse.tables.config.OptimizerTableStatsClient;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapperImpl;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -46,7 +46,7 @@ public class IcebergSnapshotsServiceTest {
 
   @MockBean private TableUUIDGenerator tableUUIDGenerator;
 
-  @MockBean private HtsTableStatsClient htsTableStatsClient;
+  @MockBean private OptimizerTableStatsClient optimizerTableStatsClient;
 
   private OpenHouseInternalRepository mockRepository;
 
@@ -99,7 +99,7 @@ public class IcebergSnapshotsServiceTest {
     Assertions.assertEquals(tableDto, result.getFirst(), "Returned DTO must be the mock value");
     Assertions.assertTrue(result.getSecond(), "Table must be created");
 
-    Mockito.verify(htsTableStatsClient, Mockito.times(1))
+    Mockito.verify(optimizerTableStatsClient, Mockito.times(1))
         .reportCommitStats(
             Mockito.eq(testUuid),
             Mockito.eq(dbId),
@@ -143,7 +143,7 @@ public class IcebergSnapshotsServiceTest {
     Assertions.assertEquals(tableDto, result.getFirst(), "Returned DTO must be the mock value");
     Assertions.assertFalse(result.getSecond(), "Table must be found in repository");
 
-    Mockito.verify(htsTableStatsClient, Mockito.times(1))
+    Mockito.verify(optimizerTableStatsClient, Mockito.times(1))
         .reportCommitStats(
             Mockito.eq(testUuid),
             Mockito.anyString(),
@@ -184,7 +184,7 @@ public class IcebergSnapshotsServiceTest {
         () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
 
     // stats client must not be called when save throws
-    Mockito.verify(htsTableStatsClient, Mockito.never())
+    Mockito.verify(optimizerTableStatsClient, Mockito.never())
         .reportCommitStats(
             Mockito.any(),
             Mockito.any(),
@@ -217,7 +217,7 @@ public class IcebergSnapshotsServiceTest {
         RequestValidationFailureException.class,
         () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
 
-    Mockito.verify(htsTableStatsClient, Mockito.never())
+    Mockito.verify(optimizerTableStatsClient, Mockito.never())
         .reportCommitStats(
             Mockito.any(),
             Mockito.any(),

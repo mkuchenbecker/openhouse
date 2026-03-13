@@ -52,6 +52,9 @@ public class ClusterProperties {
   @Value("${cluster.housetables.base-uri:#{null}}")
   private String clusterHouseTablesBaseUri;
 
+  @Value("${cluster.optimizer.base-uri:#{null}}")
+  private String clusterOptimizerBaseUri;
+
   @Value("${cluster.housetables.database.type:IN_MEMORY}")
   private String clusterHouseTablesDatabaseType;
 

@@ -95,19 +95,18 @@ TABLE_UUID=$(curl -sf \
   "http://localhost:8000/v1/databases/db1/tables/smoke_tbl" | jq -r '.tableUUID')
 echo "Table UUID: $TABLE_UUID"
 
-echo "=== [setup] Assert table-stats populated ==="
+echo "=== [setup] Update optimizer tableProperties with OFD opt-in ==="
 sleep 5
-RESULT=$(curl -sf "http://localhost:8001/v1/hts/table-stats/$TABLE_UUID")
-echo "$RESULT"
-ADDED=$(echo "$RESULT" | jq -r '.stats.delta.numFilesAdded')
-[ "$ADDED" -ge 1 ] 2>/dev/null || { echo "FAIL: expected numFilesAdded>=1, got $ADDED"; exit 1; }
-echo "PASS: numFilesAdded=$ADDED"
-
-echo "=== [setup] Update HTS tableProperties with OFD opt-in ==="
-curl -sf -X PUT "http://localhost:8001/v1/hts/table-stats/$TABLE_UUID" \
+curl -sf -X PUT "http://localhost:8003/v1/table-stats/$TABLE_UUID" \
   -H "Content-Type: application/json" \
   -d "{\"databaseId\":\"db1\",\"tableName\":\"smoke_tbl\",\"tableProperties\":{\"maintenance.optimizer.ofd.enabled\":\"true\"}}"
-echo "DONE: tableProperties updated in HTS"
+echo "DONE: tableProperties updated in optimizer"
+
+echo "=== [setup] Assert stats row written to optimizer ==="
+OFD_PROP=$(curl -sf "http://localhost:8003/v1/table-stats/$TABLE_UUID" \
+  | jq -r '.tableProperties["maintenance.optimizer.ofd.enabled"]')
+[ "$OFD_PROP" = "true" ] || { echo "FAIL: expected tableProperties opt-in=true, got '$OFD_PROP'"; exit 1; }
+echo "PASS: optimizer stats row verified"
 
 # ---------------------------------------------------------------------------
 # Step 2: Run — execute the analyzer

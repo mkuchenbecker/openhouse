@@ -8,7 +8,7 @@ import com.linkedin.openhouse.common.exception.RequestValidationFailureException
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.authorization.Privileges;
-import com.linkedin.openhouse.tables.config.HtsTableStatsClient;
+import com.linkedin.openhouse.tables.config.OptimizerTableStatsClient;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
@@ -38,7 +38,7 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
 
   @Autowired AuthorizationUtils authorizationUtils;
 
-  @Autowired HtsTableStatsClient htsTableStatsClient;
+  @Autowired OptimizerTableStatsClient optimizerTableStatsClient;
 
   @Override
   public Pair<TableDto, Boolean> putIcebergSnapshots(
@@ -110,7 +110,7 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
             log.warn("Failed to parse snapshot summary: {}", e.getMessage());
           }
         }
-        htsTableStatsClient.reportCommitStats(
+        optimizerTableStatsClient.reportCommitStats(
             savedDto.getTableUUID(),
             savedDto.getDatabaseId(),
             savedDto.getTableId(),

@@ -9,6 +9,7 @@ services:
       - ./:/var/config/
     depends_on:
       - openhouse-housetables
+      - openhouse-optimizer
       - namenode
       - datanode
       - prometheus
@@ -79,11 +80,10 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
       - SPRING_DATASOURCE_USERNAME=oh_user
       - SPRING_DATASOURCE_PASSWORD=oh_password
-      - HTS_BASE_URI=http://openhouse-housetables:8080
     depends_on:
       mysql:
         condition: service_healthy
-      openhouse-housetables:
+      openhouse-optimizer:
         condition: service_started
     profiles:
       - run-analyzer

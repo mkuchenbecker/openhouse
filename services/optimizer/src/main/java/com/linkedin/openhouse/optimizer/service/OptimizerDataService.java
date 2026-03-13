@@ -3,8 +3,11 @@ package com.linkedin.openhouse.optimizer.service;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
+import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
+import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import java.util.List;
+import java.util.Optional;
 
 /** Service interface for optimizer data operations. */
 public interface OptimizerDataService {
@@ -24,6 +27,17 @@ public interface OptimizerDataService {
    * inserted with {@code status=PENDING}. Fully idempotent: repeating the same call is safe.
    */
   TableOperationsDto upsertTableOperation(String id, UpsertTableOperationsRequest request);
+
+  // --- TableStats ---
+
+  /**
+   * Create or update the stats row for {@code tableUuid}. Fully idempotent: the same call
+   * overwrites the previous snapshot with the latest commit values.
+   */
+  TableStatsDto upsertTableStats(String tableUuid, UpsertTableStatsRequest request);
+
+  /** Return the stats row for {@code tableUuid}, or empty if none exists. */
+  Optional<TableStatsDto> getTableStats(String tableUuid);
 
   // --- TableOperationsHistory ---
 

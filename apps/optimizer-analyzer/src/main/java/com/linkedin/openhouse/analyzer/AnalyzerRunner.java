@@ -1,46 +1,53 @@
 package com.linkedin.openhouse.analyzer;
 
-import com.linkedin.openhouse.analyzer.client.HtsClient;
 import com.linkedin.openhouse.analyzer.entity.TableOperationEntity;
+import com.linkedin.openhouse.analyzer.entity.TableStatsEntity;
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
 import com.linkedin.openhouse.analyzer.repository.TableOperationsRepository;
+import com.linkedin.openhouse.analyzer.repository.TableStatsRepository;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 /**
- * Runs the analysis loop once per process invocation. For each {@link OperationAnalyzer}, loads
- * active operation records from the optimizer DB via JPA, then iterates every table returned by the
- * HTS bulk endpoint and inserts PENDING rows for eligible tables.
+ * Core analysis logic. For each {@link OperationAnalyzer}, loads active operation records from the
+ * optimizer DB via JPA, then iterates every table in {@code table_stats} and inserts PENDING rows
+ * for eligible tables.
+ *
+ * <p>Invoked by {@link AnalyzerApplication}'s {@code CommandLineRunner} once per process run.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class AnalyzerRunner implements CommandLineRunner {
+public class AnalyzerRunner {
+
+  private static final Set<String> ACTIVE_STATUSES = Set.of("PENDING", "SCHEDULED");
 
   private final List<OperationAnalyzer> analyzers;
-  private final HtsClient htsClient;
-  private final TableOperationsRepository repo;
+  private final TableStatsRepository statsRepo;
+  private final TableOperationsRepository operationsRepo;
 
-  @Override
-  public void run(String... args) {
-    List<TableSummary> allTables = htsClient.getAllTableStats();
-    log.info("Found {} tables in HTS", allTables.size());
+  /** Run the full analysis loop once. */
+  public void analyze() {
+    List<TableSummary> allTables =
+        statsRepo.findAll().stream().map(this::toSummary).collect(Collectors.toList());
+    log.info("Found {} tables in optimizer table_stats", allTables.size());
 
     analyzers.forEach(
         analyzer -> {
           String operationType = analyzer.getOperationType();
 
           Map<String, TableOperationRecord> opsByUuid =
-              repo.findActiveByType(operationType).stream()
+              operationsRepo.findByTypeAndStatuses(operationType, ACTIVE_STATUSES).stream()
                   .filter(e -> e.getTableUuid() != null)
                   .collect(
                       Collectors.toMap(
@@ -68,7 +75,7 @@ public class AnalyzerRunner implements CommandLineRunner {
                               .status("PENDING")
                               .createdAt(Instant.now())
                               .build();
-                      repo.save(entity);
+                      operationsRepo.save(entity);
                       log.info(
                           "Created PENDING {} operation for table {}.{}",
                           operationType,
@@ -79,6 +86,17 @@ public class AnalyzerRunner implements CommandLineRunner {
         });
 
     log.info("Analysis complete");
+  }
+
+  private TableSummary toSummary(TableStatsEntity e) {
+    return TableSummary.builder()
+        .tableUuid(e.getTableUuid())
+        .databaseId(e.getDatabaseId())
+        .tableId(e.getTableName())
+        .tableProperties(
+            e.getTableProperties() != null ? e.getTableProperties() : Collections.emptyMap())
+        .stats(e.getStats())
+        .build();
   }
 
   private static TableOperationRecord toRecord(TableOperationEntity e) {

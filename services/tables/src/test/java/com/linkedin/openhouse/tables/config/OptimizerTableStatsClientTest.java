@@ -4,26 +4,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.google.gson.JsonObject;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-public class HtsTableStatsClientTest {
+public class OptimizerTableStatsClientTest {
 
-  private HtsTableStatsClient client;
+  private OptimizerTableStatsClient client;
 
   @BeforeEach
   void setUp() {
     ClusterProperties props = Mockito.mock(ClusterProperties.class);
-    Mockito.when(props.getClusterHouseTablesBaseUri()).thenReturn("http://localhost:8080");
-    client = new HtsTableStatsClient(props);
+    Mockito.when(props.getClusterOptimizerBaseUri()).thenReturn("http://localhost:8003");
+    client = new OptimizerTableStatsClient(props);
     // skip @PostConstruct — WebClient not needed for body-building tests
   }
 
   @Test
   void testBuildRequestBody_setsAllFields() {
-    java.util.Map<String, String> props =
-        java.util.Map.of("maintenance.optimizer.ofd.enabled", "true");
+    Map<String, String> props = Map.of("maintenance.optimizer.ofd.enabled", "true");
     JsonObject body =
         client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 3L, 1L, 1024L, props);
 

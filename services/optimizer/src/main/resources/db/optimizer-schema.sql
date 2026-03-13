@@ -1,6 +1,5 @@
 -- Optimizer Service Schema
 -- Compatible with MySQL (production) and H2 in MySQL mode (tests).
--- Note: table_stats lives in the housetables service.
 CREATE TABLE IF NOT EXISTS table_operations (
   id             VARCHAR(36)   NOT NULL,
   table_uuid     VARCHAR(36)   NOT NULL,
@@ -13,6 +12,15 @@ CREATE TABLE IF NOT EXISTS table_operations (
   version        BIGINT,
   metrics        TEXT,
   PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS table_stats (
+  table_uuid       VARCHAR(36)   NOT NULL,
+  database_id      VARCHAR(255)  NOT NULL,
+  table_name       VARCHAR(255)  NOT NULL,
+  stats            TEXT,
+  table_properties TEXT,
+  PRIMARY KEY (table_uuid)
 );
 
 CREATE TABLE IF NOT EXISTS table_operations_history (

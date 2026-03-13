@@ -12,14 +12,15 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 /**
- * Fire-and-forget client that pushes per-commit stats to the HTS table_stats endpoint.
+ * Fire-and-forget client that pushes per-commit stats to the optimizer {@code table_stats}
+ * endpoint.
  *
  * <p>Failures are logged and swallowed — a stats update failure must never fail a table commit.
  */
 @Component
 @Slf4j
 @RequiredArgsConstructor
-public class HtsTableStatsClient {
+public class OptimizerTableStatsClient {
 
   private final ClusterProperties clusterProperties;
 
@@ -27,12 +28,11 @@ public class HtsTableStatsClient {
 
   @PostConstruct
   void init() {
-    webClient =
-        WebClient.builder().baseUrl(clusterProperties.getClusterHouseTablesBaseUri()).build();
+    webClient = WebClient.builder().baseUrl(clusterProperties.getClusterOptimizerBaseUri()).build();
   }
 
   /**
-   * Push per-commit stats to the HTS table_stats endpoint asynchronously.
+   * Push per-commit stats to the optimizer table_stats endpoint asynchronously.
    *
    * @param tableUuid stable Iceberg UUID — primary key of the stats row
    * @param databaseId denormalized display column
@@ -44,6 +44,7 @@ public class HtsTableStatsClient {
    * @param numFilesDeleted number of data files deleted across all snapshots in this commit
    * @param tableSizeBytes total size of all data files as of the last snapshot, or {@code null} if
    *     unavailable
+   * @param tableProperties current table properties snapshot
    */
   public void reportCommitStats(
       String tableUuid,
@@ -70,7 +71,7 @@ public class HtsTableStatsClient {
 
     webClient
         .put()
-        .uri("/v1/hts/table-stats/{tableUuid}", tableUuid)
+        .uri("/v1/table-stats/{tableUuid}", tableUuid)
         .contentType(MediaType.APPLICATION_JSON)
         .bodyValue(body.toString())
         .retrieve()
@@ -84,7 +85,7 @@ public class HtsTableStatsClient {
   }
 
   /**
-   * Build the JSON request body for {@code PUT /v1/hts/table-stats/{tableUuid}}.
+   * Build the JSON request body for {@code PUT /v1/table-stats/{tableUuid}}.
    *
    * <p>Package-private for testing.
    */
