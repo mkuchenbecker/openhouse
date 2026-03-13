@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.optimizer.api.controller;
 
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
@@ -8,6 +9,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,6 +36,19 @@ public class TableOperationsController {
   public ResponseEntity<TableOperationsDto> upsertTableOperation(
       @PathVariable String id, @RequestBody UpsertTableOperationsRequest request) {
     return ResponseEntity.ok(service.upsertTableOperation(id, request));
+  }
+
+  /**
+   * Transition an operation to SUCCESS or FAILED. Called by the Spark job after completing work for
+   * a single table within a batch. Returns 404 if the operation does not exist.
+   */
+  @PatchMapping("/{id}")
+  public ResponseEntity<TableOperationsDto> patchTableOperation(
+      @PathVariable String id, @RequestBody PatchTableOperationRequest request) {
+    return service
+        .patchTableOperation(id, request)
+        .map(ResponseEntity::ok)
+        .orElse(ResponseEntity.notFound().build());
   }
 
   /**

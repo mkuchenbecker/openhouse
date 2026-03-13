@@ -29,6 +29,8 @@ public class TableStats {
     private String tableLocation;
     private Integer numSnapshots;
     private Long tableSizeBytes;
+    /** Total number of data files as of the latest snapshot — used for bin-packing. */
+    private Long numCurrentFiles;
   }
 
   /** Per-commit incremental counters; accumulated across all recorded commit events. */

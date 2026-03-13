@@ -127,6 +127,19 @@ OFD_STATUS=$(curl -sf \
 [ "$OFD_STATUS" = "PENDING" ] || { echo "FAIL: expected PENDING, got '$OFD_STATUS'"; exit 1; }
 echo "PASS: analyzer created PENDING row for table UUID $TABLE_UUID"
 
+echo "=== [run] Run optimizer scheduler ==="
+docker compose \
+  -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml \
+  --profile run-scheduler \
+  run --build --rm openhouse-optimizer-scheduler
+
+echo "=== [teardown] Assert scheduler claimed PENDING -> SCHEDULED ==="
+SCHED_STATUS=$(curl -sf \
+  "http://localhost:8003/v1/table-operations?operationType=ORPHAN_FILES_DELETION" \
+  | jq -r --arg uuid "$TABLE_UUID" '.[] | select(.tableUuid == $uuid) | .status')
+[ "$SCHED_STATUS" = "SCHEDULED" ] || { echo "FAIL: expected SCHEDULED, got '$SCHED_STATUS'"; exit 1; }
+echo "PASS: scheduler claimed row for table UUID $TABLE_UUID"
+
 echo "=== [teardown] Drop smoke table ==="
 livy_session_start
 run_sql "DROP TABLE IF EXISTS openhouse.db1.smoke_tbl"

@@ -88,6 +88,28 @@ services:
     profiles:
       - run-analyzer
 
+  openhouse-optimizer-scheduler:
+    container_name: local.openhouse-optimizer-scheduler
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer-scheduler
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=oh_user
+      - SPRING_DATASOURCE_PASSWORD=oh_password
+      - JOBS_BASE_URI=http://openhouse-jobs:8080
+      - SCHEDULER_RESULTS_ENDPOINT=http://openhouse-optimizer:8080/v1/table-operations
+      - SCHEDULER_CLUSTER_ID=LocalHadoopCluster
+    depends_on:
+      mysql:
+        condition: service_healthy
+      openhouse-optimizer:
+        condition: service_started
+      openhouse-jobs:
+        condition: service_started
+    profiles:
+      - run-scheduler
+
   prometheus:
     extends:
       file: ../common/oh-services.yml

@@ -74,6 +74,7 @@ public class AnalyzerRunner {
                               .operationType(operationType)
                               .status("PENDING")
                               .createdAt(Instant.now())
+                              .version(0L)
                               .build();
                       operationsRepo.save(entity);
                       log.info(

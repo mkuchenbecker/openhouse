@@ -44,6 +44,8 @@ public class OptimizerTableStatsClient {
    * @param numFilesDeleted number of data files deleted across all snapshots in this commit
    * @param tableSizeBytes total size of all data files as of the last snapshot, or {@code null} if
    *     unavailable
+   * @param numCurrentFiles total number of data files as of the last snapshot, or {@code null} if
+   *     unavailable; used for bin-packing by the scheduler
    * @param tableProperties current table properties snapshot
    */
   public void reportCommitStats(
@@ -56,6 +58,7 @@ public class OptimizerTableStatsClient {
       long numFilesAdded,
       long numFilesDeleted,
       Long tableSizeBytes,
+      Long numCurrentFiles,
       Map<String, String> tableProperties) {
     JsonObject body =
         buildRequestBody(
@@ -67,6 +70,7 @@ public class OptimizerTableStatsClient {
             numFilesAdded,
             numFilesDeleted,
             tableSizeBytes,
+            numCurrentFiles,
             tableProperties);
 
     webClient
@@ -98,6 +102,7 @@ public class OptimizerTableStatsClient {
       long numFilesAdded,
       long numFilesDeleted,
       Long tableSizeBytes,
+      Long numCurrentFiles,
       Map<String, String> tableProperties) {
     JsonObject snapshotMetrics = new JsonObject();
     snapshotMetrics.addProperty("clusterId", clusterId);
@@ -105,6 +110,9 @@ public class OptimizerTableStatsClient {
     snapshotMetrics.addProperty("tableLocation", tableLocation);
     if (tableSizeBytes != null) {
       snapshotMetrics.addProperty("tableSizeBytes", tableSizeBytes);
+    }
+    if (numCurrentFiles != null) {
+      snapshotMetrics.addProperty("numCurrentFiles", numCurrentFiles);
     }
 
     JsonObject commitDelta = new JsonObject();

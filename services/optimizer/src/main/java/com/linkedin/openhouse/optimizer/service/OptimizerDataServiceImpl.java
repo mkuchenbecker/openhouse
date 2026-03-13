@@ -3,6 +3,7 @@ package com.linkedin.openhouse.optimizer.service;
 import com.linkedin.openhouse.optimizer.api.mapper.OptimizerMapper;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
@@ -97,6 +98,26 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                     .tableProperties(request.getTableProperties())
                     .build());
     return mapper.toDto(statsRepository.save(row));
+  }
+
+  @Override
+  public Optional<TableOperationsDto> patchTableOperation(
+      String id, PatchTableOperationRequest request) {
+    if (request.getStatus() != OperationStatus.SUCCESS
+        && request.getStatus() != OperationStatus.FAILED) {
+      throw new IllegalArgumentException(
+          "Only SUCCESS or FAILED are valid patch targets, got: " + request.getStatus());
+    }
+    return operationsRepository
+        .findById(id)
+        .map(
+            row ->
+                operationsRepository.save(
+                    row.toBuilder()
+                        .status(request.getStatus())
+                        .metrics(request.getMetrics())
+                        .build()))
+        .map(mapper::toDto);
   }
 
   @Override

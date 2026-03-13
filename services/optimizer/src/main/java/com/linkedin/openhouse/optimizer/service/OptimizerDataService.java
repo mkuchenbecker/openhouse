@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.optimizer.service;
 
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
@@ -27,6 +28,14 @@ public interface OptimizerDataService {
    * inserted with {@code status=PENDING}. Fully idempotent: repeating the same call is safe.
    */
   TableOperationsDto upsertTableOperation(String id, UpsertTableOperationsRequest request);
+
+  /**
+   * Transition an operation to {@code SUCCESS} or {@code FAILED}.
+   *
+   * <p>Called by the Spark job after completing work for a single table within a batch. Only {@code
+   * SUCCESS} and {@code FAILED} are valid target statuses. Returns empty if the row does not exist.
+   */
+  Optional<TableOperationsDto> patchTableOperation(String id, PatchTableOperationRequest request);
 
   // --- TableStats ---
 

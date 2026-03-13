@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.linkedin.openhouse.optimizer.api.model.OperationMetrics;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
+import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsRow;
+import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -22,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 class TableOperationsRepositoryTest {
 
   @Autowired TableOperationsRepository repository;
+  @Autowired OptimizerDataService service;
 
   @Test
   void saveAndFindById() {
@@ -47,6 +50,49 @@ class TableOperationsRepositoryTest {
     assertThat(found).isPresent();
     assertThat(found.get().getStatus()).isEqualTo(OperationStatus.PENDING);
     assertThat(found.get().getMetrics().getNumSnapshots()).isEqualTo(10L);
+  }
+
+  @Test
+  void patch_pendingToSuccess_updatesStatus() {
+    String id = UUID.randomUUID().toString();
+    repository.save(
+        TableOperationsRow.builder()
+            .id(id)
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+
+    Optional<com.linkedin.openhouse.optimizer.api.model.TableOperationsDto> result =
+        service.patchTableOperation(
+            id, PatchTableOperationRequest.builder().status(OperationStatus.SUCCESS).build());
+
+    assertThat(result).isPresent();
+    assertThat(result.get().getStatus()).isEqualTo(OperationStatus.SUCCESS);
+    assertThat(repository.findById(id).get().getStatus()).isEqualTo(OperationStatus.SUCCESS);
+  }
+
+  @Test
+  void patch_nonexistentId_returnsEmpty() {
+    Optional<com.linkedin.openhouse.optimizer.api.model.TableOperationsDto> result =
+        service.patchTableOperation(
+            UUID.randomUUID().toString(),
+            PatchTableOperationRequest.builder().status(OperationStatus.FAILED).build());
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void patch_invalidStatus_throwsIllegalArgument() {
+    org.junit.jupiter.api.Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.patchTableOperation(
+                UUID.randomUUID().toString(),
+                PatchTableOperationRequest.builder().status(OperationStatus.PENDING).build()));
   }
 
   @Test
