@@ -1,11 +1,11 @@
 package com.linkedin.openhouse.analyzer;
 
-import com.linkedin.openhouse.analyzer.entity.TableOperationEntity;
-import com.linkedin.openhouse.analyzer.entity.TableStatsEntity;
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
-import com.linkedin.openhouse.analyzer.repository.TableOperationsRepository;
-import com.linkedin.openhouse.analyzer.repository.TableStatsRepository;
+import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
+import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
+import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
+import com.linkedin.openhouse.optimizer.repository.TableStatsRepository;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
@@ -51,9 +51,7 @@ public class AnalyzerRunner {
                   .filter(e -> e.getTableUuid() != null)
                   .collect(
                       Collectors.toMap(
-                          TableOperationEntity::getTableUuid,
-                          AnalyzerRunner::toRecord,
-                          (a, b) -> b));
+                          TableOperationRow::getTableUuid, AnalyzerRunner::toRecord, (a, b) -> b));
           log.info("Analyzer {} found {} active operations", operationType, opsByUuid.size());
 
           allTables.stream()
@@ -65,8 +63,8 @@ public class AnalyzerRunner {
                     Optional<TableOperationRecord> currentOp =
                         Optional.ofNullable(opsByUuid.get(tableUuid));
                     if (analyzer.shouldSchedule(table, currentOp) && currentOp.isEmpty()) {
-                      TableOperationEntity entity =
-                          TableOperationEntity.builder()
+                      TableOperationRow entity =
+                          TableOperationRow.builder()
                               .id(UUID.randomUUID().toString())
                               .tableUuid(tableUuid)
                               .databaseName(table.getDatabaseId())
@@ -89,7 +87,7 @@ public class AnalyzerRunner {
     log.info("Analysis complete");
   }
 
-  private TableSummary toSummary(TableStatsEntity e) {
+  private TableSummary toSummary(TableStatsRow e) {
     return TableSummary.builder()
         .tableUuid(e.getTableUuid())
         .databaseId(e.getDatabaseId())
@@ -100,7 +98,7 @@ public class AnalyzerRunner {
         .build();
   }
 
-  private static TableOperationRecord toRecord(TableOperationEntity e) {
+  private static TableOperationRecord toRecord(TableOperationRow e) {
     TableOperationRecord r = new TableOperationRecord();
     r.setId(e.getId());
     r.setTableUuid(e.getTableUuid());

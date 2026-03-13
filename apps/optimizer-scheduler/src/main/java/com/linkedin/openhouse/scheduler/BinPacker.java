@@ -1,6 +1,6 @@
 package com.linkedin.openhouse.scheduler;
 
-import com.linkedin.openhouse.scheduler.entity.SchedulerOperationRow;
+import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -29,26 +29,25 @@ public final class BinPacker {
    * @param maxFilesPerBin maximum total file count per bin
    * @return list of bins, each bin being a non-empty list of rows
    */
-  public static List<List<SchedulerOperationRow>> pack(
-      List<SchedulerOperationRow> pending, Map<String, Long> fileCountByUuid, long maxFilesPerBin) {
+  public static List<List<TableOperationRow>> pack(
+      List<TableOperationRow> pending, Map<String, Long> fileCountByUuid, long maxFilesPerBin) {
 
     if (pending.isEmpty()) {
       return List.of();
     }
 
-    List<SchedulerOperationRow> sorted =
+    List<TableOperationRow> sorted =
         pending.stream()
             .sorted(
                 Comparator.comparingLong(
-                        (SchedulerOperationRow r) ->
-                            fileCountByUuid.getOrDefault(r.getTableUuid(), 0L))
+                        (TableOperationRow r) -> fileCountByUuid.getOrDefault(r.getTableUuid(), 0L))
                     .reversed())
             .collect(Collectors.toList());
 
-    List<List<SchedulerOperationRow>> bins = new ArrayList<>();
+    List<List<TableOperationRow>> bins = new ArrayList<>();
     List<Long> binTotals = new ArrayList<>();
 
-    for (SchedulerOperationRow row : sorted) {
+    for (TableOperationRow row : sorted) {
       long cost = fileCountByUuid.getOrDefault(row.getTableUuid(), 0L);
 
       int placed = -1;
@@ -63,7 +62,7 @@ public final class BinPacker {
         bins.get(placed).add(row);
         binTotals.set(placed, binTotals.get(placed) + cost);
       } else {
-        List<SchedulerOperationRow> newBin = new ArrayList<>();
+        List<TableOperationRow> newBin = new ArrayList<>();
         newBin.add(row);
         bins.add(newBin);
         binTotals.add(cost);

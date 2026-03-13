@@ -6,12 +6,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.linkedin.openhouse.analyzer.entity.TableOperationEntity;
-import com.linkedin.openhouse.analyzer.entity.TableStatsEntity;
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
-import com.linkedin.openhouse.analyzer.repository.TableOperationsRepository;
-import com.linkedin.openhouse.analyzer.repository.TableStatsRepository;
+import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
+import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
+import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
+import com.linkedin.openhouse.optimizer.repository.TableStatsRepository;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -39,7 +39,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void analyze_insertsNewRow_forEligibleTableWithNoActiveOp() {
-    TableStatsEntity statsEntity = new TableStatsEntity();
+    TableStatsRow statsEntity = new TableStatsRow();
     statsEntity.setTableUuid("uuid-1");
     statsEntity.setDatabaseId("db1");
     statsEntity.setTableName("tbl1");
@@ -57,10 +57,9 @@ class AnalyzerRunnerTest {
 
     runner.analyze();
 
-    ArgumentCaptor<TableOperationEntity> captor =
-        ArgumentCaptor.forClass(TableOperationEntity.class);
+    ArgumentCaptor<TableOperationRow> captor = ArgumentCaptor.forClass(TableOperationRow.class);
     verify(operationsRepo).save(captor.capture());
-    TableOperationEntity saved = captor.getValue();
+    TableOperationRow saved = captor.getValue();
     assertThat(saved.getTableUuid()).isEqualTo("uuid-1");
     assertThat(saved.getDatabaseName()).isEqualTo("db1");
     assertThat(saved.getTableName()).isEqualTo("tbl1");
@@ -71,7 +70,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void analyze_noOp_whenActivePendingOperationExists() {
-    TableStatsEntity statsEntity = new TableStatsEntity();
+    TableStatsRow statsEntity = new TableStatsRow();
     statsEntity.setTableUuid("uuid-1");
     statsEntity.setDatabaseId("db1");
     statsEntity.setTableName("tbl1");
@@ -79,7 +78,7 @@ class AnalyzerRunnerTest {
     TableSummary expectedTable =
         TableSummary.builder().tableUuid("uuid-1").databaseId("db1").tableId("tbl1").build();
 
-    TableOperationEntity existingEntity = new TableOperationEntity();
+    TableOperationRow existingEntity = new TableOperationRow();
     existingEntity.setId("existing-op-id");
     existingEntity.setStatus("PENDING");
     existingEntity.setTableUuid("uuid-1");
@@ -106,7 +105,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void analyze_skipsTable_whenNotEnabled() {
-    TableStatsEntity statsEntity = new TableStatsEntity();
+    TableStatsRow statsEntity = new TableStatsRow();
     statsEntity.setTableUuid("uuid-1");
 
     TableSummary expectedTable = TableSummary.builder().tableUuid("uuid-1").build();
@@ -125,12 +124,12 @@ class AnalyzerRunnerTest {
 
   @Test
   void analyze_skipsTable_whenShouldScheduleReturnsFalse() {
-    TableStatsEntity statsEntity = new TableStatsEntity();
+    TableStatsRow statsEntity = new TableStatsRow();
     statsEntity.setTableUuid("uuid-1");
 
     TableSummary expectedTable = TableSummary.builder().tableUuid("uuid-1").build();
 
-    TableOperationEntity scheduled = new TableOperationEntity();
+    TableOperationRow scheduled = new TableOperationRow();
     scheduled.setId("op-id");
     scheduled.setStatus("SCHEDULED");
     scheduled.setTableUuid("uuid-1");
@@ -157,7 +156,7 @@ class AnalyzerRunnerTest {
 
   @Test
   void analyze_skipsTable_whenTableUuidIsNull() {
-    TableStatsEntity statsEntity = new TableStatsEntity();
+    TableStatsRow statsEntity = new TableStatsRow();
     statsEntity.setTableUuid(null);
 
     TableSummary expectedTable = TableSummary.builder().tableUuid(null).build();

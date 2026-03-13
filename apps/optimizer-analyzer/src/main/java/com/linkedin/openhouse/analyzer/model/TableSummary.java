@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.analyzer.model;
 
+import com.linkedin.openhouse.optimizer.model.TableStats;
 import java.util.Collections;
 import java.util.Map;
 import lombok.AllArgsConstructor;

@@ -1,20 +1,24 @@
-package com.linkedin.openhouse.analyzer.model;
+package com.linkedin.openhouse.optimizer.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/** Combined stats payload stored in the optimizer {@code table_stats} table. */
+/** Combined stats payload stored as a single JSON blob per table in {@code table_stats}. */
 @Data
 @Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class TableStats {
 
+  /** Snapshot fields — overwritten on every upsert. */
   private SnapshotMetrics snapshot;
+
+  /** Delta fields — accumulated across commit events. */
   private CommitDelta delta;
 
+  /** Point-in-time metadata read from Iceberg at scan time. */
   @Data
   @Builder(toBuilder = true)
   @NoArgsConstructor
@@ -25,8 +29,11 @@ public class TableStats {
     private String tableLocation;
     private Integer numSnapshots;
     private Long tableSizeBytes;
+    /** Total number of data files as of the latest snapshot — used for bin-packing. */
+    private Long numCurrentFiles;
   }
 
+  /** Per-commit incremental counters accumulated across all recorded commit events. */
   @Data
   @Builder(toBuilder = true)
   @NoArgsConstructor

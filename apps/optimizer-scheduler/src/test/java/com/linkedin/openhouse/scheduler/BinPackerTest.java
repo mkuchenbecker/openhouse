@@ -2,7 +2,7 @@ package com.linkedin.openhouse.scheduler;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.linkedin.openhouse.scheduler.entity.SchedulerOperationRow;
+import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -10,8 +10,8 @@ import org.junit.jupiter.api.Test;
 
 class BinPackerTest {
 
-  private static SchedulerOperationRow row(String uuid) {
-    return SchedulerOperationRow.builder()
+  private static TableOperationRow row(String uuid) {
+    return TableOperationRow.builder()
         .id(UUID.randomUUID().toString())
         .tableUuid(uuid)
         .databaseName("db")
@@ -28,8 +28,8 @@ class BinPackerTest {
 
   @Test
   void singleTable_oneBin() {
-    SchedulerOperationRow r = row("uuid-1");
-    List<List<SchedulerOperationRow>> bins =
+    TableOperationRow r = row("uuid-1");
+    List<List<TableOperationRow>> bins =
         BinPacker.pack(List.of(r), Map.of("uuid-1", 100L), 1_000_000L);
 
     assertThat(bins).hasSize(1);
@@ -38,11 +38,11 @@ class BinPackerTest {
 
   @Test
   void tablesUnderLimit_oneBin() {
-    SchedulerOperationRow r1 = row("a");
-    SchedulerOperationRow r2 = row("b");
-    SchedulerOperationRow r3 = row("c");
+    TableOperationRow r1 = row("a");
+    TableOperationRow r2 = row("b");
+    TableOperationRow r3 = row("c");
 
-    List<List<SchedulerOperationRow>> bins =
+    List<List<TableOperationRow>> bins =
         BinPacker.pack(
             List.of(r1, r2, r3), Map.of("a", 300_000L, "b", 300_000L, "c", 300_000L), 1_000_000L);
 
@@ -52,12 +52,12 @@ class BinPackerTest {
 
   @Test
   void tablesOverLimit_twoBins() {
-    SchedulerOperationRow r1 = row("a");
-    SchedulerOperationRow r2 = row("b");
-    SchedulerOperationRow r3 = row("c");
+    TableOperationRow r1 = row("a");
+    TableOperationRow r2 = row("b");
+    TableOperationRow r3 = row("c");
 
     // 600k + 600k would exceed 1M; 400k fits after 600k
-    List<List<SchedulerOperationRow>> bins =
+    List<List<TableOperationRow>> bins =
         BinPacker.pack(
             List.of(r1, r2, r3), Map.of("a", 600_000L, "b", 600_000L, "c", 400_000L), 1_000_000L);
 
@@ -68,8 +68,8 @@ class BinPackerTest {
 
   @Test
   void largeTableAlone_exceedsLimitSingleBin() {
-    SchedulerOperationRow r = row("big");
-    List<List<SchedulerOperationRow>> bins =
+    TableOperationRow r = row("big");
+    List<List<TableOperationRow>> bins =
         BinPacker.pack(List.of(r), Map.of("big", 5_000_000L), 1_000_000L);
 
     assertThat(bins).hasSize(1);
@@ -78,11 +78,11 @@ class BinPackerTest {
 
   @Test
   void noStats_fileCountZero_groupedNormally() {
-    SchedulerOperationRow r1 = row("x");
-    SchedulerOperationRow r2 = row("y");
+    TableOperationRow r1 = row("x");
+    TableOperationRow r2 = row("y");
 
     // No stats entries — both get cost 0, both fit in one bin
-    List<List<SchedulerOperationRow>> bins = BinPacker.pack(List.of(r1, r2), Map.of(), 1_000_000L);
+    List<List<TableOperationRow>> bins = BinPacker.pack(List.of(r1, r2), Map.of(), 1_000_000L);
 
     assertThat(bins).hasSize(1);
     assertThat(bins.get(0)).hasSize(2);
@@ -90,10 +90,10 @@ class BinPackerTest {
 
   @Test
   void sortedDescending_largestTablesFirst() {
-    SchedulerOperationRow small = row("small");
-    SchedulerOperationRow large = row("large");
+    TableOperationRow small = row("small");
+    TableOperationRow large = row("large");
 
-    List<List<SchedulerOperationRow>> bins =
+    List<List<TableOperationRow>> bins =
         BinPacker.pack(List.of(small, large), Map.of("small", 100L, "large", 900_000L), 1_000_000L);
 
     // Both fit in one bin, large should appear first due to descending sort

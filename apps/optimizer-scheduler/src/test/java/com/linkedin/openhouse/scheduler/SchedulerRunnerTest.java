@@ -11,11 +11,12 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
+import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
+import com.linkedin.openhouse.optimizer.model.TableStats;
+import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
+import com.linkedin.openhouse.optimizer.repository.TableStatsRepository;
 import com.linkedin.openhouse.scheduler.client.JobsServiceClient;
-import com.linkedin.openhouse.scheduler.entity.SchedulerOperationRow;
-import com.linkedin.openhouse.scheduler.entity.SchedulerStatsRow;
-import com.linkedin.openhouse.scheduler.repository.SchedulerOperationsRepository;
-import com.linkedin.openhouse.scheduler.repository.SchedulerStatsRepository;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -31,8 +32,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class SchedulerRunnerTest {
 
-  @Mock private SchedulerOperationsRepository operationsRepo;
-  @Mock private SchedulerStatsRepository statsRepo;
+  @Mock private TableOperationsRepository operationsRepo;
+  @Mock private TableStatsRepository statsRepo;
   @Mock private JobsServiceClient jobsClient;
 
   @InjectMocks private SchedulerRunner runner;
@@ -45,8 +46,8 @@ class SchedulerRunnerTest {
         runner, "resultsEndpoint", "http://localhost:8080/v1/table-operations");
   }
 
-  private SchedulerOperationRow pendingRow(String uuid, String db, String table) {
-    return SchedulerOperationRow.builder()
+  private TableOperationRow pendingRow(String uuid, String db, String table) {
+    return TableOperationRow.builder()
         .id(UUID.randomUUID().toString())
         .tableUuid(uuid)
         .databaseName(db)
@@ -57,9 +58,12 @@ class SchedulerRunnerTest {
         .build();
   }
 
-  private SchedulerStatsRow statsRow(String uuid, long numCurrentFiles) {
-    String statsJson = "{\"snapshot\":{\"numCurrentFiles\":" + numCurrentFiles + "}}";
-    return SchedulerStatsRow.builder().tableUuid(uuid).stats(statsJson).build();
+  private TableStatsRow statsRow(String uuid, long numCurrentFiles) {
+    TableStats stats =
+        TableStats.builder()
+            .snapshot(TableStats.SnapshotMetrics.builder().numCurrentFiles(numCurrentFiles).build())
+            .build();
+    return TableStatsRow.builder().tableUuid(uuid).stats(stats).build();
   }
 
   @Test
@@ -72,17 +76,20 @@ class SchedulerRunnerTest {
   }
 
   @Test
-  void schedule_pendingOps_submitsBatchedJob() {
+  void schedule_claimsBeforeSubmit() {
     String uuid = UUID.randomUUID().toString();
-    SchedulerOperationRow row = pendingRow(uuid, "db1", "tbl1");
+    TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
     when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of(statsRow(uuid, 100_000L)));
+    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.of("job-123"));
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
 
     runner.schedule();
+
+    // Claim happens first; only then is the job submitted.
+    verify(operationsRepo).claimOperation(eq(row.getId()), eq(0L), any());
 
     ArgumentCaptor<List<String>> tableNamesCaptor = ArgumentCaptor.forClass(List.class);
     ArgumentCaptor<List<String>> opIdsCaptor = ArgumentCaptor.forClass(List.class);
@@ -99,32 +106,51 @@ class SchedulerRunnerTest {
   }
 
   @Test
-  void schedule_jobLaunchFails_rowsRemainPending() {
+  void schedule_jobLaunchFails_rowsStayScheduled() {
     String uuid = UUID.randomUUID().toString();
-    SchedulerOperationRow row = pendingRow(uuid, "db1", "tbl1");
+    TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
     when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
+    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.empty());
 
     runner.schedule();
 
-    verify(operationsRepo, never()).claimOperation(anyString(), anyLong(), any());
+    // Rows are claimed (SCHEDULED) before launch; launch failure leaves them SCHEDULED for
+    // a watchdog to reset.
+    verify(operationsRepo).claimOperation(eq(row.getId()), eq(0L), any());
+    verify(jobsClient).launch(anyString(), anyString(), anyList(), anyList(), anyString());
   }
 
   @Test
-  void schedule_claimsRowsAfterLaunch() {
+  void schedule_rowAlreadyClaimed_skipsSubmit() {
+    String uuid = UUID.randomUUID().toString();
+    TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
+
+    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
+    when(statsRepo.findAllById(any())).thenReturn(List.of());
+    // claimOperation returns 0 — another instance already claimed this row.
+    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(0);
+
+    runner.schedule();
+
+    verify(jobsClient, never()).launch(anyString(), anyString(), anyList(), anyList(), anyString());
+  }
+
+  @Test
+  void schedule_claimsAllRowsInBin() {
     String uuid1 = UUID.randomUUID().toString();
     String uuid2 = UUID.randomUUID().toString();
-    SchedulerOperationRow row1 = pendingRow(uuid1, "db1", "tbl1");
-    SchedulerOperationRow row2 = pendingRow(uuid2, "db1", "tbl2");
+    TableOperationRow row1 = pendingRow(uuid1, "db1", "tbl1");
+    TableOperationRow row2 = pendingRow(uuid2, "db1", "tbl2");
 
     when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row1, row2));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
+    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.of("job-456"));
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
 
     runner.schedule();
 
