@@ -59,4 +59,13 @@ public class Policies {
   @Schema(description = "Locking state of table.", example = "{lockState: {locked: true/false}")
   @Valid
   LockState lockState;
+
+  @Schema(
+      description =
+          "Performance tier for the table, controlling HDFS block replication. Higher tiers use "
+              + "more storage but provide better read performance. When auto=true the system manages "
+              + "the resolved tier. When auto=false the customer pins it.",
+      example = "{performanceTier:{auto:true, resolved:'STANDARD'}}")
+  @Valid
+  PerformanceTierConfig performanceTier;
 }

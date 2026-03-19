@@ -58,6 +58,7 @@ import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.expressions.Term;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Objects;
 
@@ -318,12 +319,13 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       }
 
       final TableMetadata updatedMtDataRef = metadataToCommit;
+      final FileIO writeIO = resolveWriteIO(metadataToCommit);
       long metadataUpdateStartTime = System.currentTimeMillis();
       try {
         metricsReporter.executeWithStats(
             () ->
                 TableMetadataParser.write(
-                    updatedMtDataRef, io().newOutputFile(newMetadataLocation)),
+                    updatedMtDataRef, writeIO.newOutputFile(newMetadataLocation)),
             InternalCatalogMetricsConstant.METADATA_UPDATE_LATENCY,
             getCatalogMetricTags());
         log.info(
@@ -743,5 +745,36 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     return new GsonBuilder()
         .create()
         .fromJson(serializedNewIntermediateSchemas, new TypeToken<List<String>>() {}.getType());
+  }
+
+  /**
+   * Returns a FileIO configured with the table's resolved HDFS replication factor. Falls back to
+   * the default FileIO if the table has no performance tier, or if the storage does not support
+   * per-file replication configuration (e.g. S3, ADLS).
+   */
+  private FileIO resolveWriteIO(TableMetadata metadata) {
+    String replicationStr =
+        metadata.properties().get(CatalogConstants.OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY);
+    if (replicationStr == null) {
+      return this.fileIO;
+    }
+    try {
+      Storage storage = fileIOManager.getStorage(this.fileIO);
+      if (!(storage.getClient() instanceof HdfsStorageClient)
+          && !(storage.getClient() instanceof LocalStorageClient)) {
+        return this.fileIO;
+      }
+      FileSystem fs = (FileSystem) storage.getClient().getNativeClient();
+      org.apache.hadoop.conf.Configuration conf =
+          new org.apache.hadoop.conf.Configuration(fs.getConf());
+      conf.setInt("dfs.replication", Integer.parseInt(replicationStr));
+      return new HadoopFileIO(conf);
+    } catch (Exception e) {
+      log.warn(
+          "Failed to create replication-aware FileIO for table {}, falling back to default. Error: {}",
+          tableIdentifier,
+          e.getMessage());
+      return this.fileIO;
+    }
   }
 }

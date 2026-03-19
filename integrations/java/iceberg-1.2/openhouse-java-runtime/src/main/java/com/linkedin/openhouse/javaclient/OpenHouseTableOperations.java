@@ -24,6 +24,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SnapshotParser;
@@ -35,6 +36,7 @@ import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
@@ -60,15 +62,57 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
   @Getter(AccessLevel.PROTECTED)
   private String cluster;
 
+  /**
+   * Hadoop configuration used to construct replication-aware FileIO instances. May be null for
+   * non-HDFS storage, in which case {@code fileIO} is always returned as-is.
+   */
+  @Getter(AccessLevel.PROTECTED)
+  private Configuration conf;
+
+  // Cache: avoids creating a new HadoopFileIO on every io() call when replication is stable.
+  private transient short cachedReplication = -1;
+  private transient FileIO cachedReplicationFileIO;
+
   @Override
   protected String tableName() {
     return tableIdentifier.toString();
   }
 
+  /**
+   * Returns a FileIO configured with the table's resolved HDFS replication factor. If the table has
+   * no performance-tier replication property, or no Hadoop conf was provided, returns the base
+   * fileIO unchanged.
+   */
   @Override
   public FileIO io() {
-    return fileIO;
+    if (conf == null || current() == null) {
+      return fileIO;
+    }
+    String replicationStr = current().properties().get(OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY);
+    if (replicationStr == null) {
+      return fileIO;
+    }
+    try {
+      short replication = Short.parseShort(replicationStr);
+      if (replication == cachedReplication && cachedReplicationFileIO != null) {
+        return cachedReplicationFileIO;
+      }
+      Configuration overrideConf = new Configuration(conf);
+      overrideConf.setInt("dfs.replication", replication);
+      cachedReplicationFileIO = new HadoopFileIO(overrideConf);
+      cachedReplication = replication;
+      return cachedReplicationFileIO;
+    } catch (Exception e) {
+      log.warn(
+          "Failed to create replication-aware FileIO for table {}, using default. Error: {}",
+          tableName(),
+          e.getMessage());
+      return fileIO;
+    }
   }
+
+  private static final String OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY =
+      "openhouse.performance-tier.hdfs-replication";
 
   private static final String UPDATED_OPENHOUSE_POLICY_KEY = "updated.openhouse.policy";
   private static final String OPENHOUSE_TABLE_TYPE_KEY = "openhouse.tableType";

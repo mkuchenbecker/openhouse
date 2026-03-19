@@ -26,6 +26,14 @@ public final class CatalogConstants {
   /** Used to uniquely identify an update towards a table from user side. */
   public static final String COMMIT_KEY = "commitKey";
 
+  /**
+   * Denormalized HDFS block replication factor derived from the table's performance tier. Written
+   * by the Tables Service at create/update time. Read by client-side FileIO and server-side commit
+   * to configure dfs.replication for new file writes.
+   */
+  public static final String OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY =
+      "openhouse.performance-tier.hdfs-replication";
+
   public static final String EVOLVED_SCHEMA_KEY = "evolved.table.schema";
 
   static final String FEATURE_TOGGLE_STOP_CREATE = "stop_create";

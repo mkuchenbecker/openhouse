@@ -1721,6 +1721,46 @@ public class OpenHouseInternalTableOperationsTest {
   }
 
   /**
+   * Phase 4.2: verifies that when OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY is present in table
+   * properties, resolveWriteIO takes the HDFS/local path and calls fs.getConf() to build a
+   * replication-aware FileIO.
+   */
+  @Test
+  void testResolveWriteIOUsesPerformanceTierReplication() throws IOException {
+    Map<String, String> properties = new HashMap<>();
+    properties.put(CatalogConstants.OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY, "9");
+    TableMetadata metadata = BASE_TABLE_METADATA.replaceProperties(properties);
+
+    LocalStorage mockLocalStorage = mock(LocalStorage.class);
+    when(fileIOManager.getStorage(any(FileIO.class))).thenReturn(mockLocalStorage);
+    when(mockLocalStorage.getClient()).thenReturn((StorageClient) mockLocalStorageClient);
+    when(mockLocalStorageClient.getNativeClient()).thenReturn(mockFileSystem);
+    when(mockFileSystem.getConf()).thenReturn(new Configuration());
+
+    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, metadata);
+      verify(mockFileSystem).getConf();
+    }
+  }
+
+  /**
+   * Phase 4.2: verifies that when OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY is absent, the default
+   * FileIO is used and fs.getConf() is never called for replication purposes.
+   */
+  @Test
+  void testResolveWriteIOFallsBackToDefaultWhenNoReplicationProperty() throws IOException {
+    Map<String, String> properties = new HashMap<>(BASE_TABLE_METADATA.properties());
+    TableMetadata metadata = BASE_TABLE_METADATA.replaceProperties(properties);
+
+    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, metadata);
+      verify(mockFileSystem, never()).getConf();
+    }
+  }
+
+  /**
    * Tests that stale snapshot detection returns 409 Conflict instead of 400 Bad Request.
    *
    * <p>This test reproduces the production scenario where:

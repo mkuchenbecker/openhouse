@@ -282,6 +282,7 @@ public class OpenHouseCatalog extends BaseMetastoreCatalog
         .tableApi(tableApi)
         .snapshotApi(snapshotApi)
         .cluster(cluster)
+        .conf(this.conf)
         .build();
   }
 

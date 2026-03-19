@@ -4,6 +4,8 @@ import static com.linkedin.openhouse.tables.model.TableModelConstants.*;
 
 import com.google.gson.GsonBuilder;
 import com.jayway.jsonpath.JsonPath;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTier;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTierConfig;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -149,6 +151,36 @@ public class PoliciesSpecMapperTest {
     ObjectNode nodePolicies = factory.objectNode();
     nodePolicies.put("policies", node);
     return node.toString();
+  }
+
+  @Test
+  public void testPerformanceTierDefaultResolution() {
+    // null performanceTier → auto=true, resolved=STANDARD (cluster default)
+    Policies input = Policies.builder().build();
+    Policies resolved = policiesMapper.mapPolicies(input);
+    Assertions.assertNotNull(resolved.getPerformanceTier());
+    Assertions.assertTrue(resolved.getPerformanceTier().isAuto());
+    Assertions.assertEquals(PerformanceTier.STANDARD, resolved.getPerformanceTier().getResolved());
+  }
+
+  @Test
+  public void testPerformanceTierCustomerPinnedPreserved() {
+    // auto=false, resolved=HIGH → kept as-is
+    Policies input =
+        Policies.builder()
+            .performanceTier(
+                PerformanceTierConfig.builder().auto(false).resolved(PerformanceTier.HIGH).build())
+            .build();
+    Policies resolved = policiesMapper.mapPolicies(input);
+    Assertions.assertFalse(resolved.getPerformanceTier().isAuto());
+    Assertions.assertEquals(PerformanceTier.HIGH, resolved.getPerformanceTier().getResolved());
+  }
+
+  @Test
+  public void testGetHdfsReplicationFactor() {
+    Assertions.assertEquals(3, policiesMapper.getHdfsReplicationFactor(PerformanceTier.STANDARD));
+    Assertions.assertEquals(9, policiesMapper.getHdfsReplicationFactor(PerformanceTier.HIGH));
+    Assertions.assertEquals(27, policiesMapper.getHdfsReplicationFactor(PerformanceTier.MAX));
   }
 
   @Test
