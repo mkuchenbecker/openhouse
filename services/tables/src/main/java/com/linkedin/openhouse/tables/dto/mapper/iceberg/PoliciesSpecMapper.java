@@ -3,6 +3,9 @@ package com.linkedin.openhouse.tables.dto.mapper.iceberg;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTier;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTierConfig;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Replication;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ReplicationConfig;
@@ -16,9 +19,12 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.mapstruct.Mapper;
 import org.mapstruct.Named;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Mapper(componentModel = "spring")
 public class PoliciesSpecMapper {
+
+  @Autowired ClusterProperties clusterProperties;
 
   /**
    * Given an Iceberg {@link TableDto}, serialize to JsonString format.
@@ -101,7 +107,57 @@ public class PoliciesSpecMapper {
               .replication(mapReplicationPolicies(policies.getReplication()))
               .build();
     }
+    if (policies != null) {
+      updatedPolicies =
+          updatedPolicies
+              .toBuilder()
+              .performanceTier(resolvePerformanceTier(policies.getPerformanceTier()))
+              .build();
+    }
     return updatedPolicies;
+  }
+
+  /**
+   * Resolves the performance tier config by filling in defaults when the field is absent or when
+   * auto=true and no resolved tier has been set yet.
+   *
+   * <p>Rules:
+   *
+   * <ul>
+   *   <li>null input → {auto: true, resolved: &lt;cluster default&gt;}
+   *   <li>auto=true, resolved=null → {auto: true, resolved: &lt;cluster default&gt;}
+   *   <li>auto=true, resolved=non-null → keep as-is (autotuner already set it)
+   *   <li>auto=false, resolved=non-null → keep as-is (customer pinned it)
+   * </ul>
+   */
+  PerformanceTierConfig resolvePerformanceTier(PerformanceTierConfig input) {
+    PerformanceTier clusterDefault =
+        PerformanceTier.valueOf(clusterProperties.getClusterPerformanceTierDefault());
+    if (input == null) {
+      return PerformanceTierConfig.builder().auto(true).resolved(clusterDefault).build();
+    }
+    if (input.getResolved() == null) {
+      return input.toBuilder().resolved(clusterDefault).build();
+    }
+    return input;
+  }
+
+  /**
+   * Returns the HDFS replication factor for the given tier as configured in this cluster.
+   *
+   * @param tier the performance tier
+   * @return HDFS block replication factor
+   */
+  public short getHdfsReplicationFactor(PerformanceTier tier) {
+    switch (tier) {
+      case HIGH:
+        return (short) clusterProperties.getClusterPerformanceTierReplicationHigh();
+      case MAX:
+        return (short) clusterProperties.getClusterPerformanceTierReplicationMax();
+      case STANDARD:
+      default:
+        return (short) clusterProperties.getClusterPerformanceTierReplicationStandard();
+    }
   }
 
   /**

@@ -39,6 +39,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
 
   @Autowired private HistoryPolicySpecValidator historyPolicySpecValidator;
 
+  @Autowired private PerformanceTierValidator performanceTierValidator;
+
   @Override
   public void validateGetTable(String databaseId, String tableId) {
     List<String> validationFailures = new ArrayList<>();
@@ -190,7 +192,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
 
     List<PolicySpecValidator> validators =
         Arrays.asList(
-            retentionPolicySpecValidator, replicationConfigValidator, historyPolicySpecValidator);
+            retentionPolicySpecValidator,
+            replicationConfigValidator,
+            historyPolicySpecValidator,
+            performanceTierValidator);
     for (PolicySpecValidator validator : validators) {
       if (!validator.validate(createUpdateTableRequestBody, tableUri)) {
         throw new RequestValidationFailureException(

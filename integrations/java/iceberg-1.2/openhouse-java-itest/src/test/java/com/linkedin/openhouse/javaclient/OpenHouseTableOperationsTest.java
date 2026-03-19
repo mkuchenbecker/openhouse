@@ -14,6 +14,7 @@ import com.linkedin.openhouse.relocated.org.springframework.http.HttpStatus;
 import com.linkedin.openhouse.relocated.org.springframework.web.reactive.function.client.WebClientRequestException;
 import com.linkedin.openhouse.relocated.org.springframework.web.reactive.function.client.WebClientResponseException;
 import com.linkedin.openhouse.relocated.reactor.core.publisher.Mono;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -22,14 +23,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.commons.compress.utils.Lists;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.BaseMetastoreTableOperations;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -48,7 +54,8 @@ public class OpenHouseTableOperationsTest {
         TableApi tableApi,
         SnapshotApi snapshotApi,
         String cluster) {
-      super(tableIdentifier, fileIO, tableApi, snapshotApi, cluster);
+      // conf=null, cachedReplication=-1, cachedReplicationFileIO=null
+      super(tableIdentifier, fileIO, tableApi, snapshotApi, cluster, null, (short) -1, null);
     }
 
     @Override
@@ -478,5 +485,106 @@ public class OpenHouseTableOperationsTest {
         History.GranularityEnum.DAY, updatedPolicies.getHistory().getGranularity());
     Assertions.assertEquals(2, updatedPolicies.getHistory().getVersions());
     Assertions.assertEquals(true, updatedPolicies.getSharingEnabled());
+  }
+
+  // ---- Phase 5.3: client-side io() replication tests ----
+
+  private TableMetadata buildMetadataWithProperty(String key, String value) {
+    Schema schema = new Schema(Types.NestedField.required(1, "col", Types.StringType.get()));
+    Map<String, String> props = new HashMap<>();
+    if (key != null) {
+      props.put(key, value);
+    }
+    return TableMetadata.newTableMetadata(
+        schema, PartitionSpec.unpartitioned(), "/tmp/test-table", ImmutableMap.copyOf(props));
+  }
+
+  private OpenHouseTableOperations buildOpsWithConf(FileIO fileIO, Configuration conf)
+      throws Exception {
+    OpenHouseTableOperations ops =
+        OpenHouseTableOperations.builder()
+            .tableIdentifier(TableIdentifier.of("db", "tbl"))
+            .fileIO(fileIO)
+            .tableApi(mock(TableApi.class))
+            .snapshotApi(mock(SnapshotApi.class))
+            .cluster("test-cluster")
+            .conf(conf)
+            .build();
+    return ops;
+  }
+
+  private void injectCurrentMetadata(OpenHouseTableOperations ops, TableMetadata metadata)
+      throws Exception {
+    Field metadataField = BaseMetastoreTableOperations.class.getDeclaredField("currentMetadata");
+    metadataField.setAccessible(true);
+    metadataField.set(ops, metadata);
+    // Prevent current() from triggering a refresh (which would call doRefresh → TableApi)
+    Field shouldRefreshField = BaseMetastoreTableOperations.class.getDeclaredField("shouldRefresh");
+    shouldRefreshField.setAccessible(true);
+    shouldRefreshField.set(ops, false);
+  }
+
+  /**
+   * Phase 5.3: io() returns a HadoopFileIO (not the original fileIO) when
+   * openhouse.performance-tier.hdfs-replication is set in table properties.
+   */
+  @Test
+  public void testIoReturnsReplicationAwareFileIO() throws Exception {
+    FileIO mockFileIO = mock(FileIO.class);
+    Configuration hadoopConf = new Configuration();
+    OpenHouseTableOperations ops = buildOpsWithConf(mockFileIO, hadoopConf);
+    injectCurrentMetadata(
+        ops, buildMetadataWithProperty("openhouse.performance-tier.hdfs-replication", "9"));
+
+    FileIO result = ops.io();
+
+    Assertions.assertNotSame(mockFileIO, result);
+    Assertions.assertInstanceOf(HadoopFileIO.class, result);
+  }
+
+  /** Phase 5.3: io() falls back to the original fileIO when the replication property is absent. */
+  @Test
+  public void testIoReturnsFallbackFileIOWhenPropertyAbsent() throws Exception {
+    FileIO mockFileIO = mock(FileIO.class);
+    Configuration hadoopConf = new Configuration();
+    OpenHouseTableOperations ops = buildOpsWithConf(mockFileIO, hadoopConf);
+    injectCurrentMetadata(ops, buildMetadataWithProperty(null, null));
+
+    FileIO result = ops.io();
+
+    Assertions.assertSame(mockFileIO, result);
+  }
+
+  /**
+   * Phase 5.3: io() falls back to the original fileIO when conf is null (non-HDFS environments).
+   */
+  @Test
+  public void testIoReturnsFallbackFileIOWhenConfIsNull() throws Exception {
+    FileIO mockFileIO = mock(FileIO.class);
+    OpenHouseTableOperations ops = buildOpsWithConf(mockFileIO, null);
+    injectCurrentMetadata(
+        ops, buildMetadataWithProperty("openhouse.performance-tier.hdfs-replication", "9"));
+
+    FileIO result = ops.io();
+
+    Assertions.assertSame(mockFileIO, result);
+  }
+
+  /**
+   * Phase 5.3: io() returns the same cached FileIO instance on repeated calls with the same
+   * replication value.
+   */
+  @Test
+  public void testIoCachesReplicationAwareFileIO() throws Exception {
+    FileIO mockFileIO = mock(FileIO.class);
+    Configuration hadoopConf = new Configuration();
+    OpenHouseTableOperations ops = buildOpsWithConf(mockFileIO, hadoopConf);
+    injectCurrentMetadata(
+        ops, buildMetadataWithProperty("openhouse.performance-tier.hdfs-replication", "9"));
+
+    FileIO first = ops.io();
+    FileIO second = ops.io();
+
+    Assertions.assertSame(first, second, "io() should return the cached FileIO on repeated calls");
   }
 }

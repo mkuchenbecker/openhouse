@@ -152,6 +152,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       boolean snapshotsUpdated = doUpdateSnapshotsIfNeeded(updateProperties, tableDto);
       boolean policiesUpdated =
           tablePolicyUpdater.updatePoliciesIfNeeded(updateProperties, tableDto, table.properties());
+      updatePerformanceTierReplication(updateProperties, tableDto);
       boolean sortOrderUpdated =
           doUpdateSortOrderIfNeeded(updateProperties, tableDto, table, writeSchema);
       // TODO remove tableTypeAdded after all existing tables have been back-filled to have a
@@ -384,6 +385,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     // Populate policies
     String policiesString = policiesMapper.toPoliciesJsonString(tableDto);
     propertiesMap.put(InternalRepositoryUtils.POLICIES_KEY, policiesString);
+
+    // Denormalize the HDFS replication factor so clients can read it without cluster config
+    putPerformanceTierReplication(propertiesMap, tableDto);
 
     if (!CollectionUtils.isEmpty(tableDto.getJsonSnapshots())) {
       meterRegistry.counter(MetricsConstant.REPO_TABLE_CREATED_WITH_DATA_CTR).increment();
@@ -785,5 +789,35 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     return Iterators.elementsEqual(
         before.fields().stream().map(PartitionField::name).iterator(),
         newSpec.fields().stream().map(PartitionField::name).iterator());
+  }
+
+  /**
+   * Writes the denormalized HDFS replication factor into the properties map at table creation time.
+   * Reads the resolved performance tier from the tableDto policies and maps it to a replication
+   * factor using cluster configuration via {@link PoliciesSpecMapper#getHdfsReplicationFactor}.
+   */
+  private void putPerformanceTierReplication(Map<String, String> propertiesMap, TableDto tableDto) {
+    com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTierConfig tier =
+        tableDto.getPolicies() != null ? tableDto.getPolicies().getPerformanceTier() : null;
+    if (tier != null && tier.getResolved() != null) {
+      propertiesMap.put(
+          OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY,
+          String.valueOf(policiesMapper.getHdfsReplicationFactor(tier.getResolved())));
+    }
+  }
+
+  /**
+   * Writes the denormalized HDFS replication factor into the update properties at table update
+   * time.
+   */
+  private void updatePerformanceTierReplication(
+      UpdateProperties updateProperties, TableDto tableDto) {
+    com.linkedin.openhouse.tables.api.spec.v0.request.components.PerformanceTierConfig tier =
+        tableDto.getPolicies() != null ? tableDto.getPolicies().getPerformanceTier() : null;
+    if (tier != null && tier.getResolved() != null) {
+      updateProperties.set(
+          OPENHOUSE_PERFORMANCE_TIER_REPLICATION_KEY,
+          String.valueOf(policiesMapper.getHdfsReplicationFactor(tier.getResolved())));
+    }
   }
 }

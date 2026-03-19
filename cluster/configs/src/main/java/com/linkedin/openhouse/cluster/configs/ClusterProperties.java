@@ -96,4 +96,18 @@ public class ClusterProperties {
   // string
   @Value("${cluster.tables.allowed-client-name-values:}")
   private List<String> allowedClientNameValues;
+
+  // Performance tier configuration — maps tier names to HDFS block replication factors.
+  // Operators configure these per cluster; defaults suit a large multi-hundred-PB cluster.
+  @Value("${cluster.performance-tier.default-tier:STANDARD}")
+  private String clusterPerformanceTierDefault;
+
+  @Value("${cluster.performance-tier.hdfs-replication.STANDARD:3}")
+  private int clusterPerformanceTierReplicationStandard;
+
+  @Value("${cluster.performance-tier.hdfs-replication.HIGH:9}")
+  private int clusterPerformanceTierReplicationHigh;
+
+  @Value("${cluster.performance-tier.hdfs-replication.MAX:27}")
+  private int clusterPerformanceTierReplicationMax;
 }
