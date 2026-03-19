@@ -10,8 +10,6 @@ import javax.persistence.Convert;
 import javax.persistence.Entity;
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.Index;
 import javax.persistence.Table;
@@ -25,9 +23,10 @@ import lombok.NoArgsConstructor;
 /**
  * Append-only record of a completed Spark maintenance job.
  *
- * <p>Written by the SparkJob after each run. No unique constraint — multiple runs of the same
- * operation on the same table produce multiple rows. Auto-increment PK avoids coordination overhead
- * on high-volume writes.
+ * <p>Written by the Spark app after each table's operation finishes. The {@code id} is the same
+ * UUID as the originating {@code table_operations.id}, tying each history entry directly back to
+ * the specific operation cycle that produced it. Multiple runs of the same operation on the same
+ * table produce multiple rows (each cycle gets a new UUID from the Analyzer).
  */
 @Entity
 @Table(
@@ -46,10 +45,10 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PROTECTED)
 public class TableOperationsHistoryRow {
 
+  /** Same UUID as the originating {@code table_operations.id}. Set by the caller; not generated. */
   @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
-  @Column(name = "id")
-  private Long id;
+  @Column(name = "id", nullable = false, length = 36)
+  private String id;
 
   @Column(name = "table_uuid", nullable = false, length = 36)
   private String tableUuid;

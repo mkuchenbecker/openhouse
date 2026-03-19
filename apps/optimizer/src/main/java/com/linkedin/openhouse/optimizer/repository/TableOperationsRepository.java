@@ -38,8 +38,8 @@ public interface TableOperationsRepository extends JpaRepository<TableOperationR
    */
   @Modifying
   @Query(
-      "UPDATE TableOperationRow r SET r.status = 'SCHEDULED', r.scheduledAt = :now"
-          + " WHERE r.id = :id AND r.version = :version")
+      "UPDATE TableOperationRow r SET r.status = 'SCHEDULED', r.scheduledAt = :now,"
+          + " r.version = r.version + 1 WHERE r.id = :id AND r.version = :version")
   int claimOperation(
       @Param("id") String id, @Param("version") Long version, @Param("now") Instant now);
 }

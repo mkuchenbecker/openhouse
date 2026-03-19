@@ -13,8 +13,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TableOperationsHistoryDto {
 
-  /** Auto-increment; server-assigned. */
-  private Long id;
+  /** Same UUID as the originating {@code table_operations.id}; supplied by the caller. */
+  private String id;
 
   /** Stable table identity from the Tables Service. */
   private String tableUuid;

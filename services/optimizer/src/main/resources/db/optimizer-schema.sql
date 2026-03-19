@@ -20,11 +20,12 @@ CREATE TABLE IF NOT EXISTS table_stats (
   table_name       VARCHAR(255)  NOT NULL,
   stats            TEXT,
   table_properties TEXT,
+  updated_at       TIMESTAMP(6)  NOT NULL,
   PRIMARY KEY (table_uuid)
 );
 
 CREATE TABLE IF NOT EXISTS table_operations_history (
-  id             BIGINT        NOT NULL AUTO_INCREMENT,
+  id             VARCHAR(36)   NOT NULL,
   table_uuid     VARCHAR(36)   NOT NULL,
   database_name  VARCHAR(255)  NOT NULL,
   table_name     VARCHAR(255)  NOT NULL,

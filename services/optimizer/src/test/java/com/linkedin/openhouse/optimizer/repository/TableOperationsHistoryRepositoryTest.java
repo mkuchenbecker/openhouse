@@ -30,6 +30,7 @@ class TableOperationsHistoryRepositoryTest {
 
     repository.save(
         TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
             .tableUuid(tableUuid)
             .databaseName("db1")
             .tableName("tbl1")
@@ -41,6 +42,7 @@ class TableOperationsHistoryRepositoryTest {
 
     repository.save(
         TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
             .tableUuid(tableUuid)
             .databaseName("db1")
             .tableName("tbl1")
@@ -66,6 +68,7 @@ class TableOperationsHistoryRepositoryTest {
     for (int i = 0; i < 3; i++) {
       repository.save(
           TableOperationsHistoryRow.builder()
+              .id(UUID.randomUUID().toString())
               .tableUuid(tableUuid)
               .databaseName("db1")
               .tableName("tbl2")
@@ -86,6 +89,7 @@ class TableOperationsHistoryRepositoryTest {
     for (int i = 0; i < 5; i++) {
       repository.save(
           TableOperationsHistoryRow.builder()
+              .id(UUID.randomUUID().toString())
               .tableUuid(tableUuid)
               .databaseName("db1")
               .tableName("tbl3")

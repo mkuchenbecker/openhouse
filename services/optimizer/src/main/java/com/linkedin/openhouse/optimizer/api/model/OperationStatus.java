@@ -13,5 +13,12 @@ public enum OperationStatus {
   SUCCESS,
 
   /** The Spark job failed or was lost without a response. */
-  FAILED
+  FAILED,
+
+  /**
+   * Marked by the Scheduler when it detects duplicate PENDING rows for the same {@code (table_uuid,
+   * operation_type)}. Only the most-recent PENDING row is claimed; older duplicates are CANCELED
+   * before the claim step.
+   */
+  CANCELED
 }

@@ -20,9 +20,13 @@ public class OrphanFilesDeletionAnalyzer implements OperationAnalyzer {
   @Autowired
   public OrphanFilesDeletionAnalyzer(
       @Value("${ofd.success-retry-hours:24}") long successRetryHours,
-      @Value("${ofd.failure-retry-hours:1}") long failureRetryHours) {
+      @Value("${ofd.failure-retry-hours:1}") long failureRetryHours,
+      @Value("${ofd.scheduled-timeout-hours:6}") long scheduledTimeoutHours) {
     this.cadencePolicy =
-        new CadencePolicy(Duration.ofHours(successRetryHours), Duration.ofHours(failureRetryHours));
+        new CadencePolicy(
+            Duration.ofHours(successRetryHours),
+            Duration.ofHours(failureRetryHours),
+            Duration.ofHours(scheduledTimeoutHours));
   }
 
   /** Package-private for tests that supply a pre-built {@link CadencePolicy}. */

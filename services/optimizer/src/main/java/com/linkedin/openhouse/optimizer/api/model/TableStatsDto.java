@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.model;
 
+import java.time.Instant;
 import java.util.Map;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -18,4 +19,5 @@ public class TableStatsDto {
   private String tableName;
   private TableStats stats;
   private Map<String, String> tableProperties;
+  private Instant updatedAt;
 }

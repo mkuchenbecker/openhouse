@@ -13,7 +13,6 @@ import javax.persistence.Enumerated;
 import javax.persistence.Id;
 import javax.persistence.Index;
 import javax.persistence.Table;
-import javax.persistence.Version;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -79,7 +78,10 @@ public class TableOperationsRow {
   @Column(name = "scheduled_at")
   private Instant scheduledAt;
 
-  @Version
+  /**
+   * Manual optimistic lock for the Scheduler claim. Incremented by the raw {@code claimOperation}
+   * UPDATE query; must NOT use JPA {@code @Version} since the claim bypasses JPA entity management.
+   */
   @Column(name = "version")
   private Long version;
 

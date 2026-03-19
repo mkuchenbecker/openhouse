@@ -7,10 +7,8 @@ import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
-import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
-import com.linkedin.openhouse.optimizer.entity.TableOperationsRow;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsHistoryRepository;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
@@ -51,32 +49,12 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
         .collect(Collectors.toList());
   }
 
-  @Override
-  @Transactional
-  public TableOperationsDto upsertTableOperation(String id, UpsertTableOperationsRequest request) {
-    TableOperationsRow row =
-        operationsRepository
-            .findById(id)
-            .map(existing -> existing.toBuilder().metrics(request.getMetrics()).build())
-            .orElse(
-                TableOperationsRow.builder()
-                    .id(id)
-                    .tableUuid(request.getTableUuid())
-                    .databaseName(request.getDatabaseName())
-                    .tableName(request.getTableName())
-                    .operationType(request.getOperationType())
-                    .status(OperationStatus.PENDING)
-                    .createdAt(Instant.now())
-                    .metrics(request.getMetrics())
-                    .build());
-    return mapper.toDto(operationsRepository.save(row));
-  }
-
   // --- TableStats ---
 
   @Override
   @Transactional
   public TableStatsDto upsertTableStats(String tableUuid, UpsertTableStatsRequest request) {
+    Instant now = Instant.now();
     TableStatsRow row =
         statsRepository
             .findById(tableUuid)
@@ -88,6 +66,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                         .tableName(request.getTableName())
                         .stats(request.getStats())
                         .tableProperties(request.getTableProperties())
+                        .updatedAt(now)
                         .build())
             .orElse(
                 TableStatsRow.builder()
@@ -96,6 +75,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                     .tableName(request.getTableName())
                     .stats(request.getStats())
                     .tableProperties(request.getTableProperties())
+                    .updatedAt(now)
                     .build());
     return mapper.toDto(statsRepository.save(row));
   }
@@ -118,6 +98,11 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                         .metrics(request.getMetrics())
                         .build()))
         .map(mapper::toDto);
+  }
+
+  @Override
+  public Optional<TableOperationsDto> getTableOperation(String id) {
+    return operationsRepository.findById(id).map(mapper::toDto);
   }
 
   @Override

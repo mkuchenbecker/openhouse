@@ -16,13 +16,15 @@ class OrphanFilesDeletionAnalyzerTest {
 
   private static final Duration SUCCESS_INTERVAL = Duration.ofHours(24);
   private static final Duration FAILURE_INTERVAL = Duration.ofHours(1);
+  private static final Duration SCHEDULED_TIMEOUT = Duration.ofHours(6);
 
   private OrphanFilesDeletionAnalyzer analyzer;
 
   @BeforeEach
   void setUp() {
     analyzer =
-        new OrphanFilesDeletionAnalyzer(new CadencePolicy(SUCCESS_INTERVAL, FAILURE_INTERVAL));
+        new OrphanFilesDeletionAnalyzer(
+            new CadencePolicy(SUCCESS_INTERVAL, FAILURE_INTERVAL, SCHEDULED_TIMEOUT));
   }
 
   // --- isEnabled ---
@@ -64,11 +66,30 @@ class OrphanFilesDeletionAnalyzerTest {
   }
 
   @Test
-  void shouldSchedule_scheduled_returnsFalse() {
+  void shouldSchedule_scheduledWithinTimeout_returnsFalse() {
+    Instant recentlyScheduled = Instant.now().minus(SCHEDULED_TIMEOUT).plusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", recentlyScheduled))))
+        .isFalse();
+  }
+
+  @Test
+  void shouldSchedule_scheduledPastTimeout_returnsTrue() {
+    Instant longAgo = Instant.now().minus(SCHEDULED_TIMEOUT).minusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"), Optional.of(opWithStatus("SCHEDULED", longAgo))))
+        .isTrue();
+  }
+
+  @Test
+  void shouldSchedule_scheduledWithNullScheduledAt_returnsTrue() {
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("SCHEDULED", null))))
-        .isFalse();
+        .isTrue();
   }
 
   @Test

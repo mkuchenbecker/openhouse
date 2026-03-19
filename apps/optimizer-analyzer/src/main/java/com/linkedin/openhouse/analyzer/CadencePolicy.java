@@ -10,12 +10,18 @@ import lombok.RequiredArgsConstructor;
  * Encapsulates the time-based scheduling logic shared across operation types. An analyzer delegates
  * to {@link CadencePolicy} to decide whether to re-issue a recommendation for a table that already
  * has an active operation record.
+ *
+ * <p>The SCHEDULED timeout is a key safety mechanism: if a Spark job crashes without reporting
+ * back, the SCHEDULED row would otherwise block the table forever. When the row has been SCHEDULED
+ * longer than {@code scheduledTimeout}, the Analyzer treats it as failed and returns {@code true},
+ * causing a new PENDING row to be inserted (superseding the stale one).
  */
 @RequiredArgsConstructor
 public class CadencePolicy {
 
   private final Duration successRetryInterval;
   private final Duration failureRetryInterval;
+  private final Duration scheduledTimeout;
 
   /**
    * Returns {@code true} if a new or refreshed operation record should be upserted.
@@ -31,7 +37,7 @@ public class CadencePolicy {
       case "PENDING":
         return true;
       case "SCHEDULED":
-        return false;
+        return pastInterval(op.getScheduledAt(), scheduledTimeout);
       case "SUCCESS":
         return pastInterval(op.getScheduledAt(), successRetryInterval);
       case "FAILED":

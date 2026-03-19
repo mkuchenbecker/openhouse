@@ -3,7 +3,6 @@ package com.linkedin.openhouse.optimizer.api.controller;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
-import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -11,7 +10,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -26,19 +24,6 @@ public class TableOperationsController {
   private final OptimizerDataService service;
 
   /**
-   * Create or update an operation recommendation.
-   *
-   * <p>{@code id} is a client-generated UUID. On first call a new row is created with {@code
-   * status=PENDING}. On subsequent calls with the same {@code id} the metrics snapshot is
-   * refreshed. Idempotent: retrying with the same {@code id} is safe.
-   */
-  @PutMapping("/{id}")
-  public ResponseEntity<TableOperationsDto> upsertTableOperation(
-      @PathVariable String id, @RequestBody UpsertTableOperationsRequest request) {
-    return ResponseEntity.ok(service.upsertTableOperation(id, request));
-  }
-
-  /**
    * Transition an operation to SUCCESS or FAILED. Called by the Spark job after completing work for
    * a single table within a batch. Returns 404 if the operation does not exist.
    */
@@ -47,6 +32,18 @@ public class TableOperationsController {
       @PathVariable String id, @RequestBody PatchTableOperationRequest request) {
     return service
         .patchTableOperation(id, request)
+        .map(ResponseEntity::ok)
+        .orElse(ResponseEntity.notFound().build());
+  }
+
+  /**
+   * Fetch a single operation row by its ID, regardless of status. Returns 404 if not found. Used by
+   * the smoke test and monitoring to poll for SUCCESS after a Spark job completes.
+   */
+  @GetMapping("/{id}")
+  public ResponseEntity<TableOperationsDto> getTableOperation(@PathVariable String id) {
+    return service
+        .getTableOperation(id)
         .map(ResponseEntity::ok)
         .orElse(ResponseEntity.notFound().build());
   }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.linkedin.openhouse.optimizer.api.model.TableStats;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,6 +42,7 @@ class TableStatsRepositoryTest {
             .tableName("tbl1")
             .stats(stats)
             .tableProperties(Map.of("maintenance.optimizer.ofd.enabled", "true"))
+            .updatedAt(Instant.now())
             .build());
 
     Optional<TableStatsRow> found = repository.findById(tableUuid);
@@ -64,6 +66,7 @@ class TableStatsRepositoryTest {
                 TableStats.builder()
                     .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(1).build())
                     .build())
+            .updatedAt(Instant.now())
             .build());
 
     repository.save(
@@ -75,6 +78,7 @@ class TableStatsRepositoryTest {
                 TableStats.builder()
                     .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(10).build())
                     .build())
+            .updatedAt(Instant.now())
             .build());
 
     assertThat(repository.findAll()).hasSize(1);

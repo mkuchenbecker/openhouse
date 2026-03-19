@@ -5,7 +5,6 @@ import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
-import com.linkedin.openhouse.optimizer.api.model.UpsertTableOperationsRequest;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import java.util.List;
 import java.util.Optional;
@@ -22,20 +21,18 @@ public interface OptimizerDataService {
   List<TableOperationsDto> getAllTableOperations(OperationType operationType);
 
   /**
-   * Create or update an operation recommendation identified by {@code id}.
-   *
-   * <p>If a row with {@code id} exists, its {@code metrics} are updated. If not, a new row is
-   * inserted with {@code status=PENDING}. Fully idempotent: repeating the same call is safe.
-   */
-  TableOperationsDto upsertTableOperation(String id, UpsertTableOperationsRequest request);
-
-  /**
    * Transition an operation to {@code SUCCESS} or {@code FAILED}.
    *
    * <p>Called by the Spark job after completing work for a single table within a batch. Only {@code
    * SUCCESS} and {@code FAILED} are valid target statuses. Returns empty if the row does not exist.
    */
   Optional<TableOperationsDto> patchTableOperation(String id, PatchTableOperationRequest request);
+
+  /**
+   * Return the operation row for {@code id} regardless of status, or empty if it does not exist.
+   * Used to poll a specific operation (e.g. waiting for SUCCESS after a Spark job completes).
+   */
+  Optional<TableOperationsDto> getTableOperation(String id);
 
   // --- TableStats ---
 
