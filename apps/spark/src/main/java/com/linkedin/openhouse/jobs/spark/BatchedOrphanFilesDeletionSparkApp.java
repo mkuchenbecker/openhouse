@@ -11,11 +11,6 @@ import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import java.io.Serializable;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -30,6 +25,11 @@ import java.util.concurrent.TimeUnit;
 import lombok.Builder;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.commons.lang3.math.NumberUtils;
@@ -169,9 +169,12 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
 
   private void reportResults(
       List<OrphanDeletionResult> results, Map<String, String> tableToOperationId) throws Exception {
-    HttpClient client =
+    OkHttpClient client =
         resultsEndpoint != null
-            ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+            ? new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build()
             : null;
 
     int failureCount = 0;
@@ -202,7 +205,7 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
     }
   }
 
-  private void patchOperationStatus(HttpClient client, String id, OrphanDeletionResult result)
+  private void patchOperationStatus(OkHttpClient client, String id, OrphanDeletionResult result)
       throws Exception {
     OperationPatch patch =
         result.isSuccess()
@@ -212,18 +215,13 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
                 result.getErrorMessage(), result.getErrorType(), result.getDurationMs());
 
     String json = OBJECT_MAPPER.writeValueAsString(patch);
-    HttpResponse<Void> response =
-        client.send(
-            HttpRequest.newBuilder()
-                .uri(URI.create(resultsEndpoint + "/" + id))
-                .header("Content-Type", "application/json")
-                .method("PATCH", HttpRequest.BodyPublishers.ofString(json))
-                .timeout(Duration.ofSeconds(30))
-                .build(),
-            HttpResponse.BodyHandlers.discarding());
-    int status = response.statusCode();
-    if (status < 200 || status >= 300) {
-      throw new RuntimeException("PATCH operation/" + id + " returned HTTP " + status);
+    RequestBody body = RequestBody.create(json, MediaType.parse("application/json; charset=utf-8"));
+    Request request = new Request.Builder().url(resultsEndpoint + "/" + id).patch(body).build();
+    try (Response response = client.newCall(request).execute()) {
+      int status = response.code();
+      if (status < 200 || status >= 300) {
+        throw new RuntimeException("PATCH operation/" + id + " returned HTTP " + status);
+      }
     }
   }
 
@@ -333,14 +331,17 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
         idsStr != null ? Arrays.asList(idsStr.split(",")) : Collections.emptyList();
     String resultsEndpoint = cmdLine.getOptionValue("resultsEndpoint");
 
+    long rawTtl = NumberUtils.toLong(cmdLine.getOptionValue("ttl"), TimeUnit.DAYS.toSeconds(7));
+    // TTL=0 bypasses the minimum-age guard (for tests that seed orphan files and need
+    // them deleted immediately). Any other explicit value is clamped to the 1-day minimum.
+    long ttlSeconds = rawTtl == 0 ? 0 : Math.max(rawTtl, TimeUnit.DAYS.toSeconds(1));
+
     return new BatchedOrphanFilesDeletionSparkApp(
         getJobId(cmdLine),
         createStateManager(cmdLine, otelEmitter),
         tableNames,
         Integer.parseInt(cmdLine.getOptionValue("parallelism", "10")),
-        Math.max(
-            NumberUtils.toLong(cmdLine.getOptionValue("ttl"), TimeUnit.DAYS.toSeconds(7)),
-            TimeUnit.DAYS.toSeconds(1)),
+        ttlSeconds,
         otelEmitter,
         cmdLine.getOptionValue("backupDir", ".backup"),
         Integer.parseInt(cmdLine.getOptionValue("concurrentDeletes", "10")),
