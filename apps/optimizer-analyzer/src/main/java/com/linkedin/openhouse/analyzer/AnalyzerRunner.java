@@ -2,89 +2,136 @@ package com.linkedin.openhouse.analyzer;
 
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
+import com.linkedin.openhouse.optimizer.entity.TableOperationHistoryRow;
 import com.linkedin.openhouse.optimizer.entity.TableOperationRow;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
+import com.linkedin.openhouse.optimizer.repository.TableOperationHistoryRepository;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
 import com.linkedin.openhouse.optimizer.repository.TableStatsRepository;
 import java.time.Instant;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Core analysis logic. For each {@link OperationAnalyzer}, loads active operation records from the
- * optimizer DB via JPA, then iterates every table in {@code table_stats} and inserts PENDING rows
- * for eligible tables.
+ * Core analysis loop. Streams {@code table_stats} rows one at a time from MySQL, evaluating each
+ * table against every registered {@link OperationAnalyzer} in a single pass.
  *
- * <p>Invoked by {@link AnalyzerApplication}'s {@code CommandLineRunner} once per process run.
+ * <p>The two sides of the join — current operations and circuit-breaker history — are loaded into
+ * memory once per run before the stream opens. Both are naturally bounded (only tables with active
+ * or recently failed operations have rows), so holding them in maps is safe at any table scale.
+ *
+ * <p>{@code @Transactional} is required to keep the JDBC cursor alive for the duration of the
+ * stream. Writes ({@code operationsRepo.save}) participate in the same transaction, which is
+ * correct: the eligible set is small, so transaction size stays bounded.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class AnalyzerRunner {
 
-  private static final Set<String> ACTIVE_STATUSES = Set.of("PENDING", "SCHEDULED");
-
   private final List<OperationAnalyzer> analyzers;
   private final TableStatsRepository statsRepo;
   private final TableOperationsRepository operationsRepo;
+  private final TableOperationHistoryRepository historyRepo;
 
-  /** Run the full analysis loop once. */
+  /** Run the full analysis loop once, streaming table_stats with a single JDBC cursor. */
+  @Transactional
   public void analyze() {
-    List<TableSummary> allTables =
-        statsRepo.findAll().stream().map(this::toSummary).collect(Collectors.toList());
-    log.info("Found {} tables in optimizer table_stats", allTables.size());
+    // Pre-load the small sides of the joins — one query per analyzer type.
+    Map<String, Map<String, TableOperationRecord>> opsByType =
+        analyzers.stream()
+            .collect(
+                Collectors.toMap(
+                    OperationAnalyzer::getOperationType, a -> loadOpsMap(a.getOperationType())));
 
-    analyzers.forEach(
-        analyzer -> {
-          String operationType = analyzer.getOperationType();
+    Map<String, Map<String, List<TableOperationHistoryRow>>> historyByType =
+        analyzers.stream()
+            .collect(
+                Collectors.toMap(
+                    OperationAnalyzer::getOperationType,
+                    a -> loadHistoryMap(a.getOperationType())));
 
-          Map<String, TableOperationRecord> opsByUuid =
-              operationsRepo.findByTypeAndStatuses(operationType, ACTIVE_STATUSES).stream()
-                  .filter(e -> e.getTableUuid() != null)
-                  .collect(
-                      Collectors.toMap(
-                          TableOperationRow::getTableUuid, AnalyzerRunner::toRecord, (a, b) -> b));
-          log.info("Analyzer {} found {} active operations", operationType, opsByUuid.size());
+    // Single scan: each row is evaluated by all analyzers before moving to the next.
+    try (Stream<TableStatsRow> tables = statsRepo.streamAll()) {
+      tables
+          .filter(row -> row.getTableUuid() != null)
+          .forEach(
+              row -> {
+                TableSummary table = toSummary(row);
+                analyzers.forEach(
+                    analyzer -> {
+                      String type = analyzer.getOperationType();
+                      Optional<TableOperationRecord> currentOp =
+                          Optional.ofNullable(opsByType.get(type).get(row.getTableUuid()));
+                      List<TableOperationHistoryRow> history =
+                          historyByType
+                              .get(type)
+                              .getOrDefault(row.getTableUuid(), Collections.emptyList());
 
-          allTables.stream()
-              .filter(analyzer::isEnabled)
-              .filter(table -> table.getTableUuid() != null)
-              .forEach(
-                  table -> {
-                    String tableUuid = table.getTableUuid();
-                    Optional<TableOperationRecord> currentOp =
-                        Optional.ofNullable(opsByUuid.get(tableUuid));
-                    if (analyzer.shouldSchedule(table, currentOp) && currentOp.isEmpty()) {
-                      TableOperationRow entity =
-                          TableOperationRow.builder()
-                              .id(UUID.randomUUID().toString())
-                              .tableUuid(tableUuid)
-                              .databaseName(table.getDatabaseId())
-                              .tableName(table.getTableId())
-                              .operationType(operationType)
-                              .status("PENDING")
-                              .createdAt(Instant.now())
-                              .version(0L)
-                              .build();
-                      operationsRepo.save(entity);
-                      log.info(
-                          "Created PENDING {} operation for table {}.{}",
-                          operationType,
-                          table.getDatabaseId(),
-                          table.getTableId());
-                    }
-                  });
-        });
+                      if (analyzer.isEnabled(table)
+                          && analyzer.shouldSchedule(table, currentOp)
+                          && !isCircuitBroken(analyzer, row.getTableUuid(), history)) {
+                        operationsRepo.save(buildOperation(row, type));
+                        log.info(
+                            "Created PENDING {} operation for table {}.{}",
+                            type,
+                            row.getDatabaseId(),
+                            row.getTableName());
+                      }
+                    });
+              });
+    }
 
     log.info("Analysis complete");
+  }
+
+  /**
+   * Loads the most recent operation record per table for the given type. Deduplicates by keeping
+   * the newer row when a table has more than one active record.
+   */
+  private Map<String, TableOperationRecord> loadOpsMap(String operationType) {
+    Map<String, TableOperationRecord> map =
+        operationsRepo.findByType(operationType).stream()
+            .filter(e -> e.getTableUuid() != null)
+            .collect(
+                Collectors.toMap(
+                    TableOperationRow::getTableUuid,
+                    AnalyzerRunner::toRecord,
+                    (a, b) -> mostRecent(a, b)));
+    log.info("Analyzer {} found {} tables with operation history", operationType, map.size());
+    return map;
+  }
+
+  /**
+   * Loads all history rows for the given type and groups them by {@code tableUuid}, newest first.
+   * Called once per analyzer type to eliminate per-table N+1 queries in the circuit breaker check.
+   */
+  private Map<String, List<TableOperationHistoryRow>> loadHistoryMap(String operationType) {
+    return historyRepo.findAllByOperationType(operationType).stream()
+        .collect(Collectors.groupingBy(TableOperationHistoryRow::getTableUuid));
+  }
+
+  private TableOperationRow buildOperation(TableStatsRow row, String operationType) {
+    return TableOperationRow.builder()
+        .id(UUID.randomUUID().toString())
+        .tableUuid(row.getTableUuid())
+        .databaseName(row.getDatabaseId())
+        .tableName(row.getTableName())
+        .operationType(operationType)
+        .status("PENDING")
+        .createdAt(Instant.now())
+        .version(0L)
+        .build();
   }
 
   private TableSummary toSummary(TableStatsRow e) {
@@ -96,6 +143,34 @@ public class AnalyzerRunner {
             e.getTableProperties() != null ? e.getTableProperties() : Collections.emptyMap())
         .stats(e.getStats())
         .build();
+  }
+
+  /**
+   * Returns {@code true} if the circuit breaker has tripped. Uses the pre-loaded history list
+   * instead of querying the DB per table.
+   */
+  private boolean isCircuitBroken(
+      OperationAnalyzer analyzer, String tableUuid, List<TableOperationHistoryRow> history) {
+    int threshold = analyzer.getCircuitBreakerThreshold();
+    if (threshold <= 0 || history.size() < threshold) {
+      return false;
+    }
+    boolean allFailed =
+        history.stream().limit(threshold).allMatch(r -> "FAILED".equals(r.getStatus()));
+    if (allFailed) {
+      log.warn(
+          "Circuit breaker tripped for table {} operation {}: last {} attempts all FAILED",
+          tableUuid,
+          analyzer.getOperationType(),
+          threshold);
+    }
+    return allFailed;
+  }
+
+  private static TableOperationRecord mostRecent(TableOperationRecord a, TableOperationRecord b) {
+    Comparator<TableOperationRecord> byCreatedAt =
+        Comparator.comparing(r -> r.getCreatedAt() != null ? r.getCreatedAt() : Instant.EPOCH);
+    return byCreatedAt.compare(a, b) >= 0 ? a : b;
   }
 
   private static TableOperationRecord toRecord(TableOperationRow e) {

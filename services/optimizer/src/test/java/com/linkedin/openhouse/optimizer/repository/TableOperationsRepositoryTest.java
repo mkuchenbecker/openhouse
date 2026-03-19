@@ -53,7 +53,7 @@ class TableOperationsRepositoryTest {
   }
 
   @Test
-  void patch_pendingToSuccess_updatesStatus() {
+  void patch_scheduledToSuccess_updatesStatus() {
     String id = UUID.randomUUID().toString();
     repository.save(
         TableOperationsRow.builder()
@@ -62,8 +62,9 @@ class TableOperationsRepositoryTest {
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.PENDING)
+            .status(OperationStatus.SCHEDULED)
             .createdAt(Instant.now())
+            .scheduledAt(Instant.now())
             .build());
 
     Optional<com.linkedin.openhouse.optimizer.api.model.TableOperationsDto> result =
@@ -86,13 +87,34 @@ class TableOperationsRepositoryTest {
   }
 
   @Test
-  void patch_invalidStatus_throwsIllegalArgument() {
+  void patch_invalidStatus_throwsInvalidPatchStatus() {
     org.junit.jupiter.api.Assertions.assertThrows(
-        IllegalArgumentException.class,
+        com.linkedin.openhouse.optimizer.api.exception.InvalidPatchStatusException.class,
         () ->
             service.patchTableOperation(
                 UUID.randomUUID().toString(),
                 PatchTableOperationRequest.builder().status(OperationStatus.PENDING).build()));
+  }
+
+  @Test
+  void patch_pendingRow_throwsConflict() {
+    String id = UUID.randomUUID().toString();
+    repository.save(
+        TableOperationsRow.builder()
+            .id(id)
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+
+    org.junit.jupiter.api.Assertions.assertThrows(
+        com.linkedin.openhouse.optimizer.api.exception.OperationStateConflictException.class,
+        () ->
+            service.patchTableOperation(
+                id, PatchTableOperationRequest.builder().status(OperationStatus.SUCCESS).build()));
   }
 
   @Test

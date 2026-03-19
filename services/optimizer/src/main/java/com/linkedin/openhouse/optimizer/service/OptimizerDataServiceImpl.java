@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.optimizer.service;
 
+import com.linkedin.openhouse.optimizer.api.exception.InvalidPatchStatusException;
+import com.linkedin.openhouse.optimizer.api.exception.OperationStateConflictException;
 import com.linkedin.openhouse.optimizer.api.mapper.OptimizerMapper;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
@@ -85,18 +87,23 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
       String id, PatchTableOperationRequest request) {
     if (request.getStatus() != OperationStatus.SUCCESS
         && request.getStatus() != OperationStatus.FAILED) {
-      throw new IllegalArgumentException(
+      throw new InvalidPatchStatusException(
           "Only SUCCESS or FAILED are valid patch targets, got: " + request.getStatus());
     }
     return operationsRepository
         .findById(id)
         .map(
-            row ->
-                operationsRepository.save(
-                    row.toBuilder()
-                        .status(request.getStatus())
-                        .metrics(request.getMetrics())
-                        .build()))
+            row -> {
+              if (row.getStatus() != OperationStatus.SCHEDULED) {
+                throw new OperationStateConflictException(
+                    "Operation " + id + " is " + row.getStatus() + ", expected SCHEDULED");
+              }
+              return operationsRepository.save(
+                  row.toBuilder()
+                      .status(request.getStatus())
+                      .metrics(request.getMetrics())
+                      .build());
+            })
         .map(mapper::toDto);
   }
 
@@ -117,6 +124,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   public TableOperationsHistoryDto appendHistory(TableOperationsHistoryDto dto) {
     TableOperationsHistoryRow row =
         TableOperationsHistoryRow.builder()
+            .id(dto.getId())
             .tableUuid(dto.getTableUuid())
             .databaseName(dto.getDatabaseName())
             .tableName(dto.getTableName())

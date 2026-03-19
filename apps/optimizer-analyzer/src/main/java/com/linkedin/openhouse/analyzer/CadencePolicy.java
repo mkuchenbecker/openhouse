@@ -35,7 +35,7 @@ public class CadencePolicy {
     TableOperationRecord op = currentOp.get();
     switch (op.getStatus()) {
       case "PENDING":
-        return true;
+        return false;
       case "SCHEDULED":
         return pastInterval(op.getScheduledAt(), scheduledTimeout);
       case "SUCCESS":

@@ -26,4 +26,13 @@ public interface OperationAnalyzer {
    * @param currentOp the existing active operation record, or empty if none exists
    */
   boolean shouldSchedule(TableSummary table, Optional<TableOperationRecord> currentOp);
+
+  /**
+   * Maximum number of consecutive FAILED history entries before the circuit breaker trips and
+   * scheduling is suppressed for this (table, operation_type). Override per operation type. Returns
+   * 0 to disable the circuit breaker.
+   */
+  default int getCircuitBreakerThreshold() {
+    return 5;
+  }
 }

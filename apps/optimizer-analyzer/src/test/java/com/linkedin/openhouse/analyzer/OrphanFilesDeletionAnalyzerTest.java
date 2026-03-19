@@ -58,11 +58,11 @@ class OrphanFilesDeletionAnalyzerTest {
   }
 
   @Test
-  void shouldSchedule_pending_returnsTrue() {
+  void shouldSchedule_pending_returnsFalse() {
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"), Optional.of(opWithStatus("PENDING", null))))
-        .isTrue();
+        .isFalse();
   }
 
   @Test
