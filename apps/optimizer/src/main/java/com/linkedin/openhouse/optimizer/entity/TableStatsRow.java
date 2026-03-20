@@ -2,6 +2,7 @@ package com.linkedin.openhouse.optimizer.entity;
 
 import com.linkedin.openhouse.optimizer.model.TableStats;
 import com.vladmihalcea.hibernate.type.json.JsonStringType;
+import java.time.Instant;
 import java.util.Map;
 import javax.persistence.Column;
 import javax.persistence.Entity;
@@ -46,4 +47,7 @@ public class TableStatsRow {
   @Type(type = "json")
   @Column(name = "table_properties", columnDefinition = "TEXT")
   private Map<String, String> tableProperties;
+
+  @Column(name = "updated_at", nullable = false)
+  private Instant updatedAt;
 }

@@ -17,9 +17,18 @@ public interface TableOperationsRepository extends JpaRepository<TableOperations
    *
    * <p>Used by the Analyzer to pre-load current state before iterating tables.
    */
+  /**
+   * Return all active (PENDING or SCHEDULED) rows for the given operation type.
+   *
+   * <p>Used by the Analyzer to pre-load current state before iterating tables.
+   */
   @Query(
       "SELECT r FROM TableOperationsRow r "
           + "WHERE r.operationType = :type "
           + "AND r.status IN ('PENDING', 'SCHEDULED')")
   List<TableOperationsRow> find(@Param("type") OperationType type);
+
+  /** Return all active (PENDING or SCHEDULED) rows across all operation types. */
+  @Query("SELECT r FROM TableOperationsRow r WHERE r.status IN ('PENDING', 'SCHEDULED')")
+  List<TableOperationsRow> findAllActive();
 }

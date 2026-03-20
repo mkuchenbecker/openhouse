@@ -31,13 +31,6 @@ public interface TableOperationsRepository extends JpaRepository<TableOperationR
   List<TableOperationRow> findByType(@Param("type") String operationType);
 
   /**
-   * Returns all PENDING rows for the given operation type. Used by the Scheduler to find work to
-   * submit.
-   */
-  @Query("SELECT r FROM TableOperationRow r WHERE r.operationType = :type AND r.status = 'PENDING'")
-  List<TableOperationRow> findPendingByType(@Param("type") String operationType);
-
-  /**
    * Cancel older duplicate PENDING rows for the same (table_uuid, operation_type), keeping only the
    * row identified by {@code keepId}. Called by the Scheduler before claiming to prevent duplicate
    * job submissions from concurrent Analyzer runs.

@@ -42,11 +42,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
           .map(mapper::toDto)
           .collect(Collectors.toList());
     }
-    return operationsRepository.findAll().stream()
-        .filter(
-            r ->
-                r.getStatus() == OperationStatus.PENDING
-                    || r.getStatus() == OperationStatus.SCHEDULED)
+    return operationsRepository.findAllActive().stream()
         .map(mapper::toDto)
         .collect(Collectors.toList());
   }

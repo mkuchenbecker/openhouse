@@ -18,5 +18,6 @@ CREATE TABLE IF NOT EXISTS table_stats (
   table_name       VARCHAR(255)  NOT NULL,
   stats            TEXT,
   table_properties TEXT,
+  updated_at       TIMESTAMP(6)  NOT NULL,
   PRIMARY KEY (table_uuid)
 );

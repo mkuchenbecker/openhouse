@@ -21,7 +21,7 @@ public class JobResultConverter implements AttributeConverter<JobResult, String>
     try {
       return OBJECT_MAPPER.writeValueAsString(attribute);
     } catch (JsonProcessingException e) {
-      throw new IllegalArgumentException("Failed to serialize JobResult to JSON", e);
+      throw new IllegalStateException("Failed to serialize JobResult to JSON", e);
     }
   }
 
@@ -33,7 +33,7 @@ public class JobResultConverter implements AttributeConverter<JobResult, String>
     try {
       return OBJECT_MAPPER.readValue(dbData, JobResult.class);
     } catch (IOException e) {
-      throw new IllegalArgumentException("Failed to deserialize JobResult from JSON: " + dbData, e);
+      throw new IllegalStateException("Failed to deserialize JobResult from JSON: " + dbData, e);
     }
   }
 }

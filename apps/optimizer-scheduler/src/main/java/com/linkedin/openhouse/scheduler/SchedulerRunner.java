@@ -37,7 +37,8 @@ public class SchedulerRunner {
 
   @Transactional
   public void schedule() {
-    List<TableOperationRow> pending = operationsRepo.findPendingByType(operationType);
+    List<TableOperationRow> pending =
+        operationsRepo.findByTypeAndStatuses(operationType, List.of("PENDING"));
     if (pending.isEmpty()) {
       log.info("No PENDING operations of type {}; nothing to schedule", operationType);
       return;
@@ -70,6 +71,15 @@ public class SchedulerRunner {
   }
 
   private void submitBin(List<TableOperationRow> bin) {
+    // 0. Cancel duplicate PENDING rows per (tableUuid, operationType) — keep only the first row.
+    bin.stream()
+        .collect(Collectors.groupingBy(TableOperationRow::getTableUuid))
+        .forEach(
+            (uuid, rows) -> {
+              TableOperationRow keep = rows.get(0);
+              operationsRepo.cancelDuplicatePending(uuid, operationType, keep.getId());
+            });
+
     // 1. Claim all rows first — prevents a second scheduler instance from double-submitting.
     //    Any row already claimed (claimOperation returns 0) is excluded from this batch.
     List<TableOperationRow> claimed =

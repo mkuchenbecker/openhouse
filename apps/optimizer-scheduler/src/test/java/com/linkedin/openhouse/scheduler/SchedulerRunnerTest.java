@@ -68,7 +68,8 @@ class SchedulerRunnerTest {
 
   @Test
   void schedule_noPendingOps_noJobSubmitted() {
-    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of());
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of());
 
     runner.schedule();
 
@@ -80,7 +81,8 @@ class SchedulerRunnerTest {
     String uuid = UUID.randomUUID().toString();
     TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
-    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of(statsRow(uuid, 100_000L)));
     when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
@@ -110,7 +112,8 @@ class SchedulerRunnerTest {
     String uuid = UUID.randomUUID().toString();
     TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
-    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
     when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
@@ -129,7 +132,8 @@ class SchedulerRunnerTest {
     String uuid = UUID.randomUUID().toString();
     TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
-    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row));
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
     // claimOperation returns 0 — another instance already claimed this row.
     when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(0);
@@ -140,13 +144,34 @@ class SchedulerRunnerTest {
   }
 
   @Test
+  void schedule_cancelsDuplicatePendingBeforeClaim() {
+    String uuid = UUID.randomUUID().toString();
+    TableOperationRow row1 = pendingRow(uuid, "db1", "tbl1");
+    TableOperationRow row2 = pendingRow(uuid, "db1", "tbl1");
+
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of(row1, row2));
+    when(statsRepo.findAllById(any())).thenReturn(List.of());
+    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
+    when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
+        .thenReturn(Optional.of("job-789"));
+
+    runner.schedule();
+
+    // cancelDuplicatePending is called once for the shared UUID, keeping the first row.
+    verify(operationsRepo)
+        .cancelDuplicatePending(eq(uuid), eq("ORPHAN_FILES_DELETION"), eq(row1.getId()));
+  }
+
+  @Test
   void schedule_claimsAllRowsInBin() {
     String uuid1 = UUID.randomUUID().toString();
     String uuid2 = UUID.randomUUID().toString();
     TableOperationRow row1 = pendingRow(uuid1, "db1", "tbl1");
     TableOperationRow row2 = pendingRow(uuid2, "db1", "tbl2");
 
-    when(operationsRepo.findPendingByType("ORPHAN_FILES_DELETION")).thenReturn(List.of(row1, row2));
+    when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
+        .thenReturn(List.of(row1, row2));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
     when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
