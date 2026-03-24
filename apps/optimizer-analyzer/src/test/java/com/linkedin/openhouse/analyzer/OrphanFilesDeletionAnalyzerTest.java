@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
+import com.linkedin.openhouse.optimizer.entity.TableOperationHistoryRow;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -50,90 +51,161 @@ class OrphanFilesDeletionAnalyzerTest {
     assertThat(analyzer.isEnabled(table)).isFalse();
   }
 
-  // --- shouldSchedule ---
+  // --- shouldSchedule: no existing op ---
 
   @Test
-  void shouldSchedule_noExistingOp_returnsTrue() {
-    assertThat(analyzer.shouldSchedule(tableWithProperty("true"), Optional.empty())).isTrue();
+  void shouldSchedule_noOp_noHistory_returnsTrue() {
+    assertThat(
+            analyzer.shouldSchedule(tableWithProperty("true"), Optional.empty(), Optional.empty()))
+        .isTrue();
   }
+
+  @Test
+  void shouldSchedule_noOp_successHistoryAfterCooldown_returnsTrue() {
+    Instant longAgo = Instant.now().minus(SUCCESS_INTERVAL).minusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.empty(),
+                Optional.of(historyWithStatus("SUCCESS", longAgo))))
+        .isTrue();
+  }
+
+  @Test
+  void shouldSchedule_noOp_successHistoryBeforeCooldown_returnsFalse() {
+    Instant recent = Instant.now().minus(SUCCESS_INTERVAL).plusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.empty(),
+                Optional.of(historyWithStatus("SUCCESS", recent))))
+        .isFalse();
+  }
+
+  @Test
+  void shouldSchedule_noOp_failedHistoryAfterRetry_returnsTrue() {
+    Instant longAgo = Instant.now().minus(FAILURE_INTERVAL).minusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.empty(),
+                Optional.of(historyWithStatus("FAILED", longAgo))))
+        .isTrue();
+  }
+
+  @Test
+  void shouldSchedule_noOp_failedHistoryBeforeRetry_returnsFalse() {
+    Instant recent = Instant.now().minus(FAILURE_INTERVAL).plusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.empty(),
+                Optional.of(historyWithStatus("FAILED", recent))))
+        .isFalse();
+  }
+
+  // --- shouldSchedule: PENDING / SCHEDULING ---
 
   @Test
   void shouldSchedule_pending_returnsFalse() {
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("PENDING", null))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("PENDING", null)),
+                Optional.empty()))
         .isFalse();
   }
 
   @Test
-  void shouldSchedule_scheduledWithinTimeout_returnsFalse() {
-    Instant recentlyScheduled = Instant.now().minus(SCHEDULED_TIMEOUT).plusSeconds(60);
+  void shouldSchedule_scheduling_returnsFalse() {
     assertThat(
             analyzer.shouldSchedule(
                 tableWithProperty("true"),
-                Optional.of(opWithStatus("SCHEDULED", recentlyScheduled))))
+                Optional.of(opWithStatus("SCHEDULING", null)),
+                Optional.empty()))
+        .isFalse();
+  }
+
+  // --- shouldSchedule: SCHEDULED + history ---
+
+  @Test
+  void shouldSchedule_scheduledNoHistory_withinTimeout_returnsFalse() {
+    Instant recent = Instant.now().minus(SCHEDULED_TIMEOUT).plusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", recent)),
+                Optional.empty()))
         .isFalse();
   }
 
   @Test
-  void shouldSchedule_scheduledPastTimeout_returnsTrue() {
+  void shouldSchedule_scheduledNoHistory_pastTimeout_returnsTrue() {
     Instant longAgo = Instant.now().minus(SCHEDULED_TIMEOUT).minusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("SCHEDULED", longAgo))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", longAgo)),
+                Optional.empty()))
         .isTrue();
   }
 
   @Test
-  void shouldSchedule_scheduledWithNullScheduledAt_returnsTrue() {
+  void shouldSchedule_scheduledWithNullScheduledAt_noHistory_returnsTrue() {
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("SCHEDULED", null))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", null)),
+                Optional.empty()))
         .isTrue();
   }
 
   @Test
-  void shouldSchedule_successBeforeInterval_returnsFalse() {
-    Instant recentlyScheduled = Instant.now().minus(SUCCESS_INTERVAL).plusSeconds(60);
+  void shouldSchedule_scheduledWithSuccessHistory_afterCooldown_returnsTrue() {
+    Instant scheduledAt = Instant.now().minusSeconds(3600);
+    Instant historyAt = Instant.now().minus(SUCCESS_INTERVAL).minusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("SUCCESS", recentlyScheduled))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", scheduledAt)),
+                Optional.of(historyWithStatus("SUCCESS", historyAt))))
+        .isTrue();
+  }
+
+  @Test
+  void shouldSchedule_scheduledWithSuccessHistory_beforeCooldown_returnsFalse() {
+    Instant scheduledAt = Instant.now().minusSeconds(3600);
+    Instant historyAt = Instant.now().minus(SUCCESS_INTERVAL).plusSeconds(60);
+    assertThat(
+            analyzer.shouldSchedule(
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", scheduledAt)),
+                Optional.of(historyWithStatus("SUCCESS", historyAt))))
         .isFalse();
   }
 
   @Test
-  void shouldSchedule_successAfterInterval_returnsTrue() {
-    Instant longAgo = Instant.now().minus(SUCCESS_INTERVAL).minusSeconds(60);
+  void shouldSchedule_scheduledWithFailedHistory_afterRetry_returnsTrue() {
+    Instant scheduledAt = Instant.now().minusSeconds(3600);
+    Instant historyAt = Instant.now().minus(FAILURE_INTERVAL).minusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("SUCCESS", longAgo))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", scheduledAt)),
+                Optional.of(historyWithStatus("FAILED", historyAt))))
         .isTrue();
   }
 
   @Test
-  void shouldSchedule_failedBeforeInterval_returnsFalse() {
-    Instant recentlyScheduled = Instant.now().minus(FAILURE_INTERVAL).plusSeconds(60);
+  void shouldSchedule_scheduledWithFailedHistory_beforeRetry_returnsFalse() {
+    Instant scheduledAt = Instant.now().minusSeconds(3600);
+    Instant historyAt = Instant.now().minus(FAILURE_INTERVAL).plusSeconds(60);
     assertThat(
             analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("FAILED", recentlyScheduled))))
+                tableWithProperty("true"),
+                Optional.of(opWithStatus("SCHEDULED", scheduledAt)),
+                Optional.of(historyWithStatus("FAILED", historyAt))))
         .isFalse();
-  }
-
-  @Test
-  void shouldSchedule_failedAfterInterval_returnsTrue() {
-    Instant longAgo = Instant.now().minus(FAILURE_INTERVAL).minusSeconds(60);
-    assertThat(
-            analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("FAILED", longAgo))))
-        .isTrue();
-  }
-
-  @Test
-  void shouldSchedule_successWithNullScheduledAt_returnsTrue() {
-    assertThat(
-            analyzer.shouldSchedule(
-                tableWithProperty("true"), Optional.of(opWithStatus("SUCCESS", null))))
-        .isTrue();
   }
 
   // --- helpers ---
@@ -156,5 +228,15 @@ class OrphanFilesDeletionAnalyzerTest {
     op.setStatus(status);
     op.setScheduledAt(scheduledAt);
     return op;
+  }
+
+  private TableOperationHistoryRow historyWithStatus(String status, Instant submittedAt) {
+    return TableOperationHistoryRow.builder()
+        .id("hist-id")
+        .tableUuid("test-uuid")
+        .operationType("ORPHAN_FILES_DELETION")
+        .submittedAt(submittedAt)
+        .status(status)
+        .build();
   }
 }

@@ -14,7 +14,7 @@
 #   7. Run the scheduler → claims PENDING→SCHEDULED, submits OFD job.
 #      jobs.yaml sets --ttl 0, bypassing the 1-day age guard so the fresh
 #      orphan is eligible for deletion immediately.
-#   8. Poll until the Spark job PATCHes status=SUCCESS.
+#   8. Poll until the Spark job completes and a SUCCESS history row appears.
 #   9. Assert HDFS data-file count decreased — OFD deleted the orphan.
 #  10. Assert the surviving rows ('1','a') and ('2','b') are still readable.
 #  11. Teardown.
@@ -219,24 +219,25 @@ SCHED_STATUS=$(curl -sf \
 echo "PASS: scheduler claimed row (status=SCHEDULED)"
 
 # ---------------------------------------------------------------------------
-# Step 10: Poll for SUCCESS.
-# The Spark job PATCHes PATCH /v1/table-operations/{id} with status=SUCCESS
-# after running OFD. Poll every 20 s for up to 10 minutes.
+# Step 10: Poll for SUCCESS in history.
+# The Spark job POSTs to /v1/table-operations/{id}/complete which writes a
+# history row. Poll every 20 s for up to 10 minutes.
 # ---------------------------------------------------------------------------
-echo "=== [assert] Spark job PATCHes operation to SUCCESS ==="
-FINAL_STATUS=""
+echo "=== [assert] Spark job completes operation (SUCCESS in history) ==="
+HIST_STATUS=""
 for i in $(seq 1 30); do
-  FINAL_STATUS=$(curl -sf "http://localhost:8003/v1/table-operations/$OP_ID" \
-    | jq -r '.status' 2>/dev/null || echo "")
-  [ "$FINAL_STATUS" = "SUCCESS" ] && break
-  echo "  status=$FINAL_STATUS, waiting ($i/30)..."
+  HIST_STATUS=$(curl -sf \
+    "http://localhost:8003/v1/table-operations-history?tableUuid=$TABLE_UUID&operationType=ORPHAN_FILES_DELETION&limit=1" \
+    | jq -r '.[0].status // empty' 2>/dev/null || echo "")
+  [ "$HIST_STATUS" = "SUCCESS" ] && break
+  echo "  history status=$HIST_STATUS, waiting ($i/30)..."
   sleep 20
 done
-[ "$FINAL_STATUS" = "SUCCESS" ] || {
-  echo "FAIL: operation never reached SUCCESS (final status='$FINAL_STATUS')"
+[ "$HIST_STATUS" = "SUCCESS" ] || {
+  echo "FAIL: no SUCCESS history row found (final status='$HIST_STATUS')"
   exit 1
 }
-echo "PASS: operation $OP_ID reached SUCCESS"
+echo "PASS: operation $OP_ID completed with SUCCESS in history"
 
 # ---------------------------------------------------------------------------
 # Step 11: Assert OFD deleted the orphan file.

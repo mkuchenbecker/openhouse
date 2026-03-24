@@ -61,7 +61,8 @@ class AnalyzerRunnerTest {
     when(historyRepo.findAllByOperationType("ORPHAN_FILES_DELETION"))
         .thenReturn(Collections.emptyList());
     when(analyzer.isEnabled(expectedTable)).thenReturn(true);
-    when(analyzer.shouldSchedule(expectedTable, Optional.empty())).thenReturn(true);
+    when(analyzer.shouldSchedule(expectedTable, Optional.empty(), Optional.empty()))
+        .thenReturn(true);
 
     runner.analyze();
 
@@ -106,7 +107,8 @@ class AnalyzerRunnerTest {
     existingRecord.setTableUuid("uuid-1");
     existingRecord.setOperationType("ORPHAN_FILES_DELETION");
     existingRecord.setCreatedAt(existingEntity.getCreatedAt());
-    when(analyzer.shouldSchedule(expectedTable, Optional.of(existingRecord))).thenReturn(false);
+    when(analyzer.shouldSchedule(expectedTable, Optional.of(existingRecord), Optional.empty()))
+        .thenReturn(false);
 
     runner.analyze();
 
@@ -159,7 +161,8 @@ class AnalyzerRunnerTest {
     scheduledRecord.setTableUuid("uuid-1");
     scheduledRecord.setOperationType("ORPHAN_FILES_DELETION");
     scheduledRecord.setCreatedAt(scheduled.getCreatedAt());
-    when(analyzer.shouldSchedule(expectedTable, Optional.of(scheduledRecord))).thenReturn(false);
+    when(analyzer.shouldSchedule(expectedTable, Optional.of(scheduledRecord), Optional.empty()))
+        .thenReturn(false);
 
     runner.analyze();
 
@@ -210,7 +213,8 @@ class AnalyzerRunnerTest {
     when(operationsRepo.findByType("ORPHAN_FILES_DELETION")).thenReturn(Collections.emptyList());
     when(historyRepo.findAllByOperationType("ORPHAN_FILES_DELETION")).thenReturn(failures);
     when(analyzer.isEnabled(expectedTable)).thenReturn(true);
-    when(analyzer.shouldSchedule(expectedTable, Optional.empty())).thenReturn(true);
+    when(analyzer.shouldSchedule(expectedTable, Optional.empty(), Optional.of(failures.get(0))))
+        .thenReturn(true);
 
     runner.analyze();
 
@@ -246,7 +250,8 @@ class AnalyzerRunnerTest {
     when(operationsRepo.findByType("ORPHAN_FILES_DELETION")).thenReturn(Collections.emptyList());
     when(historyRepo.findAllByOperationType("ORPHAN_FILES_DELETION")).thenReturn(failures);
     when(analyzer.isEnabled(expectedTable)).thenReturn(true);
-    when(analyzer.shouldSchedule(expectedTable, Optional.empty())).thenReturn(true);
+    when(analyzer.shouldSchedule(expectedTable, Optional.empty(), Optional.of(failures.get(0))))
+        .thenReturn(true);
 
     runner.analyze();
 

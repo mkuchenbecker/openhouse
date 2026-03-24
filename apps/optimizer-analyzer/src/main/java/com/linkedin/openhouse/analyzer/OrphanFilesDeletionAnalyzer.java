@@ -2,6 +2,7 @@ package com.linkedin.openhouse.analyzer;
 
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
+import com.linkedin.openhouse.optimizer.entity.TableOperationHistoryRow;
 import java.time.Duration;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +46,10 @@ public class OrphanFilesDeletionAnalyzer implements OperationAnalyzer {
   }
 
   @Override
-  public boolean shouldSchedule(TableSummary table, Optional<TableOperationRecord> currentOp) {
-    return cadencePolicy.shouldSchedule(currentOp);
+  public boolean shouldSchedule(
+      TableSummary table,
+      Optional<TableOperationRecord> currentOp,
+      Optional<TableOperationHistoryRow> latestHistory) {
+    return cadencePolicy.shouldSchedule(currentOp, latestHistory);
   }
 }

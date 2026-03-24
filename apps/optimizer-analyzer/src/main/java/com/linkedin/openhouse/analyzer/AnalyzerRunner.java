@@ -78,8 +78,11 @@ public class AnalyzerRunner {
                               .get(type)
                               .getOrDefault(row.getTableUuid(), Collections.emptyList());
 
+                      Optional<TableOperationHistoryRow> latestHistory =
+                          history.stream().findFirst();
+
                       if (analyzer.isEnabled(table)
-                          && analyzer.shouldSchedule(table, currentOp)
+                          && analyzer.shouldSchedule(table, currentOp, latestHistory)
                           && !isCircuitBroken(analyzer, row.getTableUuid(), history)) {
                         operationsRepo.save(buildOperation(row, type));
                         log.info(

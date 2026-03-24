@@ -24,12 +24,12 @@ import org.junit.jupiter.api.Test;
  * Iceberg catalog ({@link OpenHouseSparkITest}). The app is never submitted as an external Spark
  * job; {@code runInner(ops)} is called directly.
  *
- * <p>When testing the per-table PATCH callback path, the Optimizer service is replaced by an
- * embedded {@link com.sun.net.httpserver.HttpServer} that captures request bodies. This verifies
- * the shape and content of the JSON payloads without requiring a live service.
+ * <p>When testing the per-table complete-operation callback path, the Optimizer service is replaced
+ * by an embedded {@link com.sun.net.httpserver.HttpServer} that captures request bodies. This
+ * verifies the shape and content of the JSON payloads without requiring a live service.
  *
  * <p>What is covered: orphan file deletion logic, parallel table processing, partial-success
- * semantics, per-table PATCH payload format (SUCCESS and FAILED), and argument parsing. What is NOT
+ * semantics, per-table POST payload format (SUCCESS and FAILED), and argument parsing. What is NOT
  * covered: the actual Optimizer service receiving and persisting results, or end-to-end job
  * submission via the Jobs service.
  */
@@ -372,17 +372,16 @@ public class BatchedOrphanFilesDeletionSparkAppTest extends OpenHouseSparkITest 
       Assertions.assertEquals(1, successCount);
       Assertions.assertEquals(1, failureCount);
 
+      // SUCCESS payload has status only, no result object.
       String successBody =
           receivedBodies.stream().filter(b -> b.contains("\"SUCCESS\"")).findFirst().get();
-      Assertions.assertTrue(successBody.contains("\"orphanFilesDeleted\""));
-      Assertions.assertTrue(successBody.contains("\"bytesDeleted\""));
-      Assertions.assertTrue(successBody.contains("\"durationMs\""));
+      Assertions.assertFalse(successBody.contains("\"result\""));
 
+      // FAILED payload has status + result with error details.
       String failureBody =
           receivedBodies.stream().filter(b -> b.contains("\"FAILED\"")).findFirst().get();
       Assertions.assertTrue(failureBody.contains("\"errorMessage\""));
       Assertions.assertTrue(failureBody.contains("\"errorType\""));
-      Assertions.assertTrue(failureBody.contains("\"durationMs\""));
     } finally {
       httpServer.stop(0);
     }
@@ -429,7 +428,6 @@ public class BatchedOrphanFilesDeletionSparkAppTest extends OpenHouseSparkITest 
       for (String body : receivedBodies) {
         Assertions.assertTrue(body.contains("\"errorMessage\""));
         Assertions.assertTrue(body.contains("\"errorType\""));
-        Assertions.assertTrue(body.contains("\"durationMs\""));
       }
     } finally {
       httpServer.stop(0);

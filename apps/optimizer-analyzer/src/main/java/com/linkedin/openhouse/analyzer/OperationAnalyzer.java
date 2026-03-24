@@ -2,6 +2,7 @@ package com.linkedin.openhouse.analyzer;
 
 import com.linkedin.openhouse.analyzer.model.TableOperationRecord;
 import com.linkedin.openhouse.analyzer.model.TableSummary;
+import com.linkedin.openhouse.optimizer.entity.TableOperationHistoryRow;
 import java.util.Optional;
 
 /**
@@ -24,8 +25,12 @@ public interface OperationAnalyzer {
    *
    * @param table the table entry
    * @param currentOp the existing active operation record, or empty if none exists
+   * @param latestHistory the most recent history entry for this (table, type), or empty
    */
-  boolean shouldSchedule(TableSummary table, Optional<TableOperationRecord> currentOp);
+  boolean shouldSchedule(
+      TableSummary table,
+      Optional<TableOperationRecord> currentOp,
+      Optional<TableOperationHistoryRow> latestHistory);
 
   /**
    * Maximum number of consecutive FAILED history entries before the circuit breaker trips and
