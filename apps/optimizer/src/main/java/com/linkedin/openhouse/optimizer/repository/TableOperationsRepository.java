@@ -53,7 +53,7 @@ public interface TableOperationsRepository extends JpaRepository<TableOperationR
    * concurrently. Returns 1 if the claim succeeded, 0 if the row was already claimed by another
    * instance.
    */
-  @Modifying
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
       "UPDATE TableOperationRow r SET r.status = 'SCHEDULING', r.scheduledAt = :now,"
           + " r.version = r.version + 1 WHERE r.id = :id AND r.version = :version")
@@ -65,7 +65,7 @@ public interface TableOperationsRepository extends JpaRepository<TableOperationR
    *
    * @return 1 if updated, 0 if not found or wrong version/status
    */
-  @Modifying
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
       "UPDATE TableOperationRow r SET r.status = 'SCHEDULED', r.jobId = :jobId,"
           + " r.version = r.version + 1"

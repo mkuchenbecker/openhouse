@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -10,6 +11,7 @@ import lombok.NoArgsConstructor;
 @Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class TableStats {
 
   /** Snapshot fields — overwritten on every upsert. */
@@ -23,6 +25,7 @@ public class TableStats {
   @Builder(toBuilder = true)
   @NoArgsConstructor
   @AllArgsConstructor
+  @JsonIgnoreProperties(ignoreUnknown = true)
   public static class SnapshotMetrics {
     private String clusterId;
     private String tableVersion;

@@ -225,16 +225,24 @@ echo "PASS: scheduler claimed row (status=SCHEDULED)"
 # ---------------------------------------------------------------------------
 echo "=== [assert] Spark job completes operation (SUCCESS in history) ==="
 HIST_STATUS=""
-for i in $(seq 1 30); do
+for i in $(seq 1 9); do
   HIST_STATUS=$(curl -sf \
     "http://localhost:8003/v1/table-operations-history?tableUuid=$TABLE_UUID&operationType=ORPHAN_FILES_DELETION&limit=1" \
     | jq -r '.[0].status // empty' 2>/dev/null || echo "")
   [ "$HIST_STATUS" = "SUCCESS" ] && break
-  echo "  history status=$HIST_STATUS, waiting ($i/30)..."
+  echo "  history status=${HIST_STATUS:-<none>}, waiting ($i/9)..."
   sleep 20
 done
 [ "$HIST_STATUS" = "SUCCESS" ] || {
-  echo "FAIL: no SUCCESS history row found (final status='$HIST_STATUS')"
+  echo "FAIL: no SUCCESS history row after 3 min (last status='${HIST_STATUS:-<none>}')"
+  echo "--- diagnostics ---"
+  echo "Operation row:"
+  curl -sf "http://localhost:8003/v1/table-operations/$OP_ID" 2>/dev/null | jq . || echo "(not found)"
+  echo "History rows:"
+  curl -sf "http://localhost:8003/v1/table-operations-history?tableUuid=$TABLE_UUID&limit=5" 2>/dev/null | jq . || echo "(none)"
+  echo "Livy sessions:"
+  curl -sf "http://localhost:9003/sessions" 2>/dev/null | jq '.sessions[] | {id, state, appId}' || echo "(none)"
+  echo "---"
   exit 1
 }
 echo "PASS: operation $OP_ID completed with SUCCESS in history"
