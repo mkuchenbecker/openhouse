@@ -33,7 +33,9 @@ CREATE TABLE IF NOT EXISTS table_operations_history (
   operation_type VARCHAR(50)   NOT NULL,
   submitted_at   TIMESTAMP(6)  NOT NULL,
   status         VARCHAR(20)   NOT NULL,
-  job_id         VARCHAR(255),
-  result         TEXT,
+  job_id                VARCHAR(255),
+  result                TEXT,
+  orphan_files_deleted  INT,
+  orphan_bytes_deleted  BIGINT,
   PRIMARY KEY (id)
 );

@@ -34,4 +34,10 @@ public class TableOperationsHistoryDto {
 
   /** Job result payload; both fields null on success. */
   private JobResult result;
+
+  /** Number of orphan files deleted; null for non-OFD operations or before completion. */
+  private Integer orphanFilesDeleted;
+
+  /** Bytes reclaimed by orphan file deletion; null for non-OFD operations. */
+  private Long orphanBytesDeleted;
 }

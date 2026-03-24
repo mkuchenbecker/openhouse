@@ -61,39 +61,42 @@ public class AnalyzerRunner {
                     OperationAnalyzer::getOperationType,
                     a -> loadHistoryMap(a.getOperationType())));
 
-    // Single scan: each row is evaluated by all analyzers before moving to the next.
+    // Load stats into a list so the JDBC cursor is closed before any writes.
+    // MySQL does not allow issuing statements (including writes) while a streaming result set
+    // is open on the same connection.
+    List<TableStatsRow> tableList;
     try (Stream<TableStatsRow> tables = statsRepo.streamAll()) {
-      tables
-          .filter(row -> row.getTableUuid() != null)
-          .forEach(
-              row -> {
-                TableSummary table = toSummary(row);
-                analyzers.forEach(
-                    analyzer -> {
-                      String type = analyzer.getOperationType();
-                      Optional<TableOperationRecord> currentOp =
-                          Optional.ofNullable(opsByType.get(type).get(row.getTableUuid()));
-                      List<TableOperationHistoryRow> history =
-                          historyByType
-                              .get(type)
-                              .getOrDefault(row.getTableUuid(), Collections.emptyList());
-
-                      Optional<TableOperationHistoryRow> latestHistory =
-                          history.stream().findFirst();
-
-                      if (analyzer.isEnabled(table)
-                          && analyzer.shouldSchedule(table, currentOp, latestHistory)
-                          && !isCircuitBroken(analyzer, row.getTableUuid(), history)) {
-                        operationsRepo.save(buildOperation(row, type));
-                        log.info(
-                            "Created PENDING {} operation for table {}.{}",
-                            type,
-                            row.getDatabaseId(),
-                            row.getTableName());
-                      }
-                    });
-              });
+      tableList = tables.filter(row -> row.getTableUuid() != null).collect(Collectors.toList());
     }
+    log.info("Found {} tables in optimizer table_stats", tableList.size());
+
+    tableList.forEach(
+        row -> {
+          TableSummary table = toSummary(row);
+          analyzers.forEach(
+              analyzer -> {
+                String type = analyzer.getOperationType();
+                Optional<TableOperationRecord> currentOp =
+                    Optional.ofNullable(opsByType.get(type).get(row.getTableUuid()));
+                List<TableOperationHistoryRow> history =
+                    historyByType
+                        .get(type)
+                        .getOrDefault(row.getTableUuid(), Collections.emptyList());
+
+                Optional<TableOperationHistoryRow> latestHistory = history.stream().findFirst();
+
+                if (analyzer.isEnabled(table)
+                    && analyzer.shouldSchedule(table, currentOp, latestHistory)
+                    && !isCircuitBroken(analyzer, row.getTableUuid(), history)) {
+                  operationsRepo.save(buildOperation(row, type));
+                  log.info(
+                      "Created PENDING {} operation for table {}.{}",
+                      type,
+                      row.getDatabaseId(),
+                      row.getTableName());
+                }
+              });
+        });
 
     log.info("Analysis complete");
   }

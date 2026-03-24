@@ -80,4 +80,12 @@ public class TableOperationsHistoryRow {
   @Convert(converter = JobResultConverter.class)
   @Column(name = "result")
   private JobResult result;
+
+  /** Number of orphan files deleted by the Spark job; null for non-OFD operations. */
+  @Column(name = "orphan_files_deleted")
+  private Integer orphanFilesDeleted;
+
+  /** Bytes reclaimed by orphan file deletion; null for non-OFD operations. */
+  @Column(name = "orphan_bytes_deleted")
+  private Long orphanBytesDeleted;
 }

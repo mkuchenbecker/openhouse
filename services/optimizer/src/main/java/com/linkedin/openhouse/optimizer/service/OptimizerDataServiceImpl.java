@@ -67,6 +67,8 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                       .status(request.getStatus())
                       .jobId(row.getJobId())
                       .result(request.getResult())
+                      .orphanFilesDeleted(request.getOrphanFilesDeleted())
+                      .orphanBytesDeleted(request.getOrphanBytesDeleted())
                       .build();
               return mapper.toDto(historyRepository.save(historyRow));
             });

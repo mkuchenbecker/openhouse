@@ -43,5 +43,6 @@ public class TableStats {
   public static class CommitDelta {
     private Long numFilesAdded;
     private Long numFilesDeleted;
+    private Long deletedSizeBytes;
   }
 }

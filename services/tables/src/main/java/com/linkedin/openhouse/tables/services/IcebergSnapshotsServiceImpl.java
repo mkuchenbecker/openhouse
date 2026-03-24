@@ -94,6 +94,7 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
         long numFilesDeleted = 0;
         Long tableSizeBytes = null;
         Long numCurrentFiles = null;
+        Long deletedSizeBytes = null;
         Gson gson = new Gson();
         for (String snapshotJson : jsonSnapshots) {
           try {
@@ -110,6 +111,11 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
             if (summary.has("total-data-files")) {
               numCurrentFiles = parseLong(summary, "total-data-files");
             }
+            if (summary.has("removed-files-size")) {
+              deletedSizeBytes =
+                  (deletedSizeBytes == null ? 0L : deletedSizeBytes)
+                      + parseLong(summary, "removed-files-size");
+            }
           } catch (Exception e) {
             log.warn("Failed to parse snapshot summary: {}", e.getMessage());
           }
@@ -125,6 +131,7 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
             numFilesDeleted,
             tableSizeBytes,
             numCurrentFiles,
+            deletedSizeBytes,
             savedDto.getTableProperties());
       }
       return Pair.of(savedDto, !tableDto.isPresent());

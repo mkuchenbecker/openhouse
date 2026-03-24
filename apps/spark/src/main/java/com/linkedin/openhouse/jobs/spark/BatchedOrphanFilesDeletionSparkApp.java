@@ -209,7 +209,7 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
       throws Exception {
     OperationResult opResult =
         result.isSuccess()
-            ? OperationResult.success()
+            ? OperationResult.success(result.getOrphanFilesDeleted(), result.getBytesDeleted())
             : OperationResult.failure(result.getErrorMessage(), result.getErrorType());
 
     String json = OBJECT_MAPPER.writeValueAsString(opResult);
@@ -265,18 +265,23 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
   static class OperationResult {
     public final String status;
     public final ResultPayload result;
+    public final Integer orphanFilesDeleted;
+    public final Long orphanBytesDeleted;
 
-    private OperationResult(String status, ResultPayload result) {
+    private OperationResult(
+        String status, ResultPayload result, Integer orphanFilesDeleted, Long orphanBytesDeleted) {
       this.status = status;
       this.result = result;
+      this.orphanFilesDeleted = orphanFilesDeleted;
+      this.orphanBytesDeleted = orphanBytesDeleted;
     }
 
-    static OperationResult success() {
-      return new OperationResult("SUCCESS", null);
+    static OperationResult success(int orphanFilesDeleted, long orphanBytesDeleted) {
+      return new OperationResult("SUCCESS", null, orphanFilesDeleted, orphanBytesDeleted);
     }
 
     static OperationResult failure(String errorMessage, String errorType) {
-      return new OperationResult("FAILED", new ResultPayload(errorMessage, errorType));
+      return new OperationResult("FAILED", new ResultPayload(errorMessage, errorType), null, null);
     }
   }
 

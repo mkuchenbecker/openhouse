@@ -59,6 +59,7 @@ public class OptimizerTableStatsClient {
       long numFilesDeleted,
       Long tableSizeBytes,
       Long numCurrentFiles,
+      Long deletedSizeBytes,
       Map<String, String> tableProperties) {
     JsonObject body =
         buildRequestBody(
@@ -71,6 +72,7 @@ public class OptimizerTableStatsClient {
             numFilesDeleted,
             tableSizeBytes,
             numCurrentFiles,
+            deletedSizeBytes,
             tableProperties);
 
     webClient
@@ -103,6 +105,7 @@ public class OptimizerTableStatsClient {
       long numFilesDeleted,
       Long tableSizeBytes,
       Long numCurrentFiles,
+      Long deletedSizeBytes,
       Map<String, String> tableProperties) {
     JsonObject snapshotMetrics = new JsonObject();
     snapshotMetrics.addProperty("clusterId", clusterId);
@@ -118,6 +121,9 @@ public class OptimizerTableStatsClient {
     JsonObject commitDelta = new JsonObject();
     commitDelta.addProperty("numFilesAdded", numFilesAdded);
     commitDelta.addProperty("numFilesDeleted", numFilesDeleted);
+    if (deletedSizeBytes != null) {
+      commitDelta.addProperty("deletedSizeBytes", deletedSizeBytes);
+    }
 
     JsonObject stats = new JsonObject();
     stats.add("snapshot", snapshotMetrics);

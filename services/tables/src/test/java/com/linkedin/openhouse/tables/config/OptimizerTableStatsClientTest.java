@@ -25,7 +25,7 @@ public class OptimizerTableStatsClientTest {
   void testBuildRequestBody_setsAllFields() {
     Map<String, String> props = Map.of("maintenance.optimizer.ofd.enabled", "true");
     JsonObject body =
-        client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 3L, 1L, 1024L, 42L, props);
+        client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 3L, 1L, 1024L, 42L, 512L, props);
 
     assertThat(body.get("databaseId").getAsString()).isEqualTo("db1");
     assertThat(body.get("tableName").getAsString()).isEqualTo("t1");
@@ -51,7 +51,7 @@ public class OptimizerTableStatsClientTest {
   @Test
   void testBuildRequestBody_nullOptionalFields_omitsFields() {
     JsonObject body =
-        client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 0L, 0L, null, null, null);
+        client.buildRequestBody("db1", "t1", "cl1", "v1", "/loc", 0L, 0L, null, null, null, null);
 
     JsonObject snap = body.getAsJsonObject("stats").getAsJsonObject("snapshot");
     assertThat(snap.has("tableSizeBytes")).isFalse();
