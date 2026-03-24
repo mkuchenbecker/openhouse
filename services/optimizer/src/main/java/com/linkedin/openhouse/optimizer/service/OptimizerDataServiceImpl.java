@@ -3,6 +3,7 @@ package com.linkedin.openhouse.optimizer.service;
 import com.linkedin.openhouse.optimizer.api.exception.InvalidPatchStatusException;
 import com.linkedin.openhouse.optimizer.api.exception.OperationStateConflictException;
 import com.linkedin.openhouse.optimizer.api.mapper.OptimizerMapper;
+import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,15 +38,46 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   // --- TableOperations ---
 
   @Override
-  public List<TableOperationsDto> getAllTableOperations(OperationType operationType) {
-    if (operationType != null) {
-      return operationsRepository.find(operationType).stream()
-          .map(mapper::toDto)
-          .collect(Collectors.toList());
-    }
-    return operationsRepository.findAllActive().stream()
+  public List<TableOperationsDto> listTableOperations(
+      OperationType operationType,
+      OperationStatus status,
+      String databaseName,
+      String tableName,
+      String tableUuid) {
+    return operationsRepository
+        .findFiltered(operationType, status, databaseName, tableName, tableUuid).stream()
         .map(mapper::toDto)
         .collect(Collectors.toList());
+  }
+
+  @Override
+  public Optional<TableOperationsDto> patchTableOperation(
+      String id, PatchTableOperationRequest request) {
+    if (request.getStatus() != OperationStatus.SUCCESS
+        && request.getStatus() != OperationStatus.FAILED) {
+      throw new InvalidPatchStatusException(
+          "Only SUCCESS or FAILED are valid patch targets, got: " + request.getStatus());
+    }
+    return operationsRepository
+        .findById(id)
+        .map(
+            row -> {
+              if (row.getStatus() != OperationStatus.SCHEDULED) {
+                throw new OperationStateConflictException(
+                    "Operation " + id + " is " + row.getStatus() + ", expected SCHEDULED");
+              }
+              return operationsRepository.save(
+                  row.toBuilder()
+                      .status(request.getStatus())
+                      .metrics(request.getMetrics())
+                      .build());
+            })
+        .map(mapper::toDto);
+  }
+
+  @Override
+  public Optional<TableOperationsDto> getTableOperation(String id) {
+    return operationsRepository.findById(id).map(mapper::toDto);
   }
 
   // --- TableStats ---
@@ -79,38 +112,15 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   }
 
   @Override
-  public Optional<TableOperationsDto> patchTableOperation(
-      String id, PatchTableOperationRequest request) {
-    if (request.getStatus() != OperationStatus.SUCCESS
-        && request.getStatus() != OperationStatus.FAILED) {
-      throw new InvalidPatchStatusException(
-          "Only SUCCESS or FAILED are valid patch targets, got: " + request.getStatus());
-    }
-    return operationsRepository
-        .findById(id)
-        .map(
-            row -> {
-              if (row.getStatus() != OperationStatus.SCHEDULED) {
-                throw new OperationStateConflictException(
-                    "Operation " + id + " is " + row.getStatus() + ", expected SCHEDULED");
-              }
-              return operationsRepository.save(
-                  row.toBuilder()
-                      .status(request.getStatus())
-                      .metrics(request.getMetrics())
-                      .build());
-            })
-        .map(mapper::toDto);
-  }
-
-  @Override
-  public Optional<TableOperationsDto> getTableOperation(String id) {
-    return operationsRepository.findById(id).map(mapper::toDto);
-  }
-
-  @Override
   public Optional<TableStatsDto> getTableStats(String tableUuid) {
     return statsRepository.findById(tableUuid).map(mapper::toDto);
+  }
+
+  @Override
+  public List<TableStatsDto> listTableStats(String databaseId, String tableName, String tableUuid) {
+    return statsRepository.findFiltered(databaseId, tableName, tableUuid).stream()
+        .map(mapper::toDto)
+        .collect(Collectors.toList());
   }
 
   // --- TableOperationsHistory ---
@@ -136,6 +146,31 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   @Override
   public List<TableOperationsHistoryDto> getHistory(String tableUuid, int limit) {
     return historyRepository.find(tableUuid, limit).stream()
+        .map(mapper::toDto)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public List<TableOperationsHistoryDto> listHistory(
+      String databaseName,
+      String tableName,
+      String tableUuid,
+      OperationType operationType,
+      OperationHistoryStatus status,
+      Instant since,
+      Instant until,
+      int limit) {
+    return historyRepository
+        .findFiltered(
+            databaseName,
+            tableName,
+            tableUuid,
+            operationType,
+            status,
+            since,
+            until,
+            PageRequest.of(0, limit))
+        .stream()
         .map(mapper::toDto)
         .collect(Collectors.toList());
   }

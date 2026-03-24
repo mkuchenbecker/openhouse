@@ -12,6 +12,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -101,5 +102,88 @@ class TableOperationsHistoryRepositoryTest {
 
     List<TableOperationsHistoryRow> rows = repository.find(tableUuid, 3);
     assertThat(rows).hasSize(3);
+  }
+
+  @Test
+  void findFiltered_noParams_returnsAll() {
+    Instant now = Instant.now();
+    String uuid1 = UUID.randomUUID().toString();
+    String uuid2 = UUID.randomUUID().toString();
+
+    repository.save(
+        TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(uuid1)
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .submittedAt(now)
+            .status(OperationHistoryStatus.SUCCESS)
+            .build());
+    repository.save(
+        TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(uuid2)
+            .databaseName("db2")
+            .tableName("tbl2")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .submittedAt(now.plusSeconds(1))
+            .status(OperationHistoryStatus.FAILED)
+            .build());
+
+    List<TableOperationsHistoryRow> rows =
+        repository.findFiltered(null, null, null, null, null, null, null, PageRequest.of(0, 100));
+    assertThat(rows).hasSize(2);
+    // Newest first
+    assertThat(rows.get(0).getStatus()).isEqualTo(OperationHistoryStatus.FAILED);
+  }
+
+  @Test
+  void findFiltered_byStatusAndTimeWindow() {
+    Instant old = Instant.parse("2024-01-01T00:00:00Z");
+    Instant recent = Instant.parse("2024-06-01T00:00:00Z");
+    String tableUuid = UUID.randomUUID().toString();
+
+    repository.save(
+        TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(tableUuid)
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .submittedAt(old)
+            .status(OperationHistoryStatus.SUCCESS)
+            .build());
+    repository.save(
+        TableOperationsHistoryRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(tableUuid)
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .submittedAt(recent)
+            .status(OperationHistoryStatus.FAILED)
+            .build());
+
+    // Filter by status
+    List<TableOperationsHistoryRow> failed =
+        repository.findFiltered(
+            null,
+            null,
+            null,
+            null,
+            OperationHistoryStatus.FAILED,
+            null,
+            null,
+            PageRequest.of(0, 100));
+    assertThat(failed).hasSize(1);
+    assertThat(failed.get(0).getSubmittedAt()).isEqualTo(recent);
+
+    // Filter by time window
+    Instant cutoff = Instant.parse("2024-03-01T00:00:00Z");
+    List<TableOperationsHistoryRow> afterCutoff =
+        repository.findFiltered(null, null, null, null, null, cutoff, null, PageRequest.of(0, 100));
+    assertThat(afterCutoff).hasSize(1);
+    assertThat(afterCutoff.get(0).getSubmittedAt()).isEqualTo(recent);
   }
 }

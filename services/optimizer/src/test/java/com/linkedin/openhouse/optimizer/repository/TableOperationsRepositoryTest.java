@@ -118,15 +118,11 @@ class TableOperationsRepositoryTest {
   }
 
   @Test
-  void find_returnsPendingAndScheduledOnly() {
-    String tableUuid1 = UUID.randomUUID().toString();
-    String tableUuid2 = UUID.randomUUID().toString();
-    String tableUuid3 = UUID.randomUUID().toString();
-
+  void findFiltered_noParams_returnsAll() {
     repository.save(
         TableOperationsRow.builder()
             .id(UUID.randomUUID().toString())
-            .tableUuid(tableUuid1)
+            .tableUuid(UUID.randomUUID().toString())
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
@@ -136,28 +132,77 @@ class TableOperationsRepositoryTest {
     repository.save(
         TableOperationsRow.builder()
             .id(UUID.randomUUID().toString())
-            .tableUuid(tableUuid2)
+            .tableUuid(UUID.randomUUID().toString())
             .databaseName("db1")
             .tableName("tbl2")
-            .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.SCHEDULED)
-            .createdAt(Instant.now())
-            .build());
-    repository.save(
-        TableOperationsRow.builder()
-            .id(UUID.randomUUID().toString())
-            .tableUuid(tableUuid3)
-            .databaseName("db1")
-            .tableName("tbl3")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
             .status(OperationStatus.SUCCESS)
             .createdAt(Instant.now())
             .build());
 
-    List<TableOperationsRow> rows = repository.find(OperationType.ORPHAN_FILES_DELETION);
+    List<TableOperationsRow> rows = repository.findFiltered(null, null, null, null, null);
     assertThat(rows).hasSize(2);
-    assertThat(rows)
-        .extracting(TableOperationsRow::getStatus)
-        .containsExactlyInAnyOrder(OperationStatus.PENDING, OperationStatus.SCHEDULED);
+  }
+
+  @Test
+  void findFiltered_byStatus() {
+    repository.save(
+        TableOperationsRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+    repository.save(
+        TableOperationsRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db1")
+            .tableName("tbl2")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.SUCCESS)
+            .createdAt(Instant.now())
+            .build());
+
+    List<TableOperationsRow> pending =
+        repository.findFiltered(null, OperationStatus.PENDING, null, null, null);
+    assertThat(pending).hasSize(1);
+    assertThat(pending.get(0).getStatus()).isEqualTo(OperationStatus.PENDING);
+
+    List<TableOperationsRow> success =
+        repository.findFiltered(null, OperationStatus.SUCCESS, null, null, null);
+    assertThat(success).hasSize(1);
+    assertThat(success.get(0).getStatus()).isEqualTo(OperationStatus.SUCCESS);
+  }
+
+  @Test
+  void findFiltered_byDatabaseAndTable() {
+    repository.save(
+        TableOperationsRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db1")
+            .tableName("tbl1")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+    repository.save(
+        TableOperationsRow.builder()
+            .id(UUID.randomUUID().toString())
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseName("db2")
+            .tableName("tbl2")
+            .operationType(OperationType.ORPHAN_FILES_DELETION)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+
+    assertThat(repository.findFiltered(null, null, "db1", null, null)).hasSize(1);
+    assertThat(repository.findFiltered(null, null, "db2", "tbl2", null)).hasSize(1);
+    assertThat(repository.findFiltered(null, null, "db1", "tbl2", null)).isEmpty();
   }
 }

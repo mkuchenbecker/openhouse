@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.optimizer.api.controller;
 
+import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
@@ -49,13 +50,17 @@ public class TableOperationsController {
   }
 
   /**
-   * List all active (PENDING or SCHEDULED) operation recommendations.
-   *
-   * @param operationType optional filter; omit to return all operation types
+   * List operations matching the given filters. All parameters are optional — omit all to return
+   * every row.
    */
   @GetMapping
   public ResponseEntity<List<TableOperationsDto>> listTableOperations(
-      @RequestParam(required = false) OperationType operationType) {
-    return ResponseEntity.ok(service.getAllTableOperations(operationType));
+      @RequestParam(required = false) OperationType operationType,
+      @RequestParam(required = false) OperationStatus status,
+      @RequestParam(required = false) String databaseName,
+      @RequestParam(required = false) String tableName,
+      @RequestParam(required = false) String tableUuid) {
+    return ResponseEntity.ok(
+        service.listTableOperations(operationType, status, databaseName, tableName, tableUuid));
   }
 }

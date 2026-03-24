@@ -3,6 +3,7 @@ package com.linkedin.openhouse.optimizer.api.controller;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** REST controller for managing per-table stats in the optimizer DB. */
@@ -37,5 +39,17 @@ public class TableStatsController {
         .getTableStats(tableUuid)
         .map(ResponseEntity::ok)
         .orElse(ResponseEntity.notFound().build());
+  }
+
+  /**
+   * List stats rows matching the given filters. All parameters are optional — omit all to return
+   * every row.
+   */
+  @GetMapping
+  public ResponseEntity<List<TableStatsDto>> listTableStats(
+      @RequestParam(required = false) String databaseId,
+      @RequestParam(required = false) String tableName,
+      @RequestParam(required = false) String tableUuid) {
+    return ResponseEntity.ok(service.listTableStats(databaseId, tableName, tableUuid));
   }
 }

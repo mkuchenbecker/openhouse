@@ -85,4 +85,61 @@ class TableStatsRepositoryTest {
     assertThat(repository.findById(tableUuid).get().getStats().getSnapshot().getNumSnapshots())
         .isEqualTo(10);
   }
+
+  @Test
+  void findFiltered_noParams_returnsAll() {
+    repository.save(
+        TableStatsRow.builder()
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseId("db1")
+            .tableName("tbl1")
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(1).build())
+                    .build())
+            .updatedAt(Instant.now())
+            .build());
+    repository.save(
+        TableStatsRow.builder()
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseId("db2")
+            .tableName("tbl2")
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(2).build())
+                    .build())
+            .updatedAt(Instant.now())
+            .build());
+
+    assertThat(repository.findFiltered(null, null, null)).hasSize(2);
+  }
+
+  @Test
+  void findFiltered_byDatabase() {
+    repository.save(
+        TableStatsRow.builder()
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseId("db1")
+            .tableName("tbl1")
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(1).build())
+                    .build())
+            .updatedAt(Instant.now())
+            .build());
+    repository.save(
+        TableStatsRow.builder()
+            .tableUuid(UUID.randomUUID().toString())
+            .databaseId("db2")
+            .tableName("tbl2")
+            .stats(
+                TableStats.builder()
+                    .snapshot(TableStats.SnapshotMetrics.builder().numSnapshots(2).build())
+                    .build())
+            .updatedAt(Instant.now())
+            .build());
+
+    assertThat(repository.findFiltered("db1", null, null)).hasSize(1);
+    assertThat(repository.findFiltered("db1", null, null).get(0).getDatabaseId()).isEqualTo("db1");
+  }
 }

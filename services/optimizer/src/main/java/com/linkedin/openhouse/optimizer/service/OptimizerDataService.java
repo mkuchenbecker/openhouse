@@ -1,11 +1,14 @@
 package com.linkedin.openhouse.optimizer.service;
 
+import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
+import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -15,10 +18,15 @@ public interface OptimizerDataService {
   // --- TableOperations ---
 
   /**
-   * List all active (PENDING or SCHEDULED) operation recommendations, optionally filtered by {@code
-   * operationType}. Pass {@code null} to return all types.
+   * List operations matching the given filters. Every parameter is optional — pass {@code null} to
+   * skip that filter. No filters returns all rows.
    */
-  List<TableOperationsDto> getAllTableOperations(OperationType operationType);
+  List<TableOperationsDto> listTableOperations(
+      OperationType operationType,
+      OperationStatus status,
+      String databaseName,
+      String tableName,
+      String tableUuid);
 
   /**
    * Transition an operation to {@code SUCCESS} or {@code FAILED}.
@@ -45,6 +53,12 @@ public interface OptimizerDataService {
   /** Return the stats row for {@code tableUuid}, or empty if none exists. */
   Optional<TableStatsDto> getTableStats(String tableUuid);
 
+  /**
+   * List stats rows matching the given filters. Every parameter is optional — pass {@code null} to
+   * skip that filter. No filters returns all rows.
+   */
+  List<TableStatsDto> listTableStats(String databaseId, String tableName, String tableUuid);
+
   // --- TableOperationsHistory ---
 
   /** Append a completed-job result record. */
@@ -57,4 +71,18 @@ public interface OptimizerDataService {
    * @param limit maximum number of rows to return
    */
   List<TableOperationsHistoryDto> getHistory(String tableUuid, int limit);
+
+  /**
+   * List history rows matching the given filters, ordered newest first. Every parameter is optional
+   * — pass {@code null} to skip that filter. No filters returns all rows up to {@code limit}.
+   */
+  List<TableOperationsHistoryDto> listHistory(
+      String databaseName,
+      String tableName,
+      String tableUuid,
+      OperationType operationType,
+      OperationHistoryStatus status,
+      Instant since,
+      Instant until,
+      int limit);
 }
