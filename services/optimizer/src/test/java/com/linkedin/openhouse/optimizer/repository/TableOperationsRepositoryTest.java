@@ -2,10 +2,13 @@ package com.linkedin.openhouse.optimizer.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.linkedin.openhouse.optimizer.api.model.CompleteOperationRequest;
+import com.linkedin.openhouse.optimizer.api.model.JobResult;
+import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationMetrics;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
-import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
+import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsRow;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
 import java.time.Instant;
@@ -52,68 +55,45 @@ class TableOperationsRepositoryTest {
   }
 
   @Test
-  void patch_scheduledToSuccess_updatesStatus() {
+  void completeOperation_scheduledRow_writesHistory() {
     String id = UUID.randomUUID().toString();
+    String tableUuid = UUID.randomUUID().toString();
     repository.save(
         TableOperationsRow.builder()
             .id(id)
-            .tableUuid(UUID.randomUUID().toString())
+            .tableUuid(tableUuid)
             .databaseName("db1")
             .tableName("tbl1")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
             .status(OperationStatus.SCHEDULED)
             .createdAt(Instant.now())
             .scheduledAt(Instant.now())
+            .jobId("spark-job-123")
             .build());
 
-    Optional<com.linkedin.openhouse.optimizer.api.model.TableOperationsDto> result =
-        service.patchTableOperation(
-            id, PatchTableOperationRequest.builder().status(OperationStatus.SUCCESS).build());
+    Optional<TableOperationsHistoryDto> result =
+        service.completeOperation(
+            id, CompleteOperationRequest.builder().status(OperationHistoryStatus.SUCCESS).build());
 
     assertThat(result).isPresent();
-    assertThat(result.get().getStatus()).isEqualTo(OperationStatus.SUCCESS);
-    assertThat(repository.findById(id).get().getStatus()).isEqualTo(OperationStatus.SUCCESS);
+    assertThat(result.get().getStatus()).isEqualTo(OperationHistoryStatus.SUCCESS);
+    assertThat(result.get().getTableUuid()).isEqualTo(tableUuid);
+    assertThat(result.get().getJobId()).isEqualTo("spark-job-123");
+    assertThat(result.get().getOperationType()).isEqualTo(OperationType.ORPHAN_FILES_DELETION);
   }
 
   @Test
-  void patch_nonexistentId_returnsEmpty() {
-    Optional<com.linkedin.openhouse.optimizer.api.model.TableOperationsDto> result =
-        service.patchTableOperation(
+  void completeOperation_notFound_returnsEmpty() {
+    Optional<TableOperationsHistoryDto> result =
+        service.completeOperation(
             UUID.randomUUID().toString(),
-            PatchTableOperationRequest.builder().status(OperationStatus.FAILED).build());
+            CompleteOperationRequest.builder()
+                .status(OperationHistoryStatus.FAILED)
+                .result(
+                    JobResult.builder().errorMessage("boom").errorType("RuntimeException").build())
+                .build());
 
     assertThat(result).isEmpty();
-  }
-
-  @Test
-  void patch_invalidStatus_throwsInvalidPatchStatus() {
-    org.junit.jupiter.api.Assertions.assertThrows(
-        com.linkedin.openhouse.optimizer.api.exception.InvalidPatchStatusException.class,
-        () ->
-            service.patchTableOperation(
-                UUID.randomUUID().toString(),
-                PatchTableOperationRequest.builder().status(OperationStatus.PENDING).build()));
-  }
-
-  @Test
-  void patch_pendingRow_throwsConflict() {
-    String id = UUID.randomUUID().toString();
-    repository.save(
-        TableOperationsRow.builder()
-            .id(id)
-            .tableUuid(UUID.randomUUID().toString())
-            .databaseName("db1")
-            .tableName("tbl1")
-            .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.PENDING)
-            .createdAt(Instant.now())
-            .build());
-
-    org.junit.jupiter.api.Assertions.assertThrows(
-        com.linkedin.openhouse.optimizer.api.exception.OperationStateConflictException.class,
-        () ->
-            service.patchTableOperation(
-                id, PatchTableOperationRequest.builder().status(OperationStatus.SUCCESS).build()));
   }
 
   @Test
@@ -135,7 +115,7 @@ class TableOperationsRepositoryTest {
             .databaseName("db1")
             .tableName("tbl2")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.SUCCESS)
+            .status(OperationStatus.SCHEDULED)
             .createdAt(Instant.now())
             .build());
 
@@ -162,7 +142,7 @@ class TableOperationsRepositoryTest {
             .databaseName("db1")
             .tableName("tbl2")
             .operationType(OperationType.ORPHAN_FILES_DELETION)
-            .status(OperationStatus.SUCCESS)
+            .status(OperationStatus.SCHEDULED)
             .createdAt(Instant.now())
             .build());
 
@@ -171,10 +151,10 @@ class TableOperationsRepositoryTest {
     assertThat(pending).hasSize(1);
     assertThat(pending.get(0).getStatus()).isEqualTo(OperationStatus.PENDING);
 
-    List<TableOperationsRow> success =
-        repository.findFiltered(null, OperationStatus.SUCCESS, null, null, null);
-    assertThat(success).hasSize(1);
-    assertThat(success.get(0).getStatus()).isEqualTo(OperationStatus.SUCCESS);
+    List<TableOperationsRow> scheduled =
+        repository.findFiltered(null, OperationStatus.SCHEDULED, null, null, null);
+    assertThat(scheduled).hasSize(1);
+    assertThat(scheduled.get(0).getStatus()).isEqualTo(OperationStatus.SCHEDULED);
   }
 
   @Test

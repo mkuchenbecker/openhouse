@@ -1,12 +1,10 @@
 package com.linkedin.openhouse.optimizer.service;
 
-import com.linkedin.openhouse.optimizer.api.exception.InvalidPatchStatusException;
-import com.linkedin.openhouse.optimizer.api.exception.OperationStateConflictException;
 import com.linkedin.openhouse.optimizer.api.mapper.OptimizerMapper;
+import com.linkedin.openhouse.optimizer.api.model.CompleteOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
-import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
@@ -51,28 +49,27 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   }
 
   @Override
-  public Optional<TableOperationsDto> patchTableOperation(
-      String id, PatchTableOperationRequest request) {
-    if (request.getStatus() != OperationStatus.SUCCESS
-        && request.getStatus() != OperationStatus.FAILED) {
-      throw new InvalidPatchStatusException(
-          "Only SUCCESS or FAILED are valid patch targets, got: " + request.getStatus());
-    }
+  @Transactional
+  public Optional<TableOperationsHistoryDto> completeOperation(
+      String id, CompleteOperationRequest request) {
     return operationsRepository
         .findById(id)
         .map(
             row -> {
-              if (row.getStatus() != OperationStatus.SCHEDULED) {
-                throw new OperationStateConflictException(
-                    "Operation " + id + " is " + row.getStatus() + ", expected SCHEDULED");
-              }
-              return operationsRepository.save(
-                  row.toBuilder()
+              TableOperationsHistoryRow historyRow =
+                  TableOperationsHistoryRow.builder()
+                      .id(row.getId())
+                      .tableUuid(row.getTableUuid())
+                      .databaseName(row.getDatabaseName())
+                      .tableName(row.getTableName())
+                      .operationType(row.getOperationType())
+                      .submittedAt(Instant.now())
                       .status(request.getStatus())
-                      .metrics(request.getMetrics())
-                      .build());
-            })
-        .map(mapper::toDto);
+                      .jobId(row.getJobId())
+                      .result(request.getResult())
+                      .build();
+              return mapper.toDto(historyRepository.save(historyRow));
+            });
   }
 
   @Override

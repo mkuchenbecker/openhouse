@@ -32,6 +32,9 @@ public class TableOperationsDto {
   /** Set by the Scheduler when claiming; {@code null} while PENDING. */
   private Instant scheduledAt;
 
+  /** Job ID returned by the Jobs Service after successful submission. */
+  private String jobId;
+
   /** Denormalized stats snapshot captured at analysis time. */
   private OperationMetrics metrics;
 }

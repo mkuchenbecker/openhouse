@@ -78,6 +78,10 @@ public class TableOperationsRow {
   @Column(name = "scheduled_at")
   private Instant scheduledAt;
 
+  /** Job ID returned by the Jobs Service after successful submission. */
+  @Column(name = "job_id", length = 255)
+  private String jobId;
+
   /**
    * Manual optimistic lock for the Scheduler claim. Incremented by the raw {@code claimOperation}
    * UPDATE query; must NOT use JPA {@code @Version} since the claim bypasses JPA entity management.

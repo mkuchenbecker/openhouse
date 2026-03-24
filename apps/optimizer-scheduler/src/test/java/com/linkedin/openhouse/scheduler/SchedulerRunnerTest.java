@@ -77,21 +77,24 @@ class SchedulerRunnerTest {
   }
 
   @Test
-  void schedule_claimsBeforeSubmit() {
+  void schedule_twoStepClaim_claimsAndSchedules() {
     String uuid = UUID.randomUUID().toString();
     TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
     when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
         .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of(statsRow(uuid, 100_000L)));
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduling(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduled(anyString(), anyLong(), anyString())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.of("job-123"));
 
     runner.schedule();
 
-    // Claim happens first; only then is the job submitted.
-    verify(operationsRepo).claimOperation(eq(row.getId()), eq(0L), any());
+    // Step 1: PENDING → SCHEDULING
+    verify(operationsRepo).markScheduling(eq(row.getId()), eq(0L), any());
+    // Step 2: SCHEDULING → SCHEDULED with jobId
+    verify(operationsRepo).markScheduled(eq(row.getId()), eq(1L), eq("job-123"));
 
     ArgumentCaptor<List<String>> tableNamesCaptor = ArgumentCaptor.forClass(List.class);
     ArgumentCaptor<List<String>> opIdsCaptor = ArgumentCaptor.forClass(List.class);
@@ -108,23 +111,23 @@ class SchedulerRunnerTest {
   }
 
   @Test
-  void schedule_jobLaunchFails_rowsStayScheduled() {
+  void schedule_jobLaunchFails_rowsStayScheduling() {
     String uuid = UUID.randomUUID().toString();
     TableOperationRow row = pendingRow(uuid, "db1", "tbl1");
 
     when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
         .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduling(anyString(), anyLong(), any())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.empty());
 
     runner.schedule();
 
-    // Rows are claimed (SCHEDULED) before launch; launch failure leaves them SCHEDULED for
-    // a watchdog to reset.
-    verify(operationsRepo).claimOperation(eq(row.getId()), eq(0L), any());
-    verify(jobsClient).launch(anyString(), anyString(), anyList(), anyList(), anyString());
+    // Rows are claimed (SCHEDULING) before launch; launch failure leaves them in SCHEDULING
+    // for the analyzer's scheduledTimeout to handle.
+    verify(operationsRepo).markScheduling(eq(row.getId()), eq(0L), any());
+    verify(operationsRepo, never()).markScheduled(anyString(), anyLong(), anyString());
   }
 
   @Test
@@ -135,8 +138,8 @@ class SchedulerRunnerTest {
     when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
         .thenReturn(List.of(row));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
-    // claimOperation returns 0 — another instance already claimed this row.
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(0);
+    // markScheduling returns 0 — another instance already claimed this row.
+    when(operationsRepo.markScheduling(anyString(), anyLong(), any())).thenReturn(0);
 
     runner.schedule();
 
@@ -152,7 +155,8 @@ class SchedulerRunnerTest {
     when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
         .thenReturn(List.of(row1, row2));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduling(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduled(anyString(), anyLong(), anyString())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.of("job-789"));
 
@@ -173,12 +177,14 @@ class SchedulerRunnerTest {
     when(operationsRepo.findByTypeAndStatuses("ORPHAN_FILES_DELETION", List.of("PENDING")))
         .thenReturn(List.of(row1, row2));
     when(statsRepo.findAllById(any())).thenReturn(List.of());
-    when(operationsRepo.claimOperation(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduling(anyString(), anyLong(), any())).thenReturn(1);
+    when(operationsRepo.markScheduled(anyString(), anyLong(), anyString())).thenReturn(1);
     when(jobsClient.launch(anyString(), anyString(), anyList(), anyList(), anyString()))
         .thenReturn(Optional.of("job-456"));
 
     runner.schedule();
 
-    verify(operationsRepo, times(2)).claimOperation(anyString(), eq(0L), any());
+    verify(operationsRepo, times(2)).markScheduling(anyString(), eq(0L), any());
+    verify(operationsRepo, times(2)).markScheduled(anyString(), eq(1L), eq("job-456"));
   }
 }

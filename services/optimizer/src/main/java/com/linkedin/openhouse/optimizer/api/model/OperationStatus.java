@@ -6,14 +6,11 @@ public enum OperationStatus {
   /** Recommended by the Analyzer but not yet claimed by the Scheduler. */
   PENDING,
 
-  /** Claimed and submitted to Spark by the Scheduler. */
+  /** Claimed by the Scheduler; waiting for the Jobs Service to return a job ID. */
+  SCHEDULING,
+
+  /** Job submitted to the Jobs Service; the row now carries a {@code jobId}. */
   SCHEDULED,
-
-  /** The Spark job completed successfully. */
-  SUCCESS,
-
-  /** The Spark job failed or was lost without a response. */
-  FAILED,
 
   /**
    * Marked by the Scheduler when it detects duplicate PENDING rows for the same {@code (table_uuid,

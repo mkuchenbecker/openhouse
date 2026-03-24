@@ -1,9 +1,9 @@
 package com.linkedin.openhouse.optimizer.service;
 
+import com.linkedin.openhouse.optimizer.api.model.CompleteOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.OperationHistoryStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
-import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
@@ -29,12 +29,12 @@ public interface OptimizerDataService {
       String tableUuid);
 
   /**
-   * Transition an operation to {@code SUCCESS} or {@code FAILED}.
-   *
-   * <p>Called by the Spark job after completing work for a single table within a batch. Only {@code
-   * SUCCESS} and {@code FAILED} are valid target statuses. Returns empty if the row does not exist.
+   * Complete an operation by writing a history entry. Looks up the operation row by {@code id},
+   * copies its table metadata into a new history row, and saves it. Returns the history DTO, or
+   * empty if the operation does not exist.
    */
-  Optional<TableOperationsDto> patchTableOperation(String id, PatchTableOperationRequest request);
+  Optional<TableOperationsHistoryDto> completeOperation(
+      String id, CompleteOperationRequest request);
 
   /**
    * Return the operation row for {@code id} regardless of status, or empty if it does not exist.

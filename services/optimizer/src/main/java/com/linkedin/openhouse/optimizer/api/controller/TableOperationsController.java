@@ -1,16 +1,18 @@
 package com.linkedin.openhouse.optimizer.api.controller;
 
+import com.linkedin.openhouse.optimizer.api.model.CompleteOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.OperationStatus;
 import com.linkedin.openhouse.optimizer.api.model.OperationType;
-import com.linkedin.openhouse.optimizer.api.model.PatchTableOperationRequest;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
+import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -25,22 +27,20 @@ public class TableOperationsController {
   private final OptimizerDataService service;
 
   /**
-   * Transition an operation to SUCCESS or FAILED. Called by the Spark job after completing work for
-   * a single table within a batch. Returns 404 if the operation does not exist.
+   * Report that an operation has completed. The backend looks up the operation row, writes a
+   * history entry with the operation's table metadata and the supplied result. Returns 201 Created
+   * with the history row, or 404 if the operation does not exist.
    */
-  @PatchMapping("/{id}")
-  public ResponseEntity<TableOperationsDto> patchTableOperation(
-      @PathVariable String id, @RequestBody PatchTableOperationRequest request) {
+  @PostMapping("/{id}/complete")
+  public ResponseEntity<TableOperationsHistoryDto> completeOperation(
+      @PathVariable String id, @RequestBody CompleteOperationRequest request) {
     return service
-        .patchTableOperation(id, request)
-        .map(ResponseEntity::ok)
+        .completeOperation(id, request)
+        .map(dto -> ResponseEntity.status(HttpStatus.CREATED).body(dto))
         .orElse(ResponseEntity.notFound().build());
   }
 
-  /**
-   * Fetch a single operation row by its ID, regardless of status. Returns 404 if not found. Used by
-   * the smoke test and monitoring to poll for SUCCESS after a Spark job completes.
-   */
+  /** Fetch a single operation row by its ID, regardless of status. Returns 404 if not found. */
   @GetMapping("/{id}")
   public ResponseEntity<TableOperationsDto> getTableOperation(@PathVariable String id) {
     return service

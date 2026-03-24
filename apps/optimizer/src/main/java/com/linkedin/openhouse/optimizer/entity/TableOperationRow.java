@@ -46,6 +46,9 @@ public class TableOperationRow {
   @Column(name = "scheduled_at")
   private Instant scheduledAt;
 
+  @Column(name = "job_id", length = 255)
+  private String jobId;
+
   /** Plain version column — not managed by JPA optimistic locking. */
   @Column(name = "version")
   private Long version;

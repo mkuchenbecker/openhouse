@@ -80,12 +80,12 @@ public class SchedulerRunner {
               operationsRepo.cancelDuplicatePending(uuid, operationType, keep.getId());
             });
 
-    // 1. Claim all rows first — prevents a second scheduler instance from double-submitting.
-    //    Any row already claimed (claimOperation returns 0) is excluded from this batch.
+    // 1. Claim all rows (PENDING → SCHEDULING) — prevents a second scheduler instance from
+    //    double-submitting. Any row already claimed (returns 0) is excluded from this batch.
     List<TableOperationRow> claimed =
         bin.stream()
             .filter(
-                r -> operationsRepo.claimOperation(r.getId(), r.getVersion(), Instant.now()) == 1)
+                r -> operationsRepo.markScheduling(r.getId(), r.getVersion(), Instant.now()) == 1)
             .collect(Collectors.toList());
 
     if (claimed.isEmpty()) {
@@ -106,10 +106,15 @@ public class SchedulerRunner {
         jobsClient.launch(jobName, operationType, tableNames, opIds, resultsEndpoint);
 
     if (jobId.isPresent()) {
+      // 3. Transition SCHEDULING → SCHEDULED with the jobId.
+      for (TableOperationRow r : claimed) {
+        operationsRepo.markScheduled(r.getId(), r.getVersion() + 1, jobId.get());
+      }
       log.info("Submitted job {} for {} tables", jobId.get(), claimed.size());
     } else {
       log.warn(
-          "Job submission failed for {} SCHEDULED rows; a watchdog must detect and reset stale rows",
+          "Job submission failed for {} SCHEDULING rows; the analyzer's scheduledTimeout will"
+              + " detect and overwrite stale rows",
           claimed.size());
     }
   }

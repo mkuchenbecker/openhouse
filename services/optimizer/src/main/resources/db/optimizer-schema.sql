@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS table_operations (
   status         VARCHAR(20)   NOT NULL,
   created_at     TIMESTAMP(6)  NOT NULL,
   scheduled_at   TIMESTAMP(6),
+  job_id         VARCHAR(255),
   version        BIGINT,
   metrics        TEXT,
   PRIMARY KEY (id)
