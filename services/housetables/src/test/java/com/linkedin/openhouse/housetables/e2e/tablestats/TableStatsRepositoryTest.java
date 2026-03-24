@@ -29,8 +29,7 @@ public class TableStatsRepositoryTest {
   public void testSaveAndFindByUuid() {
     TableStats stats =
         TableStats.builder()
-            .snapshot(
-                TableStats.SnapshotMetrics.builder().numSnapshots(5).tableSizeBytes(1024L).build())
+            .snapshot(TableStats.SnapshotMetrics.builder().tableSizeBytes(1024L).build())
             .delta(TableStats.CommitDelta.builder().numFilesAdded(10L).numFilesDeleted(2L).build())
             .build();
 
@@ -48,7 +47,7 @@ public class TableStatsRepositoryTest {
     assertThat(found).isPresent();
     assertThat(found.get().getDatabaseId()).isEqualTo("db1");
     assertThat(found.get().getTableName()).isEqualTo("tbl1");
-    assertThat(found.get().getStats().getSnapshot().getNumSnapshots()).isEqualTo(5);
+    assertThat(found.get().getStats().getSnapshot().getTableSizeBytes()).isEqualTo(1024L);
     assertThat(found.get().getStats().getDelta().getNumFilesAdded()).isEqualTo(10L);
   }
 

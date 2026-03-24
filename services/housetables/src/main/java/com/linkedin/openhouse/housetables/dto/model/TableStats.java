@@ -27,7 +27,6 @@ public class TableStats {
     private String clusterId;
     private String tableVersion;
     private String tableLocation;
-    private Integer numSnapshots;
     private Long tableSizeBytes;
   }
 

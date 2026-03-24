@@ -19,7 +19,6 @@ import lombok.NoArgsConstructor;
 public class OperationMetrics {
 
   private Long tableSizeBytes;
-  private Integer numSnapshots;
   private Integer numFilesAdded;
   private Integer numFilesDeleted;
 }

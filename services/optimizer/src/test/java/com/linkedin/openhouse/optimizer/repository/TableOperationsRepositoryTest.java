@@ -28,8 +28,7 @@ class TableOperationsRepositoryTest {
 
   @Test
   void saveAndFindById() {
-    OperationMetrics metrics =
-        OperationMetrics.builder().numSnapshots(10).tableSizeBytes(2048L).build();
+    OperationMetrics metrics = OperationMetrics.builder().tableSizeBytes(2048L).build();
     String id = UUID.randomUUID().toString();
 
     TableOperationsRow row =
@@ -49,7 +48,7 @@ class TableOperationsRepositoryTest {
     Optional<TableOperationsRow> found = repository.findById(id);
     assertThat(found).isPresent();
     assertThat(found.get().getStatus()).isEqualTo(OperationStatus.PENDING);
-    assertThat(found.get().getMetrics().getNumSnapshots()).isEqualTo(10L);
+    assertThat(found.get().getMetrics().getTableSizeBytes()).isEqualTo(2048L);
   }
 
   @Test
