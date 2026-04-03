@@ -108,3 +108,7 @@ terraform.rc
 
 # Ignore the spark shell bash file because it contains secrets
 start-spark-shell.sh
+
+# Claude Code local files
+CLAUDE.md
+memory/

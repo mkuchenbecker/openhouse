@@ -31,6 +31,20 @@ services:
       file: ../common/opa-services.yml
       service: opa
 
+  openhouse-optimizer:
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer
+    volumes:
+      - ./:/var/config/
+    depends_on:
+      - mysql
+
+  mysql:
+    extends:
+      file: ../common/mysql-services.yml
+      service: mysql
+
   oauth:
     container_name: local.oauth
     extends:

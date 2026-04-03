@@ -24,6 +24,9 @@ pluginManagement {
 
 include ':apps:spark'
 include ':apps:spark-3.5'
+include ':apps:optimizer'
+include ':apps:optimizer-analyzer'
+include ':apps:optimizer-scheduler'
 
 include ':client:common'
 include ':client:hts'
@@ -49,6 +52,7 @@ include ':libs:datalayout'
 include ':services:common'
 include ':services:housetables'
 include ':services:jobs'
+include ':services:optimizer'
 include ':services:tables'
 include ':tables-test-fixtures:tables-test-fixtures-iceberg-1.2'
 include ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5'

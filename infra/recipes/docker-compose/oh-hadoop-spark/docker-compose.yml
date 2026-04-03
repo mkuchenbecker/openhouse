@@ -9,6 +9,7 @@ services:
       - ./:/var/config/
     depends_on:
       - openhouse-housetables
+      - openhouse-optimizer
       - namenode
       - datanode
       - prometheus
@@ -49,11 +50,65 @@ services:
     volumes:
       - ./:/var/config/
     depends_on:
-      - prometheus
-      - mysql
+      prometheus:
+        condition: service_started
+      mysql:
+        condition: service_healthy
     environment:
       - HTS_DB_USER=oh_user
       - HTS_DB_PASSWORD=oh_password
+
+  openhouse-optimizer:
+    container_name: local.openhouse-optimizer
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer
+    volumes:
+      - ./:/var/config/
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      - OPTIMIZER_DB_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
+
+  openhouse-optimizer-analyzer:
+    container_name: local.openhouse-optimizer-analyzer
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer-analyzer
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=oh_user
+      - SPRING_DATASOURCE_PASSWORD=oh_password
+    depends_on:
+      mysql:
+        condition: service_healthy
+      openhouse-optimizer:
+        condition: service_started
+    profiles:
+      - run-analyzer
+
+  openhouse-optimizer-scheduler:
+    container_name: local.openhouse-optimizer-scheduler
+    extends:
+      file: ../common/oh-services.yml
+      service: openhouse-optimizer-scheduler
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/oh_db?allowPublicKeyRetrieval=true&useSSL=false
+      - SPRING_DATASOURCE_USERNAME=oh_user
+      - SPRING_DATASOURCE_PASSWORD=oh_password
+      - JOBS_BASE_URI=http://openhouse-jobs:8080
+      - SCHEDULER_RESULTS_ENDPOINT=http://openhouse-optimizer:8080/v1/table-operations
+      - SCHEDULER_CLUSTER_ID=LocalHadoopCluster
+    depends_on:
+      mysql:
+        condition: service_healthy
+      openhouse-optimizer:
+        condition: service_started
+      openhouse-jobs:
+        condition: service_started
+    profiles:
+      - run-scheduler
 
   prometheus:
     extends:
@@ -103,6 +158,11 @@ services:
     extends:
       file: ../common/mysql-services.yml
       service: mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-u", "oh_user", "-poh_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   opa:
     container_name: local.opa
