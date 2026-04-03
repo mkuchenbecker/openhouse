@@ -99,6 +99,8 @@ echo "=== [setup] Wipe stale optimizer state for db1.smoke_tbl ==="
 docker exec local.mysql mysql -uoh_user -poh_password oh_db \
   -e "DELETE FROM table_stats WHERE database_id='db1' AND table_name='smoke_tbl';"
 docker exec local.mysql mysql -uoh_user -poh_password oh_db \
+  -e "DELETE FROM table_stats_history WHERE database_id='db1' AND table_name='smoke_tbl';"
+docker exec local.mysql mysql -uoh_user -poh_password oh_db \
   -e "DELETE FROM table_operations WHERE database_name='db1' AND table_name='smoke_tbl';"
 
 # ---------------------------------------------------------------------------
@@ -281,6 +283,8 @@ livy_session_stop
 echo "=== [teardown] Remove optimizer state for smoke_tbl ==="
 docker exec local.mysql mysql -uoh_user -poh_password oh_db \
   -e "DELETE FROM table_stats WHERE database_id='db1' AND table_name='smoke_tbl';"
+docker exec local.mysql mysql -uoh_user -poh_password oh_db \
+  -e "DELETE FROM table_stats_history WHERE database_id='db1' AND table_name='smoke_tbl';"
 docker exec local.mysql mysql -uoh_user -poh_password oh_db \
   -e "DELETE FROM table_operations WHERE database_name='db1' AND table_name='smoke_tbl';"
 

@@ -8,11 +8,14 @@ import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
+import com.linkedin.openhouse.optimizer.api.model.TableStatsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import com.linkedin.openhouse.optimizer.entity.TableOperationsHistoryRow;
+import com.linkedin.openhouse.optimizer.entity.TableStatsHistoryRow;
 import com.linkedin.openhouse.optimizer.entity.TableStatsRow;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsHistoryRepository;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
+import com.linkedin.openhouse.optimizer.repository.TableStatsHistoryRepository;
 import com.linkedin.openhouse.optimizer.repository.TableStatsRepository;
 import java.time.Instant;
 import java.util.List;
@@ -31,6 +34,7 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   private final TableOperationsRepository operationsRepository;
   private final TableOperationsHistoryRepository historyRepository;
   private final TableStatsRepository statsRepository;
+  private final TableStatsHistoryRepository statsHistoryRepository;
   private final OptimizerMapper mapper;
 
   // --- TableOperations ---
@@ -107,7 +111,18 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
                     .tableProperties(request.getTableProperties())
                     .updatedAt(now)
                     .build());
-    return mapper.toDto(statsRepository.save(row));
+    TableStatsDto saved = mapper.toDto(statsRepository.save(row));
+
+    statsHistoryRepository.save(
+        TableStatsHistoryRow.builder()
+            .tableUuid(tableUuid)
+            .databaseId(request.getDatabaseId())
+            .tableName(request.getTableName())
+            .stats(request.getStats())
+            .recordedAt(now)
+            .build());
+
+    return saved;
   }
 
   @Override
@@ -118,6 +133,19 @@ public class OptimizerDataServiceImpl implements OptimizerDataService {
   @Override
   public List<TableStatsDto> listTableStats(String databaseId, String tableName, String tableUuid) {
     return statsRepository.findFiltered(databaseId, tableName, tableUuid).stream()
+        .map(mapper::toDto)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public List<TableStatsHistoryDto> getStatsHistory(String tableUuid, Instant since, int limit) {
+    PageRequest page = PageRequest.of(0, limit);
+    if (since != null) {
+      return statsHistoryRepository.findByTableUuidSince(tableUuid, since, page).stream()
+          .map(mapper::toDto)
+          .collect(Collectors.toList());
+    }
+    return statsHistoryRepository.findByTableUuid(tableUuid, page).stream()
         .map(mapper::toDto)
         .collect(Collectors.toList());
   }

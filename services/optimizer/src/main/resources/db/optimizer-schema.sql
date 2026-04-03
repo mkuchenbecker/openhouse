@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS table_stats (
   PRIMARY KEY (table_uuid)
 );
 
+CREATE TABLE IF NOT EXISTS table_stats_history (
+  id             BIGINT        NOT NULL AUTO_INCREMENT,
+  table_uuid     VARCHAR(36)   NOT NULL,
+  database_id    VARCHAR(255)  NOT NULL,
+  table_name     VARCHAR(255)  NOT NULL,
+  stats          TEXT,
+  recorded_at    TIMESTAMP(6)  NOT NULL,
+  PRIMARY KEY (id),
+  INDEX idx_tsh_table_uuid (table_uuid),
+  INDEX idx_tsh_recorded_at (recorded_at)
+);
+
 CREATE TABLE IF NOT EXISTS table_operations_history (
   id             VARCHAR(36)   NOT NULL,
   table_uuid     VARCHAR(36)   NOT NULL,

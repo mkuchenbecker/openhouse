@@ -7,6 +7,7 @@ import com.linkedin.openhouse.optimizer.api.model.OperationType;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsDto;
 import com.linkedin.openhouse.optimizer.api.model.TableOperationsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
+import com.linkedin.openhouse.optimizer.api.model.TableStatsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import java.time.Instant;
 import java.util.List;
@@ -58,6 +59,15 @@ public interface OptimizerDataService {
    * skip that filter. No filters returns all rows.
    */
   List<TableStatsDto> listTableStats(String databaseId, String tableName, String tableUuid);
+
+  /**
+   * Return per-commit stats history for {@code tableUuid}, newest first.
+   *
+   * @param tableUuid the stable table UUID
+   * @param since if non-null, only return rows recorded at or after this instant
+   * @param limit maximum number of rows to return
+   */
+  List<TableStatsHistoryDto> getStatsHistory(String tableUuid, Instant since, int limit);
 
   // --- TableOperationsHistory ---
 

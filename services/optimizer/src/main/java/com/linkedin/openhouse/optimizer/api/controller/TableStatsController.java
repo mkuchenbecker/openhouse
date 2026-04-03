@@ -1,8 +1,10 @@
 package com.linkedin.openhouse.optimizer.api.controller;
 
 import com.linkedin.openhouse.optimizer.api.model.TableStatsDto;
+import com.linkedin.openhouse.optimizer.api.model.TableStatsHistoryDto;
 import com.linkedin.openhouse.optimizer.api.model.UpsertTableStatsRequest;
 import com.linkedin.openhouse.optimizer.service.OptimizerDataService;
+import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -51,5 +53,17 @@ public class TableStatsController {
       @RequestParam(required = false) String tableName,
       @RequestParam(required = false) String tableUuid) {
     return ResponseEntity.ok(service.listTableStats(databaseId, tableName, tableUuid));
+  }
+
+  /**
+   * Return per-commit stats history for {@code tableUuid}, newest first. Optionally filter by
+   * {@code since} (inclusive) and cap at {@code limit} rows.
+   */
+  @GetMapping("/{tableUuid}/history")
+  public ResponseEntity<List<TableStatsHistoryDto>> getStatsHistory(
+      @PathVariable String tableUuid,
+      @RequestParam(required = false) Instant since,
+      @RequestParam(defaultValue = "100") int limit) {
+    return ResponseEntity.ok(service.getStatsHistory(tableUuid, since, limit));
   }
 }
