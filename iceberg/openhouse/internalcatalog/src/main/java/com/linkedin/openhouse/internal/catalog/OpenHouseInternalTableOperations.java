@@ -265,6 +265,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     try {
       // Now that we have metadataLocation we stamp it in metadata property.
       Map<String, String> properties = new HashMap<>(metadata.properties());
+
+      abortIfWriterBaseDivergedFromCatalog(base, metadata);
+
       failIfRetryUpdate(properties);
       restoreOverriddenProperties(properties);
 
@@ -580,6 +583,44 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     }
 
     return builder.build();
+  }
+
+  /**
+   * Catalog-level CAS. Aborts the commit if the writer's declared base does not match the catalog's
+   * current persisted base. Closes the BaseTransaction.applyUpdates silent-rebase variant of the
+   * stale-base bug class, and the racing-CREATE variant where a writer commits with COMMIT_KEY
+   * null/INITIAL_VERSION against an already-populated catalog.
+   *
+   * <p>Must run before failIfRetryUpdate, which strips COMMIT_KEY from the doCommit-local
+   * properties copy.
+   *
+   * @throws CommitFailedException when writer and catalog disagree on the base — retriable by
+   *     Iceberg's commit loop after the writer refreshes
+   */
+  private void abortIfWriterBaseDivergedFromCatalog(TableMetadata base, TableMetadata metadata) {
+    if (base == null || base.metadataFileLocation() == null) {
+      // No persisted catalog state to defend (initial CREATE, or mid-CREATE constructed
+      // metadata before any metadata.json has been written).
+      return;
+    }
+    String actualBase = base.metadataFileLocation();
+    String writerClaimedBase = metadata.properties().get(CatalogConstants.COMMIT_KEY);
+
+    boolean writerBaseMatchesCatalog =
+        writerClaimedBase != null
+            && !CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase)
+            && new org.apache.hadoop.fs.Path(writerClaimedBase)
+                .toUri()
+                .getPath()
+                .equals(new org.apache.hadoop.fs.Path(actualBase).toUri().getPath());
+
+    if (!writerBaseMatchesCatalog) {
+      throw new CommitFailedException(
+          "Cannot commit: writer's declared base [%s] does not match the catalog's current "
+              + "base [%s] for table %s. A concurrent commit landed between the writer's "
+              + "loadTable and commit. Refresh and retry.",
+          writerClaimedBase, actualBase, tableIdentifier);
+    }
   }
 
   /**
