@@ -315,19 +315,28 @@ public class OpenHouseInternalTableOperationsTest {
     String writerClaimedBaseLocation =
         "/test/openhouse/test_db/test_table/00001-writer-base.metadata.json";
 
-    // Post-refresh state (T_Y): catalog advanced to include the racing snapshot. The actual
-    // base.metadataFileLocation() will be null for an in-memory TableMetadata built via
-    // setBranchSnapshot, which is sufficient for the abort check — isSameMetadataPath returns
-    // false when comparing any non-null path against null, so the abort will fire on the
-    // (non-null COMMIT_KEY, null base.metadataFileLocation()) mismatch. In production both are
-    // non-null and the mismatch is between two different paths; the assertion semantics are the
-    // same either way.
-    TableMetadata postRefreshBase =
+    // Post-refresh state (T_Y): catalog advanced to include the racing snapshot. To make
+    // base.metadataFileLocation() non-null (the production shape — Iceberg passes a base loaded
+    // from a real metadata.json into doCommit), we round-trip through TableMetadataParser:
+    // write the constructed metadata to a temp file, then read it back. This exercises the
+    // production path-comparison branch of isSameMetadataPath rather than relying on the
+    // null short-circuit (which doesn't fire in production where actualBase is always non-null).
+    java.nio.file.Path tmpDir = Files.createTempDirectory("oh-stale-base-test");
+    String basePath = tmpDir.resolve("00010-post-refresh.metadata.json").toString();
+    TableMetadata buildable =
         TableMetadata.buildFrom(BASE_TABLE_METADATA)
             .setBranchSnapshot(writerKnown1, SnapshotRef.MAIN_BRANCH)
             .setBranchSnapshot(writerKnown2, SnapshotRef.MAIN_BRANCH)
             .setBranchSnapshot(racingSnapshot, SnapshotRef.MAIN_BRANCH)
             .build();
+    org.apache.hadoop.fs.Path basePathFs = new org.apache.hadoop.fs.Path(basePath);
+    org.apache.hadoop.fs.FileSystem fs = basePathFs.getFileSystem(new Configuration());
+    try (java.io.OutputStream out = fs.create(basePathFs, true)) {
+      out.write(TableMetadataParser.toJson(buildable).getBytes());
+    }
+    TableMetadata postRefreshBase =
+        TableMetadataParser.read(new HadoopFileIO(new Configuration()), basePath);
+    Assertions.assertNotNull(postRefreshBase.metadataFileLocation());
 
     // Writer's stale request body — jsonSnapshots reflects pre-race view; the racing snapshot
     // is missing because it didn't exist when the writer's driver serialized the body.
