@@ -71,6 +71,21 @@ public class SparkConcurrentInsertFunctionalTest extends OpenHouseSparkITest {
 
     long rows = spark.sql("SELECT * FROM " + TABLE_NAME).count();
     log.info("rows committed (catalog) = {}, expected = {}", rows, committedRecord.get());
+
+    // Vacuous-pass guard: if every INSERT threw, committedRecord and rows are both 0 and the
+    // equality check below passes trivially while the system is actually broken. A healthy
+    // system has Iceberg's client-side Tasks.foreach.retry absorb any 409s internally, so no
+    // INSERT should propagate an exception to the test thread.
+    assertThat(committedRecord.get())
+        .as(
+            "Vacuous-pass guard: %d / %d INSERTs threw an exception to the caller. In a healthy "
+                + "system, racing 409s should be retried internally by the Iceberg client and "
+                + "spark.sql() should not throw. Mismatch here means the JPA / HTS save path is "
+                + "broken before the race-resolution layer (e.g. NonUniqueObjectException on "
+                + "persist instead of OptimisticLockingFailureException on merge).",
+            TOTAL_RECORDS - committedRecord.get(), TOTAL_RECORDS)
+        .isEqualTo(TOTAL_RECORDS);
+
     assertThat(rows)
         .as(
             "All %d inserts returned 200 (no client exception decremented counter to %d), "
