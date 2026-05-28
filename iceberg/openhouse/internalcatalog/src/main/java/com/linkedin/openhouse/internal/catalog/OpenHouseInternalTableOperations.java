@@ -266,34 +266,13 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       // Now that we have metadataLocation we stamp it in metadata property.
       Map<String, String> properties = new HashMap<>(metadata.properties());
 
-      // Capture the writer's declared base BEFORE failIfRetryUpdate strips COMMIT_KEY. The value
-      // is the writer's request body's baseTableVersion (set on the transaction by
-      // OpenHouseInternalRepositoryImpl.save's `updateProperties.set(COMMIT_KEY, ...).commit()`),
-      // which equals the metadata file path the writer's local view was loaded from.
-      String writerClaimedBase = properties.get(CatalogConstants.COMMIT_KEY);
+      // MUST run before failIfRetryUpdate, which strips COMMIT_KEY. The helper captures
+      // COMMIT_KEY internally — keep the read+check colocated so the ordering constraint
+      // can't drift if doCommit is later refactored.
+      abortIfWriterBaseDivergedFromCatalog(base, properties);
 
       failIfRetryUpdate(properties);
       restoreOverriddenProperties(properties);
-
-      // Abort if the transaction's base has advanced past what the writer claimed it was
-      // committing against. This catches the SNAPSHOTS_EXPIRATION race-orphan bug class:
-      // BaseTransaction.applyUpdates:497 silently refreshes the transaction's base mid-commit,
-      // which would otherwise cause the subtractive merge below (lines 336-343) to interpret
-      // racing-acquired snapshots as writer-intended removals and silently drop them.
-      //
-      // Analog of HiveTableOperations:210 and HadoopTableOperations:133 — visible failure on
-      // stale-base commits, surfacing through Iceberg's BaseMetastoreTableOperations.commit
-      // retry path to the application instead of corrupting silently.
-      if (base != null
-          && writerClaimedBase != null
-          && !CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase)
-          && !isSameMetadataPath(writerClaimedBase, base.metadataFileLocation())) {
-        throw new CommitFailedException(
-            "Cannot commit: writer's declared base [%s] does not match the table's current base "
-                + "[%s] for table %s. The catalog advanced after the writer constructed its "
-                + "request. Refresh and retry.",
-            writerClaimedBase, base.metadataFileLocation(), tableIdentifier);
-      }
 
       properties.put(
           getCanonicalFieldName("tableVersion"),
@@ -622,8 +601,119 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     if (a == null || b == null) {
       return false;
     }
-    return java.util.Objects.equals(
-        java.net.URI.create(a).getPath(), java.net.URI.create(b).getPath());
+    // URI.create throws IllegalArgumentException on inputs that aren't RFC 2396 compliant. A
+    // malformed COMMIT_KEY from a client must not escape doCommit as an unclassified runtime
+    // error — Iceberg's BaseMetastoreTableOperations.commit retry loop only classifies
+    // CommitFailedException as retriable. Fall back to literal-equality (which already returned
+    // false above), so divergence is reported via the caller's CommitFailedException.
+    try {
+      return java.util.Objects.equals(
+          java.net.URI.create(a).getPath(), java.net.URI.create(b).getPath());
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
+  }
+
+  /**
+   * True when the writer's declared base is "no existing table" — either absent in the payload, or
+   * the literal {@link CatalogConstants#INITIAL_VERSION} marker that {@code
+   * OpenHouseInternalRepositoryImpl} sets for {@code CREATE TABLE} requests. Used by {@link
+   * #abortIfWriterBaseDivergedFromCatalog(TableMetadata, Map)} to detect the racing-CREATE class of
+   * the stale-base bug.
+   */
+  private static boolean writerClaimsNoExistingBase(String writerClaimedBase) {
+    return writerClaimedBase == null || CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase);
+  }
+
+  /**
+   * Aborts the commit if the catalog's current base has diverged from the base the writer claimed
+   * it was committing against. This is the catalog-level CAS that Iceberg's {@code
+   * BaseMetastoreTableOperations.commit} does NOT enforce here: in OpenHouse, the writer's view is
+   * established at job-start time and shipped to the server as {@code COMMIT_KEY}, and the server's
+   * transaction is constructed against the catalog's current state — these can diverge in two ways
+   * documented below, both of which silently drop data without this check.
+   *
+   * <h2>Failure modes this catches</h2>
+   *
+   * <ol>
+   *   <li><b>Racing update (the production SEV)</b>: writer claims base {@code T_X}; catalog
+   *       advances to {@code T_Y} between {@code OpenHouseInternalRepositoryImpl.save}'s {@code
+   *       catalog.loadTable()} and {@code transaction.commitTransaction()}. Iceberg's {@code
+   *       BaseTransaction.applyUpdates} silently refreshes the in-flight transaction's base to
+   *       {@code T_Y} and re-applies the staged {@code PendingUpdates}; the re-applied {@code
+   *       PropertiesUpdate} restamps the writer's stale {@code COMMIT_KEY=T_X} on top of {@code
+   *       T_Y}. Without this check, the subtractive snapshot-list merge later in {@code doCommit}
+   *       treats catalog-side snapshots not present in the writer's stale {@code
+   *       SNAPSHOTS_JSON_KEY} as deletions and silently expires them.
+   *   <li><b>Racing CREATE</b>: two writers each call {@code CREATE TABLE} on the same identifier.
+   *       Writer 1 wins; catalog now has state. Writer 2's request body still carries {@code
+   *       COMMIT_KEY = INITIAL_VERSION} (or no {@code COMMIT_KEY} at all if it took an upstream
+   *       path that didn't stamp it). If writer 2's commit reaches {@code doCommit} with a non-null
+   *       {@code base}, its snapshot-list payload is built from the empty view it had at job-start,
+   *       and the subtractive merge would silently drop writer 1's snapshots. We treat any claim of
+   *       "no existing base" against a non-null catalog base as a divergence.
+   * </ol>
+   *
+   * <h2>What does NOT abort</h2>
+   *
+   * <ul>
+   *   <li>{@code base == null} (first commit on a newly-created table): no catalog state exists to
+   *       have advanced past.
+   *   <li>{@code COMMIT_KEY} present and matching {@code base.metadataFileLocation()} modulo URI
+   *       scheme/authority (handled by {@link #isSameMetadataPath(String, String)}) — the no-race
+   *       path.
+   * </ul>
+   *
+   * <p>Analog of {@code HiveTableOperations:210} and {@code HadoopTableOperations:133} — visible
+   * failure on stale-base commits, surfacing through Iceberg's commit-retry path to the application
+   * instead of corrupting silently.
+   *
+   * @param base the catalog's current {@link TableMetadata} (server-loaded; may be null for CREATE)
+   * @param properties the proposed metadata's properties; {@link CatalogConstants#COMMIT_KEY} is
+   *     read here and must not yet have been stripped by {@link #failIfRetryUpdate}
+   * @throws CommitFailedException with a message describing the divergence
+   */
+  private void abortIfWriterBaseDivergedFromCatalog(
+      TableMetadata base, Map<String, String> properties) {
+    // The writer's declared base — the value the writer sent as its baseTableVersion (set on the
+    // transaction by OpenHouseInternalRepositoryImpl.save's
+    // `updateProperties.set(COMMIT_KEY, ...).commit()`), which equals the metadata file path the
+    // writer's local view was loaded from. Captured here, before failIfRetryUpdate strips it.
+    String writerClaimedBase = properties.get(CatalogConstants.COMMIT_KEY);
+
+    if (base == null) {
+      // Initial commit on a brand-new table — Iceberg's CREATE TABLE flow passes a null base to
+      // doCommit. The catalog has no prior state to have advanced past.
+      return;
+    }
+
+    String actualBase = base.metadataFileLocation();
+
+    if (writerClaimsNoExistingBase(writerClaimedBase)) {
+      // Catalog has persisted state, but the writer's view says there is no existing table. This
+      // is the racing-CREATE class: writer 2 committed CREATE against an empty view, but writer
+      // 1 already landed real state. Letting this through would silently overwrite writer 1's
+      // snapshots via doCommit's subtractive snapshot-list merge. We treat any claim of "no
+      // existing base" (null COMMIT_KEY or COMMIT_KEY = INITIAL_VERSION) against persisted
+      // catalog state as a divergence.
+      throw new CommitFailedException(
+          "Cannot commit: writer's view shows no existing table (declared base [%s]), but the "
+              + "catalog already has state at [%s] for table %s. A concurrent commit landed "
+              + "between the writer's loadTable and commit. Refresh and retry.",
+          writerClaimedBase, actualBase, tableIdentifier);
+    }
+
+    if (!isSameMetadataPath(writerClaimedBase, actualBase)) {
+      // Catalog has state and the writer claimed a specific base, but they don't match: a racing
+      // commit advanced the catalog between the writer's loadTable and commit. Letting this
+      // through would silently expire the racing-acquired snapshots via doCommit's subtractive
+      // snapshot-list merge.
+      throw new CommitFailedException(
+          "Cannot commit: writer's declared base [%s] does not match the table's current base "
+              + "[%s] for table %s. A concurrent commit landed between the writer's loadTable "
+              + "and commit. Refresh and retry.",
+          writerClaimedBase, actualBase, tableIdentifier);
+    }
   }
 
   /**
