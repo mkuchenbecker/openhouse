@@ -266,10 +266,11 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       // Now that we have metadataLocation we stamp it in metadata property.
       Map<String, String> properties = new HashMap<>(metadata.properties());
 
-      // MUST run before failIfRetryUpdate, which strips COMMIT_KEY. The helper captures
-      // COMMIT_KEY internally — keep the read+check colocated so the ordering constraint
+      // MUST run before failIfRetryUpdate, which strips COMMIT_KEY from the proposed metadata's
+      // properties. The helper reads COMMIT_KEY off of `metadata` internally — keep the
+      // call colocated with the metadata.properties() copy above so the ordering constraint
       // can't drift if doCommit is later refactored.
-      abortIfWriterBaseDivergedFromCatalog(base, properties);
+      abortIfWriterBaseDivergedFromCatalog(base, metadata);
 
       failIfRetryUpdate(properties);
       restoreOverriddenProperties(properties);
@@ -618,8 +619,8 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
    * True when the writer's declared base is "no existing table" — either absent in the payload, or
    * the literal {@link CatalogConstants#INITIAL_VERSION} marker that {@code
    * OpenHouseInternalRepositoryImpl} sets for {@code CREATE TABLE} requests. Used by {@link
-   * #abortIfWriterBaseDivergedFromCatalog(TableMetadata, Map)} to detect the racing-CREATE class of
-   * the stale-base bug.
+   * #abortIfWriterBaseDivergedFromCatalog(TableMetadata, TableMetadata)} to detect the
+   * racing-CREATE class of the stale-base bug.
    */
   private static boolean writerClaimsNoExistingBase(String writerClaimedBase) {
     return writerClaimedBase == null || CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase);
@@ -673,13 +674,14 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
    *     read here and must not yet have been stripped by {@link #failIfRetryUpdate}
    * @throws CommitFailedException with a message describing the divergence
    */
-  private void abortIfWriterBaseDivergedFromCatalog(
-      TableMetadata base, Map<String, String> properties) {
+  private void abortIfWriterBaseDivergedFromCatalog(TableMetadata base, TableMetadata metadata) {
     // The writer's declared base — the value the writer sent as its baseTableVersion (set on the
     // transaction by OpenHouseInternalRepositoryImpl.save's
     // `updateProperties.set(COMMIT_KEY, ...).commit()`), which equals the metadata file path the
-    // writer's local view was loaded from. Captured here, before failIfRetryUpdate strips it.
-    String writerClaimedBase = properties.get(CatalogConstants.COMMIT_KEY);
+    // writer's local view was loaded from. Read here, before failIfRetryUpdate strips it from
+    // the doCommit-local properties copy. The proposed `metadata.properties()` still carries
+    // the original COMMIT_KEY at this point in the doCommit flow.
+    String writerClaimedBase = metadata.properties().get(CatalogConstants.COMMIT_KEY);
 
     if (base == null) {
       // Initial commit on a brand-new table — Iceberg's CREATE TABLE flow passes a null base to
@@ -688,6 +690,14 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     }
 
     String actualBase = base.metadataFileLocation();
+    if (actualBase == null) {
+      // The catalog handed us a base with no persisted metadata.json yet. In production this
+      // does not represent "catalog has advanced state we need to defend" — Iceberg constructs
+      // a non-null TableMetadata in memory before any metadata.json is written (mid-CREATE
+      // flow, intermediate replace-table state). Defer to upstream existence checks for
+      // racing-CREATE; this method's job is to catch racing commits against persisted state.
+      return;
+    }
 
     if (writerClaimsNoExistingBase(writerClaimedBase)) {
       // Catalog has persisted state, but the writer's view says there is no existing table. This
