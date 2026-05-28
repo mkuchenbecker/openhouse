@@ -3,6 +3,7 @@ package com.linkedin.openhouse.internal.catalog.model;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.IdClass;
+import javax.persistence.Version;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -23,6 +24,15 @@ public class HouseTable {
   @Id private String tableId;
 
   @Id private String databaseId;
+
+  /**
+   * Optimistic-lock version, used by Spring Data JPA's merge to detect concurrent updates against
+   * the same HouseTable row. Without this, two writers that both observed the same {@code
+   * tableLocation} at findById time can both succeed in save(), silently overwriting one writer's
+   * commit and orphaning its metadata.json on HDFS — the silent-snapshot-drop bug reproduced by
+   * SparkConcurrentInsertFunctionalTest.
+   */
+  @Version private Long version;
 
   private String clusterId;
 
