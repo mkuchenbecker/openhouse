@@ -606,15 +606,17 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     String actualBase = base.metadataFileLocation();
     String writerClaimedBase = metadata.properties().get(CatalogConstants.COMMIT_KEY);
 
-    boolean writerBaseMatchesCatalog =
-        writerClaimedBase != null
-            && !CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase)
-            && new org.apache.hadoop.fs.Path(writerClaimedBase)
-                .toUri()
-                .getPath()
-                .equals(new org.apache.hadoop.fs.Path(actualBase).toUri().getPath());
+    if (writerClaimedBase == null || CatalogConstants.INITIAL_VERSION.equals(writerClaimedBase)) {
+      throw new CommitFailedException(
+          "Cannot commit: catalog has persisted state at [%s] but writer claims no base "
+              + "(COMMIT_KEY=[%s]) for table %s. Refresh and retry.",
+          actualBase, writerClaimedBase, tableIdentifier);
+    }
 
-    if (!writerBaseMatchesCatalog) {
+    if (!new org.apache.hadoop.fs.Path(writerClaimedBase)
+        .toUri()
+        .getPath()
+        .equals(new org.apache.hadoop.fs.Path(actualBase).toUri().getPath())) {
       throw new CommitFailedException(
           "Cannot commit: writer's declared base [%s] does not match the catalog's current "
               + "base [%s] for table %s. A concurrent commit landed between the writer's "
