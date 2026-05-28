@@ -265,7 +265,6 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     try {
       // Now that we have metadataLocation we stamp it in metadata property.
       Map<String, String> properties = new HashMap<>(metadata.properties());
-
       failIfRetryUpdate(properties);
       restoreOverriddenProperties(properties);
 
