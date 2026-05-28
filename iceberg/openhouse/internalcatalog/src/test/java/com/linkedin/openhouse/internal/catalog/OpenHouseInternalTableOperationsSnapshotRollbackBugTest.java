@@ -44,28 +44,27 @@ import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
 /**
- * Reproduces the silent-snapshot-drop bug observed on
- * {@code lva1-war-openhouse-dr.tracking_live_daily.PropItemActionEvent} on 2026-05-25.
+ * Reproduces the silent-snapshot-drop bug observed on {@code
+ * lva1-war-openhouse-dr.tracking_live_daily.PropItemActionEvent} on 2026-05-25.
  *
- * <p>Production timeline (all from the same Spark app {@code spark-c3ae5d9a-...}, set
- * {@code spark.app.name=IncrementalCompaction}):
+ * <p>Production timeline (all from the same Spark app {@code spark-c3ae5d9a-...}, set {@code
+ * spark.app.name=IncrementalCompaction}):
  *
  * <ul>
- *   <li>08:30:55 — append snapshot A = 3635817277608242413 (141,901 records,
- *       total_files_size = 256,971,963,123)
- *   <li>08:31:15 — append snapshot C = 7701923871999342588 (0 records,
- *       total_files_size = 256,937,433,977 — byte-for-byte revert to pre-A)
- *   <li>08:31:25 — append snapshot B = 5646807110737817965 (26 records,
- *       built on top of C, not A)
+ *   <li>08:30:55 — append snapshot A = 3635817277608242413 (141,901 records, total_files_size =
+ *       256,971,963,123)
+ *   <li>08:31:15 — append snapshot C = 7701923871999342588 (0 records, total_files_size =
+ *       256,937,433,977 — byte-for-byte revert to pre-A)
+ *   <li>08:31:25 — append snapshot B = 5646807110737817965 (26 records, built on top of C, not A)
  * </ul>
  *
- * <p>The 33 MB parquet that A added at
- * {@code /data/openhouse/tracking_live_daily/PropItemActionEvent-3ba224bc-.../data/datepartition=2026-05-25-00/hourpartition=2026-05-25-00/}
- * was committed, then orphaned: snapshot A was silently removed when C landed with a stale-base view
- * that did not include A in its snapshot-list payload.
+ * <p>The 33 MB parquet that A added at {@code
+ * /data/openhouse/tracking_live_daily/PropItemActionEvent-3ba224bc-.../data/datepartition=2026-05-25-00/hourpartition=2026-05-25-00/}
+ * was committed, then orphaned: snapshot A was silently removed when C landed with a stale-base
+ * view that did not include A in its snapshot-list payload.
  *
- * <p>Mechanism: {@link OpenHouseInternalTableOperations#doCommit(TableMetadata, TableMetadata)} does
- * not enforce a parent-snapshot CAS. Its snapshot-list reconciliation (see lines around
+ * <p>Mechanism: {@link OpenHouseInternalTableOperations#doCommit(TableMetadata, TableMetadata)}
+ * does not enforce a parent-snapshot CAS. Its snapshot-list reconciliation (see lines around
  * "Identify which snapshots are new vs existing" / "Remove snapshots that are no longer present in
  * the client payload") takes the client payload as authoritative. When two commits race with the
  * same base — i.e., when both writers built their proposed metadata from the same pre-A view — the
@@ -132,9 +131,9 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
 
   /**
    * Drives two sequential {@code doCommit} calls with the same pre-A base, mirroring the production
-   * pattern where two Iceberg {@code TableOperations} instances in the same SparkSession each cached
-   * the metadata before writer 1's append landed. The bug fires: writer 2's resulting metadata does
-   * not contain snapshot A.
+   * pattern where two Iceberg {@code TableOperations} instances in the same SparkSession each
+   * cached the metadata before writer 1's append landed. The bug fires: writer 2's resulting
+   * metadata does not contain snapshot A.
    */
   @Test
   void snapshotALandsThenIsSilentlyDroppedByStaleBaseSecondCommit() throws Exception {
@@ -156,7 +155,8 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
     writer1Props.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_A);
     TableMetadata writer1Metadata = BASE_TABLE_METADATA.replaceProperties(writer1Props);
 
-    try (MockedStatic<TableMetadataParser> ignored = Mockito.mockStatic(TableMetadataParser.class)) {
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
       openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, writer1Metadata);
     }
 
@@ -193,7 +193,8 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
     writer2Props.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_C);
     TableMetadata writer2Metadata = BASE_TABLE_METADATA.replaceProperties(writer2Props);
 
-    try (MockedStatic<TableMetadataParser> ignored = Mockito.mockStatic(TableMetadataParser.class)) {
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
       openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, writer2Metadata);
     }
 
@@ -243,7 +244,8 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
         SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(snapshotA)));
     writer1Props.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_A);
     TableMetadata writer1Metadata = BASE_TABLE_METADATA.replaceProperties(writer1Props);
-    try (MockedStatic<TableMetadataParser> ignored = Mockito.mockStatic(TableMetadataParser.class)) {
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
       openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, writer1Metadata);
     }
     Mockito.verify(mockHouseTableMapper, Mockito.times(1))
@@ -261,7 +263,8 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
         SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(snapshotC)));
     writer2Props.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_C);
     TableMetadata writer2Metadata = afterWriter1.replaceProperties(writer2Props);
-    try (MockedStatic<TableMetadataParser> ignored = Mockito.mockStatic(TableMetadataParser.class)) {
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
       openHouseInternalTableOperations.doCommit(afterWriter1, writer2Metadata);
     }
     Mockito.verify(mockHouseTableMapper, Mockito.times(2))
@@ -274,12 +277,135 @@ public class OpenHouseInternalTableOperationsSnapshotRollbackBugTest {
         snapshotsAfterWriter2.contains(snapshotA.snapshotId()),
         "After a proper refresh, A must survive");
     Assertions.assertTrue(
-        snapshotsAfterWriter2.contains(snapshotC.snapshotId()),
-        "C must also be present");
+        snapshotsAfterWriter2.contains(snapshotC.snapshotId()), "C must also be present");
     Assertions.assertEquals(
         snapshotC.snapshotId(),
         afterWriter2.currentSnapshot().snapshotId(),
         "main now points to C, with A as its parent ancestor");
+  }
+
+  /**
+   * Exercises the path-comparison branch of PR #611's fix that the PR's own test does not — both
+   * {@code base.metadataFileLocation()} and the writer's {@code COMMIT_KEY} are non-null, distinct,
+   * real metadata file paths. This is the production-realistic shape: server's loadTable returns a
+   * metadata with a concrete non-null metadataFileLocation; writer's request body carries a
+   * different non-null tableVersion (their stale view of the catalog).
+   *
+   * <p>The PR's existing {@code testDoCommitAbortsOnStaleClaimedBase} works because {@code
+   * TableMetadata.buildFrom(...).build()} produces metadata with {@code metadataFileLocation() ==
+   * null}, and {@code isSameMetadataPath("/path", null)} returns false via the null short-circuit —
+   * bypassing the URI-normalization branch. This test covers the production shape.
+   */
+  @org.junit.jupiter.api.Test
+  void abortFiresWhenBothPathsAreNonNullAndDifferent() throws Exception {
+    List<Snapshot> snapshots = IcebergTestUtil.getSnapshots();
+    Snapshot writerKnown = snapshots.get(0);
+    Snapshot racing = snapshots.get(1);
+
+    // Build a base metadata with a real non-null metadataFileLocation. Only way is to write
+    // it via TableMetadataParser then read back — buildFrom(...).build() leaves it null.
+    java.nio.file.Path tmpDir = Files.createTempDirectory("oh-bug-test");
+    String basePath = tmpDir.resolve("00010-post-race.metadata.json").toString();
+    TableMetadata baseWithKnownAndRacing =
+        TableMetadata.buildFrom(BASE_TABLE_METADATA)
+            .setBranchSnapshot(writerKnown, org.apache.iceberg.SnapshotRef.MAIN_BRANCH)
+            .setBranchSnapshot(racing, org.apache.iceberg.SnapshotRef.MAIN_BRANCH)
+            .build();
+    org.apache.hadoop.fs.Path basePathFs = new org.apache.hadoop.fs.Path(basePath);
+    org.apache.hadoop.fs.FileSystem fs =
+        basePathFs.getFileSystem(new org.apache.hadoop.conf.Configuration());
+    try (java.io.OutputStream out = fs.create(basePathFs, true)) {
+      out.write(TableMetadataParser.toJson(baseWithKnownAndRacing).getBytes());
+    }
+    org.apache.iceberg.io.FileIO realFileIO =
+        new org.apache.iceberg.hadoop.HadoopFileIO(new org.apache.hadoop.conf.Configuration());
+    TableMetadata postRefreshBase = TableMetadataParser.read(realFileIO, basePath);
+
+    Assertions.assertNotNull(
+        postRefreshBase.metadataFileLocation(),
+        "Test precondition: base must have non-null metadataFileLocation");
+
+    String writerClaimedBase = tmpDir.resolve("00009-pre-race.metadata.json").toString();
+    Assertions.assertNotEquals(writerClaimedBase, postRefreshBase.metadataFileLocation());
+
+    Map<String, String> properties = new HashMap<>();
+    properties.put(
+        CatalogConstants.SNAPSHOTS_JSON_KEY,
+        SnapshotsUtil.serializedSnapshots(java.util.Arrays.asList(writerKnown)));
+    properties.put(
+        CatalogConstants.SNAPSHOTS_REFS_KEY,
+        SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(writerKnown)));
+    properties.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_C);
+    properties.put(CatalogConstants.COMMIT_KEY, writerClaimedBase);
+
+    TableMetadata metadata = postRefreshBase.replaceProperties(properties);
+
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      org.apache.iceberg.exceptions.CommitFailedException thrown =
+          Assertions.assertThrows(
+              org.apache.iceberg.exceptions.CommitFailedException.class,
+              () -> openHouseInternalTableOperations.doCommit(postRefreshBase, metadata),
+              "Fix must abort when writer's COMMIT_KEY (T_X) differs from the catalog's actual "
+                  + "post-refresh base.metadataFileLocation() (T_Y) — even when both are non-null "
+                  + "concrete file paths (the production shape).");
+      Assertions.assertTrue(
+          thrown.getMessage().contains("Cannot commit"),
+          "Expected stale-base abort message, got: " + thrown.getMessage());
+      Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    }
+  }
+
+  /**
+   * Validates the URI-normalization branch of {@code isSameMetadataPath}: when the writer's claimed
+   * base carries a scheme like {@code file://} and the catalog's {@code
+   * base.metadataFileLocation()} is scheme-less (or vice versa), the same logical path must NOT be
+   * flagged as a mismatch. Non-regression — protects legitimate non-racing commits with scheme
+   * variation from being falsely aborted.
+   */
+  @org.junit.jupiter.api.Test
+  void abortDoesNotFireWhenPathsDifferOnlyInUriScheme() throws Exception {
+    List<Snapshot> snapshots = IcebergTestUtil.getSnapshots();
+    Snapshot writerSnap = snapshots.get(0);
+
+    java.nio.file.Path tmpDir = Files.createTempDirectory("oh-bug-scheme-test");
+    String basePath = tmpDir.resolve("00010-base.metadata.json").toString();
+    TableMetadata baseMeta =
+        TableMetadata.buildFrom(BASE_TABLE_METADATA)
+            .setBranchSnapshot(writerSnap, org.apache.iceberg.SnapshotRef.MAIN_BRANCH)
+            .build();
+    org.apache.hadoop.fs.Path basePathFs = new org.apache.hadoop.fs.Path(basePath);
+    org.apache.hadoop.fs.FileSystem fs =
+        basePathFs.getFileSystem(new org.apache.hadoop.conf.Configuration());
+    try (java.io.OutputStream out = fs.create(basePathFs, true)) {
+      out.write(TableMetadataParser.toJson(baseMeta).getBytes());
+    }
+    org.apache.iceberg.io.FileIO realFileIO =
+        new org.apache.iceberg.hadoop.HadoopFileIO(new org.apache.hadoop.conf.Configuration());
+    TableMetadata base = TableMetadataParser.read(realFileIO, basePath);
+
+    String schemelessBase = base.metadataFileLocation();
+    String writerClaimedBaseWithScheme = "file://" + schemelessBase;
+
+    Map<String, String> properties = new HashMap<>();
+    properties.put(
+        CatalogConstants.SNAPSHOTS_JSON_KEY,
+        SnapshotsUtil.serializedSnapshots(java.util.Arrays.asList(writerSnap)));
+    properties.put(
+        CatalogConstants.SNAPSHOTS_REFS_KEY,
+        SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(writerSnap)));
+    properties.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION_AFTER_A);
+    properties.put(CatalogConstants.COMMIT_KEY, writerClaimedBaseWithScheme);
+
+    TableMetadata metadata = base.replaceProperties(properties);
+
+    try (MockedStatic<TableMetadataParser> ignored =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      Assertions.assertDoesNotThrow(
+          () -> openHouseInternalTableOperations.doCommit(base, metadata),
+          "Fix must NOT falsely abort when the only difference is URI scheme (e.g. file:// vs "
+              + "scheme-less) — that's the same logical metadata file.");
+    }
   }
 
   private static final class InMemoryTableMetadataCache implements TableMetadataCache {
