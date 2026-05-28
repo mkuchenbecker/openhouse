@@ -3,7 +3,6 @@ package com.linkedin.openhouse.internal.catalog.model;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.IdClass;
-import javax.persistence.Version;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -25,13 +24,16 @@ public class HouseTable {
 
   @Id private String databaseId;
 
-  /**
-   * Optimistic-lock version, used by Spring Data JPA's merge to detect concurrent updates against
-   * the same HouseTable row. Without this, two writers that both observed the same {@code
-   * tableLocation} at findById time can both succeed in save(), silently overwriting one writer's
-   * commit and orphaning its metadata.json on HDFS.
+  /*
+   * Optimistic-lock version — commented out for now. Adding @Version flipped Spring Data JPA's
+   * save() to em.persist() (because isNew() defaults to "version == null") which throws
+   * NonUniqueObjectException when the EntityManager already has a managed entity at the same PK
+   * from upstream doRefresh(). All saves fail, no data lands. The right fix needs save() to go
+   * through em.merge() so @Version CAS actually fires — that requires populating version from
+   * findById before save (or overriding Persistable.isNew()). Reverting to expose the original
+   * silent-snapshot-drop bug clearly until that fix lands.
    */
-  @Version private Long version;
+  // @Version private Long version;
 
   private String clusterId;
 
