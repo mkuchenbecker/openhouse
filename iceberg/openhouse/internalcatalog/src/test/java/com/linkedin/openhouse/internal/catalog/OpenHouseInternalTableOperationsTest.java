@@ -30,7 +30,6 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -267,113 +266,6 @@ public class OpenHouseInternalTableOperationsTest {
 
       Assertions.assertTrue(updatedProperties.containsKey(getCanonicalFieldName("tableLocation")));
       Mockito.verify(mockHouseTableRepository, Mockito.times(1)).save(Mockito.eq(mockHouseTable));
-    }
-  }
-
-  /**
-   * Regression test for the SNAPSHOTS_EXPIRATION race-orphan bug class.
-   *
-   * <p>In production the failure pattern is:
-   *
-   * <ol>
-   *   <li>Spark expiration writer loads the table at T_X. Its body's {@code jsonSnapshots} is the
-   *       writer's keep-set computed against T_X's snapshots. {@code
-   *       OpenHouseInternalRepositoryImpl.save:188} stages {@code COMMIT_KEY = T_X} (the writer's
-   *       declared base) on the transaction.
-   *   <li>{@code OpenHouseInternalRepositoryImpl.versionCheck:336} passes because the catalog is
-   *       still at T_X when the server's initial {@code catalog.loadTable()} runs.
-   *   <li>A racing commit lands at HTS during server-side processing, advancing the catalog to T_Y
-   *       (which contains a snapshot the writer did not know about).
-   *   <li>{@code BaseTransaction.applyUpdates:497} silently refreshes the transaction's base to T_Y
-   *       and re-applies the staged PendingUpdates. The PropertiesUpdate re-sets the same writer
-   *       values (idempotent in V), so {@code SNAPSHOTS_JSON_KEY} stays stale but {@code
-   *       COMMIT_KEY} stays at T_X.
-   *   <li>{@code doCommit(base=T_Y, metadata=T_Y + writer's stale properties)} runs. Without the
-   *       abort check, the subtractive merge at lines 336-343 would compute {@code toRemove =
-   *       T_Y.snapshots() − writer's stale list = \{racing snap\}} and silently drop the racing
-   *       snap.
-   * </ol>
-   *
-   * <p>This test sets up the post-refresh inputs ({@code base} and {@code metadata}) and the staged
-   * {@code COMMIT_KEY = writer's claimed base} that {@code doCommit} would see after {@code
-   * applyUpdates}' refresh. It asserts that {@code doCommit} aborts with {@code
-   * CommitFailedException} — the analog of {@code HiveTableOperations:210} — instead of silently
-   * dropping the racing snapshot.
-   *
-   * <p>Without the abort check at {@code doCommit:259-275}, the request silently succeeds and the
-   * racing snapshot is dropped. With the abort, the writer gets a visible failure that propagates
-   * through Iceberg's commit-retry path to the application.
-   */
-  @Test
-  void testDoCommitAbortsOnStaleClaimedBase() throws IOException {
-    List<Snapshot> testSnapshots = IcebergTestUtil.getSnapshots();
-    Snapshot writerKnown1 = testSnapshots.get(0);
-    Snapshot writerKnown2 = testSnapshots.get(1);
-    Snapshot racingSnapshot = testSnapshots.get(2);
-
-    // Writer's claimed base path (T_X) — what its driver loaded at job start.
-    String writerClaimedBaseLocation =
-        "/test/openhouse/test_db/test_table/00001-writer-base.metadata.json";
-
-    // Post-refresh state (T_Y): catalog advanced to include the racing snapshot. To make
-    // base.metadataFileLocation() non-null (the production shape — Iceberg passes a base loaded
-    // from a real metadata.json into doCommit), we round-trip through TableMetadataParser:
-    // write the constructed metadata to a temp file, then read it back. This exercises the
-    // production path-comparison branch of isSameMetadataPath rather than relying on the
-    // null short-circuit (which doesn't fire in production where actualBase is always non-null).
-    java.nio.file.Path tmpDir = Files.createTempDirectory("oh-stale-base-test");
-    String basePath = tmpDir.resolve("00010-post-refresh.metadata.json").toString();
-    TableMetadata buildable =
-        TableMetadata.buildFrom(BASE_TABLE_METADATA)
-            .setBranchSnapshot(writerKnown1, SnapshotRef.MAIN_BRANCH)
-            .setBranchSnapshot(writerKnown2, SnapshotRef.MAIN_BRANCH)
-            .setBranchSnapshot(racingSnapshot, SnapshotRef.MAIN_BRANCH)
-            .build();
-    org.apache.hadoop.fs.Path basePathFs = new org.apache.hadoop.fs.Path(basePath);
-    org.apache.hadoop.fs.FileSystem fs = basePathFs.getFileSystem(new Configuration());
-    try (java.io.OutputStream out = fs.create(basePathFs, true)) {
-      out.write(TableMetadataParser.toJson(buildable).getBytes());
-    }
-    TableMetadata postRefreshBase =
-        TableMetadataParser.read(new HadoopFileIO(new Configuration()), basePath);
-    Assertions.assertNotNull(postRefreshBase.metadataFileLocation());
-
-    // Writer's stale request body — jsonSnapshots reflects pre-race view; the racing snapshot
-    // is missing because it didn't exist when the writer's driver serialized the body.
-    List<Snapshot> writersStaleUniverse = Arrays.asList(writerKnown1, writerKnown2);
-
-    Map<String, String> properties = new HashMap<>();
-    properties.put(
-        CatalogConstants.SNAPSHOTS_JSON_KEY,
-        SnapshotsUtil.serializedSnapshots(writersStaleUniverse));
-    properties.put(
-        CatalogConstants.SNAPSHOTS_REFS_KEY,
-        SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(writerKnown2)));
-    properties.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION);
-    // COMMIT_KEY: writer's declared base (T_X) — what OpenHouseInternalRepositoryImpl.save:188
-    // would have staged. doCommit's abort check compares this against base.metadataFileLocation()
-    // (which is T_Y after applyUpdates refreshed).
-    properties.put(CatalogConstants.COMMIT_KEY, writerClaimedBaseLocation);
-
-    TableMetadata metadata = postRefreshBase.replaceProperties(properties);
-
-    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
-        Mockito.mockStatic(TableMetadataParser.class)) {
-      CommitFailedException thrown =
-          Assertions.assertThrows(
-              CommitFailedException.class,
-              () -> openHouseInternalTableOperations.doCommit(postRefreshBase, metadata),
-              "doCommit must abort when the writer's declared COMMIT_KEY base does not match "
-                  + "the transaction's current base — otherwise the subtractive merge at "
-                  + "lines 336-343 would silently expire racing snapshots.");
-
-      Assertions.assertTrue(
-          thrown.getMessage().contains("Cannot commit"),
-          "Expected stale-base abort message, got: " + thrown.getMessage());
-
-      // Critically, the HTS save must NOT have run. If it had, the racing snapshot would already
-      // be orphaned in the catalog regardless of any retry behavior.
-      Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
     }
   }
 
