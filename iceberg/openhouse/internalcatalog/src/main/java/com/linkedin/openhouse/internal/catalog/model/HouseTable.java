@@ -24,17 +24,6 @@ public class HouseTable {
 
   @Id private String databaseId;
 
-  /*
-   * Optimistic-lock version — commented out for now. Adding @Version flipped Spring Data JPA's
-   * save() to em.persist() (because isNew() defaults to "version == null") which throws
-   * NonUniqueObjectException when the EntityManager already has a managed entity at the same PK
-   * from upstream doRefresh(). All saves fail, no data lands. The right fix needs save() to go
-   * through em.merge() so @Version CAS actually fires — that requires populating version from
-   * findById before save (or overriding Persistable.isNew()). Reverting to expose the original
-   * silent-snapshot-drop bug clearly until that fix lands.
-   */
-  // @Version private Long version;
-
   private String clusterId;
 
   private String tableUri;
