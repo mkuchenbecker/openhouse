@@ -29,8 +29,7 @@ public class HouseTable {
    * Optimistic-lock version, used by Spring Data JPA's merge to detect concurrent updates against
    * the same HouseTable row. Without this, two writers that both observed the same {@code
    * tableLocation} at findById time can both succeed in save(), silently overwriting one writer's
-   * commit and orphaning its metadata.json on HDFS — the silent-snapshot-drop bug reproduced by
-   * SparkConcurrentInsertFunctionalTest.
+   * commit and orphaning its metadata.json on HDFS.
    */
   @Version private Long version;
 
