@@ -22,12 +22,14 @@ import com.linkedin.openhouse.common.stats.model.ReplicationPolicyStatsSchema;
 import com.linkedin.openhouse.common.stats.model.RetentionStatsSchema;
 import com.linkedin.openhouse.tables.client.model.TimePartitionSpec;
 import java.io.IOException;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 import lombok.extern.slf4j.Slf4j;
@@ -200,6 +202,25 @@ public final class TableStatsCollectorUtil {
     Long oldestSnapshotTimestamp = numSnapshots > 0 ? snapshotTimestamps.get(0) : null;
     Long secondOldestSnapshotTimestamp = numSnapshots > 1 ? snapshotTimestamps.get(1) : null;
 
+    // Count snapshots that snapshot expiration (SE) should have removed but has not: non-current
+    // snapshots older than the table's configured history (snapshot-expiration) policy, plus a
+    // fixed 7-day lens. The current snapshot is excluded because SE always preserves it, so an idle
+    // table holding a single old snapshot reports zero rather than a false backlog.
+    long collectionTimeMillis = System.currentTimeMillis();
+    List<Long> nonCurrentSnapshotTimestamps =
+        StreamSupport.stream(table.snapshots().spliterator(), false)
+            .filter(
+                snapshot -> currentSnapshotId == null || currentSnapshotId != snapshot.snapshotId())
+            .map(Snapshot::timestampMillis)
+            .collect(Collectors.toList());
+    long numSnapshotsOlderThanExpirationSetting =
+        countSnapshotsOlderThan(
+            nonCurrentSnapshotTimestamps,
+            snapshotExpirationCutoffMillis(policyStats.getHistoryPolicy(), collectionTimeMillis));
+    long numSnapshotsOlderThanSevenDays =
+        countSnapshotsOlderThan(
+            nonCurrentSnapshotTimestamps, collectionTimeMillis - TimeUnit.DAYS.toMillis(7));
+
     return stats
         .toBuilder()
         .currentSnapshotId(currentSnapshotId)
@@ -214,6 +235,8 @@ public final class TableStatsCollectorUtil {
         .totalCurrentSnapshotEqualityDeleteFileSizeInBytes(sumOfEqualityDeleteFilesSizeBytes)
         .earliestPartitionDate(earliestPartitionDate)
         .numSnapshots(numSnapshots)
+        .numSnapshotsOlderThanExpirationSetting(numSnapshotsOlderThanExpirationSetting)
+        .numSnapshotsOlderThanSevenDays(numSnapshotsOlderThanSevenDays)
         .historyPolicy(policyStats.getHistoryPolicy())
         .build();
   }
@@ -357,6 +380,38 @@ public final class TableStatsCollectorUtil {
         .map(Types.NestedField::name)
         .findFirst()
         .orElse(null);
+  }
+
+  /**
+   * Timestamp before which snapshots are eligible for expiration under the table's history policy,
+   * mirroring Operations.expireSnapshots: now minus maxAge times granularity. An unset (or zero)
+   * maxAge falls back to the same default TTL the expiration job enforces.
+   */
+  static long snapshotExpirationCutoffMillis(
+      HistoryPolicyStatsSchema historyPolicy, long nowMillis) {
+    final int defaultExpirationAgeDays = 3;
+    int configuredMaxAge = historyPolicy.getMaxAge() == null ? 0 : historyPolicy.getMaxAge();
+    int expirationAge;
+    ChronoUnit expirationUnit;
+    if (configuredMaxAge <= 0) {
+      expirationAge = defaultExpirationAgeDays;
+      expirationUnit = ChronoUnit.DAYS;
+    } else {
+      expirationAge = configuredMaxAge;
+      String granularity = historyPolicy.getGranularity();
+      expirationUnit =
+          (granularity == null || granularity.isEmpty())
+              ? ChronoUnit.DAYS
+              : SparkJobUtil.convertGranularityToChrono(granularity.toUpperCase());
+    }
+    return nowMillis - expirationUnit.getDuration().multipliedBy(expirationAge).toMillis();
+  }
+
+  /** Counts snapshot timestamps strictly older than the given cutoff. */
+  static long countSnapshotsOlderThan(List<Long> snapshotTimestampsMillis, long cutoffMillis) {
+    return snapshotTimestampsMillis.stream()
+        .filter(timestampMillis -> timestampMillis < cutoffMillis)
+        .count();
   }
 
   private static PolicyStats getTablePolicies(Table table) {
