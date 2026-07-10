@@ -4,6 +4,17 @@
 work-list: what OSS Iceberg tests exist, how many, and a **first-pass grade** for each
 behavior category so we evaluate — not blindly run — before cribbing.
 
+> **DISPOSITION UPDATE (supersedes the grades below).** Per directive, **every** Apache
+> Iceberg contract test is to be **ported** — nothing is excluded. The COPY/ADAPT/SKIP grades
+> below no longer mean "whether to include"; they now mean **effort/risk + prerequisites**:
+> - **COPY** = low effort, engine-identical.
+> - **ADAPT** = needs OpenHouse catalog/policy/fixture rework.
+> - **SKIP** → re-read as **BLOCKED/DEFER**: port it, but it has a prerequisite (a feature
+>   OpenHouse must support, e.g. views/streaming, or a maintenance surface to assert against).
+>   Flag the prerequisite; do not drop the test.
+>
+> See `11-build-and-port-plan.md` for the sequenced plan across both work axes.
+
 ## Source of counts
 
 - **Repo/commit:** `apache/iceberg` @ `main`, commit `d41101270ed4f8738c0769e05e37f5126972ab33` (HEAD 2026-07-10).
