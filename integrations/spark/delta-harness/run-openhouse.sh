@@ -30,7 +30,7 @@ echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
 mkdir -p "$WORK/classes"
 "$JDK17/bin/java" -cp "$SCALAC_CP" scala.tools.nsc.Main \
   -classpath "$OHCP" -d "$WORK/classes" \
-  "$HERE/src/main/scala/harness/openhouse/OpenHouseDeleteSlice.scala"
+  "$HERE/src/main/scala/harness/openhouse/OpenHouseMatrix.scala"
 
 echo ">> running on JDK 17 (embedded OpenHouse server + OpenHouse catalog)"
 OPENS=(
