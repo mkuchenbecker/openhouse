@@ -16,16 +16,15 @@ OK  delete.byPredicate[fileFormat=orc]               expect=PASS  got=PASS  try=
 OK  delete.whereFalse.noSnapshot[fileFormat=orc]     expect=PASS  got=PASS  try=1
 OK  delete.truncate[fileFormat=orc]                  expect=PASS  got=PASS  try=1
 OK  delete.atSnapshot.rejected[fileFormat=orc]       expect=PASS  got=PASS  try=1
-OK  create.schema[fileFormat=avro]                   expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  read.projection[fileFormat=avro]                 expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  read.filter[fileFormat=avro]                     expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  format.materialization[fileFormat=avro]          expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  delete.byPredicate[fileFormat=avro]              expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  delete.whereFalse.noSnapshot[fileFormat=avro]    expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  delete.truncate[fileFormat=avro]                 expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
-OK  delete.atSnapshot.rejected[fileFormat=avro]      expect=SKIP  got=SKIP  try=1  (SKIP: avro packaging prereq — see FINDINGS.md)
+OK  create.schema[fileFormat=avro]                   expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  read.projection[fileFormat=avro]                 expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  read.filter[fileFormat=avro]                     expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  format.materialization[fileFormat=avro]          expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  delete.byPredicate[fileFormat=avro]              expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  delete.whereFalse.noSnapshot[fileFormat=avro]    expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  delete.truncate[fileFormat=avro]                 expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
+OK  delete.atSnapshot.rejected[fileFormat=avro]      expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
 OK  firewall.transientHeals                          expect=PASS  got=PASS  try=3
-OK  firewall.wrongExpect                             expect=FAIL  got=FAIL  try=1  (intentional: asserted empty after a no-op delete)
+OK  firewall.wrongExpect                             expect=FAIL  got=FAIL  try=1  (AssertionError: expected List() but got List((1,a), (2,b), (3,c)))
 
 26/26 verified  ALL GREEN  (exit 0)
-JDK 17, embedded OpenHouseLocalServer + OpenHouseCatalog, namespace openhouse.dbMatrix.

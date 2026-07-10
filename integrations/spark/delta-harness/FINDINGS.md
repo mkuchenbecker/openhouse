@@ -19,7 +19,9 @@ the first data operation (INSERT/SELECT).
 `org.apache.iceberg.shaded.org.apache.avro`, while Spark's Avro data source uses unshaded
 `org.apache.avro`. On the Avro data path the two meet and the cast fails. Parquet and ORC are
 unaffected (verified green). This is an **OpenHouse runtime packaging** issue, not a defect in
-the tests or the catalog semantics.
+the tests or the catalog semantics. Per repo maintainer, this is likely triggered by a recent
+Avro version bump (the root build forces `org.apache.avro:avro:1.11.4` for CVE-2024-47561)
+diverging from the Avro version Iceberg's shaded runtime expects.
 
 **Harness treatment.** The `fileFormat=avro` slice is **disabled** (doc 08) with this reason,
 so it shows as a visible `SKIP` rather than a red `ERROR` or a silent drop. Note the
