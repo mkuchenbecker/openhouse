@@ -77,12 +77,14 @@ same authored deltas across it, add the matching verification (doc `09`).
 
 ## Axis B — Iceberg contract-test evaluation & port-all
 
-### Phase B0 — Complete the inventory (INVESTIGATING NOW)
+### Phase B0 — Complete the inventory (DONE)
 - [x] Count `spark-extensions/.../extensions`, `spark/.../source`, `spark/.../sql` → **1,271 methods** (doc `10`)
-- [ ] Count `spark/.../actions/` (action-level rewrite/expire/orphan — higher value than CALL) — *agent running*
-- [ ] Count `spark/.../functions/` — *agent running*
-- [ ] Count `spark/.../data/` and top-level `Test*Util` — *agent running*
-- [ ] Fold results into doc `10`; publish the true grand total (the port-all denominator)
+- [x] Count `spark/.../actions/` → **279** (128 core-maintenance — the OpenHouse target)
+- [x] Count `spark/.../functions/` → **6** (transform-fn unit tests live under `sql/`, already counted)
+- [x] Count `spark/.../data/` (79) and top-level `Test*.java` (232) → **+596 total**
+- [x] Folded into doc `10`. **Grand total: 1,867 declared methods across 171 test-bearing files.**
+- [ ] Resolve the **contract-vs-unit** flag (doc `10`): ~150 top-level util/conf tests are `f(x)=y`
+      unit tests that do NOT fit the delta model — confirm whether they're in scope at all.
 
 ### Phase B1 — Evaluate + map (per test)
 For each contract test, record: behavior, the delta it implies (`observe`/`operation`/`expect`),

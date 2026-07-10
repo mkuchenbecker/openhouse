@@ -25,9 +25,8 @@ behavior category so we evaluate — not blindly run — before cribbing.
 
 | | count |
 |---|---|
-| Test files surveyed | 156 |
-| Files with ≥1 test | 119 |
-| **Declared test methods** | **1,271** (707 extensions + 342 source + 222 sql) |
+| Test files with ≥1 test | 171 (119 core + 52 extended) |
+| **Declared test methods (full survey)** | **1,867** = 1,271 core (extensions/source/sql) + 596 extended (actions/data/functions/util) |
 | Effective executed cases | **several-fold higher** — see multipliers |
 | OpenHouse today (baseline) | ~263, concentrated on catalog/DDL/policy surface |
 
@@ -112,18 +111,40 @@ Concrete per-file checklist for the wedge (grade each method as copy / adapt / d
 
 ---
 
-## Coverage gaps in THIS inventory (not yet counted)
+## Extended inventory — previously-uncounted dirs (NOW COUNTED)
 
-The survey scoped to `source` + `sql` + `extensions`. Still uncounted under
-`.../org/apache/iceberg/spark/`:
+Same commit `d411012`. **+596 methods across 52 test-bearing files → grand total 1,867.**
 
-- **`actions/`** — *action-level* RewriteDataFiles / ExpireSnapshots / RemoveOrphanFiles
-  (distinct from the `CALL` procedure tests). **Directly relevant** to OpenHouse's job-based
-  maintenance — likely a better cribbing target than the CALL procedures. **Recommend counting next.**
-- **`functions/`** — system function unit tests (some overlap with #4 transforms).
-- **`data/`** — data/generic read-write helpers.
-- **~15 top-level `Test*Util.java`** — `TestSparkDistributionAndOrderingUtil`, `TestSparkV2Filters`,
-  `TestSparkTableUtil`, etc. Mostly unit, low cribbing value.
+| dir | files | methods | disposition |
+|---|---:|---:|---|
+| `actions/` | 16 | **279** | **HIGH** — action-level maintenance; the real OpenHouse target (below) |
+| `functions/` | 1 | 6 | LOW — only `TestSparkFunctions` (catalog lookup). The transform-fn unit tests (bucket/truncate/days/…) are **not** here; they live under `sql/` and are already counted in #4. |
+| `data/` (recursive) | 17 | 79 | ADAPT — reader/writer + vectorized-read correctness per format (Parquet/ORC/Avro) |
+| top-level `Test*.java` | 18 | 232 | **MIXED — see contract-vs-unit flag** |
+
+### `actions/` is the maintenance cribbing target (supersedes CALL procedures for OpenHouse)
+
+OpenHouse runs maintenance as *jobs*, and the action layer — not the `CALL` surface — is what
+those jobs invoke. Core-maintenance = **128 methods**:
+
+- rewrite data files → `TestRewriteDataFilesAction` (57) + `TestSparkFileRewriteRunners` (5) + `TestSparkShufflingDataRewritePlanner` (2)
+- expire snapshots → `TestExpireSnapshotsAction` (33)
+- remove orphan files → `TestRemoveOrphanFilesAction` (26) + `TestRemoveOrphanFilesAction3` (5)
+
+Adjacent maintenance also here: rewrite manifests (19), rewrite position-deletes (18),
+remove-dangling-delete (4), delete-reachable-files (12). Migration/stats actions
+(CreateActions 28, RewriteTablePaths 42, ComputeTableStats 19, Migrate 1, Snapshot 3) are
+lower relevance — evaluate against OpenHouse's own migration story.
+
+### ⚠ Flag — contract tests vs internal unit tests
+
+Roughly **150 of the top-level 232** test *Spark↔Iceberg internal conversion & planning*, not
+*table behavior*: `TestSparkDistributionAndOrderingUtil` (100), `TestSparkV2Filters` (25),
+`TestSparkWriteConf`/`TestSparkReadConf`, `TestSparkSchemaUtil`, `TestSpark3Util`, filter
+converters. These are `f(input)=output` **unit tests** — they have no table pre/post state, so
+they **do not fit the delta model** (`06`) and should NOT be forced through the harness.
+"Port all" for these means porting them as ordinary unit tests, if at all. **Confirm inclusion
+— they are not table contract tests.**
 
 ---
 
