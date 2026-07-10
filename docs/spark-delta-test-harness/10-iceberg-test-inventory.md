@@ -37,6 +37,39 @@ harness models (see `07`):
    (same for Merge/Update), re-running the parent's whole method set under each write mode on
    top of the shared 3-tuple `SparkRowLevelOperationsTestBase` matrix.
 
+### Iceberg's parameterization *is* our matrix — which is why porting is direct
+
+Iceberg's own test structure is the same model we are building, so the concepts map 1:1:
+
+| Iceberg (JUnit) | This harness |
+|---|---|
+| `@TestTemplate` method (a behavior) | a `TableTest` |
+| `@Parameters` tuple (fixture config: format, version, vectorization, catalog) | a `StartingState` |
+| COW/MOR set by a subclass (`TestCopyOnWriteDelete extends TestDelete`) | another `StartingState` axis |
+| "run every method under every tuple" | "run every state-agnostic test against every state" |
+
+**Is Iceberg's model better?** It is the standard-framework encoding of the same idea, and it
+has one tell that argues *for* the prep-function structure: Iceberg expresses the write-mode
+axis (COW vs MOR) through **inheritance** because JUnit `@Parameters` is a single flat tuple
+list per class and cannot cleanly carry a second orthogonal axis. The moment a second
+dimension was needed, they reached for subclassing. Our `StartingState` model treats every
+axis uniformly — write-mode, RTAS'd, soft-dropped, feature-enabled are all just more prep
+functions, with no subclass hierarchy — which is the more flexible model for *adding axes*
+(the stated goal). What Iceberg's model buys instead is mature JUnit tooling for free.
+
+**Can we port directly? Yes — this is the payoff.** Because Iceberg's tests are already
+factored as (parameterized fixture × behavior methods), each `@TestTemplate` body ports into a
+`TableTest` and each `@Parameters` tuple / write mode becomes a `StartingState`. It is
+mechanical, not literal copy-paste — the bodies lean on base-class helpers (`sql()`,
+`createTable()`, parameterized fields) that we swap for our `ctx`/`Tables` helpers — but the
+assertion logic and the edge cases Iceberg has already found port directly, which is exactly
+what makes porting preferable to hand-writing.
+
+**What we must not do:** run Iceberg's JUnit tests as-is against OpenHouse. That would mean
+overriding their `@Parameters`/subclasses to inject the OpenHouse catalog — i.e. reusing and
+extending their tests (ruled out), and they are OSS classes outside this repo. Port the
+behavior into our own matrix instead.
+
 ## How to read the grade
 
 | Grade | Meaning |
