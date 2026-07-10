@@ -28,10 +28,20 @@ so it shows as a visible `SKIP` rather than a red `ERROR` or a silent drop. Note
 classifier correctly filed the raw failure as `ERROR` (unclassified/terminal), *not* `FAIL` —
 the infra-vs-failure firewall held.
 
-**To re-enable Avro.** Align the Avro provided to the Spark Avro data source with the version
-the OpenHouse runtime expects (un-shade Avro in the runtime, or exclude the conflicting Avro
-from the run classpath). Once data ops work, remove the `fileFormat=avro` entry from the
-disable list in `OpenHouseMatrix.scala`.
+**Experiment — is it the Avro version bump?** Swapping the unshaded Avro jar on the run
+classpath from **1.11.4 → 1.11.2** (the version bumped in commit `ffc5517`) made **no
+difference**: the `ClassCastException` is byte-for-byte identical, all 36 avro cases still fail.
+So the Avro *version force* is not the cause. Commit `ffc5517` also bumped the **linkedin/iceberg
+fork** (`1.5.2.11 → 1.5.2.14`), and iceberg's shaded Avro (`org.apache.iceberg.shaded.org.apache.avro`)
+travels *inside that fork jar*. The collision is between that shaded copy and the unshaded
+`org.apache.avro` on the classpath — a shading/relocation mismatch, independent of the Avro jar
+version. The still-untested half of the hypothesis is reverting the **iceberg-fork** version,
+which requires a full rebuild against `1.5.2.11`.
+
+**To re-enable Avro.** Align the shaded Avro in the iceberg-fork runtime with the unshaded Avro
+reaching Spark's Avro data source (un-shade in the runtime, or keep only one Avro on the run
+classpath). Once data ops work, remove the `avro` entry from the disable list in
+`OpenHouseMatrix.scala`.
 
 ## Verified green (JDK 17, embedded OpenHouse server, `openhouse.dbMatrix`)
 - **Parquet, ORC** — CREATE (schema), READ (projection + filter), format-materialization

@@ -46,5 +46,7 @@ OPENS=(
   --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
 )
 SCALA_LIB="$M2/scala-library/2.12.18/scala-library-2.12.18.jar"
+# Args are passed through as case-id filters (AND). E.g. `run-openhouse.sh delete parquet`
+# runs just the delete tests on parquet — a ~25s inner loop. No args runs the full matrix.
 exec "$JDK17/bin/java" "${OPENS[@]}" -Dio.netty.tryReflectionSetAccessible=true \
-  -cp "$WORK/classes:$SCALA_LIB:$OHCP" harness.Main
+  -cp "$WORK/classes:$SCALA_LIB:$OHCP" harness.Main "$@"

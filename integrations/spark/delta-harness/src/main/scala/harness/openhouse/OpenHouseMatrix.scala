@@ -322,9 +322,10 @@ object Plan {
   // A known-blocked slice is a visible SKIP with a reason — a deliberate decision, not a swallow.
   private val disabled: List[(String, String)] = List(
     "avro" ->
-      ("OpenHouse runtime shaded-Avro collides with Spark's unshaded Avro on the data path " +
-        "(ClassCastException), likely from a recent Avro version bump diverging from Iceberg's " +
-        "shaded Avro; packaging prerequisite before Avro is testable"))
+      ("OpenHouse runtime shaded-Avro (baked into the iceberg fork jar) collides with the " +
+        "unshaded org.apache.avro on the data path (ClassCastException). Reverting only the Avro " +
+        "jar version (1.11.4 -> 1.11.2) does NOT fix it — the shaded copy travels with the iceberg " +
+        "fork bump; packaging prerequisite before Avro is testable"))
 
   private def skipReason(id: String): Option[String] =
     disabled.collectFirst { case (pattern, reason) if id.contains(pattern) => reason }
@@ -413,9 +414,19 @@ object Main {
     spark.sparkContext.setLogLevel("ERROR")
     val ctx = Ctx(spark, "openhouse.dbMatrix")
 
-    println("\n=== delta-harness :: state-agnostic tests x starting states @ OpenHouse catalog ===\n")
+    // Selector (doc 01): each command-line arg is an include-substring; a case runs only if its id
+    // contains ALL of them (AND), matched against the id (test name, state, format). No args = run
+    // everything. Keeps the inner loop fast, e.g.
+    //   run-openhouse.sh delete parquet             ->  delete tests on parquet
+    //   run-openhouse.sh merge unpartitioned/orc    ->  merge tests on one state
+    val filters = args.toList
+    def selected(id: String): Boolean = filters.forall(id.contains)
+    val cases = Plan.cases.filter(c => selected(c.id))
 
-    val results = Plan.cases.map(c => (c.id, Runner.execute(c, ctx)))
+    val header = if (filters.isEmpty) "all cases" else s"filter ${filters.mkString(", ")} -> ${cases.size} cases"
+    println(s"\n=== delta-harness :: operations x starting states @ OpenHouse catalog ($header) ===\n")
+
+    val results = cases.map(c => (c.id, Runner.execute(c, ctx)))
 
     results.foreach { case (id, (outcome, attempts)) =>
       val note = outcome match {

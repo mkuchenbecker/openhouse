@@ -16,6 +16,17 @@ The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessi
 (read, not extended). No OpenHouse test class is subclassed and no existing test is altered;
 `OpenHouseEnv` composes the embedded server as a component.
 
+### Fast inner loop (test selection)
+Pass case-id substrings as args to `run-openhouse.sh`; a case runs only if its id contains
+**all** of them (AND). No args runs the full matrix.
+```bash
+./run-openhouse.sh delete parquet          # delete tests on parquet
+./run-openhouse.sh merge unpartitioned/orc # merge tests on one state
+./run-openhouse.sh delete.byPredicate      # a single test across states
+```
+A narrow slice is ~25s end-to-end (embedded-server + Spark startup dominates; the cases
+themselves are milliseconds), which keeps the edit/run cycle well under a minute.
+
 ### Environment note (important)
 The OpenHouse build pins **Lombok 1.18.20, which does not compile under JDK 21+** (javac
 `JCTree.qualid` change). Build/run the OpenHouse variant on **JDK 17** — set `JAVA17_HOME`.
