@@ -1,0 +1,12 @@
+=== delta-harness :: DELETE slice @ OpenHouse catalog [copy-on-write, unpartitioned] ===
+
+OK  delete.byPredicate               expect=PASS  got=PASS  attempts=1
+OK  delete.whereFalse.noSnapshot     expect=PASS  got=PASS  attempts=1
+OK  delete.truncate                  expect=PASS  got=PASS  attempts=1
+OK  delete.atSnapshot.rejected       expect=PASS  got=PASS  attempts=1
+OK  firewall.transientHeals          expect=PASS  got=PASS  attempts=3
+OK  firewall.wrongExpect             expect=FAIL  got=FAIL  attempts=1  (intentional: asserted empty after a no-op delete)
+6/6 harness checks verified  ALL GREEN
+
+Ran on JDK 17 (Corretto), Gradle 8.14.3, embedded OpenHouseLocalServer + OpenHouseCatalog.
+exit 0

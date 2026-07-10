@@ -5,9 +5,23 @@ A standalone Scala prototype of the distributed delta-test harness designed in
 permutation against real Spark 3.5 + Iceberg and **self-verifies** (each check declares its
 expected outcome; the run exits non-zero on any mismatch).
 
-**Status:** proof-of-concept, verified end-to-end (see `VERIFIED-RUN.txt`). Standalone Maven
-build — *not yet wired into the Gradle build_ and not pointed at the OpenHouse catalog yet
-(uses a local Iceberg Hadoop catalog). Both are deliberate next steps, not oversights.
+**Status:** proof-of-concept, verified end-to-end against **two catalogs**:
+- **OpenHouse catalog** (primary) — `src/main/scala/harness/openhouse/OpenHouseDeleteSlice.scala`,
+  run via `run-openhouse.sh`. Boots the embedded `OpenHouseLocalServer` and wires the real
+  `OpenHouseCatalog`. Verified: `VERIFIED-RUN-openhouse.txt`.
+- **Local Iceberg Hadoop catalog** (quick smoke) — `src/main/scala/harness/Main.scala`,
+  standalone Maven (`pom.xml`, `run.sh`). Verified: `VERIFIED-RUN.txt`.
+
+The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessionUtil`
+(read, not extended). No OpenHouse test class is subclassed and no existing test is altered;
+`OpenHouseEnv` composes the embedded server as a component.
+
+### Environment note (important)
+The OpenHouse build pins **Lombok 1.18.20, which does not compile under JDK 21+** (javac
+`JCTree.qualid` change). Build/run the OpenHouse variant on **JDK 17** — set `JAVA17_HOME`.
+The two source files share class names in package `harness`; they are **compiled
+independently** (Maven for the local variant, `run-openhouse.sh` for the OpenHouse variant),
+never together.
 
 ## What it demonstrates (maps to the design docs)
 - Outcome model + allowlist classifier (`02`), errors-as-values (`03`).

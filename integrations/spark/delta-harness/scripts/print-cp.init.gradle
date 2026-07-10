@@ -1,0 +1,11 @@
+allprojects {
+  if (path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
+    tasks.register('printHarnessCp') {
+      doLast {
+        def cp = configurations.testRuntimeClasspath.resolve().collect { it.absolutePath }
+        new File(System.getProperty('cpOut')).text = cp.join(':')
+        println "WROTE ${cp.size()} classpath entries"
+      }
+    }
+  }
+}
