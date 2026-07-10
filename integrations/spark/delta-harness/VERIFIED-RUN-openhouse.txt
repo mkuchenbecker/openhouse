@@ -1,30 +1,47 @@
-=== delta-harness :: CREATE/READ/DELETE x fileFormat @ OpenHouse catalog ===
+=== delta-harness :: state-agnostic tests x starting states @ OpenHouse catalog ===
 
-OK  create.schema[fileFormat=parquet]                expect=PASS  got=PASS  try=1
-OK  read.projection[fileFormat=parquet]              expect=PASS  got=PASS  try=1
-OK  read.filter[fileFormat=parquet]                  expect=PASS  got=PASS  try=1
-OK  format.materialization[fileFormat=parquet]       expect=PASS  got=PASS  try=1
-OK  delete.byPredicate[fileFormat=parquet]           expect=PASS  got=PASS  try=1
-OK  delete.whereFalse.noSnapshot[fileFormat=parquet] expect=PASS  got=PASS  try=1
-OK  delete.truncate[fileFormat=parquet]              expect=PASS  got=PASS  try=1
-OK  delete.atSnapshot.rejected[fileFormat=parquet]   expect=PASS  got=PASS  try=1
-OK  create.schema[fileFormat=orc]                    expect=PASS  got=PASS  try=1
-OK  read.projection[fileFormat=orc]                  expect=PASS  got=PASS  try=1
-OK  read.filter[fileFormat=orc]                      expect=PASS  got=PASS  try=1
-OK  format.materialization[fileFormat=orc]           expect=PASS  got=PASS  try=1
-OK  delete.byPredicate[fileFormat=orc]               expect=PASS  got=PASS  try=1
-OK  delete.whereFalse.noSnapshot[fileFormat=orc]     expect=PASS  got=PASS  try=1
-OK  delete.truncate[fileFormat=orc]                  expect=PASS  got=PASS  try=1
-OK  delete.atSnapshot.rejected[fileFormat=orc]       expect=PASS  got=PASS  try=1
-OK  create.schema[fileFormat=avro]                   expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  read.projection[fileFormat=avro]                 expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  read.filter[fileFormat=avro]                     expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  format.materialization[fileFormat=avro]          expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  delete.byPredicate[fileFormat=avro]              expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  delete.whereFalse.noSnapshot[fileFormat=avro]    expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  delete.truncate[fileFormat=avro]                 expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  delete.atSnapshot.rejected[fileFormat=avro]      expect=SKIP  got=SKIP  try=0  (SKIP: avro packaging prereq - see FINDINGS.md)
-OK  firewall.transientHeals                          expect=PASS  got=PASS  try=3
-OK  firewall.wrongExpect                             expect=FAIL  got=FAIL  try=1  (AssertionError: expected List() but got List((1,a), (2,b), (3,c)))
+PASS read.projection @ unpartitioned/parquet              try=1
+PASS read.filter @ unpartitioned/parquet                  try=1
+PASS format.materialization @ unpartitioned/parquet       try=1
+PASS delete.byPredicate @ unpartitioned/parquet           try=1
+PASS delete.whereFalse.noSnapshot @ unpartitioned/parquet try=1
+PASS delete.truncate @ unpartitioned/parquet              try=1
+PASS delete.atSnapshot.rejected @ unpartitioned/parquet   try=1
+PASS read.projection @ partitioned/parquet                try=1
+PASS read.filter @ partitioned/parquet                    try=1
+PASS format.materialization @ partitioned/parquet         try=1
+PASS delete.byPredicate @ partitioned/parquet             try=1
+PASS delete.whereFalse.noSnapshot @ partitioned/parquet   try=1
+PASS delete.truncate @ partitioned/parquet                try=1
+PASS delete.atSnapshot.rejected @ partitioned/parquet     try=1
+PASS read.projection @ unpartitioned/orc                  try=1
+PASS read.filter @ unpartitioned/orc                      try=1
+PASS format.materialization @ unpartitioned/orc           try=1
+PASS delete.byPredicate @ unpartitioned/orc               try=1
+PASS delete.whereFalse.noSnapshot @ unpartitioned/orc     try=1
+PASS delete.truncate @ unpartitioned/orc                  try=1
+PASS delete.atSnapshot.rejected @ unpartitioned/orc       try=1
+PASS read.projection @ partitioned/orc                    try=1
+PASS read.filter @ partitioned/orc                        try=1
+PASS format.materialization @ partitioned/orc             try=1
+PASS delete.byPredicate @ partitioned/orc                 try=1
+PASS delete.whereFalse.noSnapshot @ partitioned/orc       try=1
+PASS delete.truncate @ partitioned/orc                    try=1
+PASS delete.atSnapshot.rejected @ partitioned/orc         try=1
+SKIP read.projection @ unpartitioned/avro                 try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP read.filter @ unpartitioned/avro                     try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP format.materialization @ unpartitioned/avro          try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.byPredicate @ unpartitioned/avro              try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.whereFalse.noSnapshot @ unpartitioned/avro    try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.truncate @ unpartitioned/avro                 try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.atSnapshot.rejected @ unpartitioned/avro      try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP read.projection @ partitioned/avro                   try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP read.filter @ partitioned/avro                       try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP format.materialization @ partitioned/avro            try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.byPredicate @ partitioned/avro                try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.whereFalse.noSnapshot @ partitioned/avro      try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.truncate @ partitioned/avro                   try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP delete.atSnapshot.rejected @ partitioned/avro        try=0  (avro: packaging prereq - see FINDINGS.md)
+PASS create.schema                                        try=1
 
-26/26 verified  ALL GREEN  (exit 0)
+29 passed, 14 skipped, 0 failed  (43 cases)  exit 0
