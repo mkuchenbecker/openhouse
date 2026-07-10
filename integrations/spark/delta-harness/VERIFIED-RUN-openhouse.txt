@@ -1,4 +1,4 @@
-=== delta-harness :: state-agnostic tests x starting states @ OpenHouse catalog ===
+=== delta-harness :: state-agnostic operations x starting states @ OpenHouse catalog ===
 
 PASS read.projection @ unpartitioned/parquet              try=1
 PASS read.filter @ unpartitioned/parquet                  try=1
@@ -7,6 +7,9 @@ PASS delete.byPredicate @ unpartitioned/parquet           try=1
 PASS delete.whereFalse.noSnapshot @ unpartitioned/parquet try=1
 PASS delete.truncate @ unpartitioned/parquet              try=1
 PASS delete.atSnapshot.rejected @ unpartitioned/parquet   try=1
+PASS update.byPredicate @ unpartitioned/parquet           try=1
+PASS update.withoutCondition @ unpartitioned/parquet      try=1
+PASS update.noMatch @ unpartitioned/parquet               try=1
 PASS read.projection @ partitioned/parquet                try=1
 PASS read.filter @ partitioned/parquet                    try=1
 PASS format.materialization @ partitioned/parquet         try=1
@@ -14,6 +17,9 @@ PASS delete.byPredicate @ partitioned/parquet             try=1
 PASS delete.whereFalse.noSnapshot @ partitioned/parquet   try=1
 PASS delete.truncate @ partitioned/parquet                try=1
 PASS delete.atSnapshot.rejected @ partitioned/parquet     try=1
+PASS update.byPredicate @ partitioned/parquet             try=1
+PASS update.withoutCondition @ partitioned/parquet        try=1
+PASS update.noMatch @ partitioned/parquet                 try=1
 PASS read.projection @ unpartitioned/orc                  try=1
 PASS read.filter @ unpartitioned/orc                      try=1
 PASS format.materialization @ unpartitioned/orc           try=1
@@ -21,6 +27,9 @@ PASS delete.byPredicate @ unpartitioned/orc               try=1
 PASS delete.whereFalse.noSnapshot @ unpartitioned/orc     try=1
 PASS delete.truncate @ unpartitioned/orc                  try=1
 PASS delete.atSnapshot.rejected @ unpartitioned/orc       try=1
+PASS update.byPredicate @ unpartitioned/orc               try=1
+PASS update.withoutCondition @ unpartitioned/orc          try=1
+PASS update.noMatch @ unpartitioned/orc                   try=1
 PASS read.projection @ partitioned/orc                    try=1
 PASS read.filter @ partitioned/orc                        try=1
 PASS format.materialization @ partitioned/orc             try=1
@@ -28,6 +37,9 @@ PASS delete.byPredicate @ partitioned/orc                 try=1
 PASS delete.whereFalse.noSnapshot @ partitioned/orc       try=1
 PASS delete.truncate @ partitioned/orc                    try=1
 PASS delete.atSnapshot.rejected @ partitioned/orc         try=1
+PASS update.byPredicate @ partitioned/orc                 try=1
+PASS update.withoutCondition @ partitioned/orc            try=1
+PASS update.noMatch @ partitioned/orc                     try=1
 SKIP read.projection @ unpartitioned/avro                 try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP read.filter @ unpartitioned/avro                     try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP format.materialization @ unpartitioned/avro          try=0  (avro: packaging prereq - see FINDINGS.md)
@@ -35,6 +47,9 @@ SKIP delete.byPredicate @ unpartitioned/avro              try=0  (avro: packagin
 SKIP delete.whereFalse.noSnapshot @ unpartitioned/avro    try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP delete.truncate @ unpartitioned/avro                 try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP delete.atSnapshot.rejected @ unpartitioned/avro      try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.byPredicate @ unpartitioned/avro              try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.withoutCondition @ unpartitioned/avro         try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.noMatch @ unpartitioned/avro                  try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP read.projection @ partitioned/avro                   try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP read.filter @ partitioned/avro                       try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP format.materialization @ partitioned/avro            try=0  (avro: packaging prereq - see FINDINGS.md)
@@ -42,6 +57,9 @@ SKIP delete.byPredicate @ partitioned/avro                try=0  (avro: packagin
 SKIP delete.whereFalse.noSnapshot @ partitioned/avro      try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP delete.truncate @ partitioned/avro                   try=0  (avro: packaging prereq - see FINDINGS.md)
 SKIP delete.atSnapshot.rejected @ partitioned/avro        try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.byPredicate @ partitioned/avro                try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.withoutCondition @ partitioned/avro           try=0  (avro: packaging prereq - see FINDINGS.md)
+SKIP update.noMatch @ partitioned/avro                    try=0  (avro: packaging prereq - see FINDINGS.md)
 PASS create.schema                                        try=1
 
-29 passed, 14 skipped, 0 failed  (43 cases)  exit 0
+41 passed, 20 skipped, 0 failed  (61 cases)  exit 0

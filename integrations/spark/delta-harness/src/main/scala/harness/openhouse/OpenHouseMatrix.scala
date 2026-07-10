@@ -171,9 +171,31 @@ object Tests {
     equal(rows(ctx, table), before) // a rejected delete must leave the table unchanged
   })
 
+  // UPDATE (ported from OSS Iceberg TestUpdate — the customer-facing operation, core behaviors).
+  val updateByPredicate: TableTest = TableTest("update.byPredicate", (ctx, table) => {
+    ctx.spark.sql(s"UPDATE $table SET data = 'X' WHERE id = 2")
+    equal(rows(ctx, table), List((1L, "a"), (2L, "X"), (3L, "c")))
+  })
+
+  val updateWithoutCondition: TableTest = TableTest("update.withoutCondition", (ctx, table) => {
+    ctx.spark.sql(s"UPDATE $table SET data = 'Z'")
+    equal(rows(ctx, table), List((1L, "Z"), (2L, "Z"), (3L, "Z")))
+  })
+
+  // A real predicate that matches nothing still commits an (empty) snapshot — unlike the
+  // constant-folded `DELETE WHERE false` no-op. Behavior confirmed against OSS Iceberg
+  // TestUpdate.testUpdateNonExistingRecords (2 snapshots, 0 changed files).
+  val updateNoMatch: TableTest = TableTest("update.noMatch", (ctx, table) => {
+    val snapshotsBefore = snapshotCount(ctx, table)
+    ctx.spark.sql(s"UPDATE $table SET data = 'Y' WHERE id = 99")
+    equal(rows(ctx, table), seed)
+    isTrue(snapshotCount(ctx, table) == snapshotsBefore + 1, "UPDATE with a real no-match predicate still commits one (empty) snapshot")
+  })
+
   val stateAgnostic: List[TableTest] =
     List(readProjection, readFilter, formatMaterialization,
-      deleteByPredicate, deleteWhereFalseKeepsSnapshot, truncate, deleteAtSnapshotRejected)
+      deleteByPredicate, deleteWhereFalseKeepsSnapshot, truncate, deleteAtSnapshotRejected,
+      updateByPredicate, updateWithoutCondition, updateNoMatch)
 
   // ---- standalone tests: incompatible with a pre-existing table ----
 
