@@ -129,13 +129,23 @@ object Tests {
   import Check._
   import Tables._
 
-  // ---- state-agnostic tests: same logical seed, so these hold on every table shape ----
+  // Every operation test is INCREMENTAL: it observes the table's current contents, applies its
+  // operation, and asserts the delta relative to what it observed — never an absolute row set.
+  // So two tests can run back-to-back on the same base table and both hold, and every test works
+  // against any starting condition.
 
-  val readProjection: TableTest = TableTest("read.projection", (ctx, table) =>
-    equal(ctx.spark.sql(s"SELECT data FROM $table ORDER BY id").collect().toList.map(_.getString(0)), List("a", "b", "c")))
+  // ---- reads: verify the read path against the table's current contents ----
 
-  val readFilter: TableTest = TableTest("read.filter", (ctx, table) =>
-    equal(ctx.spark.sql(s"SELECT id FROM $table WHERE id >= 2 ORDER BY id").collect().toList.map(_.getLong(0)), List(2L, 3L)))
+  val readProjection: TableTest = TableTest("read.projection", (ctx, table) => {
+    val current = rows(ctx, table)
+    equal(ctx.spark.sql(s"SELECT data FROM $table ORDER BY id").collect().toList.map(_.getString(0)), current.map(_._2))
+  })
+
+  val readFilter: TableTest = TableTest("read.filter", (ctx, table) => {
+    val current = rows(ctx, table)
+    equal(ctx.spark.sql(s"SELECT id FROM $table WHERE id >= 2 ORDER BY id").collect().toList.map(_.getLong(0)),
+      current.map(_._1).filter(_ >= 2))
+  })
 
   val formatMaterialization: TableTest = TableTest("format.materialization", (ctx, table) => {
     val fmt = declaredFormat(ctx, table)
@@ -143,21 +153,25 @@ object Tests {
     isTrue(paths.nonEmpty && paths.forall(_.toLowerCase.endsWith(s".$fmt")), s"data files are not all .$fmt: $paths")
   })
 
+  // ---- delete ----
+
   val deleteByPredicate: TableTest = TableTest("delete.byPredicate", (ctx, table) => {
+    val before = rows(ctx, table)
     ctx.spark.sql(s"DELETE FROM $table WHERE id < 2")
-    equal(rows(ctx, table), List((2L, "b"), (3L, "c")))
+    equal(rows(ctx, table), before.filterNot { case (id, _) => id < 2 })
   })
 
   val deleteWhereFalseKeepsSnapshot: TableTest = TableTest("delete.whereFalse.noSnapshot", (ctx, table) => {
+    val before = rows(ctx, table)
     val snapshotsBefore = snapshotCount(ctx, table)
     ctx.spark.sql(s"DELETE FROM $table WHERE false")
-    equal(rows(ctx, table), seed)
+    equal(rows(ctx, table), before)
     isTrue(snapshotCount(ctx, table) == snapshotsBefore, "DELETE WHERE false must not create a new snapshot")
   })
 
   val truncate: TableTest = TableTest("delete.truncate", (ctx, table) => {
     ctx.spark.sql(s"TRUNCATE TABLE $table")
-    equal(rows(ctx, table), Nil)
+    equal(rows(ctx, table), Nil) // truncate empties any starting state
   })
 
   val deleteAtSnapshotRejected: TableTest = TableTest("delete.atSnapshot.rejected", (ctx, table) => {
@@ -171,31 +185,84 @@ object Tests {
     equal(rows(ctx, table), before) // a rejected delete must leave the table unchanged
   })
 
-  // UPDATE (ported from OSS Iceberg TestUpdate — the customer-facing operation, core behaviors).
+  // ---- update (ported from OSS Iceberg TestUpdate) ----
+
   val updateByPredicate: TableTest = TableTest("update.byPredicate", (ctx, table) => {
+    val before = rows(ctx, table)
     ctx.spark.sql(s"UPDATE $table SET data = 'X' WHERE id = 2")
-    equal(rows(ctx, table), List((1L, "a"), (2L, "X"), (3L, "c")))
+    equal(rows(ctx, table), before.map { case (id, d) => if (id == 2) (id, "X") else (id, d) })
   })
 
   val updateWithoutCondition: TableTest = TableTest("update.withoutCondition", (ctx, table) => {
+    val before = rows(ctx, table)
     ctx.spark.sql(s"UPDATE $table SET data = 'Z'")
-    equal(rows(ctx, table), List((1L, "Z"), (2L, "Z"), (3L, "Z")))
+    equal(rows(ctx, table), before.map { case (id, _) => (id, "Z") })
   })
 
   // A real predicate that matches nothing still commits an (empty) snapshot — unlike the
-  // constant-folded `DELETE WHERE false` no-op. Behavior confirmed against OSS Iceberg
+  // constant-folded `DELETE WHERE false` no-op. Confirmed against OSS Iceberg
   // TestUpdate.testUpdateNonExistingRecords (2 snapshots, 0 changed files).
   val updateNoMatch: TableTest = TableTest("update.noMatch", (ctx, table) => {
+    val before = rows(ctx, table)
     val snapshotsBefore = snapshotCount(ctx, table)
     ctx.spark.sql(s"UPDATE $table SET data = 'Y' WHERE id = 99")
-    equal(rows(ctx, table), seed)
+    equal(rows(ctx, table), before.map { case (id, d) => if (id == 99) (id, "Y") else (id, d) })
     isTrue(snapshotCount(ctx, table) == snapshotsBefore + 1, "UPDATE with a real no-match predicate still commits one (empty) snapshot")
+  })
+
+  // ---- merge (ported from OSS Iceberg TestMerge) ----
+
+  private def source(pairs: (Long, String)*): String = {
+    val values = pairs.map { case (id, data) => s"(CAST($id AS BIGINT), '$data')" }.mkString(", ")
+    s"(SELECT col1 AS id, col2 AS data FROM VALUES $values)"
+  }
+
+  val mergeInsertNotMatched: TableTest = TableTest("merge.insertNotMatched", (ctx, table) => {
+    val before = rows(ctx, table)
+    val src = List((4L, "d"), (5L, "e"))
+    ctx.spark.sql(
+      s"""MERGE INTO $table t USING ${source(src: _*)} s ON t.id = s.id
+          WHEN NOT MATCHED THEN INSERT (id, data) VALUES (s.id, s.data)""")
+    val inserted = src.filterNot { case (id, _) => before.exists(_._1 == id) }
+    equal(rows(ctx, table), (before ++ inserted).sortBy(_._1))
+  })
+
+  val mergeUpdateMatched: TableTest = TableTest("merge.updateMatched", (ctx, table) => {
+    val before = rows(ctx, table)
+    val updates = List((2L, "M")).toMap
+    ctx.spark.sql(
+      s"""MERGE INTO $table t USING ${source(updates.toList: _*)} s ON t.id = s.id
+          WHEN MATCHED THEN UPDATE SET t.data = s.data""")
+    equal(rows(ctx, table), before.map { case (id, d) => (id, updates.getOrElse(id, d)) })
+  })
+
+  val mergeDeleteMatched: TableTest = TableTest("merge.deleteMatched", (ctx, table) => {
+    val before = rows(ctx, table)
+    val deleteIds = Set(1L, 3L)
+    ctx.spark.sql(
+      s"""MERGE INTO $table t USING ${source(deleteIds.toList.map(id => (id, "x")): _*)} s ON t.id = s.id
+          WHEN MATCHED THEN DELETE""")
+    equal(rows(ctx, table), before.filterNot { case (id, _) => deleteIds.contains(id) })
+  })
+
+  val mergeUpsert: TableTest = TableTest("merge.upsert", (ctx, table) => {
+    val before = rows(ctx, table)
+    val src = List((2L, "U"), (7L, "g")) // id 2 matches -> update; id 7 is new -> insert
+    ctx.spark.sql(
+      s"""MERGE INTO $table t USING ${source(src: _*)} s ON t.id = s.id
+          WHEN MATCHED THEN UPDATE SET t.data = s.data
+          WHEN NOT MATCHED THEN INSERT (id, data) VALUES (s.id, s.data)""")
+    val updates = src.toMap
+    val updated = before.map { case (id, d) => (id, updates.getOrElse(id, d)) }
+    val inserted = src.filterNot { case (id, _) => before.exists(_._1 == id) }
+    equal(rows(ctx, table), (updated ++ inserted).sortBy(_._1))
   })
 
   val stateAgnostic: List[TableTest] =
     List(readProjection, readFilter, formatMaterialization,
       deleteByPredicate, deleteWhereFalseKeepsSnapshot, truncate, deleteAtSnapshotRejected,
-      updateByPredicate, updateWithoutCondition, updateNoMatch)
+      updateByPredicate, updateWithoutCondition, updateNoMatch,
+      mergeInsertNotMatched, mergeUpdateMatched, mergeDeleteMatched, mergeUpsert)
 
   // ---- standalone tests: incompatible with a pre-existing table ----
 
