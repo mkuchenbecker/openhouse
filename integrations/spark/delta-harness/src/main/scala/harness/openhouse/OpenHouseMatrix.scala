@@ -77,14 +77,21 @@ object Tables {
   def freshName(ctx: Ctx): String = s"${ctx.namespace}.t_${counter.incrementAndGet()}"
   def drop(ctx: Ctx, table: String): Unit = ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
 
+  // Ordered by (id, data) so comparisons are deterministic even with duplicate ids.
   def rows(ctx: Ctx, table: String): List[(Long, String)] =
-    ctx.spark.sql(s"SELECT id, data FROM $table ORDER BY id").collect().toList.map(r => (r.getLong(0), r.getString(1)))
+    ctx.spark.sql(s"SELECT id, data FROM $table ORDER BY id, data").collect().toList.map(r => (r.getLong(0), r.getString(1)))
   def snapshotCount(ctx: Ctx, table: String): Long =
     ctx.spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
   def schema(ctx: Ctx, table: String): List[(String, String)] =
     ctx.spark.table(table).schema.fields.toList.map(f => (f.name, f.dataType.simpleString))
   def dataFilePaths(ctx: Ctx, table: String): List[String] =
     ctx.spark.sql(s"SELECT file_path FROM $table.files").collect().toList.map(_.getString(0))
+  /** A small DataFrame of (id bigint, data string) for the DataFrame write paths. */
+  def valuesDf(ctx: Ctx, pairs: Seq[(Long, String)]): org.apache.spark.sql.DataFrame = {
+    val values = pairs.map { case (id, data) => s"(CAST($id AS BIGINT), '$data')" }.mkString(", ")
+    ctx.spark.sql(s"SELECT col1 AS id, col2 AS data FROM VALUES $values")
+  }
+  def sorted(rows: Seq[(Long, String)]): List[(Long, String)] = rows.sortBy(r => (r._1, r._2)).toList
   def declaredFormat(ctx: Ctx, table: String): String =
     ctx.spark.sql(s"SHOW TBLPROPERTIES $table ('write.format.default')").collect()(0).getString(1)
 }
@@ -258,11 +265,41 @@ object Tests {
     equal(rows(ctx, table), (updated ++ inserted).sortBy(_._1))
   })
 
+  // ---- insert / append / overwrite ----
+
+  val insertInto: TableTest = TableTest("insert.into", (ctx, table) => {
+    val before = rows(ctx, table)
+    val src = List((4L, "d"), (5L, "e"))
+    ctx.spark.sql(s"INSERT INTO $table VALUES ${src.map { case (id, d) => s"($id, '$d')" }.mkString(", ")}")
+    equal(rows(ctx, table), sorted(before ++ src))
+  })
+
+  val appendDataFrame: TableTest = TableTest("append.dataFrame", (ctx, table) => {
+    val before = rows(ctx, table)
+    val src = List((6L, "f"), (7L, "g"))
+    valuesDf(ctx, src).writeTo(table).append()
+    equal(rows(ctx, table), sorted(before ++ src))
+  })
+
+  // INSERT OVERWRITE (static mode, the Spark default) replaces the whole table regardless of state.
+  val insertOverwrite: TableTest = TableTest("insert.overwrite", (ctx, table) => {
+    val src = List((1L, "p"), (2L, "q"))
+    ctx.spark.sql(s"INSERT OVERWRITE $table VALUES ${src.map { case (id, d) => s"($id, '$d')" }.mkString(", ")}")
+    equal(rows(ctx, table), sorted(src))
+  })
+
+  val overwriteDataFrame: TableTest = TableTest("overwrite.dataFrame", (ctx, table) => {
+    val src = List((8L, "h"))
+    valuesDf(ctx, src).writeTo(table).overwrite(org.apache.spark.sql.functions.lit(true))
+    equal(rows(ctx, table), sorted(src))
+  })
+
   val stateAgnostic: List[TableTest] =
     List(readProjection, readFilter, formatMaterialization,
       deleteByPredicate, deleteWhereFalseKeepsSnapshot, truncate, deleteAtSnapshotRejected,
       updateByPredicate, updateWithoutCondition, updateNoMatch,
-      mergeInsertNotMatched, mergeUpdateMatched, mergeDeleteMatched, mergeUpsert)
+      mergeInsertNotMatched, mergeUpdateMatched, mergeDeleteMatched, mergeUpsert,
+      insertInto, appendDataFrame, insertOverwrite, overwriteDataFrame)
 
   // ---- standalone tests: incompatible with a pre-existing table ----
 
