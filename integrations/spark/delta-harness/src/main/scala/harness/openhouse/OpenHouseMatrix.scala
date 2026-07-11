@@ -76,22 +76,44 @@ object Check {
 
 // ── Schema: columns only. A column owns its deterministic value generator; no stored seed. ──
 //
-// `literalAt(rowIndex)` is a pure function of the row index, so generated data is reproducible.
-// This is the ONLY logic a schema carries. Value generation lives on the column, which keeps
-// RowGenerator a plain iteration with no knowledge of types.
-final case class Column(columnName: String, sqlType: String, literalAt: Int => String)
+// `Column[T]` carries a phantom type `T` — the Scala type the column reads back as — so typed
+// row access (`row.get(CoreTable.long): Long`) is compiler-checked. `literalAt(rowIndex)` is a
+// pure function of the row index, so generated data is reproducible. Value generation lives on
+// the column, which keeps RowGenerator a plain iteration with no knowledge of types.
+final case class Column[T](columnName: String, sqlType: String, literalAt: Int => String)
 
 sealed trait Schema {
-  def tableColumns: Seq[Column]
+  def tableColumns: Seq[Column[_]]
   def columnDefinitions: String =
     tableColumns.map(column => s"${column.columnName} ${column.sqlType}").mkString(", ")
   def columnNames: Seq[String] = tableColumns.map(_.columnName)
 }
 
+/** Typed row access, keyed by the column's name: `row.get(CoreTable.long)` returns a `Long`. */
+object Rows {
+  implicit class TypedRow(val row: Row) extends AnyVal {
+    def get[T](column: Column[T]): T = row.getAs[T](column.columnName)
+  }
+}
+
+// A representative "core" table: one column per common data type (each named for its type), plus
+// an explicit string date-partition field in the widely-used YYYY-MM-DD-HH form. Columns only;
+// each carries a deterministic generator.
 object CoreTable extends Schema {
-  val id:   Column = Column("id",   "bigint", rowIndex => rowIndex.toString)
-  val data: Column = Column("data", "string", rowIndex => s"'row-$rowIndex'")
-  def tableColumns: Seq[Column] = Seq(id, data)
+  val long:          Column[Long]    = Column("long",          "bigint",  rowIndex => rowIndex.toString)
+  val int:           Column[Int]     = Column("int",           "int",     rowIndex => rowIndex.toString)
+  val string:        Column[String]  = Column("string",        "string",  rowIndex => s"'row-$rowIndex'")
+  val double:        Column[Double]  = Column("double",        "double",  rowIndex => s"$rowIndex.5")
+  val boolean:       Column[Boolean] = Column("boolean",       "boolean", rowIndex => if (rowIndex % 2 == 0) "true" else "false")
+  val datePartition: Column[String]  = Column("datepartition", "string",  rowIndex => CoreTable.datePartitionLiteral(rowIndex))
+  def tableColumns: Seq[Column[_]] = Seq(long, int, string, double, boolean, datePartition)
+
+  /** Deterministic YYYY-MM-DD-HH partition value, as a quoted SQL string literal. */
+  def datePartitionLiteral(rowIndex: Int): String = {
+    val day  = ((rowIndex - 1) % 28) + 1
+    val hour = (rowIndex - 1) % 24
+    f"'2024-01-$day%02d-$hour%02d'"
+  }
 }
 
 object RowGenerator {
@@ -193,16 +215,18 @@ object Tables {
 
 /** The concrete tests: preparation prefixes and operation suffixes, on CoreTable. */
 object Scenarios {
+  import Rows._
+
   // Preparation: create an unpartitioned table and seed `numberOfRows` deterministic rows.
   // Interchangeable with RTAS / drop+undrop preparations later — same resulting state.
   def createAndSeed(numberOfRows: Int): TableTest[CoreTable.type] =
     TableTest(CoreTable).create()().insert(numberOfRows)()
 
-  // Operation: delete rows with id < 2, asserting the delta against the observed pre-state.
+  // Operation: delete rows with long < 2, asserting the delta against the observed pre-state.
   val deleteByPredicate: TableTest[CoreTable.type] =
     createAndSeed(numberOfRows = 3)
-      .delete(coreTable => s"${coreTable.id.columnName} < 2") { view =>
-        Check.equal(view.after, view.before.filterNot(row => row.getLong(0) < 2))
+      .delete(coreTable => s"${coreTable.long.columnName} < 2") { view =>
+        Check.equal(view.after, view.before.filterNot(row => row.get(CoreTable.long) < 2))
       }
 }
 
