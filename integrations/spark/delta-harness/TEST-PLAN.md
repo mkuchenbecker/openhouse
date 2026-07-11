@@ -47,18 +47,18 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 - [x] update a partition column so the row moves partitions
 - [x] update with null assignment (`SET string = NULL`)
 
-## Phase 3 — MERGE  (~20)
+## Phase 3 — MERGE  ✅ (16 behaviors × 6 layouts)
 - [x] insert-not-matched; update-matched; delete-matched; upsert; delete-not-matched-by-source
-- [ ] conditional matched: `WHEN MATCHED AND <cond> THEN UPDATE`
-- [ ] multiple matched clauses (update then delete; first match wins)
-- [ ] conditional not-matched: `WHEN NOT MATCHED AND <cond> THEN INSERT`
-- [ ] matched + not-matched + not-matched-by-source in one statement
-- [ ] `UPDATE SET *` and `INSERT *` star forms
-- [ ] explicit column-specification form
-- [ ] source as a CTE; source as a set operation (UNION)
-- [ ] merge into an empty target (all rows inserted)
-- [ ] merge with a null join key
-- [ ] merge resolves columns by name (source column order differs)
+- [x] conditional matched: `WHEN MATCHED AND <cond> THEN UPDATE`
+- [x] multiple matched clauses (update then delete; first match wins)
+- [x] conditional not-matched: `WHEN NOT MATCHED AND <cond> THEN INSERT`
+- [x] matched + not-matched + not-matched-by-source in one statement
+- [x] `UPDATE SET *` (and `INSERT *`, already used throughout)
+- [x] explicit column-specification INSERT form
+- [x] source as a CTE; source as a set operation (UNION ALL)
+- [x] merge into an empty target (all rows inserted)
+- [x] merge with a null join key (never matches, no error)
+- [x] merge resolves columns by name (source column order differs)
 
 ## Phase 4 — INSERT / OVERWRITE / APPEND  (~8)
 - [x] INSERT INTO VALUES; DataFrame append; INSERT OVERWRITE (static); DataFrame overwrite(true)

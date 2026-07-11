@@ -546,6 +546,142 @@ object Scenarios {
       assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filter(_ == 2L).sorted)
     }
 
+  // Both keys 2 and 3 match, but the per-clause condition only fires for key 2.
+  val mergeConditionalUpdate: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.conditionalUpdate")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(2 AS BIGINT), 'U2'), (CAST(3 AS BIGINT), 'U3')
+            AS s(${Core.long0.columnName}, ${Core.string0.columnName})
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN MATCHED AND s.${Core.long0.columnName} = 2 THEN UPDATE SET t.${Core.string0.columnName} = s.${Core.string0.columnName}""") { view =>
+      assert(longToString(view.after) == longToString(view.before).map { case (id, s) => id -> (if (id == 2) "U2" else s) })
+    }
+
+  // First matched clause wins: key 2 updates (conditional), key 3 falls through to DELETE.
+  val mergeMultipleMatchedClauses: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.multipleMatchedClauses")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(2 AS BIGINT), 'U'), (CAST(3 AS BIGINT), 'x')
+            AS s(${Core.long0.columnName}, ${Core.string0.columnName})
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN MATCHED AND s.${Core.long0.columnName} = 2 THEN UPDATE SET t.${Core.string0.columnName} = s.${Core.string0.columnName}
+          WHEN MATCHED THEN DELETE""") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ == 3L).sorted)
+      assert(view.after.find(_.get(Core.long0) == 2L).map(_.get(Core.string0)).contains("U"))
+    }
+
+  // Conditional NOT MATCHED: source keys 4 and 5, but only 4 satisfies the insert condition.
+  val mergeConditionalInsert: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.conditionalInsert")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES
+              (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
+              (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')
+            AS s($cols)
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED AND s.${Core.long0.columnName} = 4 THEN INSERT *""") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) :+ 4L).sorted)
+    }
+
+  // All three clause kinds in one statement: update key 2, insert key 4, delete-by-source rows 1 & 3.
+  val mergeAllClauses: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.allClauses")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES
+              (CAST(2 AS BIGINT), 2, 'M2', 2.5, true,  '2024-01-02-01'),
+              (CAST(4 AS BIGINT), 4, 'row-4', 4.5, false, '2024-01-04-03')
+            AS s($cols)
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN MATCHED THEN UPDATE SET t.${Core.string0.columnName} = s.${Core.string0.columnName}
+          WHEN NOT MATCHED THEN INSERT *
+          WHEN NOT MATCHED BY SOURCE THEN DELETE""") { view =>
+      assert(keyed(view.after) == Seq(2L, 4L))
+      assert(view.after.find(_.get(Core.long0) == 2L).map(_.get(Core.string0)).contains("M2"))
+    }
+
+  // UPDATE SET * replaces every column of the matched row from the source.
+  val mergeUpdateStar: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.updateStar")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(2 AS BIGINT), 22, 'S2', 22.5, true, '2024-06-06-06') AS s($cols)
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN MATCHED THEN UPDATE SET *""") { view =>
+      val row2 = view.after.find(_.get(Core.long0) == 2L)
+      assert(row2.map(_.get(Core.string0)).contains("S2"))
+      assert(row2.map(_.get(Core.int0)).contains(22))
+    }
+
+  // Explicit column-specification INSERT (other columns null-filled).
+  val mergeInsertExplicitColumns: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.insertExplicitColumns")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(7 AS BIGINT), 'g') AS s(${Core.long0.columnName}, ${Core.string0.columnName})
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED THEN INSERT (${Core.long0.columnName}, ${Core.string0.columnName}) VALUES (s.${Core.long0.columnName}, s.${Core.string0.columnName})""") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) :+ 7L).sorted)
+      assert(view.after.find(_.get(Core.long0) == 7L).map(_.get(Core.string0)).contains("g"))
+    }
+
+  // Source is a CTE.
+  val mergeSourceCTE: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.sourceCTE")(table =>
+      s"""MERGE INTO $table t USING (
+            WITH src AS (SELECT CAST(8 AS BIGINT) AS ${Core.long0.columnName}) SELECT * FROM src
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED THEN INSERT (${Core.long0.columnName}) VALUES (s.${Core.long0.columnName})""") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) :+ 8L).sorted)
+    }
+
+  // Source is a set operation (UNION ALL).
+  val mergeSourceSetOp: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.sourceSetOp")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT CAST(8 AS BIGINT) AS ${Core.long0.columnName} UNION ALL SELECT CAST(9 AS BIGINT)
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED THEN INSERT (${Core.long0.columnName}) VALUES (s.${Core.long0.columnName})""") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) ++ Seq(8L, 9L)).sorted)
+    }
+
+  // Merge into an empty target inserts all non-matching source rows (empties the seed first).
+  val mergeIntoEmptyTarget: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("merge.intoEmptyTarget.empty")(table => s"DELETE FROM $table")()
+      .sql("merge.intoEmptyTarget")(table =>
+        s"""MERGE INTO $table t USING (
+              SELECT * FROM VALUES
+                (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
+                (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')
+              AS s($cols)
+            ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+            WHEN NOT MATCHED THEN INSERT *""") { view =>
+        assert(view.before.isEmpty)
+        assert(keyed(view.after) == Seq(4L, 5L))
+      }
+
+  // A null join key never matches, so it neither updates nor errors.
+  val mergeNullJoinKey: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.nullJoinKey")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(NULL AS BIGINT), 'n'), (CAST(2 AS BIGINT), 'M')
+            AS s(${Core.long0.columnName}, ${Core.string0.columnName})
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN MATCHED THEN UPDATE SET t.${Core.string0.columnName} = s.${Core.string0.columnName}""") { view =>
+      assert(keyed(view.after) == keyed(view.before))
+      assert(longToString(view.after) == longToString(view.before).map { case (id, s) => id -> (if (id == 2) "M" else s) })
+    }
+
+  // INSERT * resolves columns by name even when the source lists them in a different order.
+  val mergeResolveByName: TableTest[CoreTable.type] =
+    TableTest(Core).sql("merge.resolveByName")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES ('g', CAST(7 AS BIGINT), 7, 7.5, false, '2024-07-07-07')
+            AS s(${Core.string0.columnName}, ${Core.long0.columnName}, ${Core.int0.columnName}, ${Core.double0.columnName}, ${Core.boolean0.columnName}, datepartition)
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED THEN INSERT *""") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) :+ 7L).sorted)
+      assert(view.after.find(_.get(Core.long0) == 7L).map(_.get(Core.string0)).contains("g"))
+    }
+
   // ── insert / append / overwrite ────────────────────────────────────────────────────────
   val insertInto: TableTest[CoreTable.type] =
     TableTest(Core).sql("insert.into")(table =>
@@ -630,6 +766,17 @@ object Scenarios {
     "merge.deleteMatched"            -> mergeDeleteMatched,
     "merge.upsert"                   -> mergeUpsert,
     "merge.deleteNotMatchedBySource" -> mergeDeleteNotMatchedBySource,
+    "merge.conditionalUpdate"        -> mergeConditionalUpdate,
+    "merge.multipleMatchedClauses"   -> mergeMultipleMatchedClauses,
+    "merge.conditionalInsert"        -> mergeConditionalInsert,
+    "merge.allClauses"               -> mergeAllClauses,
+    "merge.updateStar"               -> mergeUpdateStar,
+    "merge.insertExplicitColumns"    -> mergeInsertExplicitColumns,
+    "merge.sourceCTE"                -> mergeSourceCTE,
+    "merge.sourceSetOp"              -> mergeSourceSetOp,
+    "merge.intoEmptyTarget"          -> mergeIntoEmptyTarget,
+    "merge.nullJoinKey"              -> mergeNullJoinKey,
+    "merge.resolveByName"            -> mergeResolveByName,
     "insert.into"                    -> insertInto,
     "append.dataFrame"               -> appendDataFrame,
     "insert.overwrite"               -> insertOverwrite,
