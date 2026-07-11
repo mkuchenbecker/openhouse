@@ -122,6 +122,20 @@ object CoreTable extends Schema {
     DatePartitionEpoch.plusHours((rowIndex - 1).toLong).format(DatePartitionFormat)
 }
 
+// A schema exercising complex/nested types: a struct, an array, a map, and a struct-in-struct.
+// Struct/array read back as Row/Seq; map as a Map. `id` is first so it is the ordering key.
+object NestedTable extends Schema {
+  val id:     Column[Long]            = Column("id",     "bigint",                      rowIndex => rowIndex.toString)
+  val s:      Column[Row]             = Column("s",      "struct<x:int,y:string>",      rowIndex => s"named_struct('x', $rowIndex, 'y', 'row-$rowIndex')")
+  val arr:    Column[Seq[Int]]        = Column("arr",    "array<int>",                  rowIndex => s"array($rowIndex, ${rowIndex + 1})")
+  val m:      Column[Map[String, Int]] = Column("m",     "map<string,int>",             rowIndex => s"map('k', $rowIndex)")
+  val nested: Column[Row]             = Column("nested", "struct<inner:struct<z:int>>", rowIndex => s"named_struct('inner', named_struct('z', $rowIndex))")
+  def tableColumns: Seq[Column[_]] = Seq(id, s, arr, m, nested)
+
+  val columnDefinitions: String =
+    "id bigint, s struct<x:int,y:string>, arr array<int>, m map<string,int>, nested struct<inner:struct<z:int>>"
+}
+
 object RowGenerator {
   /** VALUES clause for `numberOfRows` deterministic rows, one literal per column. */
   def valuesClause(schema: Schema, numberOfRows: Int): String =
@@ -205,10 +219,12 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
     try use(table) finally ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
   }
 
-  // Rows selected by the schema's columns, ordered by them for deterministic comparison.
+  // Rows selected by the schema's columns, ordered by the key (first) column for deterministic
+  // comparison. Ordering by the key (not all columns) keeps this valid for schemas with columns
+  // that aren't orderable, e.g. a map.
   private def currentRows(spark: SparkSession, table: String): Seq[Row] = {
     val columns = schema.columnNames.mkString(", ")
-    spark.sql(s"SELECT $columns FROM $table ORDER BY $columns").collect().toSeq
+    spark.sql(s"SELECT $columns FROM $table ORDER BY ${schema.columnNames.head}").collect().toSeq
   }
 
   private def snapshotCount(spark: SparkSession, table: String): Long =
@@ -847,6 +863,80 @@ object Scenarios {
     operations.filter { case (name, _) =>
       name.startsWith("delete.") || name.startsWith("update.") || name.startsWith("merge.")
     }
+
+  // ── nested / complex types (NestedTable) ───────────────────────────────────────────────
+  val nestedLayouts: List[Layout] =
+    List("parquet", "orc", "avro").map(format => Layout(s"nested-unpartitioned/$format", table =>
+      s"CREATE TABLE $table (${NestedTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
+
+  def createAndSeedNested(layout: Layout, numberOfRows: Int): TableTest[NestedTable.type] =
+    TableTest(NestedTable).sql("create")(layout.create)().insert(numberOfRows)()
+
+  // Read every nested column back and check the seeded values roundtrip.
+  val nestedRoundtrip: TableTest[NestedTable.type] =
+    TableTest(NestedTable).check("nested.roundtrip") { view =>
+      val got = view.spark.sql(s"SELECT id, s.x, s.y, arr, m['k'], nested.inner.z FROM ${view.table} ORDER BY id").collect().toSeq
+      val actual = got.map(r => (r.getLong(0), r.getInt(1), r.getString(2), r.getSeq[Int](3), r.getInt(4), r.getInt(5)))
+      assert(actual == (1 to 3).map(i => (i.toLong, i, s"row-$i", Seq(i, i + 1), i, i)))
+    }
+
+  val nestedProjectField: TableTest[NestedTable.type] =
+    TableTest(NestedTable).check("nested.projectField") { view =>
+      val xs = view.spark.sql(s"SELECT s.x FROM ${view.table} ORDER BY id").collect().map(_.getInt(0)).toSeq
+      assert(xs == Seq(1, 2, 3))
+    }
+
+  val nestedFilterField: TableTest[NestedTable.type] =
+    TableTest(NestedTable).check("nested.filterNestedField") { view =>
+      val ids = view.spark.sql(s"SELECT id FROM ${view.table} WHERE s.x = 2 ORDER BY id").collect().map(_.getLong(0)).toSeq
+      assert(ids == Seq(2L))
+    }
+
+  // Update a nested struct field.
+  val nestedUpdateStructField: TableTest[NestedTable.type] =
+    TableTest(NestedTable).sql("nested.updateStructField")(table => s"UPDATE $table SET s.x = 99 WHERE id = 2") { view =>
+      assert(view.spark.sql(s"SELECT s.x FROM ${view.table} WHERE id = 2").collect()(0).getInt(0) == 99)
+      assert(view.spark.sql(s"SELECT s.x FROM ${view.table} WHERE id = 1").collect()(0).getInt(0) == 1)
+    }
+
+  val nestedMergeInsert: TableTest[NestedTable.type] =
+    TableTest(NestedTable).sql("nested.mergeInsert")(table =>
+      s"""MERGE INTO $table tgt USING (
+            SELECT * FROM VALUES
+              (CAST(4 AS BIGINT), named_struct('x', 4, 'y', 'row-4'), array(4, 5), map('k', 4), named_struct('inner', named_struct('z', 4)))
+            AS v(id, s, arr, m, nested)
+          ) src ON tgt.id = src.id
+          WHEN NOT MATCHED THEN INSERT *""") { view =>
+      val ids = view.spark.sql(s"SELECT id FROM ${view.table} ORDER BY id").collect().map(_.getLong(0)).toSeq
+      assert(ids == Seq(1L, 2L, 3L, 4L))
+      assert(view.spark.sql(s"SELECT s.x FROM ${view.table} WHERE id = 4").collect()(0).getInt(0) == 4)
+    }
+
+  val nestedDeleteByField: TableTest[NestedTable.type] =
+    TableTest(NestedTable).sql("nested.deleteByNestedField")(table => s"DELETE FROM $table WHERE s.x = 2") { view =>
+      val ids = view.spark.sql(s"SELECT id FROM ${view.table} ORDER BY id").collect().map(_.getLong(0)).toSeq
+      assert(ids == Seq(1L, 3L))
+    }
+
+  // Insert a row with a null struct and empty array/map.
+  val nestedNullValues: TableTest[NestedTable.type] =
+    TableTest(NestedTable).sql("nested.nullValues")(table =>
+      s"INSERT INTO $table VALUES (CAST(4 AS BIGINT), CAST(NULL AS struct<x:int,y:string>), " +
+        s"CAST(array() AS array<int>), CAST(map() AS map<string,int>), CAST(NULL AS struct<inner:struct<z:int>>))") { view =>
+      val row4 = view.spark.sql(s"SELECT id, s, arr FROM ${view.table} WHERE id = 4").collect()(0)
+      assert(row4.isNullAt(1))                 // s is null
+      assert(row4.getSeq[Int](2).isEmpty)      // arr is empty
+    }
+
+  val nestedOperations: List[(String, TableTest[NestedTable.type])] = List(
+    "nested.roundtrip"          -> nestedRoundtrip,
+    "nested.projectField"       -> nestedProjectField,
+    "nested.filterNestedField"  -> nestedFilterField,
+    "nested.updateStructField"  -> nestedUpdateStructField,
+    "nested.mergeInsert"        -> nestedMergeInsert,
+    "nested.deleteByNestedField" -> nestedDeleteByField,
+    "nested.nullValues"         -> nestedNullValues
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -858,7 +948,9 @@ object Plan {
   // it": a genuine bug is tagged here, deferred for follow-up, and never plowed past silently.
   val knownBugs: List[(String, String)] = List(
     "insert.explicitColumns" ->
-      "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md"
+      "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md",
+    "nested.deleteByNestedField" ->
+      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -881,11 +973,17 @@ object Plan {
       (name, op)    <- Scenarios.mutationOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
+    // Nested / complex types, on their own schema and layouts.
+    val nested = for {
+      layout        <- Scenarios.nestedLayouts
+      (name, op)    <- Scenarios.nestedOperations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedNested(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ mor ++ creates
+    dml ++ partitioned ++ mor ++ nested ++ creates
   }
 }
 

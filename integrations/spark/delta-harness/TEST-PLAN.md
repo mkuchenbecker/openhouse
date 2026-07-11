@@ -75,15 +75,15 @@ tests whose correctness depends on partitioning; reused in Phase 7.
   all 44 mutation operations × 6 layouts = 264 cases, all green — correctness holds under MoR
 - [ ] under MoR, additionally assert delete files are produced (`.files` content / position-deletes metadata) — refinement, not yet added
 
-## Phase 6 — Nested / complex types  (new `NestedTable` schema)
-- [ ] define `NestedTable`: `struct<x:int,y:string>`, `array<int>`, `map<string,int>`, struct-in-struct
-- [ ] write + read-back roundtrip of every nested column
-- [ ] project a nested field (`SELECT s.x`)
-- [ ] filter on a nested field
-- [ ] UPDATE a nested struct field (`SET s.x = …`)
-- [ ] MERGE updating / inserting nested columns
-- [ ] delete by predicate on a nested field
-- [ ] null nested values (null struct, empty array / map)
+## Phase 6 — Nested / complex types  ✅ (+ 1 tagged bug) — NestedTable × 3 formats
+- [x] define `NestedTable`: `struct<x:int,y:string>`, `array<int>`, `map<string,int>`, struct-in-struct
+- [x] write + read-back roundtrip of every nested column
+- [x] project a nested field (`SELECT s.x`)
+- [x] filter on a nested field
+- [x] UPDATE a nested struct field (`SET s.x = 99`)
+- [x] MERGE inserting nested columns
+- [🐛] delete by predicate on a nested field — **tagged bug**: `DELETE WHERE s.x = 2` internal optimizer NPE; see `BUGS.md`
+- [x] null / empty nested values (null struct, empty array / map)
 
 ## Phase 7 — Partitioning: transforms + evolution
 - [ ] create + write + read, one per transform: identity, `bucket[N]`, `truncate[W]`, `year/month/day/hour`, `void`
