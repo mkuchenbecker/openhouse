@@ -320,12 +320,9 @@ object Plan {
   final case class Case(id: String, run: Ctx => Unit, skip: Option[String])
 
   // A known-blocked slice is a visible SKIP with a reason — a deliberate decision, not a swallow.
-  private val disabled: List[(String, String)] = List(
-    "avro" ->
-      ("OpenHouse runtime shaded-Avro (baked into the iceberg fork jar) collides with the " +
-        "unshaded org.apache.avro on the data path (ClassCastException). Reverting only the Avro " +
-        "jar version (1.11.4 -> 1.11.2) does NOT fix it — the shaded copy travels with the iceberg " +
-        "fork bump; packaging prerequisite before Avro is testable"))
+  // Avro is enabled: the run classpath de-duplicates the Iceberg jars so the shaded/unshaded Avro
+  // collision cannot occur (see FINDINGS.md F1). The disable mechanism stays here for future use.
+  private val disabled: List[(String, String)] = List()
 
   private def skipReason(id: String): Option[String] =
     disabled.collectFirst { case (pattern, reason) if id.contains(pattern) => reason }

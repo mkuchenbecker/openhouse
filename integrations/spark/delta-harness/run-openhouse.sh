@@ -26,6 +26,13 @@ echo ">> resolving OpenHouse itest runtime classpath (builds the runtime uber ja
     :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
 OHCP="$(cat "$WORK/oh-cp.txt")"
 
+# De-duplicate Iceberg: the itest classpath carries BOTH the shaded iceberg-spark-runtime fat jar
+# and the unshaded iceberg-{api,common,core,data} jars (because the embedded server and the Spark
+# client share one JVM here). On the Avro data path those two Avro namespaces collide with a
+# ClassCastException. Drop the unshaded modules and let everything resolve Iceberg — and its shaded
+# Avro — from the single fat jar. Parquet/ORC are unaffected either way. See FINDINGS.md F1.
+OHCP="$(echo "$OHCP" | tr ':' '\n' | grep -vE '/iceberg-(api|common|core|data)-[0-9]' | paste -sd:)"
+
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
 mkdir -p "$WORK/classes"
 "$JDK17/bin/java" -cp "$SCALAC_CP" scala.tools.nsc.Main \
