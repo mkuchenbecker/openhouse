@@ -136,6 +136,24 @@ object NestedTable extends Schema {
     "id bigint, s struct<x:int,y:string>, arr array<int>, m map<string,int>, nested struct<inner:struct<z:int>>"
 }
 
+// A schema for type-edge coverage: the common scalar types, exercised with nulls, special float
+// values, boundary values, and unicode/empty strings.
+object TypesTable extends Schema {
+  val id:    Column[Long]   = Column("id",    "bigint",        rowIndex => rowIndex.toString)
+  val n:     Column[Int]    = Column("n",     "int",           rowIndex => rowIndex.toString)
+  val x:     Column[Double] = Column("x",     "double",        rowIndex => s"$rowIndex.5")
+  val dec:   Column[java.math.BigDecimal] = Column("dec", "decimal(10,2)", rowIndex => s"CAST($rowIndex.50 AS decimal(10,2))")
+  val str:   Column[String] = Column("str",   "string",        rowIndex => s"'row-$rowIndex'")
+  val bin:   Column[Array[Byte]] = Column("bin", "binary",     rowIndex => s"CAST('bin-$rowIndex' AS binary)")
+  val dt:    Column[java.sql.Date] = Column("dt", "date",      rowIndex => s"DATE '2024-01-0$rowIndex'")
+  val ts:    Column[java.sql.Timestamp] = Column("ts", "timestamp", rowIndex => s"TIMESTAMP '2024-01-01 0$rowIndex:00:00'")
+  val tsntz: Column[java.time.LocalDateTime] = Column("tsntz", "timestamp_ntz", rowIndex => s"TIMESTAMP_NTZ '2024-01-01 0$rowIndex:00:00'")
+  def tableColumns: Seq[Column[_]] = Seq(id, n, x, dec, str, bin, dt, ts, tsntz)
+
+  val columnDefinitions: String =
+    "id bigint, n int, x double, dec decimal(10,2), str string, bin binary, dt date, ts timestamp, tsntz timestamp_ntz"
+}
+
 object RowGenerator {
   /** VALUES clause for `numberOfRows` deterministic rows, one literal per column. */
   def valuesClause(schema: Schema, numberOfRows: Int): String =
@@ -937,6 +955,67 @@ object Scenarios {
     "nested.deleteByNestedField" -> nestedDeleteByField,
     "nested.nullValues"         -> nestedNullValues
   )
+
+  // ── type-edge coverage (TypesTable) ─────────────────────────────────────────────────────
+  val typesLayouts: List[Layout] =
+    List("parquet", "orc", "avro").map(format => Layout(s"types-unpartitioned/$format", table =>
+      s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
+
+  def createAndSeedTypes(layout: Layout, numberOfRows: Int): TableTest[TypesTable.type] =
+    TableTest(TypesTable).sql("create")(layout.create)().insert(numberOfRows)()
+
+  // A full valued row for TypesTable with the given id; individual tests override specific columns.
+  private def typesRow(id: Long, n: String, x: String, dec: String, str: String): String =
+    s"(CAST($id AS BIGINT), $n, $x, $dec, $str, CAST('b' AS binary), DATE '2024-01-01', " +
+      s"TIMESTAMP '2024-01-01 00:00:00', TIMESTAMP_NTZ '2024-01-01 00:00:00')"
+
+  val typesRoundtrip: TableTest[TypesTable.type] =
+    TableTest(TypesTable).check("types.roundtrip") { view =>
+      val r = view.spark.sql(s"SELECT id, n, x, dec, str FROM ${view.table} WHERE id = 1").collect()(0)
+      assert(r.getLong(0) == 1L && r.getInt(1) == 1 && r.getDouble(2) == 1.5)
+      assert(r.getDecimal(3).compareTo(new java.math.BigDecimal("1.50")) == 0)
+      assert(r.getString(4) == "row-1")
+    }
+
+  val typesNulls: TableTest[TypesTable.type] =
+    TableTest(TypesTable).sql("types.nulls")(table =>
+      s"INSERT INTO $table VALUES (CAST(10 AS BIGINT), NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)") { view =>
+      val r = view.spark.sql(s"SELECT n, x, str, ts, tsntz FROM ${view.table} WHERE id = 10").collect()(0)
+      assert((0 to 4).forall(r.isNullAt))
+    }
+
+  val typesSpecialFloats: TableTest[TypesTable.type] =
+    TableTest(TypesTable).sql("types.specialFloats")(table =>
+      s"INSERT INTO $table VALUES ${typesRow(11, "0", "double('NaN')", "CAST(0 AS decimal(10,2))", "'x'")}, " +
+        s"${typesRow(12, "0", "double('Infinity')", "CAST(0 AS decimal(10,2))", "'y'")}") { view =>
+      assert(view.spark.sql(s"SELECT x FROM ${view.table} WHERE id = 11").collect()(0).getDouble(0).isNaN)
+      assert(view.spark.sql(s"SELECT x FROM ${view.table} WHERE id = 12").collect()(0).getDouble(0).isInfinite)
+    }
+
+  val typesBoundaries: TableTest[TypesTable.type] =
+    TableTest(TypesTable).sql("types.boundaries")(table =>
+      s"INSERT INTO $table VALUES " +
+        s"${typesRow(9223372036854775807L, "2147483647", "0.0", "CAST(99999999.99 AS decimal(10,2))", "'max'")}") { view =>
+      val r = view.spark.sql(s"SELECT id, n, dec FROM ${view.table} WHERE str = 'max'").collect()(0)
+      assert(r.getLong(0) == Long.MaxValue && r.getInt(1) == Int.MaxValue)
+      assert(r.getDecimal(2).compareTo(new java.math.BigDecimal("99999999.99")) == 0)
+    }
+
+  val typesUnicodeAndEmpty: TableTest[TypesTable.type] =
+    TableTest(TypesTable).sql("types.unicodeAndEmpty")(table =>
+      s"INSERT INTO $table VALUES ${typesRow(13, "0", "0.0", "CAST(0 AS decimal(10,2))", "'日本語 🎉'")}, " +
+        s"${typesRow(14, "0", "0.0", "CAST(0 AS decimal(10,2))", "''")}") { view =>
+      assert(view.spark.sql(s"SELECT str FROM ${view.table} WHERE id = 13").collect()(0).getString(0) == "日本語 🎉")
+      assert(view.spark.sql(s"SELECT str FROM ${view.table} WHERE id = 14").collect()(0).getString(0) == "")
+    }
+
+  val typesOperations: List[(String, TableTest[TypesTable.type])] = List(
+    "types.roundtrip"       -> typesRoundtrip,
+    "types.nulls"           -> typesNulls,
+    "types.specialFloats"   -> typesSpecialFloats,
+    "types.boundaries"      -> typesBoundaries,
+    "types.unicodeAndEmpty" -> typesUnicodeAndEmpty
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -979,11 +1058,17 @@ object Plan {
       (name, op)    <- Scenarios.nestedOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedNested(layout, 3).andThen(op).run)
 
+    // Type-edge coverage, on TypesTable.
+    val types = for {
+      layout        <- Scenarios.typesLayouts
+      (name, op)    <- Scenarios.typesOperations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedTypes(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ mor ++ nested ++ creates
+    dml ++ partitioned ++ mor ++ nested ++ types ++ creates
   }
 }
 

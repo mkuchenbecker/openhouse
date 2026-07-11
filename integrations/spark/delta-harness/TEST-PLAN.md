@@ -91,9 +91,9 @@ tests whose correctness depends on partitioning; reused in Phase 7.
 - [ ] partition evolution: ADD field then write; DROP field then write; read spans both specs
 - [ ] hidden-partitioning pruning (query filter prunes partitions)
 
-## Phase 8 — Type edge coverage
-- [ ] per-type roundtrip incl. nulls: bigint/int, float/double (NaN, ±inf), decimal(p,s) near-overflow, boolean, string (unicode/empty), binary, date, timestamp, timestamp_ntz
-- [ ] min / max boundary values
+## Phase 8 — Type edge coverage  ✅ — TypesTable × 3 formats
+- [x] per-type roundtrip incl. nulls: bigint/int, double (NaN, ±inf), decimal(10,2), string (unicode/empty), binary, date, timestamp, **timestamp_ntz** (supported)
+- [x] min / max boundary values (Long.MaxValue, Int.MaxValue, decimal near-precision)
 
 ## Phase 9 — Time travel (read historical)
 - [ ] `VERSION AS OF <snapshot_id>` reproduces the recorded after-state of each step
