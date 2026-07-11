@@ -29,10 +29,13 @@ separate processes, so this is a **co-located-test artifact**, not a shipping de
 **Ruled out.** Swapping the unshaded Avro jar `1.11.4 → 1.11.2` made **no difference** (identical
 failure). It was never the Avro version — it is the duplicated Iceberg.
 
-**Fix (applied, least invasive).** `run-openhouse.sh` de-duplicates the classpath: it drops the
-unshaded `iceberg-{api,common,core,data}` jars and lets everything resolve Iceberg — and its
-shaded Avro — from the single fat jar. With this, **all three formats pass, including Avro**.
-No product change; Parquet/ORC unaffected. Avro is re-enabled in `OpenHouseMatrix.scala`.
+**Fix (applied, least invasive).** The classpath is resolved through Gradle with a proper
+dependency exclusion in `scripts/print-cp.init.gradle`: the unshaded
+`com.linkedin.iceberg:iceberg-{api,common,core,data}` modules are excluded, so the resolved
+graph carries a single Iceberg — the shaded fat jar — and its shaded Avro. (The shaded jar
+provides all `org.apache.iceberg.*` classes, so excluding the unshaded modules is safe.) This
+is dependency resolution, not post-hoc jar filtering. With it, **all three formats pass,
+including Avro**; Parquet/ORC unaffected. Avro is re-enabled in `OpenHouseMatrix.scala`.
 
 **If a real deployment ever co-locates them**, the product-side fix is a build dependency
 exclusion: exclude `org.apache.iceberg:iceberg-{core,api,data,common}` from the configuration

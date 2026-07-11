@@ -1,5 +1,5 @@
 === delta-harness :: incremental DML operations x starting states @ OpenHouse catalog ===
-(run-openhouse.sh de-duplicates the iceberg jars so Avro works — see FINDINGS.md F1)
+(classpath resolved via gradle exclusion of the duplicate iceberg jars — see FINDINGS.md F1)
 
 PASS read.projection @ unpartitioned/parquet              try=1
 PASS read.filter @ unpartitioned/parquet                  try=1

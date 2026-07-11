@@ -1,5 +1,23 @@
+// Resolves the harness runtime classpath from the OpenHouse spark itest module and writes it to
+// the file named by -DcpOut.
+//
+// The itest classpath legitimately pulls two copies of Iceberg into one JVM: the shaded
+// iceberg-spark-runtime fat jar (client side) and the unshaded iceberg-{api,common,core,data}
+// jars (embedded server side). On the Avro data path those two Avro namespaces collide
+// (ClassCastException, see FINDINGS.md F1). We resolve that the proper way — a dependency
+// exclusion so the graph carries a single Iceberg — rather than filtering resolved jars by hand.
+// The shaded fat jar provides all org.apache.iceberg.* classes, so excluding the unshaded modules
+// is safe. This exclusion applies only to this classpath-extraction invocation.
 allprojects {
   if (path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
+    afterEvaluate {
+      configurations.testRuntimeClasspath {
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-core'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-api'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-common'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+      }
+    }
     tasks.register('printHarnessCp') {
       doLast {
         def cp = configurations.testRuntimeClasspath.resolve().collect { it.absolutePath }
