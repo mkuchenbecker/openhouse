@@ -1154,6 +1154,75 @@ object Scenarios {
     "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot,
     "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot
   )
+
+  // ── negative / contract tests ───────────────────────────────────────────────────────────
+  // Create + seed a valid CoreTable, then assert the bad operation is rejected.
+  private def coreNegative(label: String)(bad: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .step(label)(bad)()
+
+  private val L = CoreTable.long0.columnName
+  private val S = CoreTable.string0.columnName
+
+  val negNonExistentColumn: TableTest[CoreTable.type] =
+    coreNegative("negative.nonExistentColumn") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(s"DELETE FROM $table WHERE no_such_column = 1"))
+    }
+
+  val negNonDeterministicDelete: TableTest[CoreTable.type] =
+    coreNegative("negative.nonDeterministicDelete") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(s"DELETE FROM $table WHERE rand() < 0.5"))
+    }
+
+  val negNonDeterministicUpdate: TableTest[CoreTable.type] =
+    coreNegative("negative.nonDeterministicUpdate") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(s"UPDATE $table SET $S = 'x' WHERE rand() < 0.5"))
+    }
+
+  val negInsertArity: TableTest[CoreTable.type] =
+    coreNegative("negative.insertArity") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(s"INSERT INTO $table VALUES (CAST(1 AS BIGINT), 1)")) // too few columns
+    }
+
+  // Two UPDATE assignments to the same column in one MERGE clause.
+  val negMergeConflictingUpdates: TableTest[CoreTable.type] =
+    coreNegative("negative.mergeConflictingUpdates") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(
+        s"""MERGE INTO $table t USING (SELECT * FROM VALUES (CAST(2 AS BIGINT)) AS s($L)) s
+            ON t.$L = s.$L
+            WHEN MATCHED THEN UPDATE SET t.$S = 'a', t.$S = 'b'"""))
+    }
+
+  // Source has two rows matching the same target row → cardinality violation at runtime.
+  val negMergeCardinalityViolation: TableTest[CoreTable.type] =
+    coreNegative("negative.mergeCardinalityViolation") { (spark, table) =>
+      Check.intercept[Exception](spark.sql(
+        s"""MERGE INTO $table t USING (
+              SELECT * FROM VALUES (CAST(2 AS BIGINT), 'a'), (CAST(2 AS BIGINT), 'b') AS s($L, $S)
+            ) s ON t.$L = s.$L
+            WHEN MATCHED THEN UPDATE SET t.$S = s.$S"""))
+    }
+
+  // CREATE partitioned by a non-existent column (on a scratch name, valid managed table stays).
+  val negPartitionByNonExistent: TableTest[CoreTable.type] =
+    coreNegative("negative.partitionByNonExistent") { (spark, table) =>
+      val scratch = table + "_x"
+      Check.intercept[Exception](spark.sql(
+        s"CREATE TABLE $scratch ($columnDefinitions) USING iceberg PARTITIONED BY (no_such_column) TBLPROPERTIES ('write.format.default'='parquet')"))
+      spark.sql(s"DROP TABLE IF EXISTS $scratch")
+    }
+
+  val negatives: List[(String, TableTest[CoreTable.type])] = List(
+    "negative.nonExistentColumn"        -> negNonExistentColumn,
+    "negative.nonDeterministicDelete"   -> negNonDeterministicDelete,
+    "negative.nonDeterministicUpdate"   -> negNonDeterministicUpdate,
+    "negative.insertArity"              -> negInsertArity,
+    "negative.mergeConflictingUpdates"  -> negMergeConflictingUpdates,
+    "negative.mergeCardinalityViolation" -> negMergeCardinalityViolation,
+    "negative.partitionByNonExistent"   -> negPartitionByNonExistent
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1209,13 +1278,14 @@ object Plan {
     // Time travel + restore/rollback (self-contained pipelines, parquet).
     val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
     dml ++ partitioned ++ mor ++ nested ++ types ++ partitionTransforms ++ partitionEvolution ++
-      timeTravel ++ restoreRollback ++ creates
+      timeTravel ++ restoreRollback ++ negatives ++ creates
   }
 }
 

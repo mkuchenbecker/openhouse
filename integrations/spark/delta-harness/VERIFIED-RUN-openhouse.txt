@@ -1,27 +1,29 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-Matrix = operations x layouts, plus create.schema per layout.
+654 cases: 645 passed, 9 skipped (2 tagged bugs), 0 failed.
 
-Layouts (6):  {unpartitioned, partitioned(datepartition)} x {parquet, orc, avro}
-Operations (19), each run on every layout:
-  read.projection, read.filter, format.materialization,
-  delete.byPredicate, delete.whereFalse.noSnapshot, delete.truncate, delete.atSnapshot.rejected,
-  update.byPredicate, update.withoutCondition, update.noMatch,
-  merge.insertNotMatched, merge.updateMatched, merge.deleteMatched, merge.upsert,
-  merge.deleteNotMatchedBySource,
-  insert.into, append.dataFrame, insert.overwrite, overwrite.dataFrame
-Plus: create.schema on every layout (6).
+Composition (behaviors × axes):
+  - core DML operations (read/delete/update/merge/insert/overwrite) × 6 layouts
+    {unpartitioned, partitioned} × {parquet, orc, avro}
+  - + partitioned-only operations (dynamic overwrite, overwritePartitions) × 3 partitioned layouts
+  - + 44 mutation operations × 6 merge-on-read layouts   (Copy-on-write vs Merge-on-read)
+  - + nested/complex types (NestedTable)  × 3 formats
+  - + type-edge coverage (TypesTable)     × 3 formats
+  - + partition transforms (identity/bucket/truncate/years/months/days/hours) + rejection negatives
+  - + time travel (VERSION/TIMESTAMP AS OF, metadata tables, incremental read)
+  - + restore/rollback (rollback_to_snapshot, set_current_snapshot)
+  - + negative/contract tests (cardinality violation, conflicting updates, non-deterministic
+    predicate, non-existent column, bad partitioning, insert arity)
+  - + create.schema × 6 layouts
 
-Case ids look like:  merge.upsert @ partitioned/avro
-  ...
-PASS create.schema @ unpartitioned/parquet                try=1
-PASS create.schema @ partitioned/parquet                  try=1
-PASS create.schema @ unpartitioned/orc                    try=1
-PASS create.schema @ partitioned/orc                      try=1
-PASS create.schema @ unpartitioned/avro                   try=1
-PASS create.schema @ partitioned/avro                     try=1
+Tagged bugs (SKIP, tracked in BUGS.md):
+  - insert.explicitColumns            (× 6)  partial-column INSERT rejected (CANNOT_FIND_DATA)
+  - nested.deleteByNestedField        (× 3)  DELETE on nested struct field crashes (optimizer NPE)
 
-120 passed, 0 skipped, 0 failed  (120 cases)
+OpenHouse capability findings (Gate #0):
+  supported : copy-on-write + merge-on-read; timestamp_ntz; time travel (VERSION/TIMESTAMP AS OF);
+              incremental read; rollback_to_snapshot / set_current_snapshot procedures;
+              transforms identity/bucket/truncate/years/months/days/hours
+  rejected  : partition evolution (ALTER ADD/DROP PARTITION FIELD); void transform; days(date)
 
 Run on JDK 17 against the embedded OpenHouseLocalServer + OpenHouseCatalog.
-19 operations x 6 layouts = 114, + 6 per-layout create.schema = 120.

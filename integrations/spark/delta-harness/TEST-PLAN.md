@@ -106,19 +106,16 @@ tests whose correctness depends on partitioning; reused in Phase 7.
 - [x] `CALL … set_current_snapshot` → state reverts to the 3-row snapshot
 - [ ] rollback_to_timestamp / write-after-rollback / undrop / invalid-snapshot negative — refinements, not yet added
 
-## Phase 11 — Negative / contract
-- [ ] type mismatch on insert (string → bigint) → error
-- [ ] null into a required column → error
-- [ ] DataFrame append with a missing / extra column → schema mismatch
-- [ ] decimal precision overflow → error
-- [ ] MERGE cardinality violation (source matches a target row twice) → runtime error
-- [ ] MERGE conflicting updates (same column assigned twice) → analysis error
-- [ ] MERGE / UPDATE / DELETE with a non-deterministic condition (`rand()`) → rejected
-- [ ] reference to a non-existent column → analysis error
-- [ ] partition by a non-existent column → error
-- [ ] partition transform on an incompatible type (`days(string)`, `bucket(boolean)`) → error
-- [ ] two time transforms on two columns (`days(ts1), months(ts2)`) → error (mirror OpenHouse's own `tb_bad_partitioned`)
-- [x] write at a specific snapshot → rejected
+## Phase 11 — Negative / contract  ✅ (7 + the Phase-7 partition negatives)
+- [x] insert arity mismatch (too few columns) → rejected
+- [x] MERGE cardinality violation (source matches a target row twice) → runtime error
+- [x] MERGE conflicting updates (same column assigned twice) → error
+- [x] non-deterministic condition (`rand()`) in DELETE and UPDATE → rejected
+- [x] reference to a non-existent column → error
+- [x] partition by a non-existent column → error
+- [x] partition transform on an incompatible type — `void(n)`, `days(date)` (Phase 7)
+- [x] partition evolution rejected (Phase 7); write at a specific snapshot → rejected (Phase 1)
+- [ ] type mismatch (string→bigint), decimal overflow, DataFrame schema-mismatch — deferred (non-ANSI Spark often nulls rather than errors, so not clean rejections here)
 
 ---
 **Target:** ~130–160 distinct behaviors. Crossed with 6 layouts (and ×2 for CoW/MoR where it
