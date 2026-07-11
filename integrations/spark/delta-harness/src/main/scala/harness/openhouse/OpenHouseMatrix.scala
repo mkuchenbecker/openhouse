@@ -1081,6 +1081,79 @@ object Scenarios {
     "partition.evolutionAdd.rejected"  -> partitionEvolutionAddRejected,
     "partition.evolutionDrop.rejected" -> partitionEvolutionDropRejected
   )
+
+  // ── time travel + restore/rollback ──────────────────────────────────────────────────────
+  // A two-snapshot base: seed 3 rows (snapshot A), then insert 2 more (snapshot B).
+  private def coreTwoSnapshots: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .sql("insertMore")(table => s"INSERT INTO $table VALUES " +
+        s"(CAST(4 AS BIGINT), 4, 'row-4', 4.5, true, '2024-01-04-03'), (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")()
+
+  private def snapshotIds(spark: SparkSession, table: String): Seq[Long] =
+    spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at").collect().toSeq.map(_.getLong(0))
+
+  val timeTravelVersionAsOf: TableTest[CoreTable.type] =
+    coreTwoSnapshots.check("timeTravel.versionAsOf") { view =>
+      val snaps = snapshotIds(view.spark, view.table)
+      assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(0)}").collect()(0).getLong(0) == 3)
+      assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(1)}").collect()(0).getLong(0) == 5)
+    }
+
+  val timeTravelTimestampAsOf: TableTest[CoreTable.type] =
+    coreTwoSnapshots.check("timeTravel.timestampAsOf") { view =>
+      val ts0 = view.spark.sql(s"SELECT committed_at FROM ${view.table}.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getTimestamp(0)
+      assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} TIMESTAMP AS OF '$ts0'").collect()(0).getLong(0) == 3)
+    }
+
+  val timeTravelMetadataTables: TableTest[CoreTable.type] =
+    coreTwoSnapshots.check("timeTravel.metadataTables") { view =>
+      def count(meta: String): Long = view.spark.sql(s"SELECT count(*) FROM ${view.table}.$meta").collect()(0).getLong(0)
+      assert(count("snapshots") == 2)
+      assert(count("history") == 2)
+      assert(count("files") >= 1 && count("manifests") >= 1)
+    }
+
+  val timeTravelIncrementalRead: TableTest[CoreTable.type] =
+    coreTwoSnapshots.check("timeTravel.incrementalRead") { view =>
+      val snaps = snapshotIds(view.spark, view.table)
+      val added = view.spark.read.format("iceberg")
+        .option("start-snapshot-id", snaps(0)).option("end-snapshot-id", snaps(1))
+        .load(view.table).count()
+      assert(added == 2) // only the rows added between snapshot A and B
+    }
+
+  val timeTravel: List[(String, TableTest[CoreTable.type])] = List(
+    "timeTravel.versionAsOf"     -> timeTravelVersionAsOf,
+    "timeTravel.timestampAsOf"   -> timeTravelTimestampAsOf,
+    "timeTravel.metadataTables"  -> timeTravelMetadataTables,
+    "timeTravel.incrementalRead" -> timeTravelIncrementalRead
+  )
+
+  // Restore/rollback via stored procedures (gated: OpenHouse may not expose CALL procedures).
+  private def catalogRelative(table: String): String = table.stripPrefix("openhouse.")
+
+  val restoreRollbackToSnapshot: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("restore.rollbackToSnapshot") { (spark, table) =>
+      val first = snapshotIds(spark, table).head
+      spark.sql(s"CALL openhouse.system.rollback_to_snapshot('${catalogRelative(table)}', $first)")
+    } { view =>
+      assert(view.after.size == 3) // rolled back to the 3-row snapshot
+    }
+
+  val restoreSetCurrentSnapshot: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("restore.setCurrentSnapshot") { (spark, table) =>
+      val first = snapshotIds(spark, table).head
+      spark.sql(s"CALL openhouse.system.set_current_snapshot('${catalogRelative(table)}', $first)")
+    } { view =>
+      assert(view.after.size == 3)
+    }
+
+  val restoreRollback: List[(String, TableTest[CoreTable.type])] = List(
+    "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot,
+    "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1133,11 +1206,16 @@ object Plan {
     val partitionTransforms = Scenarios.partitionTransforms.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val partitionEvolution  = Scenarios.partitionEvolution.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
+    // Time travel + restore/rollback (self-contained pipelines, parquet).
+    val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ mor ++ nested ++ types ++ partitionTransforms ++ partitionEvolution ++ creates
+    dml ++ partitioned ++ mor ++ nested ++ types ++ partitionTransforms ++ partitionEvolution ++
+      timeTravel ++ restoreRollback ++ creates
   }
 }
 

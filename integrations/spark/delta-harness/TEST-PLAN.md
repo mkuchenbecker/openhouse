@@ -16,8 +16,8 @@ known-bug** with a recorded reason.
 ## Gate #0 — verify OpenHouse actually supports the axis before writing its tests
 Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Iceberg parity.
 - [x] CoW vs MoR (`write.{delete,update,merge}.mode`) — **both supported** (MoR needs `format-version=2`); verified by 264 green MoR cases
-- [ ] Time travel `VERSION AS OF` / `TIMESTAMP AS OF`
-- [ ] Rollback/restore procedures (`CALL openhouse.system.rollback_to_snapshot`, `set_current_snapshot`)
+- [x] Time travel `VERSION AS OF` / `TIMESTAMP AS OF` — **supported**
+- [x] Rollback/restore procedures (`CALL openhouse.system.rollback_to_snapshot`, `set_current_snapshot`) — **supported**
 - [x] Partition evolution (`ALTER TABLE … ADD/DROP PARTITION FIELD`) — **NOT supported** (OpenHouse 400: "recreate the table with new partition spec")
 - [ ] Branches / tags (likely unsupported)
 - [ ] OpenHouse table undrop / restore (soft-drop preparation)
@@ -95,20 +95,16 @@ tests whose correctness depends on partitioning; reused in Phase 7.
 - [x] per-type roundtrip incl. nulls: bigint/int, double (NaN, ±inf), decimal(10,2), string (unicode/empty), binary, date, timestamp, **timestamp_ntz** (supported)
 - [x] min / max boundary values (Long.MaxValue, Int.MaxValue, decimal near-precision)
 
-## Phase 9 — Time travel (read historical)
-- [ ] `VERSION AS OF <snapshot_id>` reproduces the recorded after-state of each step
-- [ ] `TIMESTAMP AS OF <ts>` reproduces a commit's state
-- [ ] metadata tables: `.snapshots`, `.history`, `.files`, `.manifests`, `.partitions` counts across a sequence
-- [ ] incremental read between two snapshots returns exactly the delta
+## Phase 9 — Time travel (read historical)  ✅ (supported)
+- [x] `VERSION AS OF <snapshot_id>` reproduces the state at snapshot A (3 rows) and B (5 rows)
+- [x] `TIMESTAMP AS OF <ts>` reproduces snapshot A's state
+- [x] metadata tables: `.snapshots`, `.history`, `.files`, `.manifests` counts across a two-snapshot sequence
+- [x] incremental read between two snapshots returns exactly the 2 added rows
 
-## Phase 10 — Restore / rollback (pointer)
-- [ ] `rollback_to_snapshot` → state == step k after-rows
-- [ ] `rollback_to_timestamp`
-- [ ] `set_current_snapshot` (incl. a non-ancestor snapshot)
-- [ ] write after rollback composes forward
-- [ ] a rolled-past snapshot is still readable via time travel
-- [ ] (if supported) OpenHouse table undrop / restore
-- [ ] negative: rollback to an invalid snapshot id → error
+## Phase 10 — Restore / rollback (pointer)  ✅ (procedures supported)
+- [x] `CALL … rollback_to_snapshot` → state reverts to the 3-row snapshot
+- [x] `CALL … set_current_snapshot` → state reverts to the 3-row snapshot
+- [ ] rollback_to_timestamp / write-after-rollback / undrop / invalid-snapshot negative — refinements, not yet added
 
 ## Phase 11 — Negative / contract
 - [ ] type mismatch on insert (string → bigint) → error
