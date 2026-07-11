@@ -5,7 +5,7 @@ runs customer-facing DML **operations** as **typed pipelines** against the **rea
 catalog** (an embedded `OpenHouseLocalServer` wired to `OpenHouseCatalog`), and reports
 pass / skip / fail per case.
 
-Verified: **18 passed, 0 skipped, 0 failed** — see `VERIFIED-RUN-openhouse.txt`.
+Verified: **120 passed, 0 skipped, 0 failed** — see `VERIFIED-RUN-openhouse.txt`.
 
 ## Model
 A test is a **typed pipeline** — `TableTest[S <: Schema]`. The type parameter declares which
@@ -16,19 +16,22 @@ or naming a column the schema doesn't declare.
 - **`Schema`** — columns only. Each `Column[T]` carries its Scala type `T` and a deterministic
   `literalAt(rowIndex)` generator; `CoreTable` is a representative table with one column per
   common data type plus a string `datepartition` (`YYYY-MM-DD-HH`).
-- **Preparation prefix + operation suffix** — both are same-schema pipeline segments composed
-  with `andThen`. `createAndSeed` yields a known state; an operation runs on it. The set is
-  `preparations × operations`, so RTAS / drop+undrop wire in later as alternate preparations
-  without touching any operation.
+- **Preparation prefix + operation suffix** — an operation is a **headless** pipeline segment;
+  the run composes `createAndSeed(layout)` before it via `andThen`. So the set is
+  `operations × layouts`, and RTAS / drop+undrop wire in later as alternate preparations without
+  touching any operation.
+- **Layout axis** — `Layout` = file format × partitioning, crossed with every operation. Format
+  is a schema-independent TBLPROPERTY (varied blindly); partitioning references a real column
+  (identity on the `datepartition` string). Six layouts: `{unpartitioned, partitioned}` ×
+  `{parquet, orc, avro}`.
 - **Delta assertions** — each step's validation thunk gets a `StepView` with `before`/`after`
   row snapshots and `snapshotsBefore`/`snapshotsAfter` commit counts, so every operation asserts
-  a **delta** (never an absolute row set) and holds on any starting state.
+  a **delta** (never an absolute row set) and holds under any layout.
 
-Operations covered: read (projection, filter), delete (×4), update (×3), merge (×4),
-insert/append, overwrite (×2), plus create. Operation sources are written as **explicit
-literals**. Today all run on one `core` starting state; **Stage 3** reintroduces the
-`parquet`/`orc`/`avro` × `unpartitioned`/`partitioned` layout multiplier as `Layout` values
-crossed with each scenario.
+Operations covered (19): read (projection, filter, format-materialization), delete (×4),
+update (×3), merge (×5), insert/append, overwrite (×2); plus `create.schema` per layout.
+Operation sources are written as **explicit literals**. The full run is
+`19 operations × 6 layouts + 6 creates = 120 cases`.
 
 The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessionUtil` (read,
 not extended): no OpenHouse test class is subclassed and no existing test is altered;
@@ -40,13 +43,13 @@ Requires **JDK 17** (the repo pins Lombok 1.18.20, which does not compile on JDK
 `scalac`, and runs on the embedded OpenHouse server.
 
 ```bash
-./run-openhouse.sh                          # full set (18 cases)
-./run-openhouse.sh delete                   # a fast slice (~25s): the delete tests
-./run-openhouse.sh merge                    # the merge tests
-./run-openhouse.sh delete.byPredicate       # one test
+./run-openhouse.sh                          # full matrix (120 cases)
+./run-openhouse.sh delete parquet           # a fast slice (~25s): delete tests on parquet
+./run-openhouse.sh merge partitioned/avro   # merge tests on one layout
+./run-openhouse.sh delete.byPredicate       # one test across layouts
 ```
-Args are AND-substring filters on the case id. A narrow slice is ~25s end-to-end
-(embedded-server + Spark startup dominates; the cases are milliseconds).
+Args are AND-substring filters on the case id (operation / partition / format). A narrow slice
+is ~25s end-to-end (embedded-server + Spark startup dominates; the cases are milliseconds).
 
 ## Notes
 - **Gradle wrapper** cannot download in restricted networks (proxy 403); use a system Gradle 8.x
@@ -55,7 +58,6 @@ Args are AND-substring filters on the case id. A narrow slice is ~25s end-to-end
   dependency exclusion in `scripts/print-cp.init.gradle`. See `FINDINGS.md` (F1).
 
 ## Next
-**Stage 3** — reintroduce the layout multiplier (`Layout` = format × partition) crossed with
-each scenario, restoring the ~100-case matrix. **Stage 4** — a partition-per-datatype schema
-family, then RTAS'd / drop+undrop preparations wired into every DML test (RTAS being the
-validation of the incremental model).
+A partition-per-datatype schema family, then RTAS'd / drop+undrop preparations wired into every
+DML test as alternate `createAndSeed` prefixes (RTAS being the validation of the incremental
+model).

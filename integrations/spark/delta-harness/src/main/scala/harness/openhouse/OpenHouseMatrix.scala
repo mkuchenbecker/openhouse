@@ -249,10 +249,11 @@ object Tables {
 }
 
 /**
- * The concrete tests, all on CoreTable. Each is a `createAndSeed` preparation prefix followed by
- * one operation suffix. Every operation asserts the DELTA against the observed pre-state (rows
- * and/or commit count), never an absolute row set — so a test holds on any starting state and
- * operations compose on one base table. Operation sources are written as EXPLICIT literals.
+ * The concrete tests, all on CoreTable. An operation is a HEADLESS pipeline segment (no create);
+ * the run crosses every operation with every `Layout` by composing `createAndSeed(layout)` before
+ * it via `andThen`. Every operation asserts the DELTA against the observed pre-state (rows and/or
+ * commit count), never an absolute row set — so a test holds under any layout. Operation sources
+ * are written as EXPLICIT literals.
  */
 object Scenarios {
   import Rows._
@@ -265,14 +266,28 @@ object Scenarios {
   private def longToString(rows: Seq[Row]): Map[Long, String] =
     rows.map(row => row.get(Core.long0) -> row.get(Core.string0)).toMap
 
-  // Preparation: create an unpartitioned table and seed `numberOfRows` deterministic rows.
-  // Interchangeable with RTAS / drop+undrop preparations later — same resulting state.
-  def createAndSeed(numberOfRows: Int): TableTest[CoreTable.type] =
-    TableTest(Core).create()().insert(numberOfRows)()
+  // ── the layout axis: file format x partitioning, crossed with every operation ──────────
+  // Partitioning references a real CoreTable column (identity on the date-partition string, the
+  // common real-world pattern); unpartitioned is the empty spec. Format is a schema-independent
+  // TBLPROPERTY, so it is varied blindly.
+  final case class Layout(label: String, partitioning: CoreTable.type => String, tableProperties: Map[String, String])
+
+  val layouts: List[Layout] =
+    for {
+      format <- List("parquet", "orc", "avro")
+      (partitionLabel, partitioning) <- List[(String, CoreTable.type => String)](
+        "unpartitioned" -> (_ => ""),
+        "partitioned"   -> (core => core.datePartition.columnName))
+    } yield Layout(s"$partitionLabel/$format", partitioning, Map("write.format.default" -> format))
+
+  // Preparation: create under `layout` and seed `numberOfRows` deterministic rows. Interchangeable
+  // with RTAS / drop+undrop preparations later — same resulting state.
+  def createAndSeed(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    TableTest(Core).create(layout.partitioning, layout.tableProperties)().insert(numberOfRows)()
 
   // ── reads ────────────────────────────────────────────────────────────────────────────
   val readProjection: TableTest[CoreTable.type] =
-    createAndSeed(3).check("read.projection") { view =>
+    TableTest(Core).check("read.projection") { view =>
       val expected = view.before.sortBy(_.get(Core.long0)).map(_.get(Core.string0))
       val actual = view.spark
         .sql(s"SELECT ${Core.string0.columnName} FROM ${view.table} ORDER BY ${Core.long0.columnName}")
@@ -281,7 +296,7 @@ object Scenarios {
     }
 
   val readFilter: TableTest[CoreTable.type] =
-    createAndSeed(3).check("read.filter") { view =>
+    TableTest(Core).check("read.filter") { view =>
       val expected = view.before.map(_.get(Core.long0)).filter(_ >= 2).sorted
       val actual = view.spark
         .sql(s"SELECT ${Core.long0.columnName} FROM ${view.table} WHERE ${Core.long0.columnName} >= 2 ORDER BY ${Core.long0.columnName}")
@@ -289,25 +304,33 @@ object Scenarios {
       assert(actual == expected)
     }
 
+  // The declared write format actually materializes: every data file carries that extension.
+  val formatMaterialization: TableTest[CoreTable.type] =
+    TableTest(Core).check("format.materialization") { view =>
+      val format = view.spark.sql(s"SHOW TBLPROPERTIES ${view.table} ('write.format.default')").collect()(0).getString(1)
+      val paths = view.spark.sql(s"SELECT file_path FROM ${view.table}.files").collect().toSeq.map(_.getString(0))
+      assert(paths.nonEmpty && paths.forall(_.toLowerCase.endsWith(s".$format")), s"data files are not all .$format: $paths")
+    }
+
   // ── delete ───────────────────────────────────────────────────────────────────────────
   val deleteByPredicate: TableTest[CoreTable.type] =
-    createAndSeed(3).delete(core => s"${core.long0.columnName} < 2") { view =>
+    TableTest(Core).delete(core => s"${core.long0.columnName} < 2") { view =>
       assert(view.after == view.before.filterNot(_.get(Core.long0) < 2))
     }
 
   val deleteWhereFalseKeepsSnapshot: TableTest[CoreTable.type] =
-    createAndSeed(3).delete(_ => "false") { view =>
+    TableTest(Core).delete(_ => "false") { view =>
       assert(view.after == view.before)
       assert(view.snapshotsAfter == view.snapshotsBefore, "DELETE WHERE false must not commit a snapshot")
     }
 
   val truncate: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("delete.truncate")(table => s"TRUNCATE TABLE $table") { view =>
+    TableTest(Core).sql("delete.truncate")(table => s"TRUNCATE TABLE $table") { view =>
       assert(view.after.isEmpty)
     }
 
   val deleteAtSnapshotRejected: TableTest[CoreTable.type] =
-    createAndSeed(3).step("delete.atSnapshot.rejected") { (spark, table) =>
+    TableTest(Core).step("delete.atSnapshot.rejected") { (spark, table) =>
       val snapshotId = spark
         .sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1")
         .collect()(0).getLong(0)
@@ -320,14 +343,14 @@ object Scenarios {
 
   // ── update ───────────────────────────────────────────────────────────────────────────
   val updateByPredicate: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("update.byPredicate")(table =>
+    TableTest(Core).sql("update.byPredicate")(table =>
       s"UPDATE $table SET ${Core.string0.columnName} = 'X' WHERE ${Core.long0.columnName} = 2") { view =>
       val expected = longToString(view.before).map { case (id, s) => id -> (if (id == 2) "X" else s) }
       assert(longToString(view.after) == expected)
     }
 
   val updateWithoutCondition: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("update.withoutCondition")(table =>
+    TableTest(Core).sql("update.withoutCondition")(table =>
       s"UPDATE $table SET ${Core.string0.columnName} = 'Z'") { view =>
       assert(longToString(view.after) == longToString(view.before).map { case (id, _) => id -> "Z" })
     }
@@ -335,7 +358,7 @@ object Scenarios {
   // A real predicate matching nothing still commits an (empty) snapshot — unlike the
   // constant-folded `DELETE WHERE false` no-op (confirmed vs OSS TestUpdate.testUpdateNonExistingRecords).
   val updateNoMatch: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("update.noMatch")(table =>
+    TableTest(Core).sql("update.noMatch")(table =>
       s"UPDATE $table SET ${Core.string0.columnName} = 'Y' WHERE ${Core.long0.columnName} = 99") { view =>
       assert(longToString(view.after) == longToString(view.before))
       assert(view.snapshotsAfter == view.snapshotsBefore + 1, "no-match UPDATE still commits one snapshot")
@@ -348,7 +371,7 @@ object Scenarios {
   // i.e. name the row *indices* and let the column generators fill every column. We prefer the
   // explicit form so the source values are visible in the test.
   val mergeInsertNotMatched: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("merge.insertNotMatched")(table =>
+    TableTest(Core).sql("merge.insertNotMatched")(table =>
       s"""MERGE INTO $table t USING (
             SELECT * FROM VALUES
               (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
@@ -360,7 +383,7 @@ object Scenarios {
     }
 
   val mergeUpdateMatched: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("merge.updateMatched")(table =>
+    TableTest(Core).sql("merge.updateMatched")(table =>
       s"""MERGE INTO $table t USING (
             SELECT * FROM VALUES (CAST(2 AS BIGINT), 'M') AS s(${Core.long0.columnName}, ${Core.string0.columnName})
           ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
@@ -370,7 +393,7 @@ object Scenarios {
     }
 
   val mergeDeleteMatched: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("merge.deleteMatched")(table =>
+    TableTest(Core).sql("merge.deleteMatched")(table =>
       s"""MERGE INTO $table t USING (
             SELECT * FROM VALUES (CAST(1 AS BIGINT)), (CAST(3 AS BIGINT)) AS s(${Core.long0.columnName})
           ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
@@ -379,7 +402,7 @@ object Scenarios {
     }
 
   val mergeUpsert: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("merge.upsert")(table =>
+    TableTest(Core).sql("merge.upsert")(table =>
       s"""MERGE INTO $table t USING (
             SELECT * FROM VALUES
               (CAST(2 AS BIGINT), 2, 'U', 2.5, true,  '2024-01-02-01'),
@@ -395,7 +418,7 @@ object Scenarios {
 
   // Keep only rows the source knows about: delete every row NOT matched by a source row.
   val mergeDeleteNotMatchedBySource: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("merge.deleteNotMatchedBySource")(table =>
+    TableTest(Core).sql("merge.deleteNotMatchedBySource")(table =>
       s"""MERGE INTO $table t USING (
             SELECT * FROM VALUES (CAST(2 AS BIGINT)) AS s(${Core.long0.columnName})
           ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
@@ -405,7 +428,7 @@ object Scenarios {
 
   // ── insert / append / overwrite ────────────────────────────────────────────────────────
   val insertInto: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("insert.into")(table =>
+    TableTest(Core).sql("insert.into")(table =>
       s"""INSERT INTO $table VALUES
             (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
             (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')""") { view =>
@@ -413,7 +436,7 @@ object Scenarios {
     }
 
   val appendDataFrame: TableTest[CoreTable.type] =
-    createAndSeed(3).step("append.dataFrame") { (spark, table) =>
+    TableTest(Core).step("append.dataFrame") { (spark, table) =>
       val frame = spark.sql(
         s"SELECT * FROM VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05') AS s($cols)")
       frame.writeTo(table).append()
@@ -423,7 +446,7 @@ object Scenarios {
 
   // INSERT OVERWRITE (static mode, the Spark default) replaces the whole table regardless of state.
   val insertOverwrite: TableTest[CoreTable.type] =
-    createAndSeed(3).sql("insert.overwrite")(table =>
+    TableTest(Core).sql("insert.overwrite")(table =>
       s"""INSERT OVERWRITE $table VALUES
             (CAST(1 AS BIGINT), 1, 'p', 1.5, false, '2024-01-01-00'),
             (CAST(2 AS BIGINT), 2, 'q', 2.5, true,  '2024-01-02-01')""") { view =>
@@ -431,7 +454,7 @@ object Scenarios {
     }
 
   val overwriteDataFrame: TableTest[CoreTable.type] =
-    createAndSeed(3).step("overwrite.dataFrame") { (spark, table) =>
+    TableTest(Core).step("overwrite.dataFrame") { (spark, table) =>
       val frame = spark.sql(
         s"SELECT * FROM VALUES (CAST(8 AS BIGINT), 8, 'h', 8.5, false, '2024-01-08-07') AS s($cols)")
       frame.writeTo(table).overwrite(org.apache.spark.sql.functions.lit(true))
@@ -439,45 +462,55 @@ object Scenarios {
       assert(keyed(view.after) == Seq(8L))
     }
 
-  // ── create (a preparation with no operation: assert schema + emptiness) ─────────────────
-  val createSchema: TableTest[CoreTable.type] =
-    TableTest(Core).create() { view =>
+  // ── create (a preparation-only test: create under the layout, assert schema + emptiness) ─
+  def createSchema(layout: Layout): TableTest[CoreTable.type] =
+    TableTest(Core).create(layout.partitioning, layout.tableProperties) { view =>
       val actual = view.spark.table(view.table).schema.fields.toList.map(field => (field.name, field.dataType.simpleString))
       val expected = Core.tableColumns.toList.map(column => (column.columnName, column.sqlType))
       assert(actual == expected)
       assert(view.after.isEmpty)
     }
 
-  /** Every scenario with a stable id, in report order. */
-  val all: List[(String, TableTest[CoreTable.type])] = List(
-    "read.projection"              -> readProjection,
-    "read.filter"                  -> readFilter,
-    "delete.byPredicate"           -> deleteByPredicate,
-    "delete.whereFalse.noSnapshot" -> deleteWhereFalseKeepsSnapshot,
-    "delete.truncate"              -> truncate,
-    "delete.atSnapshot.rejected"   -> deleteAtSnapshotRejected,
-    "update.byPredicate"           -> updateByPredicate,
-    "update.withoutCondition"      -> updateWithoutCondition,
-    "update.noMatch"               -> updateNoMatch,
-    "merge.insertNotMatched"       -> mergeInsertNotMatched,
-    "merge.updateMatched"          -> mergeUpdateMatched,
-    "merge.deleteMatched"          -> mergeDeleteMatched,
-    "merge.upsert"                 -> mergeUpsert,
+  /** The operations crossed with every layout, each a headless segment, in report order. */
+  val operations: List[(String, TableTest[CoreTable.type])] = List(
+    "read.projection"                -> readProjection,
+    "read.filter"                    -> readFilter,
+    "format.materialization"         -> formatMaterialization,
+    "delete.byPredicate"             -> deleteByPredicate,
+    "delete.whereFalse.noSnapshot"   -> deleteWhereFalseKeepsSnapshot,
+    "delete.truncate"                -> truncate,
+    "delete.atSnapshot.rejected"     -> deleteAtSnapshotRejected,
+    "update.byPredicate"             -> updateByPredicate,
+    "update.withoutCondition"        -> updateWithoutCondition,
+    "update.noMatch"                 -> updateNoMatch,
+    "merge.insertNotMatched"         -> mergeInsertNotMatched,
+    "merge.updateMatched"            -> mergeUpdateMatched,
+    "merge.deleteMatched"            -> mergeDeleteMatched,
+    "merge.upsert"                   -> mergeUpsert,
     "merge.deleteNotMatchedBySource" -> mergeDeleteNotMatchedBySource,
-    "insert.into"                  -> insertInto,
-    "append.dataFrame"             -> appendDataFrame,
-    "insert.overwrite"             -> insertOverwrite,
-    "overwrite.dataFrame"          -> overwriteDataFrame,
-    "create.schema"                -> createSchema
+    "insert.into"                    -> insertInto,
+    "append.dataFrame"               -> appendDataFrame,
+    "insert.overwrite"               -> insertOverwrite,
+    "overwrite.dataFrame"            -> overwriteDataFrame
   )
 }
 
-/** Assembles the run. Stage 2: the full DML surface, each on the create+seed preparation. */
+/** Assembles the run: every operation x every layout, plus create.schema per layout. */
 object Plan {
   final case class Case(id: String, run: Ctx => Unit)
 
-  def cases: List[Case] =
-    Scenarios.all.map { case (name, test) => Case(s"$name @ core", test.run) }
+  def cases: List[Case] = {
+    val dml = for {
+      layout        <- Scenarios.layouts
+      (name, op)    <- Scenarios.operations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
+
+    val creates = Scenarios.layouts.map { layout =>
+      Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
+    }
+
+    dml ++ creates
+  }
 }
 
 /** Runs a case, retrying only a transient-infrastructure failure. */

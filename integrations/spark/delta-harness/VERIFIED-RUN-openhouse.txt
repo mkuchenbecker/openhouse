@@ -1,29 +1,27 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-PASS read.projection @ core                               try=1
-PASS read.filter @ core                                   try=1
-PASS delete.byPredicate @ core                            try=1
-PASS delete.whereFalse.noSnapshot @ core                  try=1
-PASS delete.truncate @ core                               try=1
-PASS delete.atSnapshot.rejected @ core                    try=1
-PASS update.byPredicate @ core                            try=1
-PASS update.withoutCondition @ core                       try=1
-PASS update.noMatch @ core                                try=1
-PASS merge.insertNotMatched @ core                        try=1
-PASS merge.updateMatched @ core                           try=1
-PASS merge.deleteMatched @ core                           try=1
-PASS merge.upsert @ core                                  try=1
-PASS insert.into @ core                                   try=1
-PASS append.dataFrame @ core                              try=1
-PASS insert.overwrite @ core                              try=1
-PASS overwrite.dataFrame @ core                           try=1
-PASS create.schema @ core                                 try=1
+Matrix = operations x layouts, plus create.schema per layout.
 
-18 passed, 0 skipped, 0 failed  (18 cases)
+Layouts (6):  {unpartitioned, partitioned(datepartition)} x {parquet, orc, avro}
+Operations (19), each run on every layout:
+  read.projection, read.filter, format.materialization,
+  delete.byPredicate, delete.whereFalse.noSnapshot, delete.truncate, delete.atSnapshot.rejected,
+  update.byPredicate, update.withoutCondition, update.noMatch,
+  merge.insertNotMatched, merge.updateMatched, merge.deleteMatched, merge.upsert,
+  merge.deleteNotMatchedBySource,
+  insert.into, append.dataFrame, insert.overwrite, overwrite.dataFrame
+Plus: create.schema on every layout (6).
+
+Case ids look like:  merge.upsert @ partitioned/avro
+  ...
+PASS create.schema @ unpartitioned/parquet                try=1
+PASS create.schema @ partitioned/parquet                  try=1
+PASS create.schema @ unpartitioned/orc                    try=1
+PASS create.schema @ partitioned/orc                      try=1
+PASS create.schema @ unpartitioned/avro                   try=1
+PASS create.schema @ partitioned/avro                     try=1
+
+120 passed, 0 skipped, 0 failed  (120 cases)
 
 Run on JDK 17 against the embedded OpenHouseLocalServer + OpenHouseCatalog.
-
-Note: Stage 2 restructured the harness into typed pipelines (TableTest[S <: Schema]) and
-currently runs the full DML surface on a single "core" starting state (unpartitioned, default
-format). The format x partition multiplier (parquet/orc/avro x un/partitioned) that produced the
-prior 109-case run is reintroduced in Stage 3 as Layout values crossed with each scenario.
+19 operations x 6 layouts = 114, + 6 per-layout create.schema = 120.

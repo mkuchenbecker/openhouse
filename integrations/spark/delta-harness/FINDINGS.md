@@ -74,6 +74,6 @@ harness, and runs it on the embedded server. A narrow slice is ~25s end-to-end.
    turn — acknowledge and move on; there is no in-container fix.
 
 ## Verified green (JDK 17, embedded OpenHouse server, `openhouse.dbMatrix`)
-- **Parquet, ORC, Avro** — CREATE, READ (projection + filter), format-materialization, DELETE
-  (×4), UPDATE (×3), MERGE (×4), INSERT/append/overwrite.
-- **109 cases: 109 passed, 0 skipped, 0 failed.**
+- **Parquet, ORC, Avro** × **unpartitioned / partitioned** — CREATE, READ (projection + filter),
+  format-materialization, DELETE (×4), UPDATE (×3), MERGE (×5), INSERT/append/overwrite.
+- **120 cases: 120 passed, 0 skipped, 0 failed.** (19 operations × 6 layouts + 6 per-layout creates.)
