@@ -1,23 +1,26 @@
 package harness
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row, SparkSession}
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 // =====================================================================================
-// Delta-test harness, against the real OpenHouse catalog. Structure:
+// Delta-test harness against the real OpenHouse catalog.
 //
-//   starting states  x  state-agnostic tests        (every test runs on every state)
-//   + standalone tests                               (state-transition tests, e.g. CREATE)
+// A test is a TYPED PIPELINE: `TableTest[S <: Schema]`. The type parameter declares which
+// table implementation the test depends on, and every step references that schema's columns
+// through typed handles — so the compiler forbids mixing schemas or naming a column the
+// schema doesn't declare.
 //
-// A starting state prepares a seeded table in some physical shape (format, partitioning,
-// and later RTAS'd / soft-dropped / feature-enabled). A test takes a prepared table, runs
-// one or more modifications each followed by a verification, then the table is dropped.
+// Preparations and operations are BOTH pipeline segments of the same schema, composed with
+// `andThen`:
+//   * a preparation prefix  (create+seed, and later RTAS / drop+undrop) yields a known state,
+//   * an operation suffix   (delete / update / merge / insert ...) runs on that state.
+// The test set is `preparations x operations`. RTAS wires into every DML test by joining the
+// preparations list; no operation changes. (RTAS is not built yet — only the seam is.)
 //
-// To add an "rtas" story later you write a couple of StartingState prep functions (which
-// then run every existing test) and any rtas-specific TableTests (which then run on every
-// existing table shape). Catalog wiring is copied from OpenHouseLocalServer +
-// TestSparkSessionUtil (composed, not extended); no OpenHouse test is altered.
+// Catalog wiring is copied from OpenHouseLocalServer + TestSparkSessionUtil (composed, not
+// extended); no OpenHouse test is altered.
 // =====================================================================================
 
 final case class Ctx(spark: SparkSession, namespace: String)
@@ -71,313 +74,162 @@ object Check {
   }
 }
 
-sealed trait FileFormat { def id: String }
-object FileFormat {
-  case object Parquet extends FileFormat { val id = "parquet" }
-  case object Orc extends FileFormat { val id = "orc" }
-  case object Avro extends FileFormat { val id = "avro" }
+// ── Schema: columns only. A column owns its deterministic value generator; no stored seed. ──
+//
+// `literalAt(rowIndex)` is a pure function of the row index, so generated data is reproducible.
+// This is the ONLY logic a schema carries. Value generation lives on the column, which keeps
+// RowGenerator a plain iteration with no knowledge of types.
+final case class Column(columnName: String, sqlType: String, literalAt: Int => String)
+
+sealed trait Schema {
+  def tableColumns: Seq[Column]
+  def columnDefinitions: String =
+    tableColumns.map(column => s"${column.columnName} ${column.sqlType}").mkString(", ")
+  def columnNames: Seq[String] = tableColumns.map(_.columnName)
 }
 
-/** Table helpers used by starting states and tests. */
+object CoreTable extends Schema {
+  val id:   Column = Column("id",   "bigint", rowIndex => rowIndex.toString)
+  val data: Column = Column("data", "string", rowIndex => s"'row-$rowIndex'")
+  def tableColumns: Seq[Column] = Seq(id, data)
+}
+
+object RowGenerator {
+  /** VALUES clause for `numberOfRows` deterministic rows, one literal per column. */
+  def valuesClause(schema: Schema, numberOfRows: Int): String =
+    (1 to numberOfRows).map { rowIndex =>
+      schema.tableColumns.map(column => column.literalAt(rowIndex)).mkString("(", ", ", ")")
+    }.mkString("VALUES ", ", ", "")
+}
+
+/** What a step's validation thunk sees: the live table plus its rows before and after the step. */
+final case class StepView[S <: Schema](
+  spark:  SparkSession,
+  table:  String,
+  schema: S,
+  before: Seq[Row],
+  after:  Seq[Row]
+)
+
+/** One pipeline step: mutate the live table, then validate it against before/after. */
+final case class Step[S <: Schema](
+  label:    String,
+  execute:  (SparkSession, String, S) => Unit,
+  validate: StepView[S] => Unit
+)
+
+/**
+ * An immutable, typed pipeline. Build a preparation prefix and an operation suffix, then
+ * `run` executes the steps in order on one fresh, always-dropped table, validating each step.
+ */
+final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Step[S]]) {
+  private def add(step: Step[S]): TableTest[S] = new TableTest(schema, steps :+ step)
+
+  /** Append another same-schema pipeline (this is how prep prefixes join operation suffixes). */
+  def andThen(next: TableTest[S]): TableTest[S] = new TableTest(schema, steps ++ next.steps)
+
+  def create(
+      partitioning:    S => String         = _ => "",
+      tableProperties: Map[String, String] = Map.empty
+  )(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+    add(Step("create", (spark, table, schema) => {
+      val partitionClause = Option(partitioning(schema)).filter(_.nonEmpty)
+        .map(specification => s"PARTITIONED BY ($specification)").getOrElse("")
+      val propertyClause =
+        if (tableProperties.isEmpty) ""
+        else tableProperties.map { case (key, value) => s"'$key'='$value'" }
+                            .mkString("TBLPROPERTIES (", ", ", ")")
+      spark.sql(s"CREATE TABLE $table (${schema.columnDefinitions}) USING iceberg $partitionClause $propertyClause")
+    }, validate))
+
+  def insert(numberOfRows: Int)(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+    add(Step(s"insert($numberOfRows)", (spark, table, schema) =>
+      spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(schema, numberOfRows)}"), validate))
+
+  def delete(predicate: S => String)(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+    add(Step("delete", (spark, table, schema) =>
+      spark.sql(s"DELETE FROM $table WHERE ${predicate(schema)}"), validate))
+
+  /** Execute the pipeline on a fresh table, snapshotting rows around each step for validation. */
+  def run(ctx: Ctx): Unit = Tables.withTable(ctx) { table =>
+    steps.foreach { step =>
+      val before = Tables.currentRows(ctx.spark, table, schema)
+      step.execute(ctx.spark, table, schema)
+      val after = Tables.currentRows(ctx.spark, table, schema)
+      step.validate(StepView(ctx.spark, table, schema, before, after))
+    }
+  }
+}
+
+object TableTest {
+  def apply[S <: Schema](schema: S): TableTest[S] = new TableTest(schema, Vector.empty)
+}
+
+/** Table lifecycle + generic (schema-driven) row snapshots. */
 object Tables {
   private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
-
-  val seed: List[(Long, String)] = List((1L, "a"), (2L, "b"), (3L, "c"))
-  def seedValues: String = seed.map { case (id, data) => s"($id, '$data')" }.mkString(", ")
 
   def freshName(ctx: Ctx): String = s"${ctx.namespace}.t_${counter.incrementAndGet()}"
   def drop(ctx: Ctx, table: String): Unit = ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
 
-  /**
-   * The one table-lifecycle function: hand `use` a fresh, empty table name and always drop it
-   * afterward. Preparation — shaping the table (format, partitioning) and seeding it — is
-   * composed *inside* `use`, so every test scopes its table the same way.
-   */
+  /** Hand `use` a fresh, empty table name and always drop it afterward. */
   def withTable(ctx: Ctx)(use: String => Unit): Unit = {
     val table = freshName(ctx)
     drop(ctx, table) // ensure absent
     try use(table) finally drop(ctx, table)
   }
 
-  // Ordered by (id, data) so comparisons are deterministic even with duplicate ids.
-  def rows(ctx: Ctx, table: String): List[(Long, String)] =
-    ctx.spark.sql(s"SELECT id, data FROM $table ORDER BY id, data").collect().toList.map(r => (r.getLong(0), r.getString(1)))
-  def snapshotCount(ctx: Ctx, table: String): Long =
-    ctx.spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
-  def schema(ctx: Ctx, table: String): List[(String, String)] =
-    ctx.spark.table(table).schema.fields.toList.map(f => (f.name, f.dataType.simpleString))
-  def dataFilePaths(ctx: Ctx, table: String): List[String] =
-    ctx.spark.sql(s"SELECT file_path FROM $table.files").collect().toList.map(_.getString(0))
-  /** A small DataFrame of (id bigint, data string) for the DataFrame write paths. */
-  def valuesDf(ctx: Ctx, pairs: Seq[(Long, String)]): org.apache.spark.sql.DataFrame = {
-    val values = pairs.map { case (id, data) => s"(CAST($id AS BIGINT), '$data')" }.mkString(", ")
-    ctx.spark.sql(s"SELECT col1 AS id, col2 AS data FROM VALUES $values")
-  }
-  def sorted(rows: Seq[(Long, String)]): List[(Long, String)] = rows.sortBy(r => (r._1, r._2)).toList
-  def declaredFormat(ctx: Ctx, table: String): String =
-    ctx.spark.sql(s"SHOW TBLPROPERTIES $table ('write.format.default')").collect()(0).getString(1)
-}
+  private def exists(spark: SparkSession, table: String): Boolean =
+    try { spark.sql(s"DESCRIBE TABLE $table"); true } catch { case NonFatal(_) => false }
 
-/** A named starting state: a preparation step that shapes and seeds an already-named table. */
-final case class StartingState(name: String, prepare: (Ctx, String) => Unit)
-
-/** A state-agnostic test: it runs modifications + verifications against a prepared, seeded table. */
-final case class TableTest(name: String, run: (Ctx, String) => Unit)
-
-/** A self-contained test that needs a specific/absent state (e.g. CREATE); manages its own table. */
-final case class StandaloneTest(name: String, run: Ctx => Unit)
-
-object States {
-  import Tables._
-
-  def unpartitioned(fmt: FileFormat): StartingState =
-    StartingState(s"unpartitioned/${fmt.id}", (ctx, table) => {
-      ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string) TBLPROPERTIES ('write.format.default'='${fmt.id}')")
-      ctx.spark.sql(s"INSERT INTO $table VALUES $seedValues")
-    })
-
-  def partitioned(fmt: FileFormat): StartingState =
-    StartingState(s"partitioned/${fmt.id}", (ctx, table) => {
-      ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string) PARTITIONED BY (truncate(id, 2)) TBLPROPERTIES ('write.format.default'='${fmt.id}')")
-      ctx.spark.sql(s"INSERT INTO $table VALUES $seedValues")
-    })
-
-  // The states to run every state-agnostic test against.
-  val all: List[StartingState] =
-    for {
-      fmt <- List(FileFormat.Parquet, FileFormat.Orc, FileFormat.Avro)
-      shape <- List(unpartitioned _, partitioned _)
-    } yield shape(fmt)
-}
-
-object Tests {
-  import Check._
-  import Tables._
-
-  // Every operation test is INCREMENTAL: it observes the table's current contents, applies its
-  // operation, and asserts the delta relative to what it observed — never an absolute row set.
-  // So two tests can run back-to-back on the same base table and both hold, and every test works
-  // against any starting condition.
-
-  // ---- reads: verify the read path against the table's current contents ----
-
-  val readProjection: TableTest = TableTest("read.projection", (ctx, table) => {
-    val current = rows(ctx, table)
-    equal(ctx.spark.sql(s"SELECT data FROM $table ORDER BY id").collect().toList.map(_.getString(0)), current.map(_._2))
-  })
-
-  val readFilter: TableTest = TableTest("read.filter", (ctx, table) => {
-    val current = rows(ctx, table)
-    equal(ctx.spark.sql(s"SELECT id FROM $table WHERE id >= 2 ORDER BY id").collect().toList.map(_.getLong(0)),
-      current.map(_._1).filter(_ >= 2))
-  })
-
-  val formatMaterialization: TableTest = TableTest("format.materialization", (ctx, table) => {
-    val fmt = declaredFormat(ctx, table)
-    val paths = dataFilePaths(ctx, table)
-    isTrue(paths.nonEmpty && paths.forall(_.toLowerCase.endsWith(s".$fmt")), s"data files are not all .$fmt: $paths")
-  })
-
-  // ---- delete ----
-
-  val deleteByPredicate: TableTest = TableTest("delete.byPredicate", (ctx, table) => {
-    val before = rows(ctx, table)
-    ctx.spark.sql(s"DELETE FROM $table WHERE id < 2")
-    equal(rows(ctx, table), before.filterNot { case (id, _) => id < 2 })
-  })
-
-  val deleteWhereFalseKeepsSnapshot: TableTest = TableTest("delete.whereFalse.noSnapshot", (ctx, table) => {
-    val before = rows(ctx, table)
-    val snapshotsBefore = snapshotCount(ctx, table)
-    ctx.spark.sql(s"DELETE FROM $table WHERE false")
-    equal(rows(ctx, table), before)
-    isTrue(snapshotCount(ctx, table) == snapshotsBefore, "DELETE WHERE false must not create a new snapshot")
-  })
-
-  val truncate: TableTest = TableTest("delete.truncate", (ctx, table) => {
-    ctx.spark.sql(s"TRUNCATE TABLE $table")
-    equal(rows(ctx, table), Nil) // truncate empties any starting state
-  })
-
-  val deleteAtSnapshotRejected: TableTest = TableTest("delete.atSnapshot.rejected", (ctx, table) => {
-    val before = rows(ctx, table)
-    val snapshotId = ctx.spark
-      .sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1")
-      .collect()(0).getLong(0)
-    val error = intercept(ctx.spark.sql(s"DELETE FROM $table.snapshot_id_$snapshotId WHERE id < 4"))
-    isTrue(error.isInstanceOf[IllegalArgumentException], s"expected IllegalArgumentException, got ${error.getClass.getName}")
-    equal(error.getMessage, s"Cannot delete from table at a specific snapshot: $snapshotId")
-    equal(rows(ctx, table), before) // a rejected delete must leave the table unchanged
-  })
-
-  // ---- update (ported from OSS Iceberg TestUpdate) ----
-
-  val updateByPredicate: TableTest = TableTest("update.byPredicate", (ctx, table) => {
-    val before = rows(ctx, table)
-    ctx.spark.sql(s"UPDATE $table SET data = 'X' WHERE id = 2")
-    equal(rows(ctx, table), before.map { case (id, d) => if (id == 2) (id, "X") else (id, d) })
-  })
-
-  val updateWithoutCondition: TableTest = TableTest("update.withoutCondition", (ctx, table) => {
-    val before = rows(ctx, table)
-    ctx.spark.sql(s"UPDATE $table SET data = 'Z'")
-    equal(rows(ctx, table), before.map { case (id, _) => (id, "Z") })
-  })
-
-  // A real predicate that matches nothing still commits an (empty) snapshot — unlike the
-  // constant-folded `DELETE WHERE false` no-op. Confirmed against OSS Iceberg
-  // TestUpdate.testUpdateNonExistingRecords (2 snapshots, 0 changed files).
-  val updateNoMatch: TableTest = TableTest("update.noMatch", (ctx, table) => {
-    val before = rows(ctx, table)
-    val snapshotsBefore = snapshotCount(ctx, table)
-    ctx.spark.sql(s"UPDATE $table SET data = 'Y' WHERE id = 99")
-    equal(rows(ctx, table), before.map { case (id, d) => if (id == 99) (id, "Y") else (id, d) })
-    isTrue(snapshotCount(ctx, table) == snapshotsBefore + 1, "UPDATE with a real no-match predicate still commits one (empty) snapshot")
-  })
-
-  // ---- merge (ported from OSS Iceberg TestMerge) ----
-
-  private def source(pairs: (Long, String)*): String = {
-    val values = pairs.map { case (id, data) => s"(CAST($id AS BIGINT), '$data')" }.mkString(", ")
-    s"(SELECT col1 AS id, col2 AS data FROM VALUES $values)"
-  }
-
-  val mergeInsertNotMatched: TableTest = TableTest("merge.insertNotMatched", (ctx, table) => {
-    val before = rows(ctx, table)
-    val src = List((4L, "d"), (5L, "e"))
-    ctx.spark.sql(
-      s"""MERGE INTO $table t USING ${source(src: _*)} s ON t.id = s.id
-          WHEN NOT MATCHED THEN INSERT (id, data) VALUES (s.id, s.data)""")
-    val inserted = src.filterNot { case (id, _) => before.exists(_._1 == id) }
-    equal(rows(ctx, table), (before ++ inserted).sortBy(_._1))
-  })
-
-  val mergeUpdateMatched: TableTest = TableTest("merge.updateMatched", (ctx, table) => {
-    val before = rows(ctx, table)
-    val updates = List((2L, "M")).toMap
-    ctx.spark.sql(
-      s"""MERGE INTO $table t USING ${source(updates.toList: _*)} s ON t.id = s.id
-          WHEN MATCHED THEN UPDATE SET t.data = s.data""")
-    equal(rows(ctx, table), before.map { case (id, d) => (id, updates.getOrElse(id, d)) })
-  })
-
-  val mergeDeleteMatched: TableTest = TableTest("merge.deleteMatched", (ctx, table) => {
-    val before = rows(ctx, table)
-    val deleteIds = Set(1L, 3L)
-    ctx.spark.sql(
-      s"""MERGE INTO $table t USING ${source(deleteIds.toList.map(id => (id, "x")): _*)} s ON t.id = s.id
-          WHEN MATCHED THEN DELETE""")
-    equal(rows(ctx, table), before.filterNot { case (id, _) => deleteIds.contains(id) })
-  })
-
-  val mergeUpsert: TableTest = TableTest("merge.upsert", (ctx, table) => {
-    val before = rows(ctx, table)
-    val src = List((2L, "U"), (7L, "g")) // id 2 matches -> update; id 7 is new -> insert
-    ctx.spark.sql(
-      s"""MERGE INTO $table t USING ${source(src: _*)} s ON t.id = s.id
-          WHEN MATCHED THEN UPDATE SET t.data = s.data
-          WHEN NOT MATCHED THEN INSERT (id, data) VALUES (s.id, s.data)""")
-    val updates = src.toMap
-    val updated = before.map { case (id, d) => (id, updates.getOrElse(id, d)) }
-    val inserted = src.filterNot { case (id, _) => before.exists(_._1 == id) }
-    equal(rows(ctx, table), (updated ++ inserted).sortBy(_._1))
-  })
-
-  // ---- insert / append / overwrite ----
-
-  val insertInto: TableTest = TableTest("insert.into", (ctx, table) => {
-    val before = rows(ctx, table)
-    val src = List((4L, "d"), (5L, "e"))
-    ctx.spark.sql(s"INSERT INTO $table VALUES ${src.map { case (id, d) => s"($id, '$d')" }.mkString(", ")}")
-    equal(rows(ctx, table), sorted(before ++ src))
-  })
-
-  val appendDataFrame: TableTest = TableTest("append.dataFrame", (ctx, table) => {
-    val before = rows(ctx, table)
-    val src = List((6L, "f"), (7L, "g"))
-    valuesDf(ctx, src).writeTo(table).append()
-    equal(rows(ctx, table), sorted(before ++ src))
-  })
-
-  // INSERT OVERWRITE (static mode, the Spark default) replaces the whole table regardless of state.
-  val insertOverwrite: TableTest = TableTest("insert.overwrite", (ctx, table) => {
-    val src = List((1L, "p"), (2L, "q"))
-    ctx.spark.sql(s"INSERT OVERWRITE $table VALUES ${src.map { case (id, d) => s"($id, '$d')" }.mkString(", ")}")
-    equal(rows(ctx, table), sorted(src))
-  })
-
-  val overwriteDataFrame: TableTest = TableTest("overwrite.dataFrame", (ctx, table) => {
-    val src = List((8L, "h"))
-    valuesDf(ctx, src).writeTo(table).overwrite(org.apache.spark.sql.functions.lit(true))
-    equal(rows(ctx, table), sorted(src))
-  })
-
-  val stateAgnostic: List[TableTest] =
-    List(readProjection, readFilter, formatMaterialization,
-      deleteByPredicate, deleteWhereFalseKeepsSnapshot, truncate, deleteAtSnapshotRejected,
-      updateByPredicate, updateWithoutCondition, updateNoMatch,
-      mergeInsertNotMatched, mergeUpdateMatched, mergeDeleteMatched, mergeUpsert,
-      insertInto, appendDataFrame, insertOverwrite, overwriteDataFrame)
-
-  // ---- standalone tests: incompatible with a pre-existing table ----
-
-  val createTable: StandaloneTest = StandaloneTest("create.schema", ctx =>
-    withTable(ctx) { table =>
-      ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string)")
-      equal(schema(ctx, table), List(("id", "bigint"), ("data", "string")))
-      equal(rows(ctx, table), Nil)
-    })
-
-  val standalone: List[StandaloneTest] = List(createTable)
-}
-
-/** Assembles the run: (state x test) + standalone, applying the disable policy. */
-object Plan {
-  final case class Case(id: String, run: Ctx => Unit, skip: Option[String])
-
-  // A known-blocked slice is a visible SKIP with a reason — a deliberate decision, not a swallow.
-  // Avro is enabled: the run classpath de-duplicates the Iceberg jars so the shaded/unshaded Avro
-  // collision cannot occur (see FINDINGS.md F1). The disable mechanism stays here for future use.
-  private val disabled: List[(String, String)] = List()
-
-  private def skipReason(id: String): Option[String] =
-    disabled.collectFirst { case (pattern, reason) if id.contains(pattern) => reason }
-
-  def cases: List[Case] = {
-    val combined = for {
-      state <- States.all
-      test <- Tests.stateAgnostic
-    } yield {
-      val id = s"${test.name} @ ${state.name}"
-      Case(id, ctx => Tables.withTable(ctx) { table =>
-        state.prepare(ctx, table) // preparation composed within withTable
-        test.run(ctx, table)
-      }, skipReason(id))
+  /** All rows, selected by the schema's columns and ordered by them for deterministic compares. */
+  def currentRows(spark: SparkSession, table: String, schema: Schema): Seq[Row] =
+    if (!exists(spark, table)) Seq.empty
+    else {
+      val columns = schema.columnNames.mkString(", ")
+      spark.sql(s"SELECT $columns FROM $table ORDER BY $columns").collect().toSeq
     }
+}
 
-    val standalone = Tests.standalone.map(t => Case(t.name, t.run, skipReason(t.name)))
+/** The concrete tests: preparation prefixes and operation suffixes, on CoreTable. */
+object Scenarios {
+  // Preparation: create an unpartitioned table and seed `numberOfRows` deterministic rows.
+  // Interchangeable with RTAS / drop+undrop preparations later — same resulting state.
+  def createAndSeed(numberOfRows: Int): TableTest[CoreTable.type] =
+    TableTest(CoreTable).create()().insert(numberOfRows)()
 
-    combined ++ standalone
-  }
+  // Operation: delete rows with id < 2, asserting the delta against the observed pre-state.
+  val deleteByPredicate: TableTest[CoreTable.type] =
+    createAndSeed(numberOfRows = 3)
+      .delete(coreTable => s"${coreTable.id.columnName} < 2") { view =>
+        Check.equal(view.after, view.before.filterNot(row => row.getLong(0) < 2))
+      }
+}
+
+/** Assembles the run. Stage 1: a single operation on the create+seed preparation. */
+object Plan {
+  final case class Case(id: String, run: Ctx => Unit)
+
+  def cases: List[Case] = List(
+    Case("delete.byPredicate @ core", Scenarios.deleteByPredicate.run)
+  )
 }
 
 /** Runs a case, retrying only a transient-infrastructure failure. */
 object Runner {
   val MaxAttempts = 3
 
-  def execute(c: Plan.Case, ctx: Ctx): (Outcome, Int) = c.skip match {
-    case Some(reason) => (Outcome.Skipped(reason), 0)
-    case None =>
-      @tailrec def attempt(n: Int): (Outcome, Int) = {
-        val outcome =
-          try { c.run(ctx); Outcome.Passed }
-          catch { case NonFatal(t) => Outcome.Failed(t) }
-        outcome match {
-          case f: Outcome.Failed if f.retryable && n + 1 < MaxAttempts => attempt(n + 1)
-          case terminal                                                => (terminal, n + 1)
-        }
+  def execute(c: Plan.Case, ctx: Ctx): (Outcome, Int) = {
+    @tailrec def attempt(n: Int): (Outcome, Int) = {
+      val outcome =
+        try { c.run(ctx); Outcome.Passed }
+        catch { case NonFatal(t) => Outcome.Failed(t) }
+      outcome match {
+        case f: Outcome.Failed if f.retryable && n + 1 < MaxAttempts => attempt(n + 1)
+        case terminal                                                => (terminal, n + 1)
       }
-      attempt(0)
+    }
+    attempt(0)
   }
 }
 
@@ -427,17 +279,14 @@ object Main {
     spark.sparkContext.setLogLevel("ERROR")
     val ctx = Ctx(spark, "openhouse.dbMatrix")
 
-    // Selector (doc 01): each command-line arg is an include-substring; a case runs only if its id
-    // contains ALL of them (AND), matched against the id (test name, state, format). No args = run
-    // everything. Keeps the inner loop fast, e.g.
-    //   run-openhouse.sh delete parquet             ->  delete tests on parquet
-    //   run-openhouse.sh merge unpartitioned/orc    ->  merge tests on one state
+    // Each command-line arg is an include-substring; a case runs only if its id contains ALL of
+    // them (AND). No args = run everything.
     val filters = args.toList
     def selected(id: String): Boolean = filters.forall(id.contains)
     val cases = Plan.cases.filter(c => selected(c.id))
 
     val header = if (filters.isEmpty) "all cases" else s"filter ${filters.mkString(", ")} -> ${cases.size} cases"
-    println(s"\n=== delta-harness :: operations x starting states @ OpenHouse catalog ($header) ===\n")
+    println(s"\n=== delta-harness :: typed pipelines @ OpenHouse catalog ($header) ===\n")
 
     val results = cases.map(c => (c.id, Runner.execute(c, ctx)))
 

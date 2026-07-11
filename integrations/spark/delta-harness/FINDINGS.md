@@ -41,6 +41,31 @@ including Avro**; Parquet/ORC unaffected. Avro is re-enabled in `OpenHouseMatrix
 exclusion: exclude `org.apache.iceberg:iceberg-{core,api,data,common}` from the configuration
 that carries the shaded `iceberg-spark-runtime`.
 
+## Environment / methodology pitfalls (fresh container)
+
+The remote container is **ephemeral** and starts with only what the base image ships. Two
+recurring setup traps, each of which has cost a full debugging detour more than once:
+
+1. **JDK: only JDK 21 is pre-installed; the OpenHouse build needs JDK 17.** The repo pins
+   Lombok 1.18.20, which does **not** compile on JDK 21+ (annotation-processor breakage). There
+   is no JDK 17 on the image. Install it — but a bare `apt-get install openjdk-17-jdk-headless`
+   **fails with 404s** because the cached package index points at point-releases that have since
+   been superseded on the mirror. You must `sudo apt-get update` **first**, then install:
+   ```bash
+   sudo apt-get update
+   sudo apt-get install -y openjdk-17-jdk-headless   # lands at /usr/lib/jvm/java-17-openjdk-amd64
+   export JAVA17_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+   ```
+2. **Gradle wrapper cannot download (proxy 403); use the system Gradle.** `/opt/gradle/bin/gradle`
+   (8.x) is present and works. Point the run script at it:
+   ```bash
+   export GRADLE_BIN=/opt/gradle/bin/gradle
+   ```
+   The Scala compiler jars (2.12.18) are already in `~/.m2`, so no extra fetch is needed there.
+
+With both exports set, `./run-openhouse.sh <filters>` resolves the classpath, compiles the
+harness, and runs it on the embedded server. A narrow slice is ~25s end-to-end.
+
 ## Verified green (JDK 17, embedded OpenHouse server, `openhouse.dbMatrix`)
 - **Parquet, ORC, Avro** — CREATE, READ (projection + filter), format-materialization, DELETE
   (×4), UPDATE (×3), MERGE (×4), INSERT/append/overwrite.
