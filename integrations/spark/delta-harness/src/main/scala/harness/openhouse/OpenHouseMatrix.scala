@@ -91,8 +91,6 @@ final case class Column[T](columnName: String, sqlType: String, literalAt: Int =
 
 sealed trait Schema {
   def tableColumns: Seq[Column[_]]
-  def columnDefinitions: String =
-    tableColumns.map(column => s"${column.columnName} ${column.sqlType}").mkString(", ")
   def columnNames: Seq[String] = tableColumns.map(_.columnName)
 }
 
@@ -163,20 +161,6 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
 
   /** Append another same-schema pipeline (this is how prep prefixes join operation suffixes). */
   def andThen(next: TableTest[S]): TableTest[S] = new TableTest(schema, steps ++ next.steps)
-
-  def create(
-      partitioning:    S => String         = _ => "",
-      tableProperties: Map[String, String] = Map.empty
-  )(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
-    add(Step("create", (spark, table, schema) => {
-      val partitionClause = Option(partitioning(schema)).filter(_.nonEmpty)
-        .map(specification => s"PARTITIONED BY ($specification)").getOrElse("")
-      val propertyClause =
-        if (tableProperties.isEmpty) ""
-        else tableProperties.map { case (key, value) => s"'$key'='$value'" }
-                            .mkString("TBLPROPERTIES (", ", ", ")")
-      spark.sql(s"CREATE TABLE $table (${schema.columnDefinitions}) USING iceberg $partitionClause $propertyClause")
-    }, validate))
 
   def insert(numberOfRows: Int)(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
     add(Step(s"insert($numberOfRows)", (spark, table, schema) =>
@@ -255,23 +239,28 @@ object Scenarios {
     rows.map(row => row.get(Core.long0) -> row.get(Core.string0)).toMap
 
   // ── the layout axis: file format x partitioning, crossed with every operation ──────────
-  // Partitioning references a real CoreTable column (identity on the date-partition string, the
-  // common real-world pattern); unpartitioned is the empty spec. Format is a schema-independent
-  // TBLPROPERTY, so it is varied blindly.
-  final case class Layout(label: String, partitioning: CoreTable.type => String, tableProperties: Map[String, String])
+  // Each layout is a plain literal CREATE statement (no dynamic assembly): the column list is one
+  // shared literal `columnDefinitions`, and format/partition are literal fragments. createSchema
+  // cross-checks the literal against CoreTable's declared columns, so the two can't silently drift.
+  private val columnDefinitions =
+    "foo_col_long bigint, foo_col_int int, foo_col_string string, foo_col_double double, foo_col_boolean boolean, datepartition string"
+
+  final case class Layout(label: String, create: String => String)
 
   val layouts: List[Layout] =
     for {
       format <- List("parquet", "orc", "avro")
-      (partitionLabel, partitioning) <- List[(String, CoreTable.type => String)](
-        "unpartitioned" -> (_ => ""),
-        "partitioned"   -> (core => core.datePartition.columnName))
-    } yield Layout(s"$partitionLabel/$format", partitioning, Map("write.format.default" -> format))
+      (partitionLabel, partitionClause) <- List(
+        "unpartitioned" -> "",
+        "partitioned"   -> "PARTITIONED BY (datepartition)")
+    } yield Layout(s"$partitionLabel/$format", table =>
+      s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ('write.format.default'='$format')")
 
   // Preparation: create under `layout` and seed `numberOfRows` deterministic rows. Interchangeable
   // with RTAS / drop+undrop preparations later — same resulting state.
   def createAndSeed(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
-    TableTest(Core).create(layout.partitioning, layout.tableProperties)().insert(numberOfRows)()
+    TableTest(Core).sql("create")(layout.create)().insert(numberOfRows)()
 
   // ── reads ────────────────────────────────────────────────────────────────────────────
   val readProjection: TableTest[CoreTable.type] =
@@ -451,8 +440,9 @@ object Scenarios {
     }
 
   // ── create (a preparation-only test: create under the layout, assert schema + emptiness) ─
+  // Also the guard that the literal `columnDefinitions` matches CoreTable's declared columns.
   def createSchema(layout: Layout): TableTest[CoreTable.type] =
-    TableTest(Core).create(layout.partitioning, layout.tableProperties) { view =>
+    TableTest(Core).sql("create")(layout.create) { view =>
       val actual = view.spark.table(view.table).schema.fields.toList.map(field => (field.name, field.dataType.simpleString))
       val expected = Core.tableColumns.toList.map(column => (column.columnName, column.sqlType))
       assert(actual == expected)
@@ -486,6 +476,16 @@ object Scenarios {
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
 object Plan {
   final case class Case(id: String, run: Ctx => Unit)
+
+  // Known PRODUCT bugs: any case whose id contains the key is reported SKIP (bug: reason) instead
+  // of failing the suite, and is tracked in BUGS.md. This is how we "tag a failing test and filter
+  // it": a genuine bug is tagged here, deferred for follow-up, and never plowed past silently.
+  val knownBugs: List[(String, String)] = List(
+    // ("merge.someBrokenThing", "OpenHouse rejects <X>; see BUGS.md"),
+  )
+
+  def bugReason(id: String): Option[String] =
+    knownBugs.collectFirst { case (key, reason) if id.contains(key) => s"bug: $reason" }
 
   def cases: List[Case] = {
     val dml = for {
@@ -574,7 +574,14 @@ object Main {
     val header = if (filters.isEmpty) "all cases" else s"filter ${filters.mkString(", ")} -> ${cases.size} cases"
     println(s"\n=== delta-harness :: typed pipelines @ OpenHouse catalog ($header) ===\n")
 
-    val results = cases.map(c => (c.id, Runner.execute(c, ctx)))
+    // Known-bug cases are tagged (Plan.knownBugs) and reported SKIP rather than run — deferred,
+    // not passing. Everything else executes.
+    val results = cases.map { c =>
+      Plan.bugReason(c.id) match {
+        case Some(reason) => (c.id, (Outcome.Skipped(reason): Outcome, 0))
+        case None         => (c.id, Runner.execute(c, ctx))
+      }
+    }
 
     results.foreach { case (id, (outcome, attempts)) =>
       val note = outcome match {
