@@ -124,13 +124,19 @@ object RowGenerator {
     }.mkString("VALUES ", ", ", "")
 }
 
-/** What a step's validation thunk sees: the live table plus its rows before and after the step. */
+/**
+ * What a step's validation thunk sees: the live table, its rows before and after the step, and
+ * the table's snapshot (commit) count before and after — so a test can assert the delta in both
+ * data and commits (e.g. "a no-match UPDATE still commits exactly one snapshot").
+ */
 final case class StepView[S <: Schema](
-  spark:  SparkSession,
-  table:  String,
-  schema: S,
-  before: Seq[Row],
-  after:  Seq[Row]
+  spark:           SparkSession,
+  table:           String,
+  schema:          S,
+  before:          Seq[Row],
+  after:           Seq[Row],
+  snapshotsBefore: Long,
+  snapshotsAfter:  Long
 )
 
 /** One pipeline step: mutate the live table, then validate it against before/after. */
@@ -172,13 +178,29 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
     add(Step("delete", (spark, table, schema) =>
       spark.sql(s"DELETE FROM $table WHERE ${predicate(schema)}"), validate))
 
-  /** Execute the pipeline on a fresh table, snapshotting rows around each step for validation. */
+  /** General operation step: run an arbitrary mutation on the table, then validate the delta. */
+  def step(label: String)(mutate: (SparkSession, String) => Unit)
+          (validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+    add(Step(label, (spark, table, _) => mutate(spark, table), validate))
+
+  /** Operation step whose mutation is a single SQL statement (the table name is supplied). */
+  def sql(label: String)(statement: String => String)
+         (validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+    step(label)((spark, table) => spark.sql(statement(table)))(validate)
+
+  /** Read/assert-only step: no mutation, so before == after; used for the read paths. */
+  def check(label: String)(validate: StepView[S] => Unit): TableTest[S] =
+    step(label)((_, _) => ())(validate)
+
+  /** Execute the pipeline on a fresh table, snapshotting rows + commits around each step. */
   def run(ctx: Ctx): Unit = Tables.withTable(ctx) { table =>
     steps.foreach { step =>
       val before = Tables.currentRows(ctx.spark, table, schema)
+      val snapshotsBefore = Tables.snapshotCount(ctx.spark, table)
       step.execute(ctx.spark, table, schema)
       val after = Tables.currentRows(ctx.spark, table, schema)
-      step.validate(StepView(ctx.spark, table, schema, before, after))
+      val snapshotsAfter = Tables.snapshotCount(ctx.spark, table)
+      step.validate(StepView(ctx.spark, table, schema, before, after, snapshotsBefore, snapshotsAfter))
     }
   }
 }
@@ -211,32 +233,233 @@ object Tables {
       val columns = schema.columnNames.mkString(", ")
       spark.sql(s"SELECT $columns FROM $table ORDER BY $columns").collect().toSeq
     }
+
+  /** Number of snapshots (commits); 0 if the table does not exist yet. */
+  def snapshotCount(spark: SparkSession, table: String): Long =
+    if (!exists(spark, table)) 0L
+    else spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
 }
 
-/** The concrete tests: preparation prefixes and operation suffixes, on CoreTable. */
+/**
+ * The concrete tests, all on CoreTable. Each is a `createAndSeed` preparation prefix followed by
+ * one operation suffix. Every operation asserts the DELTA against the observed pre-state (rows
+ * and/or commit count), never an absolute row set — so a test holds on any starting state and
+ * operations compose on one base table. Operation sources are written as EXPLICIT literals.
+ */
 object Scenarios {
   import Rows._
+
+  private val Core = CoreTable // brevity in the typed column references below
+
+  // Short typed views of the current rows, keyed by `long`, for incremental assertions.
+  private def keyed(rows: Seq[Row]): Seq[Long] = rows.map(_.get(Core.long)).sorted
+  private def longToString(rows: Seq[Row]): Map[Long, String] =
+    rows.map(row => row.get(Core.long) -> row.get(Core.string)).toMap
 
   // Preparation: create an unpartitioned table and seed `numberOfRows` deterministic rows.
   // Interchangeable with RTAS / drop+undrop preparations later — same resulting state.
   def createAndSeed(numberOfRows: Int): TableTest[CoreTable.type] =
-    TableTest(CoreTable).create()().insert(numberOfRows)()
+    TableTest(Core).create()().insert(numberOfRows)()
 
-  // Operation: delete rows with long < 2, asserting the delta against the observed pre-state.
+  // ── reads ────────────────────────────────────────────────────────────────────────────
+  val readProjection: TableTest[CoreTable.type] =
+    createAndSeed(3).check("read.projection") { view =>
+      val expected = view.before.sortBy(_.get(Core.long)).map(_.get(Core.string))
+      val actual = view.spark
+        .sql(s"SELECT ${Core.string.columnName} FROM ${view.table} ORDER BY ${Core.long.columnName}")
+        .collect().toSeq.map(_.get(Core.string))
+      Check.equal(actual, expected)
+    }
+
+  val readFilter: TableTest[CoreTable.type] =
+    createAndSeed(3).check("read.filter") { view =>
+      val expected = view.before.map(_.get(Core.long)).filter(_ >= 2).sorted
+      val actual = view.spark
+        .sql(s"SELECT ${Core.long.columnName} FROM ${view.table} WHERE ${Core.long.columnName} >= 2 ORDER BY ${Core.long.columnName}")
+        .collect().toSeq.map(_.get(Core.long))
+      Check.equal(actual, expected)
+    }
+
+  // ── delete ───────────────────────────────────────────────────────────────────────────
   val deleteByPredicate: TableTest[CoreTable.type] =
-    createAndSeed(numberOfRows = 3)
-      .delete(coreTable => s"${coreTable.long.columnName} < 2") { view =>
-        Check.equal(view.after, view.before.filterNot(row => row.get(CoreTable.long) < 2))
-      }
+    createAndSeed(3).delete(core => s"${core.long.columnName} < 2") { view =>
+      Check.equal(view.after, view.before.filterNot(_.get(Core.long) < 2))
+    }
+
+  val deleteWhereFalseKeepsSnapshot: TableTest[CoreTable.type] =
+    createAndSeed(3).delete(_ => "false") { view =>
+      Check.equal(view.after, view.before)
+      Check.isTrue(view.snapshotsAfter == view.snapshotsBefore, "DELETE WHERE false must not commit a snapshot")
+    }
+
+  val truncate: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("delete.truncate")(table => s"TRUNCATE TABLE $table") { view =>
+      Check.equal(view.after, Seq.empty)
+    }
+
+  val deleteAtSnapshotRejected: TableTest[CoreTable.type] =
+    createAndSeed(3).step("delete.atSnapshot.rejected") { (spark, table) =>
+      val snapshotId = spark
+        .sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1")
+        .collect()(0).getLong(0)
+      val error = Check.intercept(spark.sql(s"DELETE FROM $table.snapshot_id_$snapshotId WHERE ${Core.long.columnName} < 4"))
+      Check.isTrue(error.isInstanceOf[IllegalArgumentException], s"expected IllegalArgumentException, got ${error.getClass.getName}")
+      Check.equal(error.getMessage, s"Cannot delete from table at a specific snapshot: $snapshotId")
+    } { view =>
+      Check.equal(view.after, view.before) // a rejected delete leaves the table unchanged
+    }
+
+  // ── update ───────────────────────────────────────────────────────────────────────────
+  val updateByPredicate: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("update.byPredicate")(table =>
+      s"UPDATE $table SET ${Core.string.columnName} = 'X' WHERE ${Core.long.columnName} = 2") { view =>
+      val expected = longToString(view.before).map { case (id, s) => id -> (if (id == 2) "X" else s) }
+      Check.equal(longToString(view.after), expected)
+    }
+
+  val updateWithoutCondition: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("update.withoutCondition")(table =>
+      s"UPDATE $table SET ${Core.string.columnName} = 'Z'") { view =>
+      Check.equal(longToString(view.after), longToString(view.before).map { case (id, _) => id -> "Z" })
+    }
+
+  // A real predicate matching nothing still commits an (empty) snapshot — unlike the
+  // constant-folded `DELETE WHERE false` no-op (confirmed vs OSS TestUpdate.testUpdateNonExistingRecords).
+  val updateNoMatch: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("update.noMatch")(table =>
+      s"UPDATE $table SET ${Core.string.columnName} = 'Y' WHERE ${Core.long.columnName} = 99") { view =>
+      Check.equal(longToString(view.after), longToString(view.before))
+      Check.isTrue(view.snapshotsAfter == view.snapshotsBefore + 1, "no-match UPDATE still commits one snapshot")
+    }
+
+  // ── merge ────────────────────────────────────────────────────────────────────────────
+  // Source rows are written as EXPLICIT literals. The generator-sourced alternative for this
+  // test would be:
+  //   USING (${RowGenerator.valuesClause(Core, ...)} for indices 4,5) ... WHEN NOT MATCHED THEN INSERT *
+  // i.e. name the row *indices* and let the column generators fill every column. We prefer the
+  // explicit form so the source values are visible in the test.
+  val mergeInsertNotMatched: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("merge.insertNotMatched")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES
+              (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
+              (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')
+            AS s(long, int, string, double, boolean, datepartition)
+          ) s ON t.${Core.long.columnName} = s.${Core.long.columnName}
+          WHEN NOT MATCHED THEN INSERT *""") { view =>
+      Check.equal(keyed(view.after), (view.before.map(_.get(Core.long)) ++ Seq(4L, 5L)).sorted)
+    }
+
+  val mergeUpdateMatched: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("merge.updateMatched")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(2 AS BIGINT), 'M') AS s(long, string)
+          ) s ON t.${Core.long.columnName} = s.${Core.long.columnName}
+          WHEN MATCHED THEN UPDATE SET t.${Core.string.columnName} = s.string""") { view =>
+      val expected = longToString(view.before).map { case (id, s) => id -> (if (id == 2) "M" else s) }
+      Check.equal(longToString(view.after), expected)
+    }
+
+  val mergeDeleteMatched: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("merge.deleteMatched")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(1 AS BIGINT)), (CAST(3 AS BIGINT)) AS s(long)
+          ) s ON t.${Core.long.columnName} = s.${Core.long.columnName}
+          WHEN MATCHED THEN DELETE""") { view =>
+      Check.equal(keyed(view.after), view.before.map(_.get(Core.long)).filterNot(Set(1L, 3L)).sorted)
+    }
+
+  val mergeUpsert: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("merge.upsert")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES
+              (CAST(2 AS BIGINT), 2, 'U', 2.5, true,  '2024-01-02-01'),
+              (CAST(7 AS BIGINT), 7, 'g', 7.5, false, '2024-01-07-06')
+            AS s(long, int, string, double, boolean, datepartition)
+          ) s ON t.${Core.long.columnName} = s.${Core.long.columnName}
+          WHEN MATCHED THEN UPDATE SET t.${Core.string.columnName} = s.string
+          WHEN NOT MATCHED THEN INSERT *""") { view =>
+      val updated = longToString(view.before).map { case (id, s) => id -> (if (id == 2) "U" else s) }
+      val withInsert = if (view.before.exists(_.get(Core.long) == 7L)) updated else updated + (7L -> "g")
+      Check.equal(longToString(view.after), withInsert)
+    }
+
+  // ── insert / append / overwrite ────────────────────────────────────────────────────────
+  val insertInto: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("insert.into")(table =>
+      s"""INSERT INTO $table VALUES
+            (CAST(4 AS BIGINT), 4, 'row-4', 4.5, true,  '2024-01-04-03'),
+            (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')""") { view =>
+      Check.equal(keyed(view.after), (view.before.map(_.get(Core.long)) ++ Seq(4L, 5L)).sorted)
+    }
+
+  val appendDataFrame: TableTest[CoreTable.type] =
+    createAndSeed(3).step("append.dataFrame") { (spark, table) =>
+      val frame = spark.sql(
+        "SELECT * FROM VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05') " +
+          "AS s(long, int, string, double, boolean, datepartition)")
+      frame.writeTo(table).append()
+    } { view =>
+      Check.equal(keyed(view.after), (view.before.map(_.get(Core.long)) :+ 6L).sorted)
+    }
+
+  // INSERT OVERWRITE (static mode, the Spark default) replaces the whole table regardless of state.
+  val insertOverwrite: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("insert.overwrite")(table =>
+      s"""INSERT OVERWRITE $table VALUES
+            (CAST(1 AS BIGINT), 1, 'p', 1.5, false, '2024-01-01-00'),
+            (CAST(2 AS BIGINT), 2, 'q', 2.5, true,  '2024-01-02-01')""") { view =>
+      Check.equal(keyed(view.after), Seq(1L, 2L))
+    }
+
+  val overwriteDataFrame: TableTest[CoreTable.type] =
+    createAndSeed(3).step("overwrite.dataFrame") { (spark, table) =>
+      val frame = spark.sql(
+        "SELECT * FROM VALUES (CAST(8 AS BIGINT), 8, 'h', 8.5, false, '2024-01-08-07') " +
+          "AS s(long, int, string, double, boolean, datepartition)")
+      frame.writeTo(table).overwrite(org.apache.spark.sql.functions.lit(true))
+    } { view =>
+      Check.equal(keyed(view.after), Seq(8L))
+    }
+
+  // ── create (a preparation with no operation: assert schema + emptiness) ─────────────────
+  val createSchema: TableTest[CoreTable.type] =
+    TableTest(Core).create() { view =>
+      val actual = view.spark.table(view.table).schema.fields.toList.map(field => (field.name, field.dataType.simpleString))
+      val expected = Core.tableColumns.toList.map(column => (column.columnName, column.sqlType))
+      Check.equal(actual, expected)
+      Check.equal(view.after, Seq.empty)
+    }
+
+  /** Every scenario with a stable id, in report order. */
+  val all: List[(String, TableTest[CoreTable.type])] = List(
+    "read.projection"              -> readProjection,
+    "read.filter"                  -> readFilter,
+    "delete.byPredicate"           -> deleteByPredicate,
+    "delete.whereFalse.noSnapshot" -> deleteWhereFalseKeepsSnapshot,
+    "delete.truncate"              -> truncate,
+    "delete.atSnapshot.rejected"   -> deleteAtSnapshotRejected,
+    "update.byPredicate"           -> updateByPredicate,
+    "update.withoutCondition"      -> updateWithoutCondition,
+    "update.noMatch"               -> updateNoMatch,
+    "merge.insertNotMatched"       -> mergeInsertNotMatched,
+    "merge.updateMatched"          -> mergeUpdateMatched,
+    "merge.deleteMatched"          -> mergeDeleteMatched,
+    "merge.upsert"                 -> mergeUpsert,
+    "insert.into"                  -> insertInto,
+    "append.dataFrame"             -> appendDataFrame,
+    "insert.overwrite"             -> insertOverwrite,
+    "overwrite.dataFrame"          -> overwriteDataFrame,
+    "create.schema"                -> createSchema
+  )
 }
 
-/** Assembles the run. Stage 1: a single operation on the create+seed preparation. */
+/** Assembles the run. Stage 2: the full DML surface, each on the create+seed preparation. */
 object Plan {
   final case class Case(id: String, run: Ctx => Unit)
 
-  def cases: List[Case] = List(
-    Case("delete.byPredicate @ core", Scenarios.deleteByPredicate.run)
-  )
+  def cases: List[Case] =
+    Scenarios.all.map { case (name, test) => Case(s"$name @ core", test.run) }
 }
 
 /** Runs a case, retrying only a transient-infrastructure failure. */

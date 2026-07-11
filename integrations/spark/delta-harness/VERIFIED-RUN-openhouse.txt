@@ -1,114 +1,29 @@
-=== delta-harness :: incremental DML operations x starting states @ OpenHouse catalog ===
-(classpath resolved via gradle exclusion of the duplicate iceberg jars — see FINDINGS.md F1)
+=== delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-PASS read.projection @ unpartitioned/parquet              try=1
-PASS read.filter @ unpartitioned/parquet                  try=1
-PASS format.materialization @ unpartitioned/parquet       try=1
-PASS delete.byPredicate @ unpartitioned/parquet           try=1
-PASS delete.whereFalse.noSnapshot @ unpartitioned/parquet try=1
-PASS delete.truncate @ unpartitioned/parquet              try=1
-PASS delete.atSnapshot.rejected @ unpartitioned/parquet   try=1
-PASS update.byPredicate @ unpartitioned/parquet           try=1
-PASS update.withoutCondition @ unpartitioned/parquet      try=1
-PASS update.noMatch @ unpartitioned/parquet               try=1
-PASS merge.insertNotMatched @ unpartitioned/parquet       try=1
-PASS merge.updateMatched @ unpartitioned/parquet          try=1
-PASS merge.deleteMatched @ unpartitioned/parquet          try=1
-PASS merge.upsert @ unpartitioned/parquet                 try=1
-PASS insert.into @ unpartitioned/parquet                  try=1
-PASS append.dataFrame @ unpartitioned/parquet             try=1
-PASS insert.overwrite @ unpartitioned/parquet             try=1
-PASS overwrite.dataFrame @ unpartitioned/parquet          try=1
-PASS read.projection @ partitioned/parquet                try=1
-PASS read.filter @ partitioned/parquet                    try=1
-PASS format.materialization @ partitioned/parquet         try=1
-PASS delete.byPredicate @ partitioned/parquet             try=1
-PASS delete.whereFalse.noSnapshot @ partitioned/parquet   try=1
-PASS delete.truncate @ partitioned/parquet                try=1
-PASS delete.atSnapshot.rejected @ partitioned/parquet     try=1
-PASS update.byPredicate @ partitioned/parquet             try=1
-PASS update.withoutCondition @ partitioned/parquet        try=1
-PASS update.noMatch @ partitioned/parquet                 try=1
-PASS merge.insertNotMatched @ partitioned/parquet         try=1
-PASS merge.updateMatched @ partitioned/parquet            try=1
-PASS merge.deleteMatched @ partitioned/parquet            try=1
-PASS merge.upsert @ partitioned/parquet                   try=1
-PASS insert.into @ partitioned/parquet                    try=1
-PASS append.dataFrame @ partitioned/parquet               try=1
-PASS insert.overwrite @ partitioned/parquet               try=1
-PASS overwrite.dataFrame @ partitioned/parquet            try=1
-PASS read.projection @ unpartitioned/orc                  try=1
-PASS read.filter @ unpartitioned/orc                      try=1
-PASS format.materialization @ unpartitioned/orc           try=1
-PASS delete.byPredicate @ unpartitioned/orc               try=1
-PASS delete.whereFalse.noSnapshot @ unpartitioned/orc     try=1
-PASS delete.truncate @ unpartitioned/orc                  try=1
-PASS delete.atSnapshot.rejected @ unpartitioned/orc       try=1
-PASS update.byPredicate @ unpartitioned/orc               try=1
-PASS update.withoutCondition @ unpartitioned/orc          try=1
-PASS update.noMatch @ unpartitioned/orc                   try=1
-PASS merge.insertNotMatched @ unpartitioned/orc           try=1
-PASS merge.updateMatched @ unpartitioned/orc              try=1
-PASS merge.deleteMatched @ unpartitioned/orc              try=1
-PASS merge.upsert @ unpartitioned/orc                     try=1
-PASS insert.into @ unpartitioned/orc                      try=1
-PASS append.dataFrame @ unpartitioned/orc                 try=1
-PASS insert.overwrite @ unpartitioned/orc                 try=1
-PASS overwrite.dataFrame @ unpartitioned/orc              try=1
-PASS read.projection @ partitioned/orc                    try=1
-PASS read.filter @ partitioned/orc                        try=1
-PASS format.materialization @ partitioned/orc             try=1
-PASS delete.byPredicate @ partitioned/orc                 try=1
-PASS delete.whereFalse.noSnapshot @ partitioned/orc       try=1
-PASS delete.truncate @ partitioned/orc                    try=1
-PASS delete.atSnapshot.rejected @ partitioned/orc         try=1
-PASS update.byPredicate @ partitioned/orc                 try=1
-PASS update.withoutCondition @ partitioned/orc            try=1
-PASS update.noMatch @ partitioned/orc                     try=1
-PASS merge.insertNotMatched @ partitioned/orc             try=1
-PASS merge.updateMatched @ partitioned/orc                try=1
-PASS merge.deleteMatched @ partitioned/orc                try=1
-PASS merge.upsert @ partitioned/orc                       try=1
-PASS insert.into @ partitioned/orc                        try=1
-PASS append.dataFrame @ partitioned/orc                   try=1
-PASS insert.overwrite @ partitioned/orc                   try=1
-PASS overwrite.dataFrame @ partitioned/orc                try=1
-PASS read.projection @ unpartitioned/avro                 try=1
-PASS read.filter @ unpartitioned/avro                     try=1
-PASS format.materialization @ unpartitioned/avro          try=1
-PASS delete.byPredicate @ unpartitioned/avro              try=1
-PASS delete.whereFalse.noSnapshot @ unpartitioned/avro    try=1
-PASS delete.truncate @ unpartitioned/avro                 try=1
-PASS delete.atSnapshot.rejected @ unpartitioned/avro      try=1
-PASS update.byPredicate @ unpartitioned/avro              try=1
-PASS update.withoutCondition @ unpartitioned/avro         try=1
-PASS update.noMatch @ unpartitioned/avro                  try=1
-PASS merge.insertNotMatched @ unpartitioned/avro          try=1
-PASS merge.updateMatched @ unpartitioned/avro             try=1
-PASS merge.deleteMatched @ unpartitioned/avro             try=1
-PASS merge.upsert @ unpartitioned/avro                    try=1
-PASS insert.into @ unpartitioned/avro                     try=1
-PASS append.dataFrame @ unpartitioned/avro                try=1
-PASS insert.overwrite @ unpartitioned/avro                try=1
-PASS overwrite.dataFrame @ unpartitioned/avro             try=1
-PASS read.projection @ partitioned/avro                   try=1
-PASS read.filter @ partitioned/avro                       try=1
-PASS format.materialization @ partitioned/avro            try=1
-PASS delete.byPredicate @ partitioned/avro                try=1
-PASS delete.whereFalse.noSnapshot @ partitioned/avro      try=1
-PASS delete.truncate @ partitioned/avro                   try=1
-PASS delete.atSnapshot.rejected @ partitioned/avro        try=1
-PASS update.byPredicate @ partitioned/avro                try=1
-PASS update.withoutCondition @ partitioned/avro           try=1
-PASS update.noMatch @ partitioned/avro                    try=1
-PASS merge.insertNotMatched @ partitioned/avro            try=1
-PASS merge.updateMatched @ partitioned/avro               try=1
-PASS merge.deleteMatched @ partitioned/avro               try=1
-PASS merge.upsert @ partitioned/avro                      try=1
-PASS insert.into @ partitioned/avro                       try=1
-PASS append.dataFrame @ partitioned/avro                  try=1
-PASS insert.overwrite @ partitioned/avro                  try=1
-PASS overwrite.dataFrame @ partitioned/avro               try=1
-PASS create.schema                                        try=1
+PASS read.projection @ core                               try=1
+PASS read.filter @ core                                   try=1
+PASS delete.byPredicate @ core                            try=1
+PASS delete.whereFalse.noSnapshot @ core                  try=1
+PASS delete.truncate @ core                               try=1
+PASS delete.atSnapshot.rejected @ core                    try=1
+PASS update.byPredicate @ core                            try=1
+PASS update.withoutCondition @ core                       try=1
+PASS update.noMatch @ core                                try=1
+PASS merge.insertNotMatched @ core                        try=1
+PASS merge.updateMatched @ core                           try=1
+PASS merge.deleteMatched @ core                           try=1
+PASS merge.upsert @ core                                  try=1
+PASS insert.into @ core                                   try=1
+PASS append.dataFrame @ core                              try=1
+PASS insert.overwrite @ core                              try=1
+PASS overwrite.dataFrame @ core                           try=1
+PASS create.schema @ core                                 try=1
 
-109 passed, 0 skipped, 0 failed  (109 cases)  exit 0
+18 passed, 0 skipped, 0 failed  (18 cases)
+
+Run on JDK 17 against the embedded OpenHouseLocalServer + OpenHouseCatalog.
+
+Note: Stage 2 restructured the harness into typed pipelines (TableTest[S <: Schema]) and
+currently runs the full DML surface on a single "core" starting state (unpartitioned, default
+format). The format x partition multiplier (parquet/orc/avro x un/partitioned) that produced the
+prior 109-case run is reintroduced in Stage 3 as Layout values crossed with each scenario.
