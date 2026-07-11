@@ -60,12 +60,15 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 - [x] merge with a null join key (never matches, no error)
 - [x] merge resolves columns by name (source column order differs)
 
-## Phase 4 — INSERT / OVERWRITE / APPEND  (~8)
+## Phase 4 — INSERT / OVERWRITE / APPEND  ✅ (+ 1 tagged bug)
 - [x] INSERT INTO VALUES; DataFrame append; INSERT OVERWRITE (static); DataFrame overwrite(true)
-- [ ] INSERT INTO with an explicit column list (subset → null-fill)
-- [ ] dynamic partition overwrite (`partitionOverwriteMode=dynamic`) → only touched partitions replaced
-- [ ] `writeTo(t).overwritePartitions()`
-- [ ] `INSERT INTO … SELECT` from another table
+- [🐛] INSERT INTO with an explicit column list (subset → null-fill) — **tagged bug**: partial-column INSERT rejected (`CANNOT_FIND_DATA`); see `BUGS.md`
+- [x] dynamic partition overwrite (`partitionOverwriteMode=dynamic`) → only touched partitions replaced *(partitioned-only)*
+- [x] `writeTo(t).overwritePartitions()` *(partitioned-only)*
+- [x] `INSERT INTO … SELECT`
+
+Introduced a **partitioned-only operations axis** (crossed only with the partitioned layouts) for
+tests whose correctness depends on partitioning; reused in Phase 7.
 
 ## Phase 5 — Copy-on-write vs Merge-on-read  (free multiplier)
 - [ ] add `write.{delete,update,merge}.mode` to the layout/prep axis; run phases 1–3 under both

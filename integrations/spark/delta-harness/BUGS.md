@@ -7,4 +7,4 @@ coverage on top of the broken behavior.
 
 | Case (id substring) | Reason | Found | Follow-up |
 |---|---|---|---|
-| _(none yet)_ | | | |
+| `insert.explicitColumns` | `INSERT INTO t (foo_col_long, foo_col_string) VALUES …` is rejected with `INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA: Cannot find data for the output column foo_col_int`. Vanilla Iceberg creates columns as *optional* and null-fills omitted columns on a partial-column INSERT. | Phase 4 | Confirm whether OpenHouse creates columns as **required** by default (a policy divergence from Iceberg's optional default), or whether Spark default-column fill is simply disabled here. If required-by-default is intended, this becomes a **negative** test (assert the rejection) rather than a bug. |

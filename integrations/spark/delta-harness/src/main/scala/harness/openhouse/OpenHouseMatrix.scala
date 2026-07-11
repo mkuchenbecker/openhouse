@@ -718,6 +718,46 @@ object Scenarios {
       assert(keyed(view.after) == Seq(8L))
     }
 
+  // INSERT INTO with an explicit column list; the unlisted columns are null-filled.
+  val insertExplicitColumns: TableTest[CoreTable.type] =
+    TableTest(Core).sql("insert.explicitColumns")(table =>
+      s"INSERT INTO $table (${Core.long0.columnName}, ${Core.string0.columnName}) " +
+        s"VALUES (CAST(4 AS BIGINT), 'd'), (CAST(5 AS BIGINT), 'e')") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) ++ Seq(4L, 5L)).sorted)
+      val row4 = view.after.find(_.get(Core.long0) == 4L)
+      assert(row4.map(_.get(Core.string0)).contains("d"))
+      assert(row4.exists(_.isNullAt(1))) // col_int (position 1) was not supplied
+    }
+
+  // INSERT INTO … SELECT appends the selected rows.
+  val insertIntoSelect: TableTest[CoreTable.type] =
+    TableTest(Core).sql("insert.intoSelect")(table =>
+      s"INSERT INTO $table SELECT * FROM VALUES " +
+        s"(CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05') AS s($cols)") { view =>
+      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) :+ 6L).sorted)
+    }
+
+  // ── partitioned-only: selective-partition replacement (meaningful only when partitioned) ──
+  // Seed rows 1/2/3 live in partitions '2024-01-01-00'/'01'/'02'. Writing one row into partition
+  // '…-00' must replace only that partition, leaving rows 2 and 3.
+  val insertDynamicOverwrite: TableTest[CoreTable.type] =
+    TableTest(Core).step("insert.dynamicOverwrite") { (spark, table) =>
+      spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
+      try spark.sql(s"INSERT OVERWRITE $table VALUES (CAST(10 AS BIGINT), 10, 'p', 10.5, true, '2024-01-01-00')")
+      finally spark.conf.set("spark.sql.sources.partitionOverwriteMode", "static")
+    } { view =>
+      assert(keyed(view.after) == Seq(2L, 3L, 10L))
+    }
+
+  val overwritePartitions: TableTest[CoreTable.type] =
+    TableTest(Core).step("overwrite.partitions") { (spark, table) =>
+      val frame = spark.sql(
+        s"SELECT * FROM VALUES (CAST(10 AS BIGINT), 10, 'p', 10.5, true, '2024-01-01-00') AS s($cols)")
+      frame.writeTo(table).overwritePartitions()
+    } { view =>
+      assert(keyed(view.after) == Seq(2L, 3L, 10L))
+    }
+
   // ── create (a preparation-only test: create under the layout, assert schema + emptiness) ─
   // Also the guard that the literal `columnDefinitions` matches CoreTable's declared columns.
   def createSchema(layout: Layout): TableTest[CoreTable.type] =
@@ -778,9 +818,17 @@ object Scenarios {
     "merge.nullJoinKey"              -> mergeNullJoinKey,
     "merge.resolveByName"            -> mergeResolveByName,
     "insert.into"                    -> insertInto,
+    "insert.explicitColumns"         -> insertExplicitColumns,
+    "insert.intoSelect"              -> insertIntoSelect,
     "append.dataFrame"               -> appendDataFrame,
     "insert.overwrite"               -> insertOverwrite,
     "overwrite.dataFrame"            -> overwriteDataFrame
+  )
+
+  /** Operations meaningful only on a partitioned table; crossed with the partitioned layouts only. */
+  val partitionedOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "insert.dynamicOverwrite"        -> insertDynamicOverwrite,
+    "overwrite.partitions"           -> overwritePartitions
   )
 }
 
@@ -792,7 +840,8 @@ object Plan {
   // of failing the suite, and is tracked in BUGS.md. This is how we "tag a failing test and filter
   // it": a genuine bug is tagged here, deferred for follow-up, and never plowed past silently.
   val knownBugs: List[(String, String)] = List(
-    // ("merge.someBrokenThing", "OpenHouse rejects <X>; see BUGS.md"),
+    "insert.explicitColumns" ->
+      "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -804,11 +853,16 @@ object Plan {
       (name, op)    <- Scenarios.operations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
+    val partitioned = for {
+      layout        <- Scenarios.layouts.filter(_.label.startsWith("partitioned/"))
+      (name, op)    <- Scenarios.partitionedOperations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ creates
+    dml ++ partitioned ++ creates
   }
 }
 
