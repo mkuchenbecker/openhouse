@@ -88,14 +88,16 @@ object Tables {
   def freshName(ctx: Ctx): String = s"${ctx.namespace}.t_${counter.incrementAndGet()}"
   def drop(ctx: Ctx, table: String): Unit = ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
 
-  /** Loan pattern: prepare a table via the (deferred) `prepare` thunk, run `use`, always drop it. */
-  def withPreparedTable(ctx: Ctx, prepare: Ctx => String)(use: String => Unit): Unit = {
-    val table = prepare(ctx)
+  /**
+   * The one table-lifecycle function: hand `use` a fresh, empty table name and always drop it
+   * afterward. Preparation — shaping the table (format, partitioning) and seeding it — is
+   * composed *inside* `use`, so every test scopes its table the same way.
+   */
+  def withTable(ctx: Ctx)(use: String => Unit): Unit = {
+    val table = freshName(ctx)
+    drop(ctx, table) // ensure absent
     try use(table) finally drop(ctx, table)
   }
-  /** Loan pattern for a fresh, absent table (the caller creates it), always dropped. */
-  def withFreshTable(ctx: Ctx)(use: String => Unit): Unit =
-    withPreparedTable(ctx, c => { val t = freshName(c); drop(c, t); t })(use)
 
   // Ordered by (id, data) so comparisons are deterministic even with duplicate ids.
   def rows(ctx: Ctx, table: String): List[(Long, String)] =
@@ -116,8 +118,8 @@ object Tables {
     ctx.spark.sql(s"SHOW TBLPROPERTIES $table ('write.format.default')").collect()(0).getString(1)
 }
 
-/** A named starting state: prepares a seeded table in some physical shape, returning its name. */
-final case class StartingState(name: String, prepare: Ctx => String)
+/** A named starting state: a preparation step that shapes and seeds an already-named table. */
+final case class StartingState(name: String, prepare: (Ctx, String) => Unit)
 
 /** A state-agnostic test: it runs modifications + verifications against a prepared, seeded table. */
 final case class TableTest(name: String, run: (Ctx, String) => Unit)
@@ -129,19 +131,15 @@ object States {
   import Tables._
 
   def unpartitioned(fmt: FileFormat): StartingState =
-    StartingState(s"unpartitioned/${fmt.id}", ctx => {
-      val table = freshName(ctx)
+    StartingState(s"unpartitioned/${fmt.id}", (ctx, table) => {
       ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string) TBLPROPERTIES ('write.format.default'='${fmt.id}')")
       ctx.spark.sql(s"INSERT INTO $table VALUES $seedValues")
-      table
     })
 
   def partitioned(fmt: FileFormat): StartingState =
-    StartingState(s"partitioned/${fmt.id}", ctx => {
-      val table = freshName(ctx)
+    StartingState(s"partitioned/${fmt.id}", (ctx, table) => {
       ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string) PARTITIONED BY (truncate(id, 2)) TBLPROPERTIES ('write.format.default'='${fmt.id}')")
       ctx.spark.sql(s"INSERT INTO $table VALUES $seedValues")
-      table
     })
 
   // The states to run every state-agnostic test against.
@@ -324,7 +322,7 @@ object Tests {
   // ---- standalone tests: incompatible with a pre-existing table ----
 
   val createTable: StandaloneTest = StandaloneTest("create.schema", ctx =>
-    withFreshTable(ctx) { table =>
+    withTable(ctx) { table =>
       ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string)")
       equal(schema(ctx, table), List(("id", "bigint"), ("data", "string")))
       equal(rows(ctx, table), Nil)
@@ -351,7 +349,10 @@ object Plan {
       test <- Tests.stateAgnostic
     } yield {
       val id = s"${test.name} @ ${state.name}"
-      Case(id, ctx => Tables.withPreparedTable(ctx, state.prepare)(table => test.run(ctx, table)), skipReason(id))
+      Case(id, ctx => Tables.withTable(ctx) { table =>
+        state.prepare(ctx, table) // preparation composed within withTable
+        test.run(ctx, table)
+      }, skipReason(id))
     }
 
     val standalone = Tests.standalone.map(t => Case(t.name, t.run, skipReason(t.name)))
