@@ -27,15 +27,15 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 - [x] Tagging / known-bug mechanism: `Plan.knownBugs` → `SKIP (bug: …)`, excluded from failures; `BUGS.md` follow-up list.
 - [ ] Give `TableTest` a `name` to remove the double-naming / silent-skip registration wart.
 
-## Phase 1 — DELETE  (~12)
-- [ ] delete by predicate shapes: `=`, `<`/range, `IN (list)`, `IN (subquery)`, `NOT IN (subquery)`, `EXISTS`, `NOT EXISTS`, scalar subquery
-- [ ] delete with null condition (`col IS NULL`, null-safe `<=>`)
-- [ ] delete all (no WHERE) → empty
-- [x] delete none — real predicate, no match → unchanged, +1 snapshot
-- [x] delete WHERE false (constant-folded) → unchanged, no snapshot
-- [ ] delete with partition-only predicate → metadata-only delete (no data files rewritten)
+## Phase 1 — DELETE  ✅ (14 behaviors × 6 layouts)
+- [x] delete by predicate shapes: `<`/range, `IN (list)`, `IN (subquery)`, `NOT IN (subquery)`, `EXISTS`, `NOT EXISTS`, scalar subquery
+- [x] delete with null condition (`col IS NULL`) — no null rows seeded → removes nothing, no error
+- [x] delete all (no WHERE) → empty
+- [x] delete none — real predicate, no match → unchanged, **+1** snapshot (scanned, unlike folded WHERE false)
+- [x] delete WHERE false (constant-folded) → unchanged, **no** snapshot
+- [x] delete with partition-only predicate (metadata-only delete on the partitioned layout)
 - [x] TRUNCATE → empty
-- [ ] delete with table alias
+- [x] delete with table alias
 - [x] delete at a specific snapshot → rejected (negative)
 
 ## Phase 2 — UPDATE  (~12)

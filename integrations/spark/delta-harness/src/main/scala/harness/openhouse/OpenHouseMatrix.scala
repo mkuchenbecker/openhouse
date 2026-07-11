@@ -318,6 +318,76 @@ object Scenarios {
       assert(view.after == view.before) // a rejected delete leaves the table unchanged
     }
 
+  // Removes exactly the keys in the list.
+  val deleteByInList: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.long0.columnName} IN (1, 3)") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(Set(1L, 3L)).sorted)
+    }
+
+  // Predicate is an IN-subquery over an explicit source.
+  val deleteByInSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core =>
+      s"${core.long0.columnName} IN (SELECT col1 FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ == 2L).sorted)
+    }
+
+  val deleteByNotInSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core =>
+      s"${core.long0.columnName} NOT IN (SELECT col1 FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filter(_ == 2L).sorted)
+    }
+
+  val deleteByExistsSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core =>
+      s"EXISTS (SELECT 1 FROM VALUES (CAST(2 AS BIGINT)) AS s(x) WHERE s.x = ${core.long0.columnName})") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ == 2L).sorted)
+    }
+
+  val deleteByNotExistsSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core =>
+      s"NOT EXISTS (SELECT 1 FROM VALUES (CAST(2 AS BIGINT)) AS s(x) WHERE s.x = ${core.long0.columnName})") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filter(_ == 2L).sorted)
+    }
+
+  val deleteByScalarSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core =>
+      s"${core.long0.columnName} = (SELECT max(col1) FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ == 2L).sorted)
+    }
+
+  // IS NULL against a column with no null rows removes nothing (and must not error).
+  val deleteByNullCondition: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.string0.columnName} IS NULL") { view =>
+      assert(view.after == view.before)
+    }
+
+  // DELETE with no WHERE clause empties the table.
+  val deleteAll: TableTest[CoreTable.type] =
+    TableTest(Core).sql("delete.all")(table => s"DELETE FROM $table") { view =>
+      assert(view.after.isEmpty)
+    }
+
+  // A real predicate that matches nothing: rows unchanged, but one (empty) snapshot is still
+  // committed — a scanned no-match, unlike the constant-folded `DELETE WHERE false` no-op above.
+  val deleteNone: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.long0.columnName} = 999") { view =>
+      assert(view.after == view.before)
+      assert(view.snapshotsAfter == view.snapshotsBefore + 1, "no-match DELETE with a real predicate still commits one snapshot")
+    }
+
+  // A partition-column predicate (a metadata-only delete on a partitioned layout).
+  val deleteByPartitionPredicate: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.datePartition.columnName} = '2024-01-01-00'") { view =>
+      val expected = view.before.filterNot(_.get(Core.datePartition) == "2024-01-01-00").map(_.get(Core.long0)).sorted
+      assert(keyed(view.after) == expected)
+    }
+
+  val deleteWithAlias: TableTest[CoreTable.type] =
+    TableTest(Core).sql("delete.withAlias")(table =>
+      s"DELETE FROM $table AS x WHERE x.${Core.long0.columnName} < 2") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ < 2L).sorted)
+    }
+
   // ── update ───────────────────────────────────────────────────────────────────────────
   val updateByPredicate: TableTest[CoreTable.type] =
     TableTest(Core).sql("update.byPredicate")(table =>
@@ -455,6 +525,17 @@ object Scenarios {
     "read.filter"                    -> readFilter,
     "format.materialization"         -> formatMaterialization,
     "delete.byPredicate"             -> deleteByPredicate,
+    "delete.byInList"                -> deleteByInList,
+    "delete.byInSubquery"            -> deleteByInSubquery,
+    "delete.byNotInSubquery"         -> deleteByNotInSubquery,
+    "delete.byExistsSubquery"        -> deleteByExistsSubquery,
+    "delete.byNotExistsSubquery"     -> deleteByNotExistsSubquery,
+    "delete.byScalarSubquery"        -> deleteByScalarSubquery,
+    "delete.byNullCondition"         -> deleteByNullCondition,
+    "delete.all"                     -> deleteAll,
+    "delete.none"                    -> deleteNone,
+    "delete.byPartitionPredicate"    -> deleteByPartitionPredicate,
+    "delete.withAlias"               -> deleteWithAlias,
     "delete.whereFalse.noSnapshot"   -> deleteWhereFalseKeepsSnapshot,
     "delete.truncate"                -> truncate,
     "delete.atSnapshot.rejected"     -> deleteAtSnapshotRejected,
