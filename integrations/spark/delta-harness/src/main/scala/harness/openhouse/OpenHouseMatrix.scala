@@ -200,52 +200,40 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
   def check(label: String)(validate: StepView[S] => Unit): TableTest[S] =
     step(label)((_, _) => ())(validate)
 
-  /** Execute the pipeline on a fresh table, snapshotting rows + commits around each step. */
-  def run(ctx: Ctx): Unit = Tables.withTable(ctx) { table =>
-    steps.foreach { step =>
-      val before = Tables.currentRows(ctx.spark, table, schema)
-      val snapshotsBefore = Tables.snapshotCount(ctx.spark, table)
+  // Execute the pipeline on a fresh, always-dropped table. Each step's `before` is the previous
+  // step's `after` (an empty/zero baseline for the first step), so rows and commits are only ever
+  // read AFTER a step has run — on a table a prior step created. There is no existence guard: a
+  // query against a missing table loudly fails, which is the correct behavior.
+  def run(ctx: Ctx): Unit = withTable(ctx) { table =>
+    steps.foldLeft((Seq.empty[Row], 0L)) { case ((beforeRows, beforeSnapshots), step) =>
       step.execute(ctx.spark, table, schema)
-      val after = Tables.currentRows(ctx.spark, table, schema)
-      val snapshotsAfter = Tables.snapshotCount(ctx.spark, table)
-      step.validate(StepView(ctx.spark, table, schema, before, after, snapshotsBefore, snapshotsAfter))
+      val afterRows = currentRows(ctx.spark, table)
+      val afterSnapshots = snapshotCount(ctx.spark, table)
+      step.validate(StepView(ctx.spark, table, schema, beforeRows, afterRows, beforeSnapshots, afterSnapshots))
+      (afterRows, afterSnapshots)
     }
   }
+
+  // The one table-lifecycle primitive: hand `use` a fresh table name and always drop it afterward.
+  private def withTable(ctx: Ctx)(use: String => Unit): Unit = {
+    val table = s"${ctx.namespace}.t_${TableTest.counter.incrementAndGet()}"
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table") // ensure absent
+    try use(table) finally ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Rows selected by the schema's columns, ordered by them for deterministic comparison.
+  private def currentRows(spark: SparkSession, table: String): Seq[Row] = {
+    val columns = schema.columnNames.mkString(", ")
+    spark.sql(s"SELECT $columns FROM $table ORDER BY $columns").collect().toSeq
+  }
+
+  private def snapshotCount(spark: SparkSession, table: String): Long =
+    spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
 }
 
 object TableTest {
-  def apply[S <: Schema](schema: S): TableTest[S] = new TableTest(schema, Vector.empty)
-}
-
-/** Table lifecycle + generic (schema-driven) row snapshots. */
-object Tables {
   private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
-
-  def freshName(ctx: Ctx): String = s"${ctx.namespace}.t_${counter.incrementAndGet()}"
-  def drop(ctx: Ctx, table: String): Unit = ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
-
-  /** Hand `use` a fresh, empty table name and always drop it afterward. */
-  def withTable(ctx: Ctx)(use: String => Unit): Unit = {
-    val table = freshName(ctx)
-    drop(ctx, table) // ensure absent
-    try use(table) finally drop(ctx, table)
-  }
-
-  private def exists(spark: SparkSession, table: String): Boolean =
-    try { spark.sql(s"DESCRIBE TABLE $table"); true } catch { case NonFatal(_) => false }
-
-  /** All rows, selected by the schema's columns and ordered by them for deterministic compares. */
-  def currentRows(spark: SparkSession, table: String, schema: Schema): Seq[Row] =
-    if (!exists(spark, table)) Seq.empty
-    else {
-      val columns = schema.columnNames.mkString(", ")
-      spark.sql(s"SELECT $columns FROM $table ORDER BY $columns").collect().toSeq
-    }
-
-  /** Number of snapshots (commits); 0 if the table does not exist yet. */
-  def snapshotCount(spark: SparkSession, table: String): Long =
-    if (!exists(spark, table)) 0L
-    else spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
+  def apply[S <: Schema](schema: S): TableTest[S] = new TableTest(schema, Vector.empty)
 }
 
 /**
