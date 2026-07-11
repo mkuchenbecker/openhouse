@@ -1,61 +1,51 @@
 # delta-harness (prototype)
 
-A standalone Scala prototype of the distributed delta-test harness designed in
-`docs/spark-delta-test-harness/`. It runs the **DELETE** category at a single matrix
-permutation against real Spark 3.5 + Iceberg and **self-verifies** (each check declares its
-expected outcome; the run exits non-zero on any mismatch).
+A Scala prototype of the delta-test harness designed in `docs/spark-delta-test-harness/`. It
+runs customer-facing DML **operations** as a matrix of `(operation × starting state)` against
+the **real OpenHouse catalog** (an embedded `OpenHouseLocalServer` wired to `OpenHouseCatalog`),
+and reports pass / skip / fail per case.
 
-**Status:** proof-of-concept, verified end-to-end against **two catalogs**:
-- **OpenHouse catalog** (primary) — `src/main/scala/harness/openhouse/OpenHouseDeleteSlice.scala`,
-  run via `run-openhouse.sh`. Boots the embedded `OpenHouseLocalServer` and wires the real
-  `OpenHouseCatalog`. Verified: `VERIFIED-RUN-openhouse.txt`.
-- **Local Iceberg Hadoop catalog** (quick smoke) — `src/main/scala/harness/Main.scala`,
-  standalone Maven (`pom.xml`, `run.sh`). Verified: `VERIFIED-RUN.txt`.
+Verified: **109 passed, 0 skipped, 0 failed** — see `VERIFIED-RUN-openhouse.txt`.
 
-The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessionUtil`
-(read, not extended). No OpenHouse test class is subclassed and no existing test is altered;
+## Model (maps to the design docs)
+- **`StartingState`** — a prep function that seeds a table in a physical shape
+  (partitioning × file format today; RTAS'd / soft-dropped plug in the same way). Doc `07`.
+- **`TableTest`** — a state-agnostic operation test. It observes the table's current rows,
+  runs its operation, and asserts the **delta** (never an absolute row set), so it holds on
+  any starting condition and two tests compose on one base table. Docs `05`, `06`.
+- **`StandaloneTest`** — a self-contained test for state-transition cases (e.g. `CREATE`) that
+  need a specific/absent table and are not crossed with the states.
+- The run is `states × TableTests + standalone`. Adding a state runs every test on it; adding
+  a test runs it on every state.
+
+Operations covered: read (projection, filter), insert/append, overwrite, update (×3),
+delete (×4), merge (×4), plus standalone create — across `unpartitioned`/`partitioned` ×
+`parquet`/`orc`/`avro`.
+
+The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessionUtil` (read,
+not extended): no OpenHouse test class is subclassed and no existing test is altered;
 `OpenHouseEnv` composes the embedded server as a component.
 
-### Fast inner loop (test selection)
-Pass case-id substrings as args to `run-openhouse.sh`; a case runs only if its id contains
-**all** of them (AND). No args runs the full matrix.
-```bash
-./run-openhouse.sh delete parquet          # delete tests on parquet
-./run-openhouse.sh merge unpartitioned/orc # merge tests on one state
-./run-openhouse.sh delete.byPredicate      # a single test across states
-```
-A narrow slice is ~25s end-to-end (embedded-server + Spark startup dominates; the cases
-themselves are milliseconds), which keeps the edit/run cycle well under a minute.
-
-### Environment note (important)
-The OpenHouse build pins **Lombok 1.18.20, which does not compile under JDK 21+** (javac
-`JCTree.qualid` change). Build/run the OpenHouse variant on **JDK 17** — set `JAVA17_HOME`.
-The two source files share class names in package `harness`; they are **compiled
-independently** (Maven for the local variant, `run-openhouse.sh` for the OpenHouse variant),
-never together.
-
-## What it demonstrates (maps to the design docs)
-- Outcome model + allowlist classifier (`02`), errors-as-values (`03`).
-- `Managed` + `bracket`, single edge (`04`).
-- Curried `setup` + delta `test` (`observe`/`operation`/`expect`) (`05`, `06`).
-- The DELETE slice from `12-first-slice-delete.md`: 4 in-permutation behaviors + a rejection test.
-- The two firewall self-tests (`09` §2): a transient `IOException` heals via retry (infra never
-  becomes `Failed`); a deliberately-wrong expectation is reported as `Failed`.
-
 ## Run it
-Requires Maven + a JDK. Spark 3.5 on JDK 17+ needs `--add-opens`.
+Requires **JDK 17** (the repo pins Lombok 1.18.20, which does not compile on JDK 21+). Set
+`JAVA17_HOME`. `run-openhouse.sh` resolves the classpath via Gradle, compiles the Scala with
+`scalac`, and runs on the embedded OpenHouse server.
 
 ```bash
-mvn -q compile
-mvn -q dependency:build-classpath -Dmdep.outputFile=cp.txt
-java $(cat run-jvm-args) -cp "target/classes:$(cat cp.txt)" harness.Main
+./run-openhouse.sh                          # full matrix (109 cases)
+./run-openhouse.sh delete parquet           # a fast slice (~25s): delete tests on parquet
+./run-openhouse.sh merge unpartitioned/orc  # merge tests on one state
+./run-openhouse.sh delete.byPredicate       # one test across states
 ```
+Args are AND-substring filters on the case id (test / state / format). A narrow slice is ~25s
+end-to-end (embedded-server + Spark startup dominates; the cases are milliseconds).
 
-See `run.sh` for the full JVM module flags.
+## Notes
+- **Gradle wrapper** cannot download in restricted networks (proxy 403); use a system Gradle 8.x
+  (`GRADLE_BIN`). Gradle is used only to resolve the classpath and build OpenHouse's own jars.
+- **Avro** required a classpath fix (duplicate shaded/unshaded Iceberg) — resolved via a Gradle
+  dependency exclusion in `scripts/print-cp.init.gradle`. See `FINDINGS.md` (F1).
 
-## Next steps
-1. Point `setup` at the OpenHouse catalog (swap the Hadoop-catalog config) — the `setup` seam
-   is exactly this substitution.
-2. Turn on `axes.enumerate` to extend the single permutation into the matrix (`07`, `11`).
-3. Decide final build home: a Gradle module beside the other `integrations/spark/*` projects,
-   or keep standalone.
+## Next
+Broaden the starting-state axis (more partition specs, seeded-differently, feature-enabled),
+then RTAS'd / soft-dropped states — RTAS being the validation of the incremental model.

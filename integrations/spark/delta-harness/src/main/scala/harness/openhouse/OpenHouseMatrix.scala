@@ -41,8 +41,19 @@ object Exceptions {
     chain.toList
   }
   def root(t: Throwable): Throwable = causeChain(t).last
-  /** Classification policy: an IOException anywhere in the chain is transient infrastructure. */
-  def isTransient(t: Throwable): Boolean = causeChain(t).exists(_.isInstanceOf[java.io.IOException])
+
+  /**
+   * Retry ONLY errors we positively recognize as transient. A bare IOException is NOT assumed
+   * transient — a FileNotFoundException, an EOFException on a corrupt file, or a permission error
+   * is an IOException too, and those are real failures that must surface rather than be retried
+   * away. When in doubt, an error is terminal.
+   */
+  def isTransient(t: Throwable): Boolean = causeChain(t).exists {
+    case _: java.net.SocketTimeoutException => true
+    case _: java.net.ConnectException       => true
+    case e: java.net.SocketException        => Option(e.getMessage).exists(_.toLowerCase.contains("reset"))
+    case _                                  => false
+  }
 }
 
 /** Plain assertions; each throws an AssertionError (a non-transient failure) on mismatch. */
@@ -76,6 +87,15 @@ object Tables {
 
   def freshName(ctx: Ctx): String = s"${ctx.namespace}.t_${counter.incrementAndGet()}"
   def drop(ctx: Ctx, table: String): Unit = ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+
+  /** Loan pattern: prepare a table via the (deferred) `prepare` thunk, run `use`, always drop it. */
+  def withPreparedTable(ctx: Ctx, prepare: Ctx => String)(use: String => Unit): Unit = {
+    val table = prepare(ctx)
+    try use(table) finally drop(ctx, table)
+  }
+  /** Loan pattern for a fresh, absent table (the caller creates it), always dropped. */
+  def withFreshTable(ctx: Ctx)(use: String => Unit): Unit =
+    withPreparedTable(ctx, c => { val t = freshName(c); drop(c, t); t })(use)
 
   // Ordered by (id, data) so comparisons are deterministic even with duplicate ids.
   def rows(ctx: Ctx, table: String): List[(Long, String)] =
@@ -303,14 +323,12 @@ object Tests {
 
   // ---- standalone tests: incompatible with a pre-existing table ----
 
-  val createTable: StandaloneTest = StandaloneTest("create.schema", ctx => {
-    val table = freshName(ctx)
-    try {
+  val createTable: StandaloneTest = StandaloneTest("create.schema", ctx =>
+    withFreshTable(ctx) { table =>
       ctx.spark.sql(s"CREATE TABLE $table (id bigint, data string)")
       equal(schema(ctx, table), List(("id", "bigint"), ("data", "string")))
       equal(rows(ctx, table), Nil)
-    } finally drop(ctx, table)
-  })
+    })
 
   val standalone: List[StandaloneTest] = List(createTable)
 }
@@ -333,10 +351,7 @@ object Plan {
       test <- Tests.stateAgnostic
     } yield {
       val id = s"${test.name} @ ${state.name}"
-      Case(id, ctx => {
-        val table = state.prepare(ctx)
-        try test.run(ctx, table) finally Tables.drop(ctx, table)
-      }, skipReason(id))
+      Case(id, ctx => Tables.withPreparedTable(ctx, state.prepare)(table => test.run(ctx, table)), skipReason(id))
     }
 
     val standalone = Tests.standalone.map(t => Case(t.name, t.run, skipReason(t.name)))
