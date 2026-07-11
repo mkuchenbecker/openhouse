@@ -66,6 +66,13 @@ recurring setup traps, each of which has cost a full debugging detour more than 
 With both exports set, `./run-openhouse.sh <filters>` resolves the classpath, compiles the
 harness, and runs it on the embedded server. A narrow slice is ~25s end-to-end.
 
+3. **Commits will show as "Unverified" on GitHub — this is environmental, don't chase it.** The
+   committer email is already `noreply@anthropic.com` (correct), but the SSH signing key at
+   `/home/claude/.ssh/commit_signing_key.pub` is a **0-byte empty file**, so `git` cannot sign.
+   `git commit --amend --reset-author` only rewrites author metadata; with no key material it
+   cannot add a signature, so it will not clear the flag. The stop-hook nags about this every
+   turn — acknowledge and move on; there is no in-container fix.
+
 ## Verified green (JDK 17, embedded OpenHouse server, `openhouse.dbMatrix`)
 - **Parquet, ORC, Avro** — CREATE, READ (projection + filter), format-materialization, DELETE
   (×4), UPDATE (×3), MERGE (×4), INSERT/append/overwrite.
