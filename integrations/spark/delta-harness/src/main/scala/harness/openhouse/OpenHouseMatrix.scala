@@ -103,17 +103,17 @@ object Rows {
   }
 }
 
-// A representative "core" table: one column per common data type, named col_<type>0 so more
-// fields (col_long1, ...) can join when DDL / schema-evolution operations arrive, plus an explicit
-// string date-partition field in the widely-used YYYY-MM-DD-HH form. Columns only; each carries a
-// deterministic generator.
+// A representative "core" table: one column per common data type. Column NAMES are arbitrary
+// literals (decoupled from the Scala handle) — tests reference columns through the handle, so a
+// rename here propagates everywhere. Plus an explicit string date-partition field in the widely
+// used YYYY-MM-DD-HH form. Columns only; each carries a deterministic generator.
 object CoreTable extends Schema {
-  val long0:         Column[Long]    = Column("col_long0",     "bigint",  rowIndex => rowIndex.toString)
-  val int0:          Column[Int]     = Column("col_int0",      "int",     rowIndex => rowIndex.toString)
-  val string0:       Column[String]  = Column("col_string0",   "string",  rowIndex => s"'row-$rowIndex'")
-  val double0:       Column[Double]  = Column("col_double0",   "double",  rowIndex => s"$rowIndex.5")
-  val boolean0:      Column[Boolean] = Column("col_boolean0",  "boolean", rowIndex => if (rowIndex % 2 == 0) "true" else "false")
-  val datePartition: Column[String]  = Column("datepartition", "string",  rowIndex => s"'${CoreTable.datePartitionLiteral(rowIndex)}'")
+  val long0:         Column[Long]    = Column("foo_col_long",    "bigint",  rowIndex => rowIndex.toString)
+  val int0:          Column[Int]     = Column("foo_col_int",     "int",     rowIndex => rowIndex.toString)
+  val string0:       Column[String]  = Column("foo_col_string",  "string",  rowIndex => s"'row-$rowIndex'")
+  val double0:       Column[Double]  = Column("foo_col_double",  "double",  rowIndex => s"$rowIndex.5")
+  val boolean0:      Column[Boolean] = Column("foo_col_boolean", "boolean", rowIndex => if (rowIndex % 2 == 0) "true" else "false")
+  val datePartition: Column[String]  = Column("datepartition",   "string",  rowIndex => s"'${CoreTable.datePartitionLiteral(rowIndex)}'")
   def tableColumns: Seq[Column[_]] = Seq(long0, int0, string0, double0, boolean0, datePartition)
 
   private val DatePartitionFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH")
