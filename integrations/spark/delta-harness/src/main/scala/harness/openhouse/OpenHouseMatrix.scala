@@ -1016,6 +1016,71 @@ object Scenarios {
     "types.boundaries"      -> typesBoundaries,
     "types.unicodeAndEmpty" -> typesUnicodeAndEmpty
   )
+
+  // ── partition transforms + evolution ────────────────────────────────────────────────────
+  // Each transform test is self-contained: create partitioned by the transform, seed, and verify
+  // the rows roundtrip and a partition spec is registered.
+  def partitionTransform(transform: String): TableTest[TypesTable.type] =
+    TableTest(TypesTable)
+      .sql("create")(table =>
+        s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg PARTITIONED BY ($transform) " +
+          s"TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .check("verify") { view =>
+        assert(view.after.size == 3)
+        assert(view.spark.sql(s"SELECT * FROM ${view.table}.partitions").collect().nonEmpty)
+      }
+
+  // A CREATE with an unsupported partition transform is rejected. Run it on a scratch name so the
+  // pipeline's managed (valid) table still exists for snapshotting.
+  private def partitionTransformRejected(label: String, transform: String, expectMessage: String): TableTest[TypesTable.type] =
+    TableTest(TypesTable)
+      .sql("create")(table => s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .step(label) { (spark, table) =>
+        val scratch = table + "_x"
+        val error = Check.intercept[RuntimeException](spark.sql(
+          s"CREATE TABLE $scratch (${TypesTable.columnDefinitions}) USING iceberg PARTITIONED BY ($transform) TBLPROPERTIES ('write.format.default'='parquet')"))
+        spark.sql(s"DROP TABLE IF EXISTS $scratch")
+        assert(error.getMessage.contains(expectMessage))
+      }()
+
+  val partitionTransforms: List[(String, TableTest[TypesTable.type])] = List(
+    "partition.identity"        -> partitionTransform("id"),
+    "partition.bucket"          -> partitionTransform("bucket(4, id)"),
+    "partition.truncate"        -> partitionTransform("truncate(2, str)"),
+    "partition.years"           -> partitionTransform("years(ts)"),
+    "partition.months"          -> partitionTransform("months(ts)"),
+    "partition.days"            -> partitionTransform("days(ts)"),
+    "partition.hours"           -> partitionTransform("hours(ts)"),
+    // OpenHouse contract: these transforms are rejected (negative tests).
+    "partition.void.rejected"   -> partitionTransformRejected("partition.void.rejected", "void(n)", "not supported"),
+    "partition.dateDay.rejected" -> partitionTransformRejected("partition.dateDay.rejected", "days(dt)", "Unsupported column")
+  )
+
+  // OpenHouse contract: partition evolution is NOT supported — ALTER … ADD/DROP PARTITION FIELD is
+  // rejected with a 400 telling you to recreate the table. Captured as negative tests.
+  val partitionEvolutionAddRejected: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .step("partition.evolutionAdd.rejected") { (spark, table) =>
+        val error = Check.intercept[Exception](spark.sql(s"ALTER TABLE $table ADD PARTITION FIELD datepartition"))
+        assert(error.getMessage.contains("Evolution of table partitioning"))
+      }()
+
+  val partitionEvolutionDropRejected: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .step("partition.evolutionDrop.rejected") { (spark, table) =>
+        val error = Check.intercept[Exception](spark.sql(s"ALTER TABLE $table DROP PARTITION FIELD datepartition"))
+        assert(error.getMessage.contains("Evolution of table partitioning"))
+      }()
+
+  val partitionEvolution: List[(String, TableTest[CoreTable.type])] = List(
+    "partition.evolutionAdd.rejected"  -> partitionEvolutionAddRejected,
+    "partition.evolutionDrop.rejected" -> partitionEvolutionDropRejected
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1064,11 +1129,15 @@ object Plan {
       (name, op)    <- Scenarios.typesOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedTypes(layout, 3).andThen(op).run)
 
+    // Partition transforms + evolution (self-contained pipelines, parquet).
+    val partitionTransforms = Scenarios.partitionTransforms.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val partitionEvolution  = Scenarios.partitionEvolution.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ mor ++ nested ++ types ++ creates
+    dml ++ partitioned ++ mor ++ nested ++ types ++ partitionTransforms ++ partitionEvolution ++ creates
   }
 }
 

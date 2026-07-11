@@ -18,7 +18,7 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 - [x] CoW vs MoR (`write.{delete,update,merge}.mode`) — **both supported** (MoR needs `format-version=2`); verified by 264 green MoR cases
 - [ ] Time travel `VERSION AS OF` / `TIMESTAMP AS OF`
 - [ ] Rollback/restore procedures (`CALL openhouse.system.rollback_to_snapshot`, `set_current_snapshot`)
-- [ ] Partition evolution (`ALTER TABLE … ADD/DROP PARTITION FIELD`)
+- [x] Partition evolution (`ALTER TABLE … ADD/DROP PARTITION FIELD`) — **NOT supported** (OpenHouse 400: "recreate the table with new partition spec")
 - [ ] Branches / tags (likely unsupported)
 - [ ] OpenHouse table undrop / restore (soft-drop preparation)
 
@@ -85,11 +85,11 @@ tests whose correctness depends on partitioning; reused in Phase 7.
 - [🐛] delete by predicate on a nested field — **tagged bug**: `DELETE WHERE s.x = 2` internal optimizer NPE; see `BUGS.md`
 - [x] null / empty nested values (null struct, empty array / map)
 
-## Phase 7 — Partitioning: transforms + evolution
-- [ ] create + write + read, one per transform: identity, `bucket[N]`, `truncate[W]`, `year/month/day/hour`, `void`
-- [ ] multi-field partition spec
-- [ ] partition evolution: ADD field then write; DROP field then write; read spans both specs
-- [ ] hidden-partitioning pruning (query filter prunes partitions)
+## Phase 7 — Partitioning: transforms + evolution  ✅ (7 supported + 4 rejection negatives)
+- [x] one per **supported** transform: identity, `bucket[N]`, `truncate[W]`, `years/months/days/hours` (on timestamp)
+- [x] **rejection negatives** (OpenHouse contract): `void(n)` unsupported; `days(date)` unsupported (only identity/truncate/bucket on date)
+- [x] partition **evolution rejected** — `ALTER … ADD/DROP PARTITION FIELD` → OpenHouse 400 (evolution not supported); captured as negatives
+- [ ] hidden-partitioning pruning (query filter prunes partitions) — optional refinement, not added
 
 ## Phase 8 — Type edge coverage  ✅ — TypesTable × 3 formats
 - [x] per-type roundtrip incl. nulls: bigint/int, double (NaN, ±inf), decimal(10,2), string (unicode/empty), binary, date, timestamp, **timestamp_ntz** (supported)
