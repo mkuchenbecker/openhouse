@@ -393,6 +393,16 @@ object Scenarios {
       assert(longToString(view.after) == withInsert)
     }
 
+  // Keep only rows the source knows about: delete every row NOT matched by a source row.
+  val mergeDeleteNotMatchedBySource: TableTest[CoreTable.type] =
+    createAndSeed(3).sql("merge.deleteNotMatchedBySource")(table =>
+      s"""MERGE INTO $table t USING (
+            SELECT * FROM VALUES (CAST(2 AS BIGINT)) AS s(${Core.long0.columnName})
+          ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
+          WHEN NOT MATCHED BY SOURCE THEN DELETE""") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filter(_ == 2L).sorted)
+    }
+
   // ── insert / append / overwrite ────────────────────────────────────────────────────────
   val insertInto: TableTest[CoreTable.type] =
     createAndSeed(3).sql("insert.into")(table =>
@@ -453,6 +463,7 @@ object Scenarios {
     "merge.updateMatched"          -> mergeUpdateMatched,
     "merge.deleteMatched"          -> mergeDeleteMatched,
     "merge.upsert"                 -> mergeUpsert,
+    "merge.deleteNotMatchedBySource" -> mergeDeleteNotMatchedBySource,
     "insert.into"                  -> insertInto,
     "append.dataFrame"             -> appendDataFrame,
     "insert.overwrite"             -> insertOverwrite,
