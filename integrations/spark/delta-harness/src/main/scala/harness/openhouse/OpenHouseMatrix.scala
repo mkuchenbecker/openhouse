@@ -247,15 +247,26 @@ object Scenarios {
 
   final case class Layout(label: String, create: String => String)
 
+  private val partitionVariants = List("unpartitioned" -> "", "partitioned" -> "PARTITIONED BY (datepartition)")
+
   val layouts: List[Layout] =
     for {
-      format <- List("parquet", "orc", "avro")
-      (partitionLabel, partitionClause) <- List(
-        "unpartitioned" -> "",
-        "partitioned"   -> "PARTITIONED BY (datepartition)")
+      format                        <- List("parquet", "orc", "avro")
+      (partitionLabel, partitionClause) <- partitionVariants
     } yield Layout(s"$partitionLabel/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
         s"TBLPROPERTIES ('write.format.default'='$format')")
+
+  // Merge-on-read layouts: same shapes, but DELETE/UPDATE/MERGE write position-delete files
+  // (format v2) instead of rewriting data files. Crossed with the mutation operations only.
+  val morLayouts: List[Layout] =
+    for {
+      format                        <- List("parquet", "orc", "avro")
+      (partitionLabel, partitionClause) <- partitionVariants
+    } yield Layout(s"mor-$partitionLabel/$format", table =>
+      s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ('write.format.default'='$format', 'format-version'='2', " +
+        s"'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read')")
 
   // Preparation: create under `layout` and seed `numberOfRows` deterministic rows. Interchangeable
   // with RTAS / drop+undrop preparations later — same resulting state.
@@ -830,6 +841,12 @@ object Scenarios {
     "insert.dynamicOverwrite"        -> insertDynamicOverwrite,
     "overwrite.partitions"           -> overwritePartitions
   )
+
+  /** The DELETE/UPDATE/MERGE subset — the operations affected by the CoW-vs-MoR mode. */
+  val mutationOperations: List[(String, TableTest[CoreTable.type])] =
+    operations.filter { case (name, _) =>
+      name.startsWith("delete.") || name.startsWith("update.") || name.startsWith("merge.")
+    }
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -858,11 +875,17 @@ object Plan {
       (name, op)    <- Scenarios.partitionedOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
+    // Merge-on-read: the same mutation operations, prepared on a MoR table.
+    val mor = for {
+      layout        <- Scenarios.morLayouts
+      (name, op)    <- Scenarios.mutationOperations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ creates
+    dml ++ partitioned ++ mor ++ creates
   }
 }
 

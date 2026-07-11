@@ -15,7 +15,7 @@ known-bug** with a recorded reason.
 
 ## Gate #0 — verify OpenHouse actually supports the axis before writing its tests
 Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Iceberg parity.
-- [ ] CoW vs MoR (`write.{delete,update,merge}.mode`) — are both allowed?
+- [x] CoW vs MoR (`write.{delete,update,merge}.mode`) — **both supported** (MoR needs `format-version=2`); verified by 264 green MoR cases
 - [ ] Time travel `VERSION AS OF` / `TIMESTAMP AS OF`
 - [ ] Rollback/restore procedures (`CALL openhouse.system.rollback_to_snapshot`, `set_current_snapshot`)
 - [ ] Partition evolution (`ALTER TABLE … ADD/DROP PARTITION FIELD`)
@@ -70,9 +70,10 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 Introduced a **partitioned-only operations axis** (crossed only with the partitioned layouts) for
 tests whose correctness depends on partitioning; reused in Phase 7.
 
-## Phase 5 — Copy-on-write vs Merge-on-read  (free multiplier)
-- [ ] add `write.{delete,update,merge}.mode` to the layout/prep axis; run phases 1–3 under both
-- [ ] under MoR, assert delete files are produced where expected (`.files` / position-deletes metadata)
+## Phase 5 — Copy-on-write vs Merge-on-read  ✅ (correctness) / ◻ (delete-file metadata)
+- [x] MoR layouts (`write.{delete,update,merge}.mode=merge-on-read`, `format-version=2`) crossed with
+  all 44 mutation operations × 6 layouts = 264 cases, all green — correctness holds under MoR
+- [ ] under MoR, additionally assert delete files are produced (`.files` content / position-deletes metadata) — refinement, not yet added
 
 ## Phase 6 — Nested / complex types  (new `NestedTable` schema)
 - [ ] define `NestedTable`: `struct<x:int,y:string>`, `array<int>`, `map<string,int>`, struct-in-struct
