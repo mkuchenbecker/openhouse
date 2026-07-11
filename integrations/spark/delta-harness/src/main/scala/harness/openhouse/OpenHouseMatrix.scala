@@ -411,6 +411,79 @@ object Scenarios {
       assert(view.snapshotsAfter == view.snapshotsBefore + 1, "no-match UPDATE still commits one snapshot")
     }
 
+  private def stringUpdatedWhere(view: StepView[CoreTable.type], matches: Long => Boolean, to: String): Boolean =
+    longToString(view.after) == longToString(view.before).map { case (id, s) => id -> (if (matches(id)) to else s) }
+
+  val updateByInSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byInSubquery")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X' " +
+        s"WHERE ${Core.long0.columnName} IN (SELECT col1 FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(stringUpdatedWhere(view, _ == 2, "X"))
+    }
+
+  val updateByNotInSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byNotInSubquery")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X' " +
+        s"WHERE ${Core.long0.columnName} NOT IN (SELECT col1 FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(stringUpdatedWhere(view, _ != 2, "X"))
+    }
+
+  val updateByExistsSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byExistsSubquery")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X' " +
+        s"WHERE EXISTS (SELECT 1 FROM VALUES (CAST(2 AS BIGINT)) AS s(x) WHERE s.x = ${Core.long0.columnName})") { view =>
+      assert(stringUpdatedWhere(view, _ == 2, "X"))
+    }
+
+  val updateByNotExistsSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byNotExistsSubquery")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X' " +
+        s"WHERE NOT EXISTS (SELECT 1 FROM VALUES (CAST(2 AS BIGINT)) AS s(x) WHERE s.x = ${Core.long0.columnName})") { view =>
+      assert(stringUpdatedWhere(view, _ != 2, "X"))
+    }
+
+  val updateByScalarSubquery: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byScalarSubquery")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X' " +
+        s"WHERE ${Core.long0.columnName} = (SELECT max(col1) FROM VALUES (CAST(2 AS BIGINT)) AS s(col1))") { view =>
+      assert(stringUpdatedWhere(view, _ == 2, "X"))
+    }
+
+  val updateWithAlias: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.withAlias")(table =>
+      s"UPDATE $table AS x SET x.${Core.string0.columnName} = 'X' WHERE x.${Core.long0.columnName} = 2") { view =>
+      assert(stringUpdatedWhere(view, _ == 2, "X"))
+    }
+
+  // Sets two columns in one statement; assert both landed on the matched row.
+  val updateMultipleColumns: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.multipleColumns")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = 'X', ${Core.int0.columnName} = 99 WHERE ${Core.long0.columnName} = 2") { view =>
+      assert(stringUpdatedWhere(view, _ == 2, "X"))
+      assert(view.after.find(_.get(Core.long0) == 2L).map(_.get(Core.int0)).contains(99))
+    }
+
+  // Assign a column by an expression over itself (updates the key column).
+  val updateByExpression: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.byExpression")(table =>
+      s"UPDATE $table SET ${Core.long0.columnName} = ${Core.long0.columnName} + 10 WHERE ${Core.long0.columnName} = 2") { view =>
+      assert(keyed(view.after) == view.before.map(_.get(Core.long0)).map(l => if (l == 2L) 12L else l).sorted)
+    }
+
+  // Update the partition column so the row moves partitions.
+  val updateMovePartition: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.movePartition")(table =>
+      s"UPDATE $table SET ${Core.datePartition.columnName} = '2099-12-31-23' WHERE ${Core.long0.columnName} = 2") { view =>
+      val part = (rows: Seq[Row]) => rows.map(r => r.get(Core.long0) -> r.get(Core.datePartition)).toMap
+      assert(part(view.after) == part(view.before).map { case (id, d) => id -> (if (id == 2) "2099-12-31-23" else d) })
+    }
+
+  val updateNullAssignment: TableTest[CoreTable.type] =
+    TableTest(Core).sql("update.nullAssignment")(table =>
+      s"UPDATE $table SET ${Core.string0.columnName} = NULL WHERE ${Core.long0.columnName} = 2") { view =>
+      assert(longToString(view.after) == longToString(view.before).map { case (id, s) => id -> (if (id == 2) null else s) })
+    }
+
   // ── merge ────────────────────────────────────────────────────────────────────────────
   // Source rows are written as EXPLICIT literals. The generator-sourced alternative for this
   // test would be:
@@ -542,6 +615,16 @@ object Scenarios {
     "update.byPredicate"             -> updateByPredicate,
     "update.withoutCondition"        -> updateWithoutCondition,
     "update.noMatch"                 -> updateNoMatch,
+    "update.byInSubquery"            -> updateByInSubquery,
+    "update.byNotInSubquery"         -> updateByNotInSubquery,
+    "update.byExistsSubquery"        -> updateByExistsSubquery,
+    "update.byNotExistsSubquery"     -> updateByNotExistsSubquery,
+    "update.byScalarSubquery"        -> updateByScalarSubquery,
+    "update.withAlias"               -> updateWithAlias,
+    "update.multipleColumns"         -> updateMultipleColumns,
+    "update.byExpression"            -> updateByExpression,
+    "update.movePartition"           -> updateMovePartition,
+    "update.nullAssignment"          -> updateNullAssignment,
     "merge.insertNotMatched"         -> mergeInsertNotMatched,
     "merge.updateMatched"            -> mergeUpdateMatched,
     "merge.deleteMatched"            -> mergeDeleteMatched,

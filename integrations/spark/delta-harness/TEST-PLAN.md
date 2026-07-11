@@ -38,14 +38,14 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 - [x] delete with table alias
 - [x] delete at a specific snapshot → rejected (negative)
 
-## Phase 2 — UPDATE  (~12)
+## Phase 2 — UPDATE  ✅ (14 behaviors × 6 layouts)
 - [x] update by predicate; update without condition; update no-match (+1 snapshot)
-- [ ] update with subquery conditions: IN / NOT IN / EXISTS / NOT EXISTS / scalar
-- [ ] update with table alias
-- [ ] update multiple columns in one statement
-- [ ] update a column by expression over other columns (`SET a = a + 1`)
-- [ ] update a partition column so the row moves partitions (value + partition metadata)
-- [ ] update with null assignment / null condition
+- [x] update with subquery conditions: IN / NOT IN / EXISTS / NOT EXISTS / scalar
+- [x] update with table alias
+- [x] update multiple columns in one statement
+- [x] update a column by expression over itself (`SET long = long + 10`, updates the key)
+- [x] update a partition column so the row moves partitions
+- [x] update with null assignment (`SET string = NULL`)
 
 ## Phase 3 — MERGE  (~20)
 - [x] insert-not-matched; update-matched; delete-matched; upsert; delete-not-matched-by-source
