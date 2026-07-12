@@ -70,10 +70,15 @@ Mark ❓ until confirmed against the running OpenHouse catalog; don't assume Ice
 Introduced a **partitioned-only operations axis** (crossed only with the partitioned layouts) for
 tests whose correctness depends on partitioning; reused in Phase 7.
 
-## Phase 5 — Copy-on-write vs Merge-on-read  ✅ (correctness) / ◻ (delete-file metadata)
+## Phase 5 — Copy-on-write vs Merge-on-read  ✅ (correctness + physical delete-file discriminator)
 - [x] MoR layouts (`write.{delete,update,merge}.mode=merge-on-read`, `format-version=2`) crossed with
   all 44 mutation operations × 6 layouts = 264 cases, all green — correctness holds under MoR
-- [ ] under MoR, additionally assert delete files are produced (`.files` content / position-deletes metadata) — refinement, not yet added
+- [x] under MoR, assert delete files ARE produced and under CoW they are NOT — `mor.writesDeleteFiles`
+  / `cow.writesNoDeleteFiles` × {parquet, orc, avro}. Seeds all rows into one data file
+  (`COALESCE(1)`) and deletes a strict subset, so the write can't be satisfied by whole-file
+  elimination: MoR adds exactly one position-delete file, CoW adds none — deterministic on every
+  format. (A boundary-aligned delete that covers a whole data file is a legitimate metadata delete
+  with no position-delete file, which is why the seed forces a single file.)
 
 ## Phase 6 — Nested / complex types  ✅ (+ 1 tagged bug) — NestedTable × 3 formats
 - [x] define `NestedTable`: `struct<x:int,y:string>`, `array<int>`, `map<string,int>`, struct-in-struct

@@ -1,6 +1,6 @@
 package harness
 
-import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import scala.annotation.tailrec
@@ -194,7 +194,13 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
   /** Append another same-schema pipeline (this is how prep prefixes join operation suffixes). */
   def andThen(next: TableTest[S]): TableTest[S] = new TableTest(schema, steps ++ next.steps)
 
-  def insert(numberOfRows: Int)(validate: StepView[S] => Unit = _ => ()): TableTest[S] =
+  // The default validator asserts the seed actually appended `numberOfRows` rows. This defends the
+  // relative-delta operation assertions from a vacuous pass on an empty/short baseline.
+  def insert(numberOfRows: Int)(
+      validate: StepView[S] => Unit = view => assert(
+        view.after.size == view.before.size + numberOfRows,
+        s"seed insert($numberOfRows) expected ${view.before.size + numberOfRows} rows, got ${view.after.size}")
+  ): TableTest[S] =
     add(Step(s"insert($numberOfRows)", (spark, table, schema) =>
       spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(schema, numberOfRows)}"), validate))
 
@@ -231,10 +237,12 @@ final class TableTest[S <: Schema] private (val schema: S, val steps: Vector[Ste
   }
 
   // The one table-lifecycle primitive: hand `use` a fresh table name and always drop it afterward.
+  // The teardown drop is guarded so a drop failure can't mask the real failure from `use`.
   private def withTable(ctx: Ctx)(use: String => Unit): Unit = {
     val table = s"${ctx.namespace}.t_${TableTest.counter.incrementAndGet()}"
     ctx.spark.sql(s"DROP TABLE IF EXISTS $table") // ensure absent
-    try use(table) finally ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+    try use(table)
+    finally try ctx.spark.sql(s"DROP TABLE IF EXISTS $table") catch { case NonFatal(_) => () }
   }
 
   // Rows selected by the schema's columns, ordered by the key (first) column for deterministic
@@ -302,10 +310,41 @@ object Scenarios {
         s"TBLPROPERTIES ('write.format.default'='$format', 'format-version'='2', " +
         s"'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read')")
 
+  // Dedicated layouts for the CoW/MoR *physical* discriminator (below). Both pin
+  // `write.distribution-mode=none` and are unpartitioned so a single seed INSERT lands all rows in
+  // ONE data file; deleting a strict subset is then necessarily a PARTIAL-file match, which Iceberg
+  // cannot satisfy by whole-file elimination. That makes the physical outcome deterministic: MoR
+  // must add a position-delete file, CoW must rewrite the data file and add none. (The general
+  // `morLayouts` seed splits across files, so a boundary-aligned delete can legitimately drop a
+  // whole file with no position delete — correct Iceberg behaviour, but not what we want to pin.)
+  val morVerifyLayouts: List[Layout] =
+    List("parquet", "orc", "avro").map(format => Layout(s"mor-verify/$format", table =>
+      s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
+        s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
+        s"'write.delete.mode'='merge-on-read')"))
+
+  val cowVerifyLayouts: List[Layout] =
+    List("parquet", "orc", "avro").map(format => Layout(s"cow-verify/$format", table =>
+      s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
+        s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
+        s"'write.delete.mode'='copy-on-write')"))
+
   // Preparation: create under `layout` and seed `numberOfRows` deterministic rows. Interchangeable
   // with RTAS / drop+undrop preparations later — same resulting state.
   def createAndSeed(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(layout.create)().insert(numberOfRows)()
+
+  // Preparation for the physical CoW/MoR discriminator: seed all rows into ONE data file. A plain
+  // seed INSERT fans the rows across a couple of files (writer-dependent), so a strict-subset delete
+  // can land on a whole file and be satisfied by file elimination rather than a position delete. The
+  // `COALESCE(1)` hint forces a single write task → a single data file, so deleting a strict subset
+  // is deterministically a PARTIAL-file match: MoR must add a position-delete file, CoW must rewrite.
+  def createAndSeedSingleFile(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(layout.create)()
+      .sql(s"seed($numberOfRows, one-file)")(table =>
+        s"INSERT INTO $table SELECT /*+ COALESCE(1) */ * FROM (${RowGenerator.valuesClause(Core, numberOfRows)}) AS seed")(
+        view => assert(view.after.size == numberOfRows,
+          s"single-file seed expected $numberOfRows rows, got ${view.after.size}"))
 
   // ── reads ────────────────────────────────────────────────────────────────────────────
   val readProjection: TableTest[CoreTable.type] =
@@ -400,11 +439,18 @@ object Scenarios {
       assert(keyed(view.after) == view.before.map(_.get(Core.long0)).filterNot(_ == 2L).sorted)
     }
 
-  // IS NULL against a column with no null rows removes nothing (and must not error).
+  // Seed a null-string row, then DELETE WHERE string IS NULL must remove exactly it (and nothing
+  // else) — a real IS-NULL match, not a vacuous no-op.
   val deleteByNullCondition: TableTest[CoreTable.type] =
-    TableTest(Core).delete(core => s"${core.string0.columnName} IS NULL") { view =>
-      assert(view.after == view.before)
-    }
+    TableTest(Core)
+      .sql("delete.byNullCondition.seed")(table =>
+        s"INSERT INTO $table VALUES (CAST(99 AS BIGINT), 99, NULL, 99.5, false, '2024-01-01-00')")()
+      .delete(core => s"${core.string0.columnName} IS NULL") { view =>
+        assert(view.before.exists(_.get(Core.string0) == null), "precondition: a null-string row was seeded")
+        val expected = view.before.filterNot(_.get(Core.string0) == null).map(_.get(Core.long0)).sorted
+        assert(keyed(view.after) == expected)                 // exactly the non-null rows remain
+        assert(!keyed(view.after).contains(99L))              // the null-string row was removed
+      }
 
   // DELETE with no WHERE clause empties the table.
   val deleteAll: TableTest[CoreTable.type] =
@@ -545,6 +591,9 @@ object Scenarios {
           ) s ON t.${Core.long0.columnName} = s.${Core.long0.columnName}
           WHEN NOT MATCHED THEN INSERT *""") { view =>
       assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) ++ Seq(4L, 5L)).sorted)
+      // INSERT * must map the columns correctly, not just land the join key.
+      assert(view.after.find(_.get(Core.long0) == 4L).map(_.get(Core.string0)).contains("row-4"))
+      assert(view.after.find(_.get(Core.long0) == 5L).map(_.get(Core.string0)).contains("row-5"))
     }
 
   val mergeUpdateMatched: TableTest[CoreTable.type] =
@@ -785,13 +834,18 @@ object Scenarios {
   // ── partitioned-only: selective-partition replacement (meaningful only when partitioned) ──
   // Seed rows 1/2/3 live in partitions '2024-01-01-00'/'01'/'02'. Writing one row into partition
   // '…-00' must replace only that partition, leaving rows 2 and 3.
+  // Delta-sound: writing row 10 into partition '…-00' replaces ONLY that partition's rows (the
+  // seeded row 1), leaving every other partition's rows and adding 10.
+  private def onlyFirstPartitionReplaced(view: StepView[CoreTable.type]): Seq[Long] =
+    (view.before.filterNot(_.get(Core.datePartition) == "2024-01-01-00").map(_.get(Core.long0)) :+ 10L).sorted
+
   val insertDynamicOverwrite: TableTest[CoreTable.type] =
     TableTest(Core).step("insert.dynamicOverwrite") { (spark, table) =>
       spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
       try spark.sql(s"INSERT OVERWRITE $table VALUES (CAST(10 AS BIGINT), 10, 'p', 10.5, true, '2024-01-01-00')")
       finally spark.conf.set("spark.sql.sources.partitionOverwriteMode", "static")
     } { view =>
-      assert(keyed(view.after) == Seq(2L, 3L, 10L))
+      assert(keyed(view.after) == onlyFirstPartitionReplaced(view))
     }
 
   val overwritePartitions: TableTest[CoreTable.type] =
@@ -800,7 +854,7 @@ object Scenarios {
         s"SELECT * FROM VALUES (CAST(10 AS BIGINT), 10, 'p', 10.5, true, '2024-01-01-00') AS s($cols)")
       frame.writeTo(table).overwritePartitions()
     } { view =>
-      assert(keyed(view.after) == Seq(2L, 3L, 10L))
+      assert(keyed(view.after) == onlyFirstPartitionReplaced(view))
     }
 
   // ── create (a preparation-only test: create under the layout, assert schema + emptiness) ─
@@ -880,6 +934,29 @@ object Scenarios {
   val mutationOperations: List[(String, TableTest[CoreTable.type])] =
     operations.filter { case (name, _) =>
       name.startsWith("delete.") || name.startsWith("update.") || name.startsWith("merge.")
+    }
+
+  // ── MoR discriminator: prove merge-on-read actually wrote position-delete files ──────────
+  // The rest of the MoR axis reuses CoW's row-delta assertions, which pass identically whether the
+  // write was copy-on-write or merge-on-read. These two pin the PHYSICAL difference: a MoR delete
+  // MUST add a position-delete file; a CoW delete must NOT. Both are prepared with
+  // `createAndSeedSingleFile` and delete a strict subset (`long0 < 2` → 1 of 3 rows), so the write
+  // cannot be satisfied by whole-file elimination — the outcome is deterministic across formats
+  // (verified: parquet/orc/avro all add exactly one position delete under MoR, none under CoW).
+  private def deleteFileCount(spark: SparkSession, table: String): Long =
+    spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+
+  val morWritesDeleteFiles: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.long0.columnName} < 2") { view =>
+      assert(view.after == view.before.filterNot(_.get(Core.long0) < 2))                 // rows correct
+      assert(deleteFileCount(view.spark, view.table) >= 1,
+        "merge-on-read DELETE of a strict subset of a data file must write a position-delete file")
+    }
+
+  val cowWritesNoDeleteFiles: TableTest[CoreTable.type] =
+    TableTest(Core).delete(core => s"${core.long0.columnName} < 2") { view =>
+      assert(view.after == view.before.filterNot(_.get(Core.long0) < 2))
+      assert(deleteFileCount(view.spark, view.table) == 0, "copy-on-write DELETE must not write delete files")
     }
 
   // ── nested / complex types (NestedTable) ───────────────────────────────────────────────
@@ -1091,8 +1168,18 @@ object Scenarios {
       .sql("insertMore")(table => s"INSERT INTO $table VALUES " +
         s"(CAST(4 AS BIGINT), 4, 'row-4', 4.5, true, '2024-01-04-03'), (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")()
 
-  private def snapshotIds(spark: SparkSession, table: String): Seq[Long] =
-    spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at").collect().toSeq.map(_.getLong(0))
+  // Snapshots in ancestry order (root first), following the parent_id chain — deterministic even
+  // if two commits happen to share a committed_at millisecond (which `ORDER BY committed_at` is not).
+  private def snapshotIds(spark: SparkSession, table: String): Seq[Long] = {
+    val rows = spark.sql(s"SELECT snapshot_id, parent_id FROM $table.snapshots").collect().toSeq
+    val ids = rows.map(_.getLong(0)).toSet
+    val childByParent = rows.collect { case r if !r.isNullAt(1) => r.getLong(1) -> r.getLong(0) }.toMap
+    val root = rows.collectFirst { case r if r.isNullAt(1) || !ids.contains(r.getLong(1)) => r.getLong(0) }.get
+    val order = scala.collection.mutable.ListBuffer(root)
+    var cur = root
+    while (childByParent.contains(cur)) { cur = childByParent(cur); order += cur }
+    order.toList
+  }
 
   val timeTravelVersionAsOf: TableTest[CoreTable.type] =
     coreTwoSnapshots.check("timeTravel.versionAsOf") { view =>
@@ -1166,52 +1253,65 @@ object Scenarios {
   private val L = CoreTable.long0.columnName
   private val S = CoreTable.string0.columnName
 
+  // Each negative asserts BOTH the exception type and a message substring, so it verifies the
+  // operation was rejected for the RIGHT reason (not merely that something threw).
   val negNonExistentColumn: TableTest[CoreTable.type] =
     coreNegative("negative.nonExistentColumn") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(s"DELETE FROM $table WHERE no_such_column = 1"))
+      val e = Check.intercept[AnalysisException](spark.sql(s"DELETE FROM $table WHERE no_such_column = 1"))
+      assert(e.getMessage.contains("no_such_column"))
     }
 
   val negNonDeterministicDelete: TableTest[CoreTable.type] =
     coreNegative("negative.nonDeterministicDelete") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(s"DELETE FROM $table WHERE rand() < 0.5"))
+      val e = Check.intercept[AnalysisException](spark.sql(s"DELETE FROM $table WHERE rand() < 0.5"))
+      assert(e.getMessage.toLowerCase.contains("deterministic"))
     }
 
   val negNonDeterministicUpdate: TableTest[CoreTable.type] =
     coreNegative("negative.nonDeterministicUpdate") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(s"UPDATE $table SET $S = 'x' WHERE rand() < 0.5"))
+      val e = Check.intercept[AnalysisException](spark.sql(s"UPDATE $table SET $S = 'x' WHERE rand() < 0.5"))
+      assert(e.getMessage.toLowerCase.contains("deterministic"))
     }
 
   val negInsertArity: TableTest[CoreTable.type] =
     coreNegative("negative.insertArity") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(s"INSERT INTO $table VALUES (CAST(1 AS BIGINT), 1)")) // too few columns
+      val e = Check.intercept[AnalysisException](spark.sql(s"INSERT INTO $table VALUES (CAST(1 AS BIGINT), 1)")) // too few columns
+      assert(e.getMessage.toLowerCase.contains("not enough data columns"))
     }
 
-  // Two UPDATE assignments to the same column in one MERGE clause.
+  // Two UPDATE assignments to the same column in one MERGE clause → analysis error.
   val negMergeConflictingUpdates: TableTest[CoreTable.type] =
     coreNegative("negative.mergeConflictingUpdates") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(
+      val e = Check.intercept[AnalysisException](spark.sql(
         s"""MERGE INTO $table t USING (SELECT * FROM VALUES (CAST(2 AS BIGINT)) AS s($L)) s
             ON t.$L = s.$L
             WHEN MATCHED THEN UPDATE SET t.$S = 'a', t.$S = 'b'"""))
+      assert(e.getMessage.contains("Multiple assignments"))
     }
 
-  // Source has two rows matching the same target row → cardinality violation at runtime.
+  // Source has two rows matching the same target row → cardinality violation at RUNTIME. The
+  // concrete runtime exception class (SparkRuntimeException) is package-private, so we anchor on
+  // the specific message across the cause chain (the error may be wrapped in a task failure).
   val negMergeCardinalityViolation: TableTest[CoreTable.type] =
     coreNegative("negative.mergeCardinalityViolation") { (spark, table) =>
-      Check.intercept[Exception](spark.sql(
+      val e = Check.intercept[Exception](spark.sql(
         s"""MERGE INTO $table t USING (
               SELECT * FROM VALUES (CAST(2 AS BIGINT), 'a'), (CAST(2 AS BIGINT), 'b') AS s($L, $S)
             ) s ON t.$L = s.$L
             WHEN MATCHED THEN UPDATE SET t.$S = s.$S"""))
+      assert(
+        Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(_.contains("matched a single row from the target table"))),
+        s"expected a MERGE cardinality-violation message, got: ${e.getMessage}")
     }
 
   // CREATE partitioned by a non-existent column (on a scratch name, valid managed table stays).
   val negPartitionByNonExistent: TableTest[CoreTable.type] =
     coreNegative("negative.partitionByNonExistent") { (spark, table) =>
       val scratch = table + "_x"
-      Check.intercept[Exception](spark.sql(
+      val e = Check.intercept[AnalysisException](spark.sql(
         s"CREATE TABLE $scratch ($columnDefinitions) USING iceberg PARTITIONED BY (no_such_column) TBLPROPERTIES ('write.format.default'='parquet')"))
       spark.sql(s"DROP TABLE IF EXISTS $scratch")
+      assert(e.getMessage.contains("no_such_column"))
     }
 
   val negatives: List[(String, TableTest[CoreTable.type])] = List(
@@ -1259,6 +1359,12 @@ object Plan {
       (name, op)    <- Scenarios.mutationOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
+    // MoR discriminator: prove merge-on-read wrote delete files, and copy-on-write did not.
+    val morVerify = Scenarios.morVerifyLayouts.map(layout =>
+      Case(s"mor.writesDeleteFiles @ ${layout.label}", Scenarios.createAndSeedSingleFile(layout, 3).andThen(Scenarios.morWritesDeleteFiles).run))
+    val cowVerify = Scenarios.cowVerifyLayouts.map(layout =>
+      Case(s"cow.writesNoDeleteFiles @ ${layout.label}", Scenarios.createAndSeedSingleFile(layout, 3).andThen(Scenarios.cowWritesNoDeleteFiles).run))
+
     // Nested / complex types, on their own schema and layouts.
     val nested = for {
       layout        <- Scenarios.nestedLayouts
@@ -1284,8 +1390,8 @@ object Plan {
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
-    dml ++ partitioned ++ mor ++ nested ++ types ++ partitionTransforms ++ partitionEvolution ++
-      timeTravel ++ restoreRollback ++ negatives ++ creates
+    dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
+      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates
   }
 }
 
@@ -1384,9 +1490,11 @@ object Main {
     val skipped = results.count { case (_, (outcome, _)) => outcome.isInstanceOf[Outcome.Skipped] }
     val passed = results.size - failed - skipped
     println(f"\n$passed passed, $skipped skipped, $failed failed  (${results.size} cases)")
+    if (passed == 0) println("WARNING: no case actually passed (empty selection or all skipped) — reporting failure")
 
     try spark.stop() catch { case _: Throwable => () }
     try server.stop() catch { case _: Throwable => () }
-    System.exit(if (failed == 0) 0 else 1)
+    // A run that validated nothing (0 cases, or everything skipped) is NOT success.
+    System.exit(if (failed == 0 && passed > 0) 0 else 1)
   }
 }

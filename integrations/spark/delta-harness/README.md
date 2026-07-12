@@ -5,11 +5,12 @@ runs customer-facing DML **operations** as **typed pipelines** against the **rea
 catalog** (an embedded `OpenHouseLocalServer` wired to `OpenHouseCatalog`), and reports
 pass / skip / fail per case.
 
-Verified: **654 cases — 645 passed, 9 skipped (2 tagged bugs), 0 failed** — see
+Verified: **660 cases — 651 passed, 9 skipped (2 tagged bugs), 0 failed** — see
 `VERIFIED-RUN-openhouse.txt`. The full DML surface (`TEST-PLAN.md`, phases 1–11) is covered:
-delete/update/merge/insert/overwrite, copy-on-write vs merge-on-read, nested/complex types, type
-edges, partition transforms, time travel, restore/rollback, and negative/contract tests. Genuine
-OpenHouse bugs surfaced by the harness are tagged and tracked in `BUGS.md`.
+delete/update/merge/insert/overwrite, copy-on-write vs merge-on-read (incl. a physical
+position-delete-file discriminator), nested/complex types, type edges, partition transforms, time
+travel, restore/rollback, and negative/contract tests (each asserting the actual typed exception).
+Genuine OpenHouse bugs surfaced by the harness are tagged and tracked in `BUGS.md`.
 
 ## Model
 A test is a **typed pipeline** — `TableTest[S <: Schema]`. The type parameter declares which

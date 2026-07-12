@@ -1,19 +1,22 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-654 cases: 645 passed, 9 skipped (2 tagged bugs), 0 failed.
+660 cases: 651 passed, 9 skipped (2 tagged bugs), 0 failed.
 
 Composition (behaviors × axes):
   - core DML operations (read/delete/update/merge/insert/overwrite) × 6 layouts
     {unpartitioned, partitioned} × {parquet, orc, avro}
   - + partitioned-only operations (dynamic overwrite, overwritePartitions) × 3 partitioned layouts
   - + 44 mutation operations × 6 merge-on-read layouts   (Copy-on-write vs Merge-on-read)
+  - + physical CoW/MoR discriminator × 3 formats: on a single-data-file seed, a strict-subset
+    DELETE writes exactly one position-delete file under MoR and none under CoW (parquet/orc/avro)
   - + nested/complex types (NestedTable)  × 3 formats
   - + type-edge coverage (TypesTable)     × 3 formats
   - + partition transforms (identity/bucket/truncate/years/months/days/hours) + rejection negatives
   - + time travel (VERSION/TIMESTAMP AS OF, metadata tables, incremental read)
   - + restore/rollback (rollback_to_snapshot, set_current_snapshot)
   - + negative/contract tests (cardinality violation, conflicting updates, non-deterministic
-    predicate, non-existent column, bad partitioning, insert arity)
+    predicate, non-existent column, bad partitioning, insert arity) — each asserts the ACTUAL
+    typed exception (AnalysisException / etc.) plus a message substring
   - + create.schema × 6 layouts
 
 Tagged bugs (SKIP, tracked in BUGS.md):
@@ -25,5 +28,10 @@ OpenHouse capability findings (Gate #0):
               incremental read; rollback_to_snapshot / set_current_snapshot procedures;
               transforms identity/bucket/truncate/years/months/days/hours
   rejected  : partition evolution (ALTER ADD/DROP PARTITION FIELD); void transform; days(date)
+
+Physical MoR note: a MoR DELETE only adds a position-delete file when it matches a STRICT SUBSET
+of a data file. When the predicate covers a whole data file, Iceberg legitimately drops the file
+(metadata delete, no position delete) — so the discriminator seeds all rows into one file
+(COALESCE(1)) and deletes a strict subset to make the physical outcome deterministic.
 
 Run on JDK 17 against the embedded OpenHouseLocalServer + OpenHouseCatalog.
