@@ -19,14 +19,22 @@ block of that shape should exist. Gaps, most-severe first:
 | **G3** | Partition/clustering spec change on the replica commit path | `checkPartitionSpecEvolution` is inside the `!skipEligibilityCheck` block (`OpenHouseInternalRepositoryImpl:373-382`); replica commits skip it (`:294-308`) → replica spec can diverge from the physical layout of copied files. | breaks-replica (read path) | Validate spec compatibility even on the replica path. |
 | **G4** | Toggle `write.wap.enabled` / `replace.enabled` freely (e.g. disable WAP with staged snapshots present) | These are plain `write.*` props, **not** `openhouse.`-prefixed, so `checkIfPreservedTblPropsModified` doesn't cover them; only RTAS is WAP-aware. Disabling WAP while staged snapshots exist strands them (subtractive merge `doCommit:337-344`). | breaks-time-travel | WAP-state guard analogous to RTAS: reject disabling WAP while unpublished staged snapshots exist. |
 | **G8** | Main-affecting DDL while "on a branch" (`spark.wap.branch` set) — `ADD COLUMN` / `SET TBLPROPERTIES` / `WRITE ORDERED BY` | Schema/spec/props/sortOrder are **table-global** at every layer; the client's metadata-vs-snapshot commit split carries no branch dimension, and the server applies them via `setCurrentSchema`/`replaceSortOrder` (table-global). **No branch guard anywhere.** So the DDL silently mutates MAIN, not the branch. **Demonstrated live** by `branch.ddlLeak.addColumn` (ADD COLUMN on branch `leakbr` changed main's schema). | breaks-branch-isolation (silent) | Reject table-global DDL while operating on a branch (analogous to the RTAS-while-WAP block), or make it branch-scoped. |
+| **G9** | **RTAS changes the partition spec / drops columns**, bypassing the update-path guards | `checkPartitionSpecEvolution` runs only inside `updateEligibilityCheck` (`OpenHouseInternalRepositoryImpl:373-383`, update branch of `save`); the replace/stage-replace branch (`:154-173`) never calls it, and `validateReplaceTable` (`:325-366`) checks RTAS-enabled/WAP/replication but **not** spec or schema compatibility — `replaceTransaction` re-creates the table definition wholesale. So the exact evolutions ALTER rejects (partition-spec change; DROP COLUMN — rejection confirmed live) are reachable via `CREATE OR REPLACE`. Same root shape as G2: the replace path dodges update-path guards. *(Code recon; live demo queued — INTERACTION-AUDIT.md P1.)* | breaks-guard-consistency | Run the update-path eligibility checks (spec evolution, schema-drop validation) on the replace path too — or explicitly document replace as the sanctioned escape hatch. |
 | **G5** | Branch/tag/ref ops removing `main` or a snapshot a retained ref targets | Refs stored verbatim; subtractive merge (`doCommit:346-354`) removes refs absent from payload. Iceberg build-time catches some, but `main`-preservation/ordering unmodeled. | breaks-time-travel | Validate `main` survives and every retained ref resolves post-merge. Low priority (partly covered by Iceberg). |
 | **G6** | Update/replica-commit carrying a different `format-version` | Force-set only at create (`:554-556`); not on update, not `openhouse.`-prefixed, skipped on replica. Iceberg blocks downgrades downstream. | annoyance | Low — document reliance on Iceberg's downgrade block, or pin explicitly. |
 | **G7** | Replica commit rewriting reserved props / `policies` / `lockState` | `skipEligibilityCheck` is **all-or-nothing** — replica path skips preserved-prop + tableType validation wholesale (`:373-382`). A buggy mover could write a lock, flip retention, etc. | breaks-replica / policy-integrity | Narrow `skipEligibilityCheck` to an **allowlist** of what a replication commit may mutate, not a blanket bypass. |
 
-**Root-cause cluster:** G3 + G7 both stem from `skipEligibilityCheck` (`OpenHouseInternalRepositoryImpl:284-308`)
-being all-or-nothing. Cleanest single fixes: **G2** (lock-on-replace) and **G4** (WAP toggle) — same
-shape as the RTAS guard, and both are the highest-value real gaps. (G1 withdrawn — the snapshot-walk
-replication mechanism is sound; no dangling-ref race exists.)
+**Root-cause clusters:** G3 + G7 both stem from `skipEligibilityCheck` (`OpenHouseInternalRepositoryImpl:284-308`)
+being all-or-nothing; **G2 + G9 both stem from the replace path skipping update-path guards** (lock,
+spec evolution, schema-drop). Cleanest single fixes: **G2** (lock-on-replace) and **G4** (WAP toggle) —
+same shape as the RTAS guard, and both are the highest-value real gaps. (G1 withdrawn — the
+snapshot-walk replication mechanism is sound; no dangling-ref race exists.)
+
+**Behavior note (not a guard gap): rolled-past snapshots are silently expirable.** After
+`rollback_to_snapshot`, the snapshots rolled *past* are unreferenced; the history-policy-driven
+expiration job (`TableSnapshotsExpirationTask:44-58` → ref-aware Iceberg `expireSnapshots`,
+`apps/spark/.../Operations.java:268-287`) deletes them on its next run — the rollback becomes
+permanent with no signal. Pinning with a tag prevents it. (Probed context in INTERACTION-AUDIT.md §4.)
 
 ---
 
