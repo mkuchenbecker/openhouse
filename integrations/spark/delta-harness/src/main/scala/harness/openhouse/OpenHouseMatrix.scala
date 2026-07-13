@@ -1581,10 +1581,13 @@ object Scenarios {
 
   // finding: format-version is forced to the cluster default (2) — a create with '1' still reads 2
   val ddlPropsFormatVersionForced: TableTest[CoreTable.type] =
-    propsCreate("ddl.props.formatVersionForced", "'write.format.default'='parquet', 'format-version'='1'") { view =>
-      val fv = tableProps(view.spark, view.table).get("format-version")
-      assert(fv.contains("2"), s"expected forced format-version=2, got $fv (props=${tableProps(view.spark, view.table).keys.toSeq.sorted})")
-    }
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet', 'format-version'='1')")()
+      .insert(3)()
+      .check("ddl.props.formatVersionForced") { view =>
+        val fv = tableProps(view.spark, view.table).get("format-version")
+        assert(fv.contains("2"), s"expected forced format-version=2, got $fv")
+        assert(view.after.size == 3, "table not writable at the forced format-version")   // DML-after-DDL
+      }
 
   // honored-if-set: previous-versions-max the user provides survives
   val ddlPropsPreviousVersionsHonored: TableTest[CoreTable.type] =
@@ -1619,6 +1622,7 @@ object Scenarios {
         s"ALTER TABLE $t WRITE ORDERED BY ${Core.string0.columnName} DESC NULLS FIRST, ${Core.long0.columnName}") { view =>
         assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("range"), "multi-col ordered-by should set range")
       }
+      .insert(2) { view => assert(view.after.size == 5, "multi-col ordered write path failed") }   // DML-after-DDL
 
   // ── DDL Phase 17: rename table (rename to scratch + back, so the harness's fixed table name resolves) ─
   val ddlRenameTable: TableTest[CoreTable.type] =
@@ -1676,6 +1680,7 @@ object Scenarios {
       .sql("ddl.policy.sharing")(t => s"ALTER TABLE $t SET POLICY (SHARING=TRUE)") { view =>
         assert(policiesBlob(view).toLowerCase.contains("true") || policiesBlob(view).toLowerCase.contains("sharing"),
           s"sharing policy not stored: ${policiesBlob(view)}")
+        assert(view.after.size == 3, "table not queryable after SET POLICY (SHARING)")     // DML-after-DDL
       }
 
   val ddlPolicyHistory: TableTest[CoreTable.type] =
@@ -1683,6 +1688,7 @@ object Scenarios {
       .sql("ddl.policy.history")(t => s"ALTER TABLE $t SET POLICY (HISTORY MAX_AGE=2D VERSIONS=20)") { view =>
         assert(policiesBlob(view).contains("20") || policiesBlob(view).toLowerCase.contains("history"),
           s"history policy not stored: ${policiesBlob(view)}")
+        assert(view.after.size == 3, "table not queryable after SET POLICY (HISTORY)")     // DML-after-DDL
       }
 
   val ddlPolicyReplicationRoundTrip: TableTest[CoreTable.type] =
@@ -1712,6 +1718,7 @@ object Scenarios {
       .sql("ddl.policy.retention")(t => s"ALTER TABLE $t SET POLICY (RETENTION = 30d ON COLUMN datepartition WHERE pattern = 'yyyy-MM-dd-HH')") { view =>
         assert(policiesBlob(view).toLowerCase.contains("retention") || policiesBlob(view).contains("30"),
           s"retention policy not stored: ${policiesBlob(view)}")
+        assert(view.after.size == 3, "table not queryable after SET POLICY (RETENTION)")   // DML-after-DDL
       }
 
   val ddlPolicyOperations: List[(String, TableTest[CoreTable.type])] = List(
@@ -1784,14 +1791,19 @@ object Scenarios {
   val ddlAclGrantShared: TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
       .sql("ddl.acl.share")(t => s"ALTER TABLE $t SET POLICY (SHARING=TRUE)")()
-      .sql("ddl.acl.grantShared")(t => s"GRANT SELECT ON TABLE $t TO test_user")()
+      .sql("ddl.acl.grantShared")(t => s"GRANT SELECT ON TABLE $t TO test_user") { view =>
+        assert(view.after.size == 3, "shared/granted table not queryable")               // DML-after-DDL
+      }
 
-  // ── DDL Phase 15: feature-flag property (write.distribution-mode is a pass-through, honored) ─
+  // ── DDL Phase 15: feature-flag property (write.distribution-mode governs the write path) ─
   val ddlFeatureDistributionMode: TableTest[CoreTable.type] =
-    propsCreate("ddl.featureFlag.distributionMode", "'write.format.default'='parquet', 'write.distribution-mode'='none'") { view =>
-      assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("none"),
-        s"distribution-mode not honored: ${tableProps(view.spark, view.table).get("write.distribution-mode")}")
-    }
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet', 'write.distribution-mode'='none')")()
+      .insert(3)()
+      .check("ddl.featureFlag.distributionMode") { view =>
+        assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("none"),
+          s"distribution-mode not honored: ${tableProps(view.spark, view.table).get("write.distribution-mode")}")
+        assert(view.after.size == 3, "table not writable under distribution-mode=none")   // DML-after-DDL
+      }
 
   // ── DDL Phase 23: replication / table-type contract (SQL-reachable) ─────────────────────────
   val ddlReplTableTypeImmutable: TableTest[CoreTable.type] =
