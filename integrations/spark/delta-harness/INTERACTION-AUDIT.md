@@ -201,12 +201,23 @@ flips it to a loud failure — the signal to rewrite the pin as a positive test 
 **P1 — G-gap characterizations (2 cases):** `rtas.onLockedTable` (G2 live: lock → RTAS succeeds =
 the bug, characterization like G8) and `rtas.partitionSpecChange` (G9 live: RTAS with a different
 `PARTITIONED BY` succeeds where ALTER is rejected). Plus `rtas.dropsColumn` (A4).
+**P1 — RTAS property-merge semantics (~4 cases, promoted from P3):** replace is a THIRD property
+path beside CREATE and ALTER, with its own merge rules — characterize all four planes:
+(a) `rtas.props.userSurvival` — user props set on the old table: survive the replace, or reset?
+(b) `rtas.props.statementWins` — a prop set old-table AND declared in the `CREATE OR REPLACE …
+TBLPROPERTIES(…)` statement: which value wins?
+(c) `rtas.props.createDefaulting` — does the replace re-run create-time defaulting/forcing
+(`format-version` forced, `write.format.default` defaulted — can RTAS change the storage format of
+an existing table where ALTER can't)?
+(d) `rtas.props.reservedPlane` — `openhouse.*` / `policies` (retention, sharing) across a replace:
+preserved (like tableUUID, per recon) or silently reset? A policy silently dropped by RTAS would be
+a G-class finding (retention/sharing loss through the guard-skipping replace path).
 **P2 (~5 cases):** `set_current_snapshot` across RTAS (the recovery path); RTAS on a table with an
 existing branch (refs survive into the new lineage? readable?); `rollback_to_snapshot` while
 `spark.wap.branch` is set (does restore respect the branch conf or hit main? — C4); expire-after-
 rollback (C1, the permanence footgun); write-after-RTAS on `ddl.rtas.enabled`.
-**P3 (~3 cases):** ALTER-to-MoR with single-file seed (A8); `rewrite_data_files` on an evolved-schema
-table (C3); user-prop survival across RTAS.
+**P3 (~2 cases):** ALTER-to-MoR with single-file seed (A8); `rewrite_data_files` on an evolved-schema
+table (C3). *(user-prop survival across RTAS promoted into the P1 property-merge block above.)*
 
 Budget: ~20 new cases, all single-layout — interaction behaviors, not multipliers. No new axes crossed
 with format/partitioning (the ⛔ rows above say why).
