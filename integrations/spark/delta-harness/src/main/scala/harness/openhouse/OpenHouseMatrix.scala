@@ -1542,6 +1542,53 @@ object Scenarios {
     "ddl.ns.createRejected"        -> ddlNegCreateNamespace,
     "ddl.ns.dropRejected"          -> ddlNegDropNamespace
   )
+
+  // ── DDL Phase 20: policy DDL (OpenHouse SQL extension: ALTER TABLE … SET/UNSET POLICY) ──────
+  private def policiesBlob(view: StepView[CoreTable.type]): String =
+    tableProps(view.spark, view.table).getOrElse("policies", "")
+
+  val ddlPolicySharing: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.policy.sharing")(t => s"ALTER TABLE $t SET POLICY (SHARING=TRUE)") { view =>
+        assert(policiesBlob(view).toLowerCase.contains("true") || policiesBlob(view).toLowerCase.contains("sharing"),
+          s"sharing policy not stored: ${policiesBlob(view)}")
+      }
+
+  val ddlPolicyHistory: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.policy.history")(t => s"ALTER TABLE $t SET POLICY (HISTORY MAX_AGE=2D VERSIONS=20)") { view =>
+        assert(policiesBlob(view).contains("20") || policiesBlob(view).toLowerCase.contains("history"),
+          s"history policy not stored: ${policiesBlob(view)}")
+      }
+
+  val ddlPolicyReplicationRoundTrip: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.policy.replication.set")(t => s"ALTER TABLE $t SET POLICY (REPLICATION = ({destination:'clusterA'}))")()
+      .sql("ddl.policy.replication.unset")(t => s"ALTER TABLE $t UNSET POLICY (REPLICATION)") { view =>
+        assert(view.after.size == 3)                                                    // survives set+unset
+      }
+
+  val ddlPolicyNegHistoryMaxAge: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.policy.neg.historyMaxAge") { (spark, table) =>
+        val e = Check.intercept[BadRequestException](spark.sql(s"ALTER TABLE $table SET POLICY (HISTORY MAX_AGE=5D)")) // > 3 days
+        assert(e.getMessage.contains("max age must be between 1 to 3 days"), s"msg: ${e.getMessage.take(160)}")
+      }()
+
+  val ddlPolicyNegHistoryVersions: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.policy.neg.historyVersions") { (spark, table) =>
+        val e = Check.intercept[BadRequestException](spark.sql(s"ALTER TABLE $table SET POLICY (HISTORY VERSIONS=200)")) // > 100
+        assert(e.getMessage.contains("must be between 2 to 100 versions"), s"msg: ${e.getMessage.take(160)}")
+      }()
+
+  val ddlPolicyOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.policy.sharing"               -> ddlPolicySharing,
+    "ddl.policy.history"               -> ddlPolicyHistory,
+    "ddl.policy.replication"           -> ddlPolicyReplicationRoundTrip,
+    "ddl.policy.neg.historyMaxAge"     -> ddlPolicyNegHistoryMaxAge,
+    "ddl.policy.neg.historyVersions"   -> ddlPolicyNegHistoryVersions
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1609,6 +1656,7 @@ object Plan {
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlMisc         = Scenarios.ddlMiscOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1622,7 +1670,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy
   }
 }
 

@@ -206,10 +206,13 @@ the control-plane track is opted in.
       message says "Describing database is not supported" for create/drop (Spark loads metadata first) — misleading, AUDIT-FINDINGS B
 - [ ] follow-up: ALTER/DESCRIBE NAMESPACE; SHOW DATABASES/TABLES (B); implicit db-on-create
 
-## Phase 20 — Policy DDL (`ALTER TABLE … SET/UNSET POLICY`)  (B + rich N)
-- [ ] SET RETENTION (time-partitioned) / HISTORY (in-bounds) / SHARING; UNSET REPLICATION → round-trip
-- [ ] negatives: history `MAX_AGE` > 3d, `VERSIONS` > 100 / < 2; retention granularity coarser than
-      partition; retention on non-time-partition without a column pattern; replication bad interval format (parse)
+## Phase 20 — Policy DDL (`ALTER TABLE … SET/UNSET POLICY`)  (B + rich N) — ✅ 5/5 green
+- [x] SET POLICY (SHARING=TRUE) / (HISTORY MAX_AGE=2D VERSIONS=20) → stored in `policies` blob;
+      SET/UNSET POLICY (REPLICATION=({destination:'…'})) round-trip
+- [x] negatives (GOOD-tier messages): history `MAX_AGE`=5D → `BadRequestException` "max age must be
+      between 1 to 3 days"; `VERSIONS`=200 → "must be between 2 to 100 versions"
+- [ ] follow-ups: RETENTION on a time-partitioned table + granularity/pattern negatives; replication
+      bad-interval (→ 500 finding, AUDIT-FINDINGS B#2)
 
 ## Phase 21 — Clustering columns  (B + N) — NEW
 - [ ] CREATE with clustering column(s) (identity) → spec reflects it; write/read round-trips
