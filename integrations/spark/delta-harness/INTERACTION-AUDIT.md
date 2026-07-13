@@ -8,7 +8,17 @@ embedded server (probe code preserved at `scratchpad/interaction-probes.patch`; 
 observed, not predicted).
 
 Legend: ✅ tested today · 🧪 probed live (needs promotion to a real test) · ❌ relevant gap (untested)
-· 🌀 obscure but valuable · ⛔ irrelevant (documented why)
+· 🌀 obscure but valuable · ⛔ structurally irrelevant (no mechanism to interact — true regardless of
+future product changes) · ⏸ **unreachable today, contingent** — the path is blocked by a rejection
+that is *current behavior, not a contract*; the cell is dormant, gated behind a named pin test.
+
+**Framing rule: rejections are pins, not contracts.** "OpenHouse rejects X" says nothing about intent —
+it may be a deliberate design decision or just not-built-yet, and we usually can't tell which. So every
+rejection in the suite is a **characterization pin**: it asserts the exact current outcome (typed
+exception + message), which makes it a tripwire — if support for X ever lands, the pin FAILS loudly,
+and that failure is the work order to update the pin *and activate the dormant ⏸ cells it gates*. Only
+⛔ cells (physically commuting planes, e.g. file format × snapshot refs) are irrelevant on the merits;
+⏸ cells are deferred, with their activation condition written down.
 
 ---
 
@@ -21,7 +31,7 @@ travel · **RS** restore/rollback · **MX** maintenance (expire/compact/orphan) 
 |      | PS | PR | PO | RT | BR | TT | RS | MX | LK | DML |
 |------|----|----|----|----|----|----|----|----|----|-----|
 | **SE**  | ⛔¹ | ⛔¹ | ⛔¹ | ❌ **A4** | 🧪 **A3** | 🧪 **A1** | 🧪 **A2** | 🌀 C3 | ⛔² | ✅ `prep.evolved` ×174 |
-| **PS**  |    | ⛔¹ | ⛔¹ | ❌ **A5 (G9)** | ⛔³ | ⛔³ | ⛔³ | ⛔³ | ⛔² | ✅ transforms/partitioned ops |
+| **PS**  |    | ⛔¹ | ⛔¹ | ❌ **A5 (G9)** | ⏸³ | ⏸³ | ⏸³ | ⏸³ | ⛔² | ✅ transforms/partitioned ops |
 | **PR**  |    |    | ⛔¹ | 🧪 A9 (partial) | ✅ wap gate | ⛔¹ | ⛔¹ | ⛔¹ | ⛔² | ✅ distributionMode, MoR@create; ❌ **A8** MoR@ALTER |
 | **PO**  |    |    |    | ✅ repl⊕RTAS | ⛔⁴ | ⛔⁴ | 🌀 C1 | 🌀 C1 | ⛔² | ✅ policy DDL + read-back |
 | **RT**  |    |    |    |    | 🌀 C2 | 🧪 **A6** | 🧪 **A6** | ⛔⁵ | ❌ **A7 (G2)** | ❌ minor: no write-after-RTAS |
@@ -35,8 +45,13 @@ mechanism to interact through (verified: schema/props/policies ride different va
 ⛔² lock rejects EVERY mutation uniformly at the service entry (`isTableLocked` before op dispatch) —
 one representative test (`control.lock.enforcement`) covers the class. **Exception: the replace path,
 which never reaches the check — that's G2/A7, a real gap.**
-⛔³ partition-spec **evolution is rejected** in OpenHouse (tested), so downstream interactions with
-branches/travel/restore can't arise via ALTER. **Exception: the RTAS bypass — A5/G9.**
+⏸³ partition-spec **evolution is rejected today** (current behavior — rationale unknown, may be
+lifted). Downstream interactions with branches/travel/restore are therefore *unreachable via ALTER
+right now*, not irrelevant. **Gating pins:** `partition.evolutionAdd.rejected`,
+`partition.evolutionDrop.rejected` — if either ever fails (support landed), update the pins to
+positive tests and activate this row: spec-evolution × {branch reads, time travel across a spec
+change, restore across a spec change, compaction over mixed specs}. **Exception live today: the RTAS
+bypass — A5/G9 — which reaches spec change despite the ALTER rejection.**
 ⛔⁴ policies are server-side metadata consumed by *jobs*; branch/travel reads don't consult them.
 ⛔⁵ expire-after-RTAS is just expire on the new lineage (no special path — same subtractive merge).
 Also ⛔: **format (parquet/orc/avro) × everything above** — branch/travel/restore/RTAS operate on
@@ -48,11 +63,16 @@ snapshots/metadata, never on file encoding (the declared branching-plan principl
 
 **E1. Add col → insert into col → read → drop col → read.**
 Partially tested; probed end-to-end (`probe.ddl.dropColAfterData`). ADD + insert + read ✅ (also
-`prep.evolved`). DROP COLUMN is **rejected** by OpenHouse (BadRequestException, the known
-schema-dump message) — and after the rejected drop the table is intact: the new column's data is
-still queryable (`extra_col=42` → 1 row) and inserts still work. **No breakage; the "read after
-drop" leg can't exist by design.** Gap → promote the probe: today no test combines
-data-in-new-column with the drop rejection. *(Also: drop-via-RTAS may bypass this rejection — A4.)*
+`prep.evolved`). DROP COLUMN is **rejected today** (BadRequestException, the known schema-dump
+message) — and after the rejected drop the table is intact: the new column's data is still queryable
+(`extra_col=42` → 1 row) and inserts still work. So the sequence currently terminates at a clean
+rejection with no breakage — that IS the current behavior your example should show, and the promoted
+test asserts exactly that. **Gating pin: `ddl.neg.dropColumn`** — if drop support ever lands the pin
+fails, and the test evolves into your full sequence (add → insert → read → drop → read, asserting
+post-drop reads exclude the column and time travel to pre-drop snapshots still sees it). Gap →
+promote the probe: today no test combines data-in-new-column with the drop rejection. *(Also:
+drop-via-RTAS may already bypass this rejection — A4/G9 — making the post-drop legs reachable NOW
+through the replace path; that test doesn't wait on the pin.)*
 
 **E2. Restore after DDL** — untested; probed (`probe.ddl.ttRestore`). `rollback_to_snapshot` to a
 pre-ADD-COLUMN snapshot: **data reverts (3 rows), schema does NOT roll back** (still 7 columns) —
@@ -75,8 +95,10 @@ a branch writer using the old arity is **broken mid-flight** (`INSERT_COLUMN_ARI
 new-arity branch writes work. Schema is table-global in both directions — this is the G8 leak's
 mirror image. Promote as characterization (a WAP job can be broken by concurrent main DDL).
 
-**E6. Same with partition evolution** — moot via ALTER (evolution rejected, tested ✅). **But NOT
-moot via RTAS**: code recon found `checkPartitionSpecEvolution` runs only on the update path
+**E6. Same with partition evolution** — unreachable via ALTER *today* (evolution rejected; pinned ✅
+by `partition.evolution{Add,Drop}.rejected`, which will fail-and-flag if support lands — see ⏸³ for
+the dormant row that activates then). **But reachable via RTAS now**: code recon found
+`checkPartitionSpecEvolution` runs only on the update path
 (`OpenHouseInternalRepositoryImpl:373-383`); the replace path (`:154-173`) never calls it and
 `validateReplaceTable` doesn't check the spec → **RTAS can change the partition spec**, bypassing
 the guard. New finding **G9** (AUDIT-FINDINGS.md). Not yet demonstrated live → top-priority test.
@@ -111,6 +133,24 @@ everyone. OpenHouse's own expiration job is safe the same way: `SnapshotsExpirat
 Iceberg's ref-aware `expireSnapshots()` API (`apps/spark/.../Operations.java:268-287`). Promote.
 
 ---
+
+## 2b. Pin inventory — every rejection the suite asserts, and what it gates
+
+Each pin asserts today's exact outcome (typed exception + message substring), so a product change
+flips it to a loud failure — the signal to rewrite the pin as a positive test and open the gated rows.
+
+| Pin test(s) | Current behavior pinned | Dormant coverage it gates (activate on flip) |
+|---|---|---|
+| `partition.evolutionAdd.rejected` / `partition.evolutionDrop.rejected` | ALTER … ADD/DROP PARTITION FIELD → 400 | spec-evolution × branch / time travel / restore / compaction (matrix row ⏸³) |
+| `ddl.neg.dropColumn` | DROP COLUMN → 400 (schema-dump message) | post-drop reads, drop × time travel (pre-drop snapshots), drop × prep-multiplier DML |
+| `ddl.neg.narrowType` / `ddl.neg.setNotNull` | narrowing / NOT NULL tighten → rejected | narrowed-type × old-snapshot reads, × branch writers |
+| `ddl.renameColumn` (tagged BUG — silent no-op, worse than a pin) | rename neither errors nor renames | rename × time travel (old name at old snapshots), × branch reads — blocked on the bug fix |
+| `ddl.rtas.disabled` | RTAS without `replace.enabled` → 400 | none (the enabled path is tested); pin exists for the guard message |
+| `ddl.rtas.replicationConflict` / RTAS⊕WAP guard | RTAS while replication/WAP on → 400 | RTAS × staged-WAP-snapshots semantics, if the guard is ever relaxed |
+| `ddl.namespace.*` negatives | CREATE/DROP NAMESPACE → unsupported | namespace lifecycle × table enumeration/ACLs |
+| `branch.neg.wapIdAndBranch` / `branch.neg.insertNonexistent` | client-side ValidationException | auto-create-branch-on-write behavior, combined wap.id+branch routing |
+| `restore rollback across RTAS` (planned P1, from probe) | not-an-ancestor ValidationException | rollback-across-replace semantics if lineage rules change |
+| `delete.atSnapshot.rejected`, `insert arity`, etc. (DML negatives) | engine-level rejections | corresponding write forms if Spark/Iceberg add support |
 
 ## 3. Audit of the existing tests (interaction lens)
 
