@@ -12,7 +12,7 @@ exists so that multiplication is **deliberate and budgeted**, not accidental.
 
 ## Cross-budget policy (READ FIRST — this is what keeps 600 from becoming 60,000)
 
-Every DDL test is exactly one of four **roles**, and each role has a fixed blast radius:
+Every DDL test is exactly one of six **roles**, ordered by blast radius:
 
 - **B — Behavior** (the DDL statement _is_ the operation under test). Authored like a DML
   operation: a headless segment composed after `createAndSeed(layout)`, asserting a schema/row
@@ -23,9 +23,19 @@ Every DDL test is exactly one of four **roles**, and each role has a fixed blast
   **Does NOT cross the full DML matrix.** It crosses a fixed **representative smoke slice** —
   `{delete.byPredicate, update.byPredicate, merge.upsert, insert.append, read.projection}` (5 ops)
   × a **reduced 2-layout set** `{unpartitioned/parquet, partitioned/parquet}` = ~10 cases per prep.
-- **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. Reserved for
-  preparations whose whole purpose is to validate the incremental model. **Default: only RTAS**
-  earns this, and only once its Gate #0 passes. No other prep gets F without a recorded reason.
+- **S — Substrate flag** (a table property that changes the physical write/read path for _every_
+  operation: MoR, and — newly — **encryption** and **replication**). Proven once as a behavior, then
+  optionally graduated to a smoke-slice prep (P) or a full cross. MoR is the precedent that _did_
+  earn the full 264-case cross; encryption/replication default to **P** unless a real interaction
+  forces more. Each is enabled by a property/policy and must not silently no-op — an S flag that
+  claims to be on but changes nothing is itself a finding.
+- **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. Reserved for the
+  incremental-model validation. **RTAS is the one F**, and it comes _before_ the branch mega-axis.
+- **X — Cross-cutting mega-axis: WAP / branching** (the largest, reserved for **last, after RTAS**).
+  Enabling branches/WAP is not a preparation — it is a **~3× re-run of the entire combined DML+DDL
+  surface** across `{main, branch, staged-unpublished}`: every operation must hold on main, hold in
+  isolation on a named branch, and (under WAP) stage invisibly then publish. Its budget is decided
+  on its own, at the end, once everything beneath it is green — never crossed casually.
 
 **Table properties** get a sub-classification (from the property recon), because most of them must
 _not_ be crossed with anything:
@@ -41,10 +51,21 @@ _not_ be crossed with anything:
 - **Property _combinations_**: **representative tuples, not the cross-product.** Test the specific
   enforced interaction (`wap.enabled` ⊕ `replace.enabled` exclusivity), not the cartesian grid.
 
-**Budgeted total:** roles B+N+F(sort/props/etc.) ≈ **+110–140 cases**; each P prep ≈ +10; the one
-optional RTAS **F** ≈ +650. So the plan lands near **+130 cases**, or **+780** iff we spend the RTAS
-full cross. That one decision is the only thing between the two numbers — everything else is bounded
-by construction.
+**Build order (largest axis last):** bounded phases (B/N/S-as-behavior) → the S smoke-slice preps
+(encryption, replication, schema-evolved, sort-ordered) → **RTAS full cross (F)** → **WAP/branching
+mega-axis (X)**. Each tier must be green before the next is spent.
+
+**Budgeted total (rough, refined once the encryption/replication recon lands):**
+- Bounded B+N+S-behaviors (schema, props, sort, rename, CTAS/RTAS-contract, namespace, policy,
+  encryption-on, replication-on) ≈ **+120–150**
+- S smoke-slice preps (×~10 each: encryption, replication, schema-evolved, sort-ordered) ≈ **+40**
+- **RTAS full cross (F)** ≈ **+650**
+- **WAP/branching mega-axis (X)** ≈ **~3× the then-current combined surface** — the single biggest
+  spend, quantified and decided only when we reach it (order-of-thousands if taken fully; far less if
+  crossed against a smoke slice on the branch).
+
+So the pre-branch plan lands near **+160** (bounded + S preps), **+810** with RTAS, and the branch
+axis is a deliberate final multiplier on top — never accidental.
 
 ## Gate #0 — OpenHouse DDL support matrix (verified against source; ❓ = must probe at runtime)
 
