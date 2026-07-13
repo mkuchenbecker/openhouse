@@ -2,6 +2,7 @@ package harness
 
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.iceberg.exceptions.BadRequestException
+import org.apache.iceberg.exceptions.ValidationException
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -1498,11 +1499,72 @@ object Scenarios {
           s"characterizing the leak: ADD COLUMN on a branch mutated MAIN's schema — expected leaked_col in $mainCols")
       }()
 
+  // B4 representative branch DML (update + delete on a branch), isolated from main.
+  val branchDmlUpdateDelete: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.dml.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .sql("branch.dml.create")(t => s"ALTER TABLE $t CREATE BRANCH dmlbr")()
+      .step("branch.dml.updateDelete") { (spark, table) =>
+        spark.conf.set("spark.wap.branch", "dmlbr")
+        try {
+          spark.sql(s"UPDATE $table SET ${Core.string0.columnName} = 'br-upd' WHERE ${Core.long0.columnName} = 1")
+          spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} = 2")
+        } finally spark.conf.unset("spark.wap.branch")
+        val onBranch = spark.sql(s"SELECT count(*) FROM $table VERSION AS OF 'dmlbr'").collect()(0).getLong(0)
+        assert(onBranch == 2, s"branch should have 2 rows after delete, got $onBranch")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "main unchanged by branch DML")
+        val br1 = spark.sql(s"SELECT ${Core.string0.columnName} FROM $table VERSION AS OF 'dmlbr' WHERE ${Core.long0.columnName} = 1").collect()(0).getString(0)
+        assert(br1 == "br-upd", s"branch update not applied: $br1")
+      }()
+
+  // B5 lifecycle (CREATE TAG / DROP BRANCH — both supported, verified) + WAP mixing negatives.
+  val branchCreateTag: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("branch.lifecycle.tag") { (spark, table) =>
+        spark.sql(s"ALTER TABLE $table CREATE TAG mytag")
+        assert(spark.sql(s"SELECT count(*) FROM $table.refs WHERE name = 'mytag' AND type = 'TAG'").collect()(0).getLong(0) == 1,
+          "CREATE TAG did not create the tag ref")
+      }()
+
+  val branchDropBranch: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.drop.create")(t => s"ALTER TABLE $t CREATE BRANCH tmpbr")()
+      .step("branch.lifecycle.dropBranch") { (spark, table) =>
+        assert(spark.sql(s"SELECT count(*) FROM $table.refs WHERE name = 'tmpbr'").collect()(0).getLong(0) == 1, "branch not created")
+        spark.sql(s"ALTER TABLE $table DROP BRANCH tmpbr")
+        assert(spark.sql(s"SELECT count(*) FROM $table.refs WHERE name = 'tmpbr'").collect()(0).getLong(0) == 0, "DROP BRANCH did not remove the ref")
+      }()
+
+  val branchNegWapIdAndBranch: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.neg.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .sql("branch.neg.create")(t => s"ALTER TABLE $t CREATE BRANCH nb")()
+      .step("branch.neg.wapIdAndBranch") { (spark, table) =>
+        spark.conf.set("spark.wap.id", "w1")
+        spark.conf.set("spark.wap.branch", "nb")
+        try {
+          val e = Check.intercept[ValidationException](spark.sql(s"INSERT INTO $table VALUES ${coreRow(99, "x")}"))
+          assert(e.getMessage.contains("Cannot set both WAP ID and branch"), s"msg: ${e.getMessage.take(140)}")
+        } finally { spark.conf.unset("spark.wap.id"); spark.conf.unset("spark.wap.branch") }
+      }()
+
+  val branchNegInsertNonexistent: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("branch.neg.insertNonexistentBranch") { (spark, table) =>
+        val e = Check.intercept[ValidationException](spark.sql(s"INSERT INTO $table.branch_nope VALUES ${coreRow(99, "x")}"))
+        assert(e.getMessage.contains("does not exist"), s"msg: ${e.getMessage.take(140)}")
+      }()
+
   val branching: List[(String, TableTest[CoreTable.type])] = List(
     "branch.direct.isolation" -> branchDirectIsolation,
     "branch.wapConf.routing"  -> branchWapConfRouting,
     "wap.stagePublish"        -> wapStagePublish,
-    "branch.ddlLeak.addColumn" -> branchDdlLeakAddColumn
+    "branch.ddlLeak.addColumn" -> branchDdlLeakAddColumn,
+    "branch.dml.updateDelete" -> branchDmlUpdateDelete,
+    "branch.lifecycle.tag"    -> branchCreateTag,
+    "branch.lifecycle.dropBranch" -> branchDropBranch,
+    "branch.neg.wapIdAndBranch" -> branchNegWapIdAndBranch,
+    "branch.neg.insertNonexistentBranch" -> branchNegInsertNonexistent
   )
 
   // ── negative / contract tests ───────────────────────────────────────────────────────────

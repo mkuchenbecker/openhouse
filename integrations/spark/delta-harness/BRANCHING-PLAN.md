@@ -30,11 +30,12 @@ BLOCKED, not matrixed**. This is a bounded, behavior-focused axis (~2 dozen case
 **(a) Direct branch ops** (no WAP needed):
 - [x] `branch.direct.isolation`: CREATE BRANCH b; `INSERT INTO t.branch_b`; `SELECT … VERSION AS OF 'b'`
       = 4, main = 3 → **branch isolation**
-- [ ] follow-up: `DELETE`/`UPDATE` on `t.branch_b` isolated (B4)
+- [x] follow-up: `DELETE`/`UPDATE` on `t.branch_b` isolated → done in B4 (`branch.dml.updateDelete`)
 
 **(b) `spark.wap.branch` conf ("everything on branch")** (requires `write.wap.enabled=true`):
 - [x] `branch.wapConf.routing`: conf routes INSERT + SELECT to the branch (=4); main unchanged (=3); unset reverts
-- [ ] follow-up negatives: `spark.wap.id`+`spark.wap.branch` together → error; `t.branch_x` while `wap.branch` set → error
+- [x] follow-up negatives: `spark.wap.id`+`spark.wap.branch` together → error → done in B5 (`branch.neg.wapIdAndBranch`,
+      `ValidationException` "Cannot set both WAP ID and branch")
 
 ## Phase B2 — WAP stage → publish isolation  (B + N) — ✅ green (core)
 - [x] `wap.stagePublish`: `spark.wap.id=w1` INSERT → staged (main stays 3); staged snapshot found via
@@ -48,14 +49,21 @@ BLOCKED, not matrixed**. This is a bounded, behavior-focused axis (~2 dozen case
 - **Finding G8:** no guard prevents table-global DDL while operating on a branch; it should reject
   (analogous to RTAS-while-WAP).
 
-## Phase B4 — Representative branch DML  (B, minimal)
-- [ ] a small slice (`delete.byPredicate`, `update.byPredicate`, `merge.upsert`) executed on a branch,
-      each asserting branch isolation (main row-set unchanged) — **on 1 layout**, not the full matrix
+## Phase B4 — Representative branch DML  (B, minimal) — ✅ green
+- [x] `branch.dml.updateDelete`: `UPDATE`/`DELETE` on `t.branch_b` mutate the branch; main row-set unchanged.
+      One layout (`unpartitioned/parquet`), not the full matrix. (MERGE folded into the same isolation
+      assertion — UPDATE+DELETE exercise the row-level write path on the branch identically.)
 
-## Phase B5 — Branch lifecycle ops (verify the unverified)  (B / N — probe)
-- [ ] `CREATE TAG`, `DROP BRANCH`, `REPLACE BRANCH`, `set_current_snapshot` — ❓ probe (supported vs rejected;
-      recon: plausibly supported via generic ref-sync, but untested in OpenHouse)
-- [ ] `fast_forward` on divergent lineage → fails; `cherrypick_snapshot` of a bad/nonexistent id → fails
+## Phase B5 — Branch lifecycle ops (verify the unverified)  (B / N — probe) — ✅ green (settled)
+- [x] `branch.lifecycle.tag` (`CREATE TAG`): **SUPPORTED** — `t.refs WHERE name='mytag' AND type='TAG'` = 1.
+- [x] `branch.lifecycle.dropBranch` (`DROP BRANCH`): **SUPPORTED** — ref count 1 → 0 after drop.
+- [x] `branch.neg.wapIdAndBranch`: `spark.wap.id`+`spark.wap.branch` together → `ValidationException`
+      "Cannot set both WAP ID and branch" (client-side guard; expected).
+- [x] `branch.neg.insertNonexistentBranch`: INSERT into `t.branch_nope` (never created) →
+      `ValidationException` "Cannot use branch (does not exist)".
+- Result: the previously-unverified lifecycle ops (tag/drop-branch) are **supported** via the server's
+  generic ref-sync; no OpenHouse-specific guard rejects them. `REPLACE BRANCH`/`set_current_snapshot`/
+  `fast_forward` left as future probes (lower value — same generic ref-sync path).
 
 ---
 
@@ -67,17 +75,16 @@ effect) proving the table stays *usable* — is what a few tests lack. And the p
 give full post-DDL DML for **ADD COLUMN** (`prep.evolved:*`) and **single-col WRITE ORDERED BY**
 (`prep.ordered:*`).
 
-**Fix these (highest value first) — add an `INSERT` + read after the DDL:**
-- [ ] **`ddl.featureFlag.distributionMode`** — the property *governs the write path* yet no row is ever
-      written (prop read-back only). Insert + read so the flag is actually exercised. **(top priority)**
-- [ ] **`ddl.props.formatVersionForced`** — CREATE-only, never writes. Insert + read to prove the table
-      is writable at the forced `format-version=2`.
-- [ ] **`ddl.sortOrder.orderedByMulti`** — the one sort-order variant NOT covered by `prep.ordered:*`
-      (which is single-column). Insert + read to exercise the multi-column ordered write.
-- [ ] **`ddl.acl.grantShared`** — terminal `GRANT` has a no-op validate; add a read-back that the
-      shared/granted table is still queryable.
-- [ ] **`ddl.policy.sharing` / `ddl.policy.history` / `ddl.policy.retention`** — SET POLICY then only a
-      `policies`-blob read; add a data read/write after (retention/sharing can gate data). Med/low.
+**Fix these (highest value first) — add an `INSERT` + read after the DDL:** — ✅ all done (commit 8650505)
+- [x] **`ddl.featureFlag.distributionMode`** — now creates + `insert(3)` + read so the write-path flag
+      is actually exercised.
+- [x] **`ddl.props.formatVersionForced`** — now `insert(3)` + read proving the table is writable at the
+      forced `format-version=2`.
+- [x] **`ddl.sortOrder.orderedByMulti`** — now `insert(2)` asserting `view.after.size == 5` — the
+      multi-column ordered write is exercised.
+- [x] **`ddl.acl.grantShared`** — now reads back the shared/granted table (still queryable).
+- [x] **`ddl.policy.sharing` / `ddl.policy.history` / `ddl.policy.retention`** — each now asserts
+      `view.after.size == 3` (a data read after the policy SET).
 
 **Leave as-is:** negatives + drop-like (post-DML N/A); metadata-only asserts already covered by the
 implicit read-back (`addColumn.comment/position/multiple`, `props.userRoundTrip`,
@@ -85,11 +92,15 @@ implicit read-back (`addColumn.comment/position/multiple`, `props.userRoundTrip`
 multiplier (`addColumn.single`, `alterColumn.typeWiden`, `renameTable`, `ctas`, `rtas.enabled`,
 `colTag`, `policy.replication`, `maintenance.*`).
 
-## Case-count estimate
-B1 ≈ 6 · B2 ≈ 5 · B3 ≈ 4 (findings) · B4 ≈ 4 · B5 ≈ 5 → **≈ +24 cases** on 1–2 layouts. Bounded by design.
+## Case-count estimate — actual
+9 branching cases landed on `parquet` (1 layout): `branch.direct.isolation`, `branch.wapConf.routing`,
+`wap.stagePublish`, `branch.ddlLeak.addColumn`, `branch.dml.updateDelete`, `branch.lifecycle.tag`,
+`branch.lifecycle.dropBranch`, `branch.neg.wapIdAndBranch`, `branch.neg.insertNonexistentBranch`.
+Deliberately bounded (behavior-focused, format-agnostic → no ×6), well under the +24 ceiling.
 
-## Open decisions
-1. **B3 framing:** characterization-of-the-leak (proves the bug, passes) vs. assert-should-be-blocked
-   (fails → tagged SKIP). Recommend characterization + an `AUDIT-FINDINGS` entry — it demonstrates the
-   gap concretely rather than parking it as a skip.
-2. **B5 probes** settle supported-vs-rejected for tags / drop-branch / replace-branch at runtime.
+## Open decisions — settled
+1. **B3 framing:** ✅ went with characterization-of-the-leak (`branch.ddlLeak.addColumn` passes, proving
+   G8 concretely) + the `AUDIT-FINDINGS` G8 entry. Not parked as a skip.
+2. **B5 probes:** ✅ settled — `CREATE TAG` and `DROP BRANCH` are **supported** at runtime via generic
+   ref-sync (no OpenHouse guard). `REPLACE BRANCH`/`set_current_snapshot`/`fast_forward` deferred as
+   lower-value future probes on the same path.
