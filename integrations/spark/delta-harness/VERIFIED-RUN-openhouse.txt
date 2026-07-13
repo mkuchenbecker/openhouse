@@ -1,6 +1,6 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1231 cases: 1208 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
+1254 cases: 1231 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
 
 Full-suite wall-time: ~879s baseline (~14.6 min, fresh classpath) for the prior 1215-case run →
 ~0.6s/case + ~120s fixed startup (gradle resolve + Scala compile + embedded server + Spark). A cached
@@ -26,6 +26,17 @@ ref-sync), and WAP negatives (both-id-and-branch, insert-into-nonexistent-branch
 Also folded in the DML-after-DDL fixes: distributionMode / formatVersionForced now write+read a row so
 the flag/version is exercised; orderedByMulti asserts the multi-column ordered write; grantShared and the
 policy.{sharing,history,retention} tests now read data back after the DDL.
+
+Plus the feature-INTERACTION axis (INTERACTION-AUDIT.md, 23 cases, `interact.*`, single layout):
+DDL x history (travel uses the snapshot's schema; rollback is data-only; drop-col pin), RTAS x history
+(pre-replace snapshots travelable; rollback rejected typed; set_current_snapshot recovery; DML-after-
+RTAS), RTAS property-merge semantics (user props survive; statement wins; format flip; format-version
+forced), branch x history/maintenance (TT before branch point; explicit AS OF overrides wap.branch;
+main-DDL immediacy on branches; expire protects refs; procedures target main under wap.branch; RTAS
+preserves refs), expire-after-rollback permanence, ALTER-to-MoR, compaction over evolved schema —
+and three live guard-gap characterizations: G2 (RTAS replaces a LOCKED table), G9 (RTAS re-partitions
++ drops columns where ALTER rejects both), and NEW G10 (RTAS silently wipes the policies plane —
+retention lost across replace). See AUDIT-FINDINGS.md.
 
 Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
 ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
