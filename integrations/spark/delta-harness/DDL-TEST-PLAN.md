@@ -252,18 +252,18 @@ Repository-layer (needs the control-plane extension — see Phase 27):
       — the +1 column changes INSERT arity. That constraint is itself a finding: on an evolved schema,
       positional full-column INSERT breaks (no null-fill), consistent with the `insert.explicitColumns` bug.
 
-## Phase 24b — Encryption — ◻ NOT TESTABLE in-repo (documented finding, not a case)
-A repo-wide search finds **no encryption implementation at all** — no `EncryptionManager`,
-`KeyManagementClient`, parquet crypto factory, interface, abstract hook, or mock (only
+## Phase 24b — Encryption — 🐛 tagged SKIP (asserts intended behavior; plugin private)
+The KMS plugin is external/private — a repo-wide search finds **no encryption implementation** (no
+`EncryptionManager`, `KeyManagementClient`, parquet crypto factory, interface, hook, or mock; only
 `DummyTokenInterceptor` (auth) and `IcebergDataUtils` (Iceberg's stock `EncryptedOutputFile` writer
-type, which wraps plaintext). The KMS plugin is entirely external/private. So there is **nothing
-in-repo to exercise** — asserting "files are plaintext" only confirms the absence (trivially true
-with nothing encrypting the bytes), so it is **not a test** and was removed.
-- Documented as a finding: OSS default is unencrypted, silently, with the `encryption()` hook un-wired.
-- **Plugin contract** the private KMS plugin must satisfy (for a future private-plugin harness):
-  override `encryption()` / wire a `KeyManagementClient` or set `parquet.crypto.factory.class`;
-  then encryption-ON is testable (write ciphertext, fail to read without a key, round-trip with one) —
-  mirrors the external replication-mover contract.
+type, which wraps plaintext)).
+- [🐛] `ddl.encryption.active`: with encryption configured, the data file must **NOT** be readable as
+  plaintext parquet (magic ≠ `PAR1`). In OSS the `encryption()` hook is un-wired so the file IS
+  plaintext and this would fail — **tagged in `Plan.knownBugs`, reports SKIP** until the private plugin
+  is present. Unskip to validate encryption-ON. (Asserts what *should* happen, not the OSS absence.)
+- **Plugin contract** for a future private-plugin harness: override `encryption()` / wire a
+  `KeyManagementClient` or set `parquet.crypto.factory.class`; then encryption-ON is testable (write
+  ciphertext, fail to read without a key, round-trip with one) — mirrors the external replication-mover contract.
 
 ---
 

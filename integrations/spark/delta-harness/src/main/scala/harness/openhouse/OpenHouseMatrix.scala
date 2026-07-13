@@ -1726,11 +1726,26 @@ object Scenarios {
     "ddl.repl.tableTypeImmutable"      -> ddlReplTableTypeImmutable
   )
 
-  // NOTE: encryption has NO in-repo implementation to test. A repo-wide search finds no
-  // EncryptionManager / KeyManagementClient / parquet crypto factory / interface / mock — the KMS
-  // plugin is entirely external/private. Asserting "files are plaintext" only confirms the absence
-  // (trivially true with nothing to encrypt the bytes), so it is not a real test. Encryption is
-  // documented as a finding + plugin contract in DDL-TEST-PLAN.md / AUDIT-FINDINGS.md, not a case.
+  // ── DDL Phase 24b: encryption — asserts the INTENDED behavior, tagged SKIP in OSS ─────────────
+  // The KMS plugin is external/private (a repo-wide search finds no EncryptionManager /
+  // KeyManagementClient / crypto factory / interface / mock). This test asserts what SHOULD happen —
+  // with encryption configured, the data file must NOT be readable as plaintext parquet. In OSS the
+  // hook is un-wired so files are plaintext and this would fail; it is tagged in Plan.knownBugs and
+  // reports SKIP until the private plugin is present (then unskip to validate encryption-ON).
+  val ddlEncryptionActive: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
+        s"'write.format.default'='parquet', 'encryption.key-id'='k1', 'write.metadata.encryption.gcm-key-id'='k1')")()
+      .insert(3)()
+      .check("ddl.encryption.active") { view =>
+        val filePath = view.spark.sql(s"SELECT file_path FROM ${view.table}.files LIMIT 1").collect()(0).getString(0).stripPrefix("file:")
+        val head = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(filePath)).take(4))
+        assert(head != "PAR1", s"encryption not in force — data file is plaintext parquet (magic=$head); requires the private KMS plugin")
+      }
+
+  val ddlEncryptionOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.encryption.active" -> ddlEncryptionActive
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1746,7 +1761,9 @@ object Plan {
     "nested.deleteByNestedField" ->
       "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md",
     "ddl.renameColumn" ->
-      "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md"
+      "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md",
+    "ddl.encryption" ->
+      "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -1802,6 +1819,7 @@ object Plan {
     val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlTagAcl       = Scenarios.ddlTagAclFeatureOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlEncryption   = Scenarios.ddlEncryptionOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     // Phase 24 prep multipliers (full DML cross). Ordered prep × all operations; evolved prep ×
     // delete/update/read only (ADD COLUMN changes INSERT arity, breaking full-column inserts).
@@ -1830,7 +1848,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
