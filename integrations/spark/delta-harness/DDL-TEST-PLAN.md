@@ -212,7 +212,8 @@ the control-plane track is opted in.
 ## Phase 23 — Replication / table-type contract  (N + finding, bounded) — NEW
 SQL-reachable (data-plane):
 - [ ] `SET/UNSET POLICY (REPLICATION=…)` round-trip: destination upper-cased, default interval `1D`,
-      cron derived; bad interval format → parse N
+      cron derived; **finding:** malformed interval (`'5X'`) → uncaught `NumberFormatException` → **HTTP
+      500** (should be a typed 400; `"3X"` silently accepted as daily) — see `AUDIT-FINDINGS.md` B#2
 - [ ] RTAS while replication enabled → `RTAS_DISABLED` naming "replication" (typed N — OpenHouse's own gap)
 - [ ] REPLICA_TABLE create without valid `openhouse.tableUUID` → typed N
 - [ ] `isTableReplicated=true` create without sane `last-updated-ms` (missing / future) → typed N
@@ -276,26 +277,30 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 These two run ACROSS the phases above rather than as a numbered phase. They produce **findings and
 recommendations**, and each concrete instance becomes a test assertion where feasible.
 
-## Audit A — Missing guards (where an op breaks the table but isn't blocked)
-The RTAS-while-{WAP,replication} block (`validateReplaceTable`) is the model: a diligent engineer
-rejected an op that would corrupt the table. **Wherever an incompatible op would break the table, a
-block should exist.** Call out the gaps (in flight; from the missing-guard recon):
-- [ ] source-side partition/clustering change on a replication-enabled table (skipped via
-      `skipEligibilityCheck` → silent replica divergence) — should it be blocked?
-- [ ] source-side snapshot-expiration / orphan-file-deletion vs. a replica that still references the
-      files (dangling refs, no existence validation) — ordering/guard gap
-- [ ] any WAP / branch / format-version / rename edge that reaches mutation without a guard
-- For each gap: op → why it breaks the table → severity → recommend block-vs-handle. Each becomes a
-  **finding** (and, where a block *does* exist, a negative test asserting it).
+Both audits are complete — full results, with file:line and severity, are in **`AUDIT-FINDINGS.md`**.
+Headlines:
 
-## Audit B — Error-message readability (SQL-noob test; a stacktrace is "dumb")
-Every rejection a user can hit should read clearly and name the fix. Grade each message
-**GOOD** (clear + actionable, names table + remedy) / **MEH** (correct but jargony) / **BAD**
-(stacktrace / `[INTERNAL_ERROR]` / NPE / HTTP 500 / cryptic). The negative tests already assert a
-message substring — extend them to also **assert the message is not a raw stacktrace/internal error**,
-and file every BAD/MEH message as a **finding** with a suggested wording. Known BAD to confirm: the
-nested-field `DELETE` optimizer NPE (`[INTERNAL_ERROR] … NullPointerException`) — already tagged in
-`BUGS.md`; the readability angle makes it a message-quality finding too. (Audit in flight.)
+## Audit A — Missing guards (where an op breaks the table but isn't blocked) → `AUDIT-FINDINGS.md`
+Model guard: RTAS-while-{WAP,replication}. Seven gaps found (G1–G7). Highlights:
+- **G2 (concrete bug, file it):** RTAS/REPLACE on a **locked** table is not blocked — the replace
+  branches skip the `isTableLocked → LOCKED_TABLE_OPERATION` check. One-line RTAS-guard analogue.
+- **G1 (highest severity):** no existence/ordering guard between source-side expiration/OFD and the
+  verbatim replica snapshot copy → dangling refs (commit path does zero `exists()` validation).
+- **G4:** `write.wap.enabled`/`replace.enabled` are free-toggle user props → disabling WAP strands
+  staged snapshots. **G3/G7:** `skipEligibilityCheck` is an all-or-nothing bypass on the replica path.
+- Where a block already exists → a negative test asserts it; where it's missing → a finding + recommendation.
+
+## Audit B — Error-message readability (SQL-noob test; a stacktrace is "dumb") → `AUDIT-FINDINGS.md`
+- **Systemic S1 (highest leverage):** the java client wraps a 400 as `"400 , {full JSON body incl. a
+  6000-char stacktrace field}"` — even GOOD server messages reach the user buried in Java frames.
+  Surfacing only `ErrorResponseBody.message` upgrades nearly every 4xx at once.
+- **Systemic S2:** the catch-all 500 is `exception.toString()` → bare `NullPointerException` etc.
+- **Worst offenders:** nested-field DELETE `[INTERNAL_ERROR] NPE`; malformed replication interval →
+  uncaught `NumberFormatException` **500** (not a clean 400 — corrects Phase 23); commit 5xx →
+  `CommitStateUnknownException(rawBody)`; DROP/RENAME COLUMN dump full `Schema.toString()` twice.
+- **GOOD tier** (RTAS/locked/validator-bounds messages) is the bar to raise the BAD tier to.
+- **Harness action:** extend each negative to also **assert the message is not a raw
+  stacktrace/`[INTERNAL_ERROR]`/500** (a readability regression guard).
 
 ---
 **Execution protocol** (same as DML): add a phase, run it; each case passes or is a tagged known-bug
