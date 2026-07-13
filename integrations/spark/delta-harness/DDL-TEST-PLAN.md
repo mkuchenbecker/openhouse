@@ -10,6 +10,13 @@ alternate _preparation_** — it changes the starting state that every DML opera
 against. Crossed naively, one DDL preparation multiplies the entire 660-case DML matrix. This plan
 exists so that multiplication is **deliberate and budgeted**, not accidental.
 
+**Sizing philosophy (updated):** the goal is coverage, not case-minimization. **Cross it all once**
+(ceiling ~30k cases — 100k is too far, 30k is fine), **measure the suite wall-time**, then
+**recommend what is worth maintaining** and prune from evidence rather than pre-emptively. When a
+case fails, fix it in a **tight inner loop** — run the single failing case id (the harness AND-filters
+on id, a slice is ~25s) — never re-run the full suite to debug one case. Full-suite time is recorded
+in `VERIFIED-RUN-openhouse.txt` so we can see the outer-loop cost and keep it honest.
+
 ## Cross-budget policy (READ FIRST — this is what keeps 600 from becoming 60,000)
 
 Every DDL test is exactly one of six **roles**, ordered by blast radius:
@@ -21,10 +28,11 @@ Every DDL test is exactly one of six **roles**, ordered by blast radius:
 - **P — Preparation multiplier** (evolved starting state DML runs on). **Does NOT cross the full DML
   matrix** — crosses a fixed **smoke slice** `{delete.byPredicate, update.byPredicate, merge.upsert,
   insert.append, read.projection}` (5 ops) × `{unpartitioned/parquet, partitioned/parquet}` ≈ 10.
-- **S — Substrate flag** (a property that changes the physical path for _every_ operation). MoR is
-  the only real one in OSS OpenHouse and it is already done (264 cases). **Encryption and replication
-  were investigated as candidates and are NOT substrate flags** (see recon findings below) — so no new
-  S multiplier exists. An S flag that claims to be on but changes nothing is itself a finding.
+- **S — Substrate flag** (a property that changes the physical path for _every_ operation): MoR
+  (done, 264 cases), and — pending the in-code recon — **encryption** (treated as must-work, as
+  critical as RTAS: if enabled it must round-trip under every operation) and **replication** (an
+  async file-based copy whose invariants DDL can break). Each S flag gets a full or near-full cross,
+  not a smoke slice. An S flag that claims to be on but changes nothing is itself a finding.
 - **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. **RTAS is the one F**,
   and it comes _before_ the branch mega-axis.
 - **X — Cross-cutting mega-axis: WAP / branching** (largest, reserved for **last, after RTAS**).
