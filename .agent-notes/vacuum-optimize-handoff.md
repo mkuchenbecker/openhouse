@@ -124,8 +124,10 @@ Key files (paths on the Spark branches):
 `integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/VacuumTestSpark3_5.java`
 — extends `OpenHouseSparkITest` (real local server + auth), mirrors `BranchTestSpark3_5`. Compiles
 against stock Spark (VACUUM is a SQL string); needs a **VACUUM-carrying Spark 3.5 at runtime**.
-To run: build the 3.5 VACUUM branch → `publishToMavenLocal` → point the itest module's
-`sparkVersion` at that build → `./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test --tests '*VacuumTestSpark3_5'`.
+It is annotated **`@Disabled`** so OpenHouse CI (which builds stock spark-sql 3.5.2) stays green
+instead of failing on the `VACUUM` `ParseException`. To run: build the 3.5 VACUUM branch →
+`publishToMavenLocal` → point the itest module's `sparkVersion` at that build → **remove the
+`@Disabled`** → `./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test --tests '*VacuumTestSpark3_5'`.
 
 ## 7. Current state / next steps
 
