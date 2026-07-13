@@ -262,22 +262,29 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 
 ---
 
-# Control-plane track (REST + Jobs) — GATED on the harness-extension decision
+# Control-plane track — maintenance is CALL ops (done); lock/undrop are REST-only (gated on stack discussion)
 
-## Phase 25 — Table lock enforcement matrix  (B + N) — NEW
+**Reframed (per direction):** maintenance is **operations, not jobs** — jobs merely orchestrate the
+Iceberg `CALL` procedures, which are reachable directly from Spark SQL. So Phase 27 moved to the
+data-plane track and is **green**. Only **lock** and **undrop** are genuinely REST-only; whether to
+build a REST client is under discussion (the harness embeds `OpenHouseLocalServer`, so a local REST
+call may be cheap — see the discussion).
+
+## Phase 25 — Table lock enforcement matrix  (B + N) — REST-only, pending stack discussion
 - [ ] lock via REST → update / rename / GRANT on the locked table rejected (`LOCKED_TABLE_OPERATION` /
       `GRANT_ON_LOCKED_TABLES`, typed); read requires `LOCK_ADMIN`; unlock restores mutability
+      (also exercises the G2 lock-on-replace bypass finding, if REST is wired)
 
-## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — NEW
+## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — REST-only, pending stack discussion
 - [ ] drop (soft) → table appears in soft-deleted list → restore → loads with identical schema/rows
 - [ ] restore onto an in-use name → `AlreadyExistsException`; purge → gone; hard-vs-soft default per drop path
 
-## Phase 27 — Maintenance jobs (state-changing control-plane ops)  (B) — NEW
-- [ ] snapshot-expiration → old snapshots dropped, time-travel reachability shrinks
-- [ ] data-compaction (`RewriteDataFiles`) → file count/layout changes, new snapshot, rows preserved
-- [ ] retention → rows past the retention window deleted; orphan-file deletion → dangling files removed
-- [ ] expiration/OFD on a source is safe for the replica — it replicates as a snapshot in the walk
-      (not a dangling-ref break; G1 withdrawn)
+## Phase 27 — Maintenance OPERATIONS (Iceberg `CALL` procedures, not jobs) — ✅ green — MOVED to data-plane
+- [x] `expire_snapshots(older_than => TIMESTAMP '2999…', retain_last => 1)` → old snapshot dropped
+      (snaps 2→1, time-travel reachability shrinks), current data preserved
+- [x] `rewrite_data_files` (compaction) → runs, rows preserved
+- [x] `remove_orphan_files(older_than => TIMESTAMP '2020…')` → runs (24h-interval safety guard needs a
+      past ts), rows preserved. Note: `now()` is rejected in a CALL arg (`IcebergParseException`) — use a literal.
 
 ---
 

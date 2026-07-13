@@ -1319,6 +1319,39 @@ object Scenarios {
     "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot
   )
 
+  // ── Maintenance OPERATIONS (Iceberg CALL procedures; jobs merely orchestrate these) ──────────
+  // SE / OFD / compaction are stored procedures, reachable from Spark SQL like rollback/set_current.
+  // Each mutates physical state; we assert the current DATA is preserved and observe the metadata delta.
+  val maintenanceExpireSnapshots: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("maintenance.expireSnapshots") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+    } { view =>
+      assert(view.after.size == 5, "expire_snapshots changed the current data")
+      assert(view.snapshotsAfter < view.snapshotsBefore, s"expire did not drop a snapshot: ${view.snapshotsBefore} -> ${view.snapshotsAfter}")
+    }
+
+  val maintenanceRewriteDataFiles: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("maintenance.rewriteDataFiles") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}')")
+    } { view =>
+      assert(view.after.size == 5, "compaction changed rows")                          // rows preserved
+    }
+
+  val maintenanceRemoveOrphanFiles: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("maintenance.removeOrphanFiles") { (spark, table) =>
+      // older_than must be ≥24h in the past (a safety guard); a far-past ts is a valid no-op that
+      // still exercises the procedure end-to-end without corrupting live files.
+      spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
+    } { view =>
+      assert(view.after.size == 5, "orphan removal changed rows")
+    }
+
+  val maintenance: List[(String, TableTest[CoreTable.type])] = List(
+    "maintenance.expireSnapshots"  -> maintenanceExpireSnapshots,
+    "maintenance.rewriteDataFiles" -> maintenanceRewriteDataFiles,
+    "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles
+  )
+
   // ── negative / contract tests ───────────────────────────────────────────────────────────
   // Create + seed a valid CoreTable, then assert the bad operation is rejected.
   private def coreNegative(label: String)(bad: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
@@ -1775,6 +1808,7 @@ object Plan {
     // Time travel + restore/rollback (self-contained pipelines, parquet).
     val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
@@ -1812,7 +1846,7 @@ object Plan {
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
-      ddlPrepOrdered ++ ddlPrepEvolved
+      maintenance ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
