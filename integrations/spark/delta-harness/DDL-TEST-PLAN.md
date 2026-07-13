@@ -212,8 +212,9 @@ the control-plane track is opted in.
       SET/UNSET POLICY (REPLICATION=({destination:'…'})) round-trip
 - [x] negatives (GOOD-tier messages): history `MAX_AGE`=5D → `BadRequestException` "max age must be
       between 1 to 3 days"; `VERSIONS`=200 → "must be between 2 to 100 versions"
-- [ ] follow-ups: RETENTION on a time-partitioned table + granularity/pattern negatives; replication
-      bad-interval (→ 500 finding, AUDIT-FINDINGS B#2)
+- [x] RETENTION on a time-partitioned (`datepartition`) table `= 30d ON COLUMN datepartition WHERE
+      pattern = 'yyyy-MM-dd-HH'` → stored in the policies blob
+- [ ] follow-ups: retention granularity/pattern negatives; replication bad-interval (→ 500 finding, AUDIT-FINDINGS B#2)
 
 ## Phase 21 — Clustering columns  (B + N) — ◻ largely subsumed by Phase 7
 - OpenHouse "clustering" columns are materialized as identity/`bucket`/`truncate` **partition-spec**
@@ -251,11 +252,10 @@ Repository-layer (needs the control-plane extension — see Phase 27):
       — the +1 column changes INSERT arity. That constraint is itself a finding: on an evolved schema,
       positional full-column INSERT breaks (no null-fill), consistent with the `insert.explicitColumns` bug.
 
-## Phase 24b — Encryption (OSS plaintext-default path; KMS plugin private → out of scope)  (N + finding) — NEW
-- [ ] set `write.metadata.encryption.*` / `parquet.encryption.*` / `encryption.key-id` on CREATE/ALTER →
-      stored as inert user props, no error (OSS has no crypto wiring)
-- [ ] **finding:** written `.parquet` (magic `PAR1`) + `metadata.json` are **plaintext on disk**, readable
-      with no key material configured — OSS default is unencrypted
+## Phase 24b — Encryption (OSS plaintext-default path; KMS plugin private → out of scope)  (N + finding) — ✅ green
+- [x] create with `encryption.key-id` / `write.metadata.encryption.gcm-key-id` set → table round-trips
+      with **no key configured**, and the on-disk data file starts with the plaintext parquet magic
+      `PAR1` — proving no encryption is in force (OSS has no crypto wiring)
 - [ ] document the **plugin contract** the private KMS plugin must satisfy (override `encryption()` /
       wire a `KeyManagementClient` or `parquet.crypto.factory.class`) so a future private-plugin harness
       can drive encryption-ON — mirrors the external replication-mover contract

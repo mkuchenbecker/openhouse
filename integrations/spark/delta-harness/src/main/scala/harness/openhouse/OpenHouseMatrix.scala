@@ -1591,10 +1591,19 @@ object Scenarios {
         assert(e.getMessage.contains("must be between 2 to 100 versions"), s"msg: ${e.getMessage.take(160)}")
       }()
 
+  // Retention on a (string) time-partitioned column requires a column pattern (a valid DateTimeFormatter).
+  val ddlPolicyRetention: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='parquet')")().insert(3)()
+      .sql("ddl.policy.retention")(t => s"ALTER TABLE $t SET POLICY (RETENTION = 30d ON COLUMN datepartition WHERE pattern = 'yyyy-MM-dd-HH')") { view =>
+        assert(policiesBlob(view).toLowerCase.contains("retention") || policiesBlob(view).contains("30"),
+          s"retention policy not stored: ${policiesBlob(view)}")
+      }
+
   val ddlPolicyOperations: List[(String, TableTest[CoreTable.type])] = List(
     "ddl.policy.sharing"               -> ddlPolicySharing,
     "ddl.policy.history"               -> ddlPolicyHistory,
     "ddl.policy.replication"           -> ddlPolicyReplicationRoundTrip,
+    "ddl.policy.retention"             -> ddlPolicyRetention,
     "ddl.policy.neg.historyMaxAge"     -> ddlPolicyNegHistoryMaxAge,
     "ddl.policy.neg.historyVersions"   -> ddlPolicyNegHistoryVersions
   )
@@ -1683,6 +1692,26 @@ object Scenarios {
     "ddl.featureFlag.distributionMode" -> ddlFeatureDistributionMode,
     "ddl.repl.tableTypeImmutable"      -> ddlReplTableTypeImmutable
   )
+
+  // ── DDL Phase 24b: encryption (OSS has no crypto wiring → props inert, data plaintext on disk) ─
+  // The KMS plugin is private/external; in OSS the encryption() hook is un-wired, so encryption props
+  // are inert and files are plaintext. We assert both: the table round-trips with encryption props set
+  // AND no key configured, and the on-disk data file starts with the plaintext parquet magic `PAR1`.
+  val ddlEncryptionPlaintext: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
+        s"'write.format.default'='parquet', 'encryption.key-id'='k1', 'write.metadata.encryption.gcm-key-id'='k1')")()
+      .insert(3)()
+      .check("ddl.encryption.plaintext") { view =>
+        assert(view.after.size == 3, "table with encryption props set did not round-trip (no key configured)")
+        val filePath = view.spark.sql(s"SELECT file_path FROM ${view.table}.files LIMIT 1").collect()(0).getString(0).stripPrefix("file:")
+        val head = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(filePath)).take(4))
+        assert(head == "PAR1", s"data file is not plaintext parquet (magic=$head) — encryption unexpectedly active?")
+      }
+
+  val ddlEncryptionOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.encryption.plaintext" -> ddlEncryptionPlaintext
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1753,6 +1782,7 @@ object Plan {
     val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlTagAcl       = Scenarios.ddlTagAclFeatureOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlEncryption   = Scenarios.ddlEncryptionOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     // Phase 24 prep multipliers (full DML cross). Ordered prep × all operations; evolved prep ×
     // delete/update/read only (ADD COLUMN changes INSERT arity, breaking full-column inserts).
@@ -1781,7 +1811,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
