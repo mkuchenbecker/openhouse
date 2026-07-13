@@ -1,21 +1,37 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1215 cases: 1194 passed, 21 skipped (3 tagged bugs), 0 failed.
+1231 cases: 1208 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
 
-Full-suite wall-time: 879s (~14.6 min, fresh classpath) for 1215 cases → ~0.6s/case + ~120s fixed
-startup (gradle resolve + Scala compile + embedded server + Spark). A cached classpath (default;
-FORCE_CP=1 to refresh) drops a small slice to ~40s. The full run stays well under 1h — a single-process
-CI/final-step artifact; day-to-day iteration is on single-id slices.
+Full-suite wall-time: ~879s baseline (~14.6 min, fresh classpath) for the prior 1215-case run →
+~0.6s/case + ~120s fixed startup (gradle resolve + Scala compile + embedded server + Spark). A cached
+classpath (default; FORCE_CP=1 to refresh) trims the fixed startup; the +16 cases add only a few seconds
+of test time. The full run stays well under 1h — a single-process CI/final-step artifact; day-to-day
+iteration is on single-id slices.
 
-Composition now includes the DDL surface (DDL-TEST-PLAN.md): schema evolution (ADD COLUMN, rename,
+Composition includes the DDL surface (DDL-TEST-PLAN.md): schema evolution (ADD COLUMN, rename,
 type-widen), table properties (reserved-key rejection + forced-override findings), sort order, rename
 table, namespace negatives, policy DDL (retention/history/sharing/replication), CTAS/RTAS contract
 (incl. RTAS⊕replication), column tags + GRANT/REVOKE ACL, and the Phase-24 preparation multipliers
 (ordered-table × all DML = 318; evolved-schema × delete/update/read = 174).
 
-Tagged bugs (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
-ddl.renameColumn (RENAME COLUMN silent no-op). OpenHouse audit findings (missing guards +
-error-message readability) tracked in AUDIT-FINDINGS.md.
+Plus the control-plane shim (REST to the embedded OpenHouseLocalServer): lock enforcement
+(control.lock.enforcement — POST /lock rejects Spark UPDATE, DELETE /lock re-enables); undrop lifecycle
+tagged SKIP (embedded soft-delete repo is a stub — REST-FIDELITY-EVAL.md).
+
+Plus the branching/WAP axis (BRANCHING-PLAN.md, format-agnostic → parquet only, 9 cases): direct branch
+isolation, spark.wap.branch conf routing, WAP stage→cherrypick publish, DDL-on-branch leak-to-main
+characterization (finding G8), branch DML isolation, CREATE TAG / DROP BRANCH (both supported via generic
+ref-sync), and WAP negatives (both-id-and-branch, insert-into-nonexistent-branch).
+
+Also folded in the DML-after-DDL fixes: distributionMode / formatVersionForced now write+read a row so
+the flag/version is exercised; orderedByMulti asserts the multi-column ordered write; grantShared and the
+policy.{sharing,history,retention} tests now read data back after the DDL.
+
+Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
+ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
+intended behavior, skipped), control.undrop (embedded soft-delete stub — REST-FIDELITY-EVAL.md).
+OpenHouse audit findings (missing guards incl. G8 branch-leak + error-message readability) tracked in
+AUDIT-FINDINGS.md.
 
 --- prior baseline (DML only) ---
 660 cases: 651 passed, 9 skipped (2 tagged bugs), 0 failed. 597s wall.
