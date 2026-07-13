@@ -174,12 +174,13 @@ the control-plane track is opted in.
       Recon predicted a rejection; reality is a silent failure (client drops the change pre-server).
 - [ ] follow-up: `DROP COLUMN` on a nested field (needs NestedTable)
 
-## Phase 14 — Table properties + metadata retention  (B + N + findings)
-- [ ] user key set→read-back→unset (B); reserved `policies`/`openhouse.tableType` set → typed N
-- [ ] **finding:** `format-version=1` → read-back 2; `delete-after-commit.enabled` forced to cluster default
-- [ ] honored-if-set: `write.format.default=avro`, `previous-versions-max=5` → read-back matches
-- [ ] metadata-version retention: old `metadata.json` pruned to `previous-versions-max` (B)
-- [ ] tuning: retry-wait / compression codec accepted, table still round-trips (assert-once)
+## Phase 14 — Table properties + metadata retention  (B + N + findings) — ✅ 4/4 green (initial)
+- [x] user key set→read-back→unset (B)
+- [x] reserved `openhouse.tableUUID` set → typed N (`BadRequestException` "restriction"). **Finding:**
+      `policies` set throws a client-side Gson parse error instead (AUDIT-FINDINGS B).
+- [x] **finding confirmed:** `format-version=1` → read-back **2** (forced); `previous-versions-max=7` **honored**
+- [ ] follow-ups: `delete-after-commit.enabled` forced; `write.format.default=avro` honored; metadata.json
+      pruning; tuning props accept-once
 
 ## Phase 15 — Feature-flag properties  (B)
 - [ ] `write.distribution-mode=range` vs `none` observable in write layout (light)

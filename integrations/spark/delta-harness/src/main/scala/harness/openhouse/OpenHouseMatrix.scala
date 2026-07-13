@@ -1423,6 +1423,57 @@ object Scenarios {
     "ddl.neg.narrowType" -> ddlNegNarrowType,
     "ddl.neg.setNotNull" -> ddlNegSetNotNull
   )
+
+  // ── DDL Phase 14: table properties (user keys, reserved-key rejection, forced-override findings) ─
+  // Self-contained pipelines (parquet) — property behavior is layout-invariant. `tableProps` reads
+  // back via SHOW TBLPROPERTIES.
+  private def tableProps(spark: SparkSession, table: String): Map[String, String] =
+    spark.sql(s"SHOW TBLPROPERTIES $table").collect().toSeq.map(r => r.getString(0) -> r.getString(1)).toMap
+
+  private def propsCreate(label: String, tblprops: String)(check: StepView[CoreTable.type] => Unit): TableTest[CoreTable.type] =
+    TableTest(Core).sql(label)(table =>
+      s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ($tblprops)")(check)
+
+  // user key round-trips: SET then read back, UNSET removes it
+  val ddlPropsUserRoundTrip: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("ddl.props.userRoundTrip.create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("ddl.props.userRoundTrip.set")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('my_key'='my_val')") { view =>
+        assert(tableProps(view.spark, view.table).get("my_key").contains("my_val"), "user prop not set")
+      }
+      .sql("ddl.props.userRoundTrip.unset")(t => s"ALTER TABLE $t UNSET TBLPROPERTIES ('my_key')") { view =>
+        assert(!tableProps(view.spark, view.table).contains("my_key"), "user prop not removed")
+      }
+
+  // reserved-key rejection: an openhouse.* key hits the clean server guard (ALTER_RESERVED_TBLPROPS →
+  // 400 → BadRequestException). NOTE: `policies` specifically is value-parsed on the CLIENT first, so
+  // SET('policies'='x') throws a Gson JsonParseException before the guard — recorded in AUDIT-FINDINGS.
+  val ddlPropsReservedOpenhouse: TableTest[CoreTable.type] =
+    coreNegative("ddl.props.reservedOpenhouse") { (spark, table) =>
+      val e = Check.intercept[BadRequestException](spark.sql(s"ALTER TABLE $table SET TBLPROPERTIES ('openhouse.tableUUID'='deadbeef')"))
+      assert(e.getMessage.toLowerCase.contains("restriction"), s"msg: ${e.getMessage.take(200)}")
+    }
+
+  // finding: format-version is forced to the cluster default (2) — a create with '1' still reads 2
+  val ddlPropsFormatVersionForced: TableTest[CoreTable.type] =
+    propsCreate("ddl.props.formatVersionForced", "'write.format.default'='parquet', 'format-version'='1'") { view =>
+      val fv = tableProps(view.spark, view.table).get("format-version")
+      assert(fv.contains("2"), s"expected forced format-version=2, got $fv (props=${tableProps(view.spark, view.table).keys.toSeq.sorted})")
+    }
+
+  // honored-if-set: previous-versions-max the user provides survives
+  val ddlPropsPreviousVersionsHonored: TableTest[CoreTable.type] =
+    propsCreate("ddl.props.previousVersionsHonored", "'write.format.default'='parquet', 'write.metadata.previous-versions-max'='7'") { view =>
+      val v = tableProps(view.spark, view.table).get("write.metadata.previous-versions-max")
+      assert(v.contains("7"), s"expected previous-versions-max=7, got $v")
+    }
+
+  val ddlPropsOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.props.userRoundTrip"          -> ddlPropsUserRoundTrip,
+    "ddl.props.reservedOpenhouse"      -> ddlPropsReservedOpenhouse,
+    "ddl.props.formatVersionForced"    -> ddlPropsFormatVersionForced,
+    "ddl.props.previousVersionsHonored"-> ddlPropsPreviousVersionsHonored
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1488,6 +1539,7 @@ object Plan {
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1500,7 +1552,8 @@ object Plan {
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
-      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++ ddlNegatives
+      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
+      ddlNegatives ++ ddlProps
   }
 }
 

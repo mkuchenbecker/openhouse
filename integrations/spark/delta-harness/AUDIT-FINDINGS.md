@@ -64,6 +64,15 @@ Grade for a non-expert SQL user: **GOOD** = names the table + the fix · **MEH**
   wrapped as `"400 , {body}"` per S1.)
 - **RENAME COLUMN is a SILENT NO-OP** (not a message issue but a silent-failure defect; see
   `BUGS.md`) — neither errors nor renames. The worst readability outcome is *no signal at all*.
+- **`SET TBLPROPERTIES('policies'='x')` throws a client-side Gson error**, not the clean reserved-key
+  guard: `com.…relocated.…gson.JsonParseException: OpenHouse: Cannot convert policies string to
+  policies object`. The `policies` value is parsed on the client before the `ALTER_RESERVED_TBLPROPS`
+  server guard runs, so the user gets a parser stacktrace instead of "policies is reserved". (Other
+  `openhouse.*` reserved keys DO hit the clean guard — verified `openhouse.tableUUID` → 400 "restriction".)
+- **Confirmed forced-override:** `CREATE … TBLPROPERTIES('format-version'='1')` reads back
+  `format-version=2` — the user's value is silently overridden by the cluster default (not an error,
+  not honored). `write.metadata.previous-versions-max` by contrast IS honored. The asymmetry is a
+  "you didn't get what you set" surprise.
 
 ### MEH (correct but could name the fix / drop a raw dump)
 reserved-tblprops (dumps a Gson diff), `ALTER_TABLE_TYPE` (no remedy named), GRANT-on-unshared (no
