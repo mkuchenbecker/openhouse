@@ -30,6 +30,7 @@ procedure resolution, argument binding, and catalog-side **auth** all happen on 
 | VACUUM on Spark master (5.0) | `mkuchenbecker/spark` @ `claude/iceberg-vacuum-semantics-43tl45` | PR #1, CI fully green, draft |
 | VACUUM on Spark 3.5 (primary target) | `mkuchenbecker/spark` @ `claude/iceberg-vacuum-semantics-43tl45-spark3.5` | PR #2, base `branch-3.5`, green except one known flake, draft |
 | OpenHouse integration test | `mkuchenbecker/openhouse` @ `claude/iceberg-vacuum-semantics-43tl45` | this branch |
+| OPTIMIZE on Spark 3.5 | `mkuchenbecker/spark` @ `claude/iceberg-optimize-semantics-43tl45-spark3.5` | PR #3, base = VACUUM branch, CI-verified green |
 
 The user's real deployment target is **Spark 3.5** (LinkedIn OpenHouse catalog uses a custom
 `com.linkedin.iceberg` 1.5.2.x on Spark 3.5). Master/5.0 is carried along but 3.5 is what matters.
@@ -137,6 +138,13 @@ instead of failing on the `VACUUM` `ParseException`. To run: build the 3.5 VACUU
 - [x] Iceberg dep + real e2e gated behind `iceberg-integration-tests` profile (3.5).
 - [x] OpenHouse integration question answered; `VacuumTestSpark3_5` written & pushed (this branch).
 - [ ] Run `VacuumTestSpark3_5` in an env with a VACUUM-carrying Spark 3.5 (OpenHouse CI / real infra).
-- [ ] Implement OPTIMIZE per `.agent-notes/optimize-plan.md` (3.5 first).
-- [ ] (Deferred) Optimize keyword spelling default = `REWRITE MANIFESTS`; output = silent like VACUUM.
+- [x] Implement OPTIMIZE per `.agent-notes/optimize-plan.md` (3.5 first). Done: PR #3
+      (`claude/iceberg-optimize-semantics-43tl45-spark3.5`, base = VACUUM branch). Surface
+      `OPTIMIZE <table> [REWRITE MANIFESTS]`; keyword spelling `REWRITE MANIFESTS`, output silent.
+      Verified locally on JDK 17 (14 tests: SQLKeywordSuite, SparkSqlParserSuite, OptimizeTableSuite,
+      SQLQueryTestSuite keywords, ThriftServer getSQLKeywords) AND CI-green on catalyst/hive-thriftserver
+      + sql-other/slow/extended + Scala 2.13 SBT + Java 11/17 Maven. Only red = the known
+      `StatisticsSuite` hive flake (hive module untouched by OPTIMIZE). `OptimizeIcebergSuite` (real
+      compaction e2e) is profile-gated (`iceberg-integration-tests`) and not run in default CI.
+- [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM (and now OPTIMIZE).
 - [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM.
