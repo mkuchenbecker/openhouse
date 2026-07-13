@@ -284,9 +284,14 @@ this is high-fidelity.
 - [ ] follow-ups: locked-rename rejection; G2 lock-on-replace bypass (RTAS on a locked table — the
       concrete bug); `LOCK_ADMIN`-gated read (needs auth → Docker/OPA, out of scope)
 
-## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — REST-only, pending stack discussion
-- [ ] drop (soft) → table appears in soft-deleted list → restore → loads with identical schema/rows
-- [ ] restore onto an in-use name → `AlreadyExistsException`; purge → gone; hard-vs-soft default per drop path
+## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — 🐛 tagged SKIP (two blockers; product gap)
+Sub-agent investigation (HTS-vs-H2) found undrop is not testable at fidelity in the embedded harness:
+1. the embedded `HouseTableRepository` is a `@Primary` in-memory **STUB** (`HouseTablesH2Repository`) —
+   a test would exercise the shim's own reimplementation, not real HTS logic;
+2. the public Tables `DELETE` **hard-codes `purge=true`**, so drop→soft-delete is unreachable via the
+   customer API in *any* environment (undrop is HTS-admin-only) — a **product finding** (AUDIT-FINDINGS C).
+- [🐛] `control.undrop.lifecycle` — intended `soft-drop → list → restore` flow, tagged SKIP. Real
+  fidelity needs an embedded HTS (`SpringH2HtsApplication`) + de-`@Primary`-ing the stub (REST-FIDELITY-EVAL.md).
 
 ## Phase 27 — Maintenance OPERATIONS (Iceberg `CALL` procedures, not jobs) — ✅ green — MOVED to data-plane
 - [x] `expire_snapshots(older_than => TIMESTAMP '2999…', retain_last => 1)` → old snapshot dropped

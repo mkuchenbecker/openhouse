@@ -48,6 +48,10 @@ object Rest {
     val r = client.send(base(ctx, path).DELETE().build(), HttpResponse.BodyHandlers.ofString())
     (r.statusCode(), r.body())
   }
+  def put(ctx: Ctx, path: String, body: String): (Int, String) = {
+    val r = client.send(base(ctx, path).PUT(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
   def get(ctx: Ctx, path: String): (Int, String) = {
     val r = client.send(base(ctx, path).GET().build(), HttpResponse.BodyHandlers.ofString())
     (r.statusCode(), r.body())
@@ -1402,8 +1406,32 @@ object Scenarios {
     } finally spark.sql(s"DROP TABLE IF EXISTS $table")
   }
 
+  // Undrop lifecycle — TAGGED SKIP (Plan.knownBugs). Not runnable at fidelity in the embedded harness:
+  // (1) the embedded HouseTableRepository is a @Primary in-memory STUB (HouseTablesH2Repository) — a
+  //     test here would exercise the shim's own reimplementation, not the real HTS soft-delete logic;
+  // (2) the public Tables DELETE hard-codes purge=true, so drop→soft-delete is unreachable via the
+  //     customer API in ANY environment (undrop is HTS-admin-only — a product finding).
+  // Real fidelity needs an embedded HTS (SpringH2HtsApplication) + de-@Primary-ing the stub. The body
+  // documents the intended list→restore flow for that future harness.
+  def controlUndropLifecycle(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_undrop"
+    val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(coreCreateParquet(table))
+    spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 3)}")
+    // (intended, once a real HTS soft-deletes the table:)
+    val (listStatus, listBody) = Rest.get(ctx, s"/v1/databases/$db/softDeletedTables")
+    assert(listStatus == 200 && listBody.contains(tbl), "soft-deleted table should be listed")
+    val (restoreStatus, _) = Rest.put(ctx, s"/v1/databases/$db/tables/$tbl/restore?deletedAtMs=0", "")
+    assert(restoreStatus >= 200 && restoreStatus < 300, "restore should succeed")
+    assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "restored table keeps its rows")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
   val controlPlane: List[(String, Ctx => Unit)] = List(
-    "control.lock.enforcement" -> controlLockEnforcement
+    "control.lock.enforcement"  -> controlLockEnforcement,
+    "control.undrop.lifecycle"  -> controlUndropLifecycle
   )
 
   // ── negative / contract tests ───────────────────────────────────────────────────────────
@@ -1817,7 +1845,9 @@ object Plan {
     "ddl.renameColumn" ->
       "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md",
     "ddl.encryption" ->
-      "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md"
+      "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md",
+    "control.undrop" ->
+      "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md"
   )
 
   def bugReason(id: String): Option[String] =

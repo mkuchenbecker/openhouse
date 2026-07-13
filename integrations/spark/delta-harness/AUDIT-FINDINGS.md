@@ -29,6 +29,20 @@ replication mechanism is sound; no dangling-ref race exists.)
 
 ---
 
+## Audit C — Reachability / product gaps (surfaced building the REST shim)
+- **Customer-facing undrop is not wired.** The public Tables `DELETE /v1/databases/{db}/tables/{t}`
+  hard-codes `purge=true` (`OpenHouseInternalRepositoryImpl.deleteById` → `catalog.dropTable(id, true)`),
+  so a customer DROP can never populate the soft-deleted store — in **any** environment (Docker
+  included). Soft-delete is reachable only via the internal HouseTables admin endpoint
+  (`DELETE /hts/tables?isSoftDelete=true`). The Tables API exposes `GET /softDeletedTables`, `PUT
+  /restore`, `DELETE /purge`, but nothing customer-facing feeds them. So `drop → undrop` is HTS-admin-only.
+- **The embedded harness uses a soft-delete STUB.** In `SpringH2TestApplication` the active
+  `HouseTableRepository` is a `@Primary` in-memory `HouseTablesH2Repository` (a HashMap
+  reimplementation), not the real `HouseTableRepositoryImpl`. So any undrop test against the embedded
+  server tests the shim's own logic, not production — hence `control.undrop` is tagged SKIP. Real
+  fidelity needs the embedded HTS (`SpringH2HtsApplication`, which runs the genuine soft-delete JPA
+  code) wired in with the stub de-`@Primary`-ed — a substantial harness restructure (REST-FIDELITY-EVAL.md).
+
 ## Audit B — Error-message readability (a stacktrace is "dumb")
 
 Grade for a non-expert SQL user: **GOOD** = names the table + the fix · **MEH** = correct but jargony
