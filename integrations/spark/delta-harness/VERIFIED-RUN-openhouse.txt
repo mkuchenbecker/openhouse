@@ -2,6 +2,11 @@
 
 660 cases: 651 passed, 9 skipped (2 tagged bugs), 0 failed.
 
+Full-suite wall-time: 597s (~10 min) — ~82s gradle classpath resolve + Scala compile, ~35s
+embedded-server + Spark startup, ~480s cases → ~0.73s/case marginal + ~120s fixed startup.
+Projection: ~5k cases ≈ 1h, ~8.5k ≈ 1.75h, ~30k ≈ 6h. Full run = nightly/CI artifact; iterate on
+single-id slices (and cache the classpath so a slice pays ~40s, not the ~120s fixed tax).
+
 Composition (behaviors × axes):
   - core DML operations (read/delete/update/merge/insert/overwrite) × 6 layouts
     {unpartitioned, partitioned} × {parquet, orc, avro}

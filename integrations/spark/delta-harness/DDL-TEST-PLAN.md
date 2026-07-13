@@ -12,10 +12,19 @@ exists so that multiplication is **deliberate and budgeted**, not accidental.
 
 **Sizing philosophy (updated):** the goal is coverage, not case-minimization. **Cross it all once**
 (ceiling ~30k cases — 100k is too far, 30k is fine), **measure the suite wall-time**, then
-**recommend what is worth maintaining** and prune from evidence rather than pre-emptively. When a
-case fails, fix it in a **tight inner loop** — run the single failing case id (the harness AND-filters
-on id, a slice is ~25s) — never re-run the full suite to debug one case. Full-suite time is recorded
-in `VERIFIED-RUN-openhouse.txt` so we can see the outer-loop cost and keep it honest.
+**recommend what is worth maintaining** and prune from evidence rather than pre-emptively.
+
+**Measured timing (660-case baseline = 597s wall):** ~82s gradle classpath resolve + Scala compile,
+~35s embedded-server + Spark startup, ~480s cases → **~0.73s / case marginal + ~120s fixed startup**.
+Projection: ~5k ≈ 1h · ~8.5k ≈ 1.75h · ~15k ≈ 3h · ~30k ≈ 6h. So the **full run is a nightly/CI
+artifact**, not an interactive loop.
+
+**Loop discipline (the reason we measured):** the inner loop is **startup-bound, not case-bound** —
+a single-id slice still pays the ~120s fixed tax (mostly the ~82s gradle re-resolve). So: (1) **cache
+the classpath** (`oh-cp.txt`) and skip the gradle step on unchanged deps → a slice drops to ~40s;
+(2) fix a failing case by running **only its id** (`run-openhouse.sh <case.id>`), never the full
+suite; (3) recompile-only when source changes. Full-suite wall-time is recorded in
+`VERIFIED-RUN-openhouse.txt` each run so the outer-loop cost stays visible and honest.
 
 ## Cross-budget policy (READ FIRST — this is what keeps 600 from becoming 60,000)
 
@@ -28,11 +37,13 @@ Every DDL test is exactly one of six **roles**, ordered by blast radius:
 - **P — Preparation multiplier** (evolved starting state DML runs on). **Does NOT cross the full DML
   matrix** — crosses a fixed **smoke slice** `{delete.byPredicate, update.byPredicate, merge.upsert,
   insert.append, read.projection}` (5 ops) × `{unpartitioned/parquet, partitioned/parquet}` ≈ 10.
-- **S — Substrate flag** (a property that changes the physical path for _every_ operation): MoR
-  (done, 264 cases), and — pending the in-code recon — **encryption** (treated as must-work, as
-  critical as RTAS: if enabled it must round-trip under every operation) and **replication** (an
-  async file-based copy whose invariants DDL can break). Each S flag gets a full or near-full cross,
-  not a smoke slice. An S flag that claims to be on but changes nothing is itself a finding.
+- **S — Substrate flag** (a property that changes the physical path for _every_ operation). In-code
+  recon settled the two candidates: **MoR is the only real substrate** (done, 264 cases). **Encryption
+  is ABSENT** in OSS OpenHouse — the `encryption()` hook is un-wired, files are plaintext on disk — so
+  it is not a substrate; it collapses to ~2 negatives + a plaintext-on-disk finding. **Replication's
+  data-mover is EXTERNAL** (not in-repo; the `REPLICATION` job is dead code here) and OpenHouse copies
+  snapshots verbatim with no path rewrite — so it is not a per-operation substrate either; it is a
+  bounded (~15) contract/negatives surface. No _new_ S multiplier exists; MoR remains the only one.
 - **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. **RTAS is the one F**,
   and it comes _before_ the branch mega-axis.
 - **X — Cross-cutting mega-axis: WAP / branching** (largest, reserved for **last, after RTAS**).
@@ -60,16 +71,19 @@ the current SQL-only harness cannot reach. So the work splits:
 `data-plane bounded (B/N) → S/P smoke preps → [control-plane track, if opted in] → RTAS (F) → WAP/branching (X)`.
 Each tier green before the next is spent.
 
-**Budgeted total (grounded in the recon; the two substrate axes shrank, not grew):**
+**Budgeted total (EXPANSIVE — cross-all-once, ~30k ceiling with headroom; ~0.73s/case → time in ()):**
 - Data-plane bounded B+N (schema, props+metadata-retention, sort, rename, CTAS/RTAS-contract,
-  namespace, policy, clustering, column-tags, ACL, replication-contract) ≈ **+115**
-- P smoke preps (schema-evolved, sort-ordered — encryption/replication preps **dropped**) ≈ **+20**
-- Control-plane track (lock / undrop / maintenance jobs) ≈ **+20** *(gated on the harness-extension decision)*
-- **RTAS full cross (F)** ≈ **+650**
-- **WAP/branching mega-axis (X)** ≈ **+150** (smoke-on-branch) … **up to ~+2,400** (full 3× cross)
+  namespace, policy, clustering, column-tags, ACL, replication-SQL, encryption-negatives) ≈ **+130**
+- **Preparations promoted to FULL DML cross** (each ≈ +660, not smoke): schema-evolved, sort-ordered ≈ **+1,320**
+- **RTAS full cross (F)** ≈ **+660**
+- Control-plane track (lock / undrop / maintenance × layouts / replication repository-layer) ≈ **+50** *(gated on the harness-extension decision)*
+- **WAP/branching mega-axis (X)** — re-run the combined surface on `{branch, staged}` ≈ **2× ≈ +5,700**
 
-Cumulative on the 660 DML baseline: **~795** (data-plane) → **~815** (+control-plane) → **~1,465**
-(+RTAS) → **~1,615 / up to ~3,900** (+branch). The branch axis is the only order-of-magnitude lever.
+Cumulative on the 660 DML baseline: **~790** data-plane bounded *(~11 min)* → **~2,110** +full-cross
+preps *(~35 min)* → **~2,770** +RTAS *(~45 min)* → **~2,820** +control-plane → **~8,500** +branch
+*(~1.75 h)*. Headroom to ~30k exists (branch × layouts, maintenance × matrix, WAP staging variants) if
+we want more; **~8.5k is the natural landing point, ~1.75 h full run.** The branch axis is the only
+order-of-magnitude lever and stays last.
 
 ## Gate #0 — OpenHouse support matrix (verified against source; ❓ = probe at runtime)
 
@@ -94,14 +108,24 @@ of a locked table (`LOCKED_TABLE_OPERATION`); REPLICA create without a valid `op
 `format-version` → cluster default (2); `write.metadata.delete-after-commit.enabled` → cluster default.
 Honored-if-set: `write.format.default`, `write.metadata.previous-versions-max`.
 
-**Recon findings that reshaped this plan:**
-- **Encryption: does not exist in OSS OpenHouse** (no KMS / Parquet modular encryption / column
-  encryption). Collapses to a single negative (encryption/KMS props ignored), not an axis.
-- **Replication is not a per-operation substrate.** Replica tables are written only by an external
-  cross-cluster job; user DML results are unchanged. It reduces to bounded negatives + policy
-  round-trips. Cross-cluster mechanics + `enable_tabletype` toggle are **out of scope** for a single
-  embedded server. Note: **OpenHouse's own tests do not cover the RTAS-while-replication rejection** —
-  a real gap we fill.
+**Recon findings that reshaped this plan (verified in code):**
+- **Encryption: ABSENT in OSS OpenHouse — proven by an un-wired hook, not just "not found".**
+  `OpenHouseInternalTableOperations extends BaseMetastoreTableOperations` overrides `io()` but **not
+  `encryption()`**, so it inherits Iceberg's no-op `PlaintextEncryptionManager`; no
+  `parquet.crypto.factory.class`, no KMS client, no storage-backend SSE. Files are plaintext on disk.
+  → ~2 **negatives** (encryption/KMS props stored inert; `.parquet`/`metadata.json` readable with no
+  key) + a **plaintext-on-disk finding**. Not a substrate. If encryption must be a real feature, the
+  repo has to add it (override `encryption()` + wire a KMS client / crypto factory).
+- **Replication: EXTERNAL data-mover, brittle raw-snapshot copy.** The copy+commit executor is **not
+  in-repo** — no `OperationTask` registers `OPERATION_TYPE=REPLICATION`, `JobsScheduler` throws
+  "Unsupported job type REPLICATION", no `ReplicationSparkApp`. Only the primary-side scheduling and
+  the destination **commit-acceptance** path exist. OpenHouse stores snapshots **verbatim** (no path
+  rewrite), so a replica carries **source-region absolute paths** — correctness depends on the
+  external mover staging files where they resolve. **DDL that breaks it:** source-side snapshot
+  expiration / retention / orphan-file-deletion delete files the replica's copied snapshot list still
+  references → **dangling refs, with no existence validation on commit**. → bounded ~15 cases,
+  SQL-reachable + repository-layer (see Phase 23 / 27); the RTAS-while-replication rejection is a gap
+  OpenHouse's own tests miss. Cross-cluster + `enable_tabletype` are out of scope for one server.
 - **Column tags (`SET TAG PII|HC`) and sharing are metadata/ACL-plane only** — they do NOT mask or
   alter query results. Test = round-trip + assert reads unaffected.
 - **Genuinely new axes:** clustering columns (separate from partitioning); table lock enforcement;
@@ -178,14 +202,31 @@ the control-plane track is opted in.
 - [ ] negatives: GRANT with sharing off → `GRANT_ON_UNSHARED_TABLES`; ❓ database-scoped GRANT/REVOKE
 - [ ] ❓ probe whether OSS `AuthorizationHandler` enforces (else degrade to parse+persist)
 
-## Phase 23 — Replication / table-type contract  (N, bounded) — NEW
+## Phase 23 — Replication / table-type contract  (N + finding, bounded) — NEW
+SQL-reachable (data-plane):
+- [ ] `SET/UNSET POLICY (REPLICATION=…)` round-trip: destination upper-cased, default interval `1D`,
+      cron derived; bad interval format → parse N
+- [ ] RTAS while replication enabled → `RTAS_DISABLED` naming "replication" (typed N — OpenHouse's own gap)
 - [ ] REPLICA_TABLE create without valid `openhouse.tableUUID` → typed N
 - [ ] `isTableReplicated=true` create without sane `last-updated-ms` (missing / future) → typed N
 - [ ] change `openhouse.tableType` on an existing table → `ALTER_TABLE_TYPE` typed N
 
-## Phase 24 — Data-plane preparation multipliers  (P — smoke slice)
-- [ ] `createSeedAddColumn(layout)` × smoke-slice × {unpart,part}/parquet — DML holds on an evolved schema
-- [ ] `createSeedOrdered(layout)` × smoke-slice × 2 layouts — DML holds under a sort order
+Repository-layer (needs the control-plane extension — see Phase 27):
+- [ ] REPLICA commit (base=REPLICA+clusterA, incoming=PRIMARY+clusterB) → skips eligibility, retains type
+- [ ] intermediate-schema replay is REPLICA-only; PRIMARY commit does not get `newIntermediateSchemas`
+- [ ] snapshots stored **verbatim** (no path rewrite) — proves the "no transformation" property
+- [ ] **finding:** replica commit referencing a missing file path is accepted with **no existence
+      validation** → a source-side expiration/OFD (Phase 27) would leave the replica with a dangling ref
+
+## Phase 24 — Data-plane preparation multipliers  (FULL DML cross — promoted from smoke per cross-all-once)
+- [ ] `createSeedAddColumn(layout)` × **all DML × all layouts** — DML holds on an evolved schema (~+660)
+- [ ] `createSeedOrdered(layout)` × **all DML × all layouts** — DML holds under a sort order (~+660)
+
+## Phase 24b — Encryption negatives  (N + finding) — NEW
+- [ ] set `write.metadata.encryption.*` / `parquet.encryption.*` / `encryption.key-id` on CREATE/ALTER →
+      stored as inert user props, no error
+- [ ] **finding:** written `.parquet` (magic `PAR1`) + `metadata.json` are **plaintext on disk**, readable
+      with no key material configured — proving no encryption is in force
 
 ---
 
@@ -203,6 +244,8 @@ the control-plane track is opted in.
 - [ ] snapshot-expiration → old snapshots dropped, time-travel reachability shrinks
 - [ ] data-compaction (`RewriteDataFiles`) → file count/layout changes, new snapshot, rows preserved
 - [ ] retention → rows past the retention window deleted; orphan-file deletion → dangling files removed
+- [ ] **replication-interaction finding:** expiration/OFD on a source deletes files a replica snapshot
+      list references (ties to Phase 23) — the concrete way DDL/maintenance breaks the external replica
 
 ---
 
