@@ -1589,6 +1589,48 @@ object Scenarios {
     "ddl.policy.neg.historyMaxAge"     -> ddlPolicyNegHistoryMaxAge,
     "ddl.policy.neg.historyVersions"   -> ddlPolicyNegHistoryVersions
   )
+
+  // ── DDL Phase 18: CTAS / RTAS ───────────────────────────────────────────────────────────
+  val ddlCtas: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.ctas") { (spark, table) =>
+        val tgt = s"${table}_ctas"
+        spark.sql(s"DROP TABLE IF EXISTS $tgt")
+        spark.sql(s"CREATE TABLE $tgt USING iceberg AS SELECT * FROM $table")
+        assert(spark.sql(s"SELECT count(*) FROM $tgt").collect()(0).getLong(0) == 3, "CTAS lost rows")
+        spark.sql(s"DROP TABLE IF EXISTS $tgt")
+      }()
+
+  val ddlRtasEnabled: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.rtas.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('replace.enabled'='true')")()
+      .step("ddl.rtas.enabled") { (spark, table) =>
+        spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table WHERE ${Core.long0.columnName} <= 2")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "RTAS did not replace")
+      }()
+
+  val ddlRtasDisabled: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.rtas.disabled") { (spark, table) =>
+        val e = Check.intercept[BadRequestException](spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table"))
+        assert(e.getMessage.contains("REPLACE TABLE AS SELECT is not enabled"), s"msg: ${e.getMessage.take(160)}")
+      }()
+
+  val ddlRtasReplicationConflict: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.rtas.repl.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('replace.enabled'='true')")()
+      .sql("ddl.rtas.repl.policy")(t => s"ALTER TABLE $t SET POLICY (REPLICATION = ({destination:'clusterA'}))")()
+      .step("ddl.rtas.replicationConflict") { (spark, table) =>
+        val e = Check.intercept[BadRequestException](spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table"))
+        assert(e.getMessage.contains("while replication is enabled"), s"msg: ${e.getMessage.take(160)}")
+      }()
+
+  val ddlCtasRtasOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.ctas"                     -> ddlCtas,
+    "ddl.rtas.enabled"             -> ddlRtasEnabled,
+    "ddl.rtas.disabled"            -> ddlRtasDisabled,
+    "ddl.rtas.replicationConflict" -> ddlRtasReplicationConflict
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1657,6 +1699,7 @@ object Plan {
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlMisc         = Scenarios.ddlMiscOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1670,7 +1713,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas
   }
 }
 

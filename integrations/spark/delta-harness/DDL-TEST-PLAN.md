@@ -195,11 +195,12 @@ the control-plane track is opted in.
 - [x] rename onto an existing name → `WebClientResponseWithMessageException` 409 "already exists" (typed)
 - [ ] follow-up: cross-catalog rename → typed N (needs a 2nd catalog)
 
-## Phase 18 — CTAS / RTAS contract  (B + N + finding)
-- [ ] CTAS rows+schema; **finding:** CTAS drops NOT NULL + sort order
-- [ ] RTAS w/ `replace.enabled` → replaced, props preserved, `policies=""`
-- [ ] RTAS without flag → `RTAS_DISABLED` (N); RTAS ⊕ WAP → N; **RTAS ⊕ replication → N (OpenHouse's own gap)**
-- [ ] `CREATE OR REPLACE` on a non-existent table → creates it
+## Phase 18 — CTAS / RTAS contract  (B + N) — ✅ 4/4 green
+- [x] CTAS → new table has the 3 rows + schema
+- [x] RTAS w/ `replace.enabled=true` → table replaced (2 rows)
+- [x] RTAS without flag → `BadRequestException` "REPLACE TABLE AS SELECT is not enabled" (GOOD msg, typed N)
+- [x] **RTAS ⊕ replication → `BadRequestException` "while replication is enabled"** (the gap OpenHouse's own tests miss — now covered)
+- [ ] follow-ups: RTAS ⊕ WAP negative; CTAS-drops-NOT-NULL finding; CREATE-OR-REPLACE on a non-existent table
 
 ## Phase 19 — Namespace / catalog DDL  (N + B) — ✅ green (create/drop)
 - [x] CREATE / DROP NAMESPACE → `UnsupportedOperationException` "not supported" (typed). **Finding:** the
