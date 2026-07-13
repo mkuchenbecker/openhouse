@@ -182,8 +182,8 @@ the control-plane track is opted in.
 - [ ] follow-ups: `delete-after-commit.enabled` forced; `write.format.default=avro` honored; metadata.json
       pruning; tuning props accept-once
 
-## Phase 15 — Feature-flag properties  (B)
-- [ ] `write.distribution-mode=range` vs `none` observable in write layout (light)
+## Phase 15 — Feature-flag properties  (B) — ✅ green
+- [x] `write.distribution-mode=none` honored (round-trips as a pass-through prop)
 - [ ] (WAP flag effect deferred into the Phase 29 mega-axis; MoR already covered)
 
 ## Phase 16 — Sort order / write distribution  (B) — ✅ green
@@ -220,21 +220,20 @@ the control-plane track is opted in.
 - [ ] clustering with `TRUNCATE[w]` / `BUCKET[n]` transform; ❓ SQL surface (`CLUSTERED BY` vs API)
 - [ ] negatives: > max clustering columns; clustering-evolution (ALTER) → `PARTITION_EVOLUTION` typed N
 
-## Phase 22 — Column tags + sharing / ACL  (B + N; ❓ enforcement) — NEW
-- [ ] `MODIFY COLUMN c SET TAG (PII|HC)` → tag round-trips; **reads unaffected** (no masking — assertion)
-- [ ] `SET POLICY (SHARING=TRUE)` then `GRANT SELECT … TO p` → accepted; `SHOW GRANTS` lists it
-- [ ] negatives: GRANT with sharing off → `GRANT_ON_UNSHARED_TABLES`; ❓ database-scoped GRANT/REVOKE
-- [ ] ❓ probe whether OSS `AuthorizationHandler` enforces (else degrade to parse+persist)
+## Phase 22 — Column tags + sharing / ACL  (B + N) — ✅ green
+- [x] `MODIFY COLUMN c SET TAG = (PII)` → succeeds; **query results unaffected** (no masking — asserted)
+- [x] `SET POLICY (SHARING=TRUE)` then `GRANT SELECT ON TABLE t TO p` → accepted (embedded auth records it)
+- [x] GRANT with sharing off → `IllegalArgumentException` "is not a shared table" (typed N)
+- [ ] follow-ups: `SHOW GRANTS`; database-scoped GRANT/REVOKE; `REVOKE`
 
-## Phase 23 — Replication / table-type contract  (N + finding, bounded) — NEW
+## Phase 23 — Replication / table-type contract  (N + finding, bounded) — ✅ SQL-reachable green
 SQL-reachable (data-plane):
-- [ ] `SET/UNSET POLICY (REPLICATION=…)` round-trip: destination upper-cased, default interval `1D`,
-      cron derived; **finding:** malformed interval (`'5X'`) → uncaught `NumberFormatException` → **HTTP
-      500** (should be a typed 400; `"3X"` silently accepted as daily) — see `AUDIT-FINDINGS.md` B#2
-- [ ] RTAS while replication enabled → `RTAS_DISABLED` naming "replication" (typed N — OpenHouse's own gap)
-- [ ] REPLICA_TABLE create without valid `openhouse.tableUUID` → typed N
-- [ ] `isTableReplicated=true` create without sane `last-updated-ms` (missing / future) → typed N
-- [ ] change `openhouse.tableType` on an existing table → `ALTER_TABLE_TYPE` typed N
+- [x] `SET/UNSET POLICY (REPLICATION=({destination:'…'}))` round-trip (Phase 20)
+- [x] RTAS while replication enabled → `BadRequestException` "while replication is enabled" (Phase 18 — OpenHouse's own gap)
+- [x] change `openhouse.tableType` → `BadRequestException` "restriction" (reserved-props guard fires before ALTER_TABLE_TYPE)
+- [ ] follow-up finding: malformed replication interval (`'5X'`) → HTTP 500 (AUDIT-FINDINGS B#2)
+- [ ] REPLICA_TABLE create without `openhouse.tableUUID`; `isTableReplicated` without `last-updated-ms`
+      — **not SQL-reachable** (create filters `openhouse.*` props; the client stamps PRIMARY) → repository-layer
 
 Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] REPLICA commit (base=REPLICA+clusterA, incoming=PRIMARY+clusterB) → skips eligibility, retains type

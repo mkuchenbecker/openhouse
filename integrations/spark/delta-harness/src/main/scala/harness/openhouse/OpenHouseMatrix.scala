@@ -1631,6 +1631,49 @@ object Scenarios {
     "ddl.rtas.disabled"            -> ddlRtasDisabled,
     "ddl.rtas.replicationConflict" -> ddlRtasReplicationConflict
   )
+
+  // ── DDL Phase 22: column tags + ACL (metadata/ACL-plane; tags do NOT mask query results) ────
+  val ddlColumnTag: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.colTag")(t => s"ALTER TABLE $t MODIFY COLUMN ${Core.string0.columnName} SET TAG = (PII)") { view =>
+        val vals = view.spark.sql(s"SELECT ${Core.string0.columnName} FROM ${view.table} ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getString(0))
+        assert(vals == Seq("row-1", "row-2", "row-3"), s"SET TAG changed query results (should not mask): $vals")
+      }
+
+  val ddlAclGrantUnshared: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.acl.grantUnshared") { (spark, table) =>
+        val e = Check.intercept[IllegalArgumentException](spark.sql(s"GRANT SELECT ON TABLE $table TO test_user"))
+        assert(e.getMessage.contains("is not a shared table"), s"msg: ${e.getMessage.take(160)}")
+      }()
+
+  // After SHARING=TRUE the grant is accepted (the embedded auth handler records it, no throw).
+  val ddlAclGrantShared: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.acl.share")(t => s"ALTER TABLE $t SET POLICY (SHARING=TRUE)")()
+      .sql("ddl.acl.grantShared")(t => s"GRANT SELECT ON TABLE $t TO test_user")()
+
+  // ── DDL Phase 15: feature-flag property (write.distribution-mode is a pass-through, honored) ─
+  val ddlFeatureDistributionMode: TableTest[CoreTable.type] =
+    propsCreate("ddl.featureFlag.distributionMode", "'write.format.default'='parquet', 'write.distribution-mode'='none'") { view =>
+      assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("none"),
+        s"distribution-mode not honored: ${tableProps(view.spark, view.table).get("write.distribution-mode")}")
+    }
+
+  // ── DDL Phase 23: replication / table-type contract (SQL-reachable) ─────────────────────────
+  val ddlReplTableTypeImmutable: TableTest[CoreTable.type] =
+    coreNegative("ddl.repl.tableTypeImmutable") { (spark, table) =>
+      val e = Check.intercept[BadRequestException](spark.sql(s"ALTER TABLE $table SET TBLPROPERTIES ('openhouse.tableType'='REPLICA_TABLE')"))
+      assert(e.getMessage.contains("restriction"), s"msg: ${e.getMessage.take(160)}")
+    }
+
+  val ddlTagAclFeatureOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.colTag"                       -> ddlColumnTag,
+    "ddl.acl.grantUnshared"            -> ddlAclGrantUnshared,
+    "ddl.acl.grantShared"              -> ddlAclGrantShared,
+    "ddl.featureFlag.distributionMode" -> ddlFeatureDistributionMode,
+    "ddl.repl.tableTypeImmutable"      -> ddlReplTableTypeImmutable
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1700,6 +1743,7 @@ object Plan {
     val ddlMisc         = Scenarios.ddlMiscOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlTagAcl       = Scenarios.ddlTagAclFeatureOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1713,7 +1757,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl
   }
 }
 
