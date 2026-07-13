@@ -14,7 +14,7 @@ block of that shape should exist. Gaps, most-severe first:
 
 | # | Op that breaks the table | Why it breaks (cite) | Severity | Recommendation |
 |---|---|---|---|---|
-| **G1** | Source-side snapshot expiration / orphan-file-deletion vs. the verbatim replica snapshot copy | Snapshots copied verbatim, no path rewrite; commit path does **zero existence validation** (`SnapshotsUtil.parseSnapshots` only JSON-parses; `OpenHouseInternalTableOperations.doCommit:314-354` blindly `addSnapshot`/`setRef`; no `SnapshotInspector`). Deleting files the replica still references → **dangling refs**. | corrupts-data / breaks-replica | Server-side reject a snapshot PUT whose manifests aren't resolvable on the target FileIO **+** a mover ordering contract (copy files before metadata; don't expire until replicas advance). |
+| ~~G1~~ | ~~Source expiration/OFD vs. replica copy → dangling refs~~ **WITHDRAWN — invalid.** | Replication is a **snapshot walk**: the mover walks the primary's snapshot ancestry and copies the files each walked snapshot references; **expiration is itself a snapshot in that chain that replicates**. The walk is internally consistent and ordered by construction, so there is no independent deletion racing the copy and no dangling ref. (The commit path indeed does no `exists()` validation, but the snapshot-walk ordering makes that a non-issue, not a gap.) | — | None — mechanism is sound. |
 | **G2** | **RTAS / REPLACE on a LOCKED table** (concrete bug) | The replace/stage-replace branches (`TablesServiceImpl.putTable:113-115`, `IcebergSnapshotsServiceImpl.putIcebergSnapshots:68-72`) only check replace privilege and **never reach** the `isTableLocked → LOCKED_TABLE_OPERATION` throw (`:125-130`/`:73-78`); `validateReplaceTable` checks RTAS/WAP/replication but **not lock**. A locked table can be fully replaced. | breaks-lock-contract / data-loss | **File it.** One-line extension: add the `isTableLocked` check to both replace branches. Cleanest RTAS-guard analogue. |
 | **G3** | Partition/clustering spec change on the replica commit path | `checkPartitionSpecEvolution` is inside the `!skipEligibilityCheck` block (`OpenHouseInternalRepositoryImpl:373-382`); replica commits skip it (`:294-308`) → replica spec can diverge from the physical layout of copied files. | breaks-replica (read path) | Validate spec compatibility even on the replica path. |
 | **G4** | Toggle `write.wap.enabled` / `replace.enabled` freely (e.g. disable WAP with staged snapshots present) | These are plain `write.*` props, **not** `openhouse.`-prefixed, so `checkIfPreservedTblPropsModified` doesn't cover them; only RTAS is WAP-aware. Disabling WAP while staged snapshots exist strands them (subtractive merge `doCommit:337-344`). | breaks-time-travel | WAP-state guard analogous to RTAS: reject disabling WAP while unpublished staged snapshots exist. |
@@ -24,7 +24,8 @@ block of that shape should exist. Gaps, most-severe first:
 
 **Root-cause cluster:** G3 + G7 both stem from `skipEligibilityCheck` (`OpenHouseInternalRepositoryImpl:284-308`)
 being all-or-nothing. Cleanest single fixes: **G2** (lock-on-replace) and **G4** (WAP toggle) — same
-shape as the RTAS guard. Highest severity: **G1** (dangling refs).
+shape as the RTAS guard, and both are the highest-value real gaps. (G1 withdrawn — the snapshot-walk
+replication mechanism is sound; no dangling-ref race exists.)
 
 ---
 

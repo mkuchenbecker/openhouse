@@ -223,8 +223,8 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] REPLICA commit (base=REPLICA+clusterA, incoming=PRIMARY+clusterB) → skips eligibility, retains type
 - [ ] intermediate-schema replay is REPLICA-only; PRIMARY commit does not get `newIntermediateSchemas`
 - [ ] snapshots stored **verbatim** (no path rewrite) — proves the "no transformation" property
-- [ ] **finding:** replica commit referencing a missing file path is accepted with **no existence
-      validation** → a source-side expiration/OFD (Phase 27) would leave the replica with a dangling ref
+- [ ] replication is a **snapshot walk** (expiration = a replicated snapshot in the chain) → the copy
+      is ordered/consistent by construction (no dangling-ref race; G1 withdrawn)
 
 ## Phase 24 — Data-plane preparation multipliers  (FULL DML cross — promoted from smoke per cross-all-once)
 - [ ] `createSeedAddColumn(layout)` × **all DML × all layouts** — DML holds on an evolved schema (~+660)
@@ -255,8 +255,8 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] snapshot-expiration → old snapshots dropped, time-travel reachability shrinks
 - [ ] data-compaction (`RewriteDataFiles`) → file count/layout changes, new snapshot, rows preserved
 - [ ] retention → rows past the retention window deleted; orphan-file deletion → dangling files removed
-- [ ] **replication-interaction finding:** expiration/OFD on a source deletes files a replica snapshot
-      list references (ties to Phase 23) — the concrete way DDL/maintenance breaks the external replica
+- [ ] expiration/OFD on a source is safe for the replica — it replicates as a snapshot in the walk
+      (not a dangling-ref break; G1 withdrawn)
 
 ---
 
@@ -281,13 +281,14 @@ Both audits are complete — full results, with file:line and severity, are in *
 Headlines:
 
 ## Audit A — Missing guards (where an op breaks the table but isn't blocked) → `AUDIT-FINDINGS.md`
-Model guard: RTAS-while-{WAP,replication}. Seven gaps found (G1–G7). Highlights:
+Model guard: RTAS-while-{WAP,replication}. Gaps G2–G7 (G1 withdrawn — see below). Highlights:
 - **G2 (concrete bug, file it):** RTAS/REPLACE on a **locked** table is not blocked — the replace
   branches skip the `isTableLocked → LOCKED_TABLE_OPERATION` check. One-line RTAS-guard analogue.
-- **G1 (highest severity):** no existence/ordering guard between source-side expiration/OFD and the
-  verbatim replica snapshot copy → dangling refs (commit path does zero `exists()` validation).
 - **G4:** `write.wap.enabled`/`replace.enabled` are free-toggle user props → disabling WAP strands
   staged snapshots. **G3/G7:** `skipEligibilityCheck` is an all-or-nothing bypass on the replica path.
+- **G1 WITHDRAWN:** the "source expiration → dangling replica ref" hypothesis is invalid — replication
+  is a **snapshot walk** (expiration is itself a replicated snapshot in the chain), so the copy is
+  ordered/consistent by construction and no dangling-ref race exists.
 - Where a block already exists → a negative test asserts it; where it's missing → a finding + recommendation.
 
 ## Audit B — Error-message readability (SQL-noob test; a stacktrace is "dumb") → `AUDIT-FINDINGS.md`
