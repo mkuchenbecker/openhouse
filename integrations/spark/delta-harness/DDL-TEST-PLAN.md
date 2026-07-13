@@ -186,11 +186,14 @@ the control-plane track is opted in.
 - [ ] `write.distribution-mode=range` vs `none` observable in write layout (light)
 - [ ] (WAP flag effect deferred into the Phase 29 mega-axis; MoR already covered)
 
-## Phase 16 — Sort order / write distribution  (B; ❓ read-back surface)
-- [ ] `WRITE ORDERED BY` single/multi/`DESC NULLS FIRST`; `WRITE UNORDERED` clears; `distribution-mode=range` appears
+## Phase 16 — Sort order / write distribution  (B) — ✅ green
+- [x] `WRITE ORDERED BY` single + multi/`DESC NULLS FIRST` → `write.distribution-mode=range` appears (❓ surface → use distribution-mode side effect)
+- [ ] follow-up: `WRITE UNORDERED` clears
 
-## Phase 17 — Rename table  (B + N)
-- [ ] rename same-db → old gone / new loads identical; onto existing → conflict; cross-catalog → typed N
+## Phase 17 — Rename table  (B + N) — ✅ green
+- [x] rename same-db → old name gone / new loads with 3 rows (rename-to-scratch-and-back so the fixed harness name resolves)
+- [x] rename onto an existing name → `WebClientResponseWithMessageException` 409 "already exists" (typed)
+- [ ] follow-up: cross-catalog rename → typed N (needs a 2nd catalog)
 
 ## Phase 18 — CTAS / RTAS contract  (B + N + finding)
 - [ ] CTAS rows+schema; **finding:** CTAS drops NOT NULL + sort order
@@ -198,8 +201,10 @@ the control-plane track is opted in.
 - [ ] RTAS without flag → `RTAS_DISABLED` (N); RTAS ⊕ WAP → N; **RTAS ⊕ replication → N (OpenHouse's own gap)**
 - [ ] `CREATE OR REPLACE` on a non-existent table → creates it
 
-## Phase 19 — Namespace / catalog DDL  (N + B)
-- [ ] CREATE/DROP/ALTER/DESCRIBE NAMESPACE → typed N each; SHOW DATABASES/TABLES → B; implicit db-on-create
+## Phase 19 — Namespace / catalog DDL  (N + B) — ✅ green (create/drop)
+- [x] CREATE / DROP NAMESPACE → `UnsupportedOperationException` "not supported" (typed). **Finding:** the
+      message says "Describing database is not supported" for create/drop (Spark loads metadata first) — misleading, AUDIT-FINDINGS B
+- [ ] follow-up: ALTER/DESCRIBE NAMESPACE; SHOW DATABASES/TABLES (B); implicit db-on-create
 
 ## Phase 20 — Policy DDL (`ALTER TABLE … SET/UNSET POLICY`)  (B + rich N)
 - [ ] SET RETENTION (time-partitioned) / HISTORY (in-bounds) / SHARING; UNSET REPLICATION → round-trip

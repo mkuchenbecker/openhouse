@@ -2,6 +2,7 @@ package harness
 
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
 import org.apache.iceberg.exceptions.BadRequestException
+import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import scala.annotation.tailrec
@@ -1474,6 +1475,73 @@ object Scenarios {
     "ddl.props.formatVersionForced"    -> ddlPropsFormatVersionForced,
     "ddl.props.previousVersionsHonored"-> ddlPropsPreviousVersionsHonored
   )
+
+  private def coreCreateParquet(table: String): String =
+    s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')"
+
+  // ── DDL Phase 16: sort order / write distribution ───────────────────────────────────────
+  // WRITE ORDERED BY sets the sort order; the observable side effect is write.distribution-mode=range
+  // (the recon's CatalogOperationTest asserts this). WRITE UNORDERED clears the order.
+  val ddlWriteOrderedBy: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.sortOrder.orderedBy")(t => s"ALTER TABLE $t WRITE ORDERED BY ${Core.long0.columnName}") { view =>
+        assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("range"),
+          s"distribution-mode not range: ${tableProps(view.spark, view.table).get("write.distribution-mode")}")
+      }
+
+  val ddlWriteOrderedByMulti: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("ddl.sortOrder.orderedByMulti")(t =>
+        s"ALTER TABLE $t WRITE ORDERED BY ${Core.string0.columnName} DESC NULLS FIRST, ${Core.long0.columnName}") { view =>
+        assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("range"), "multi-col ordered-by should set range")
+      }
+
+  // ── DDL Phase 17: rename table (rename to scratch + back, so the harness's fixed table name resolves) ─
+  val ddlRenameTable: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.renameTable") { (spark, table) =>
+        val scratch = s"${table}_ren"
+        spark.sql(s"ALTER TABLE $table RENAME TO $scratch")
+        assert(spark.sql(s"SELECT count(*) FROM $scratch").collect()(0).getLong(0) == 3, "renamed table lost rows")
+        Check.intercept[Exception](spark.sql(s"SELECT 1 FROM $table LIMIT 1"))          // old name is gone
+        spark.sql(s"ALTER TABLE $scratch RENAME TO $table")                             // restore for teardown
+      }()
+
+  val ddlRenameTableConflict: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("ddl.renameTable.conflict") { (spark, table) =>
+        val other = s"${table}_other"
+        spark.sql(s"DROP TABLE IF EXISTS $other")
+        spark.sql(coreCreateParquet(other))
+        val e = Check.intercept[WebClientResponseWithMessageException](spark.sql(s"ALTER TABLE $table RENAME TO $other")) // target exists
+        assert(e.getMessage.contains("already exists"), s"msg: ${e.getMessage.take(160)}")
+        spark.sql(s"DROP TABLE IF EXISTS $other")
+      }()
+
+  // ── DDL Phase 19: namespace DDL negatives (OpenHouse rejects create/drop) ──────────────────
+  // Both CREATE and DROP NAMESPACE surface `UnsupportedOperationException: "Describing database is not
+  // supported"` — Spark calls loadNamespaceMetadata first, so the user gets a *describe* message for a
+  // create/drop (a misleading message — AUDIT-FINDINGS B). We anchor on the stable "not supported".
+  val ddlNegCreateNamespace: TableTest[CoreTable.type] =
+    coreNegative("ddl.ns.createRejected") { (spark, _) =>
+      val e = Check.intercept[UnsupportedOperationException](spark.sql("CREATE NAMESPACE openhouse.a_new_db"))
+      assert(e.getMessage.contains("not supported"), s"msg: ${e.getMessage.take(160)}")
+    }
+
+  val ddlNegDropNamespace: TableTest[CoreTable.type] =
+    coreNegative("ddl.ns.dropRejected") { (spark, _) =>
+      val e = Check.intercept[UnsupportedOperationException](spark.sql("DROP NAMESPACE openhouse.dbMatrix"))
+      assert(e.getMessage.contains("not supported"), s"msg: ${e.getMessage.take(160)}")
+    }
+
+  val ddlMiscOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.sortOrder.orderedBy"      -> ddlWriteOrderedBy,
+    "ddl.sortOrder.orderedByMulti" -> ddlWriteOrderedByMulti,
+    "ddl.renameTable"              -> ddlRenameTable,
+    "ddl.renameTable.conflict"     -> ddlRenameTableConflict,
+    "ddl.ns.createRejected"        -> ddlNegCreateNamespace,
+    "ddl.ns.dropRejected"          -> ddlNegDropNamespace
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1540,6 +1608,7 @@ object Plan {
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlMisc         = Scenarios.ddlMiscOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1553,7 +1622,7 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps
+      ddlNegatives ++ ddlProps ++ ddlMisc
   }
 }
 

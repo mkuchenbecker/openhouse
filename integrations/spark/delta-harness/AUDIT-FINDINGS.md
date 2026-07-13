@@ -69,6 +69,10 @@ Grade for a non-expert SQL user: **GOOD** = names the table + the fix · **MEH**
   policies object`. The `policies` value is parsed on the client before the `ALTER_RESERVED_TBLPROPS`
   server guard runs, so the user gets a parser stacktrace instead of "policies is reserved". (Other
   `openhouse.*` reserved keys DO hit the clean guard — verified `openhouse.tableUUID` → 400 "restriction".)
+- **CREATE/DROP NAMESPACE surface the WRONG message:** both throw `UnsupportedOperationException:
+  "Describing database is not supported"` — Spark calls `loadNamespaceMetadata` before create/drop, so
+  a user issuing `CREATE NAMESPACE` / `DROP NAMESPACE` is told *describing* is unsupported. Should say
+  "OpenHouse creates databases implicitly; CREATE/DROP NAMESPACE is unsupported."
 - **Confirmed forced-override:** `CREATE … TBLPROPERTIES('format-version'='1')` reads back
   `format-version=2` — the user's value is silently overridden by the cluster default (not an error,
   not honored). `write.metadata.previous-versions-max` by contrast IS honored. The asymmetry is a
