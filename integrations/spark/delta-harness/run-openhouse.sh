@@ -20,10 +20,17 @@ GRADLE="${GRADLE_BIN:-gradle}"
 M2="${HOME}/.m2/repository/org/scala-lang"
 SCALAC_CP="$M2/scala-compiler/2.12.18/scala-compiler-2.12.18.jar:$M2/scala-reflect/2.12.18/scala-reflect-2.12.18.jar:$M2/scala-library/2.12.18/scala-library-2.12.18.jar"
 
-echo ">> resolving OpenHouse itest runtime classpath (builds the runtime uber jar + fixtures)"
-( cd "$REPO_ROOT" && "$GRADLE" -Dorg.gradle.java.home="$JDK17" -DcpOut="$WORK/oh-cp.txt" \
-    --init-script "$HERE/scripts/print-cp.init.gradle" \
-    :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
+# Classpath resolution is the slow part (~82s of gradle). It only changes when OpenHouse deps
+# change, so we cache it in $WORK/oh-cp.txt and reuse it for fast inner-loop iteration. Force a
+# fresh resolve with FORCE_CP=1 (do this after pulling dep changes or the first run in a session).
+if [[ "${FORCE_CP:-0}" != "1" && -s "$WORK/oh-cp.txt" ]]; then
+  echo ">> reusing cached OpenHouse classpath ($WORK/oh-cp.txt) — set FORCE_CP=1 to re-resolve"
+else
+  echo ">> resolving OpenHouse itest runtime classpath (builds the runtime uber jar + fixtures)"
+  ( cd "$REPO_ROOT" && "$GRADLE" -Dorg.gradle.java.home="$JDK17" -DcpOut="$WORK/oh-cp.txt" \
+      --init-script "$HERE/scripts/print-cp.init.gradle" \
+      :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
+fi
 OHCP="$(cat "$WORK/oh-cp.txt")"
 
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"

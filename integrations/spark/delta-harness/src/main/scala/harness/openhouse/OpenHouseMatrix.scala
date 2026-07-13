@@ -867,6 +867,57 @@ object Scenarios {
       assert(view.after.isEmpty)
     }
 
+  // ── DDL Phase 12: schema evolution — ADD COLUMN family (❓ probes settle B-vs-N) ───────────
+  // The added column is not one of CoreTable's typed handles, so these assert on the LIVE schema
+  // (name / type / comment / order) and raw SQL, not on typed row handles. Row snapshots
+  // (view.before/after) still read only CoreTable's columns, so they stay valid across the ALTER.
+  private def liveColumns(view: StepView[CoreTable.type]): Seq[(String, String)] =
+    view.spark.table(view.table).schema.fields.toSeq.map(field => (field.name, field.dataType.simpleString))
+
+  val ddlAddColumnSingle: TableTest[CoreTable.type] =
+    TableTest(Core).sql("ddl.addColumn.single")(t => s"ALTER TABLE $t ADD COLUMN added_int int") { view =>
+      assert(liveColumns(view).map(_._1).contains("added_int"), s"added_int missing: ${liveColumns(view).map(_._1)}")
+      val nullCount = view.spark.sql(s"SELECT count(*) FROM ${view.table} WHERE added_int IS NULL").collect()(0).getLong(0)
+      assert(nullCount == view.before.size, s"existing rows should read null for added_int: $nullCount != ${view.before.size}")
+      assert(view.after.size == view.before.size)                                       // ADD COLUMN keeps rows
+    }
+
+  val ddlAddColumnMultiple: TableTest[CoreTable.type] =
+    TableTest(Core).sql("ddl.addColumn.multiple")(t => s"ALTER TABLE $t ADD COLUMNS (added_a int, added_b string)") { view =>
+      val names = liveColumns(view).map(_._1)
+      assert(names.contains("added_a") && names.contains("added_b"), s"added columns missing: $names")
+      assert(view.after.size == view.before.size)
+    }
+
+  val ddlAddColumnComment: TableTest[CoreTable.type] =
+    TableTest(Core).sql("ddl.addColumn.comment")(t => s"ALTER TABLE $t ADD COLUMN added_c int COMMENT 'a note'") { view =>
+      val field = view.spark.table(view.table).schema.fields.find(_.name == "added_c")
+      assert(field.isDefined, "added_c missing")
+      assert(field.get.getComment().contains("a note"), s"comment not stored: ${field.flatMap(_.getComment())}")
+    }
+
+  val ddlAddColumnPosition: TableTest[CoreTable.type] =
+    TableTest(Core).sql("ddl.addColumn.position")(t => s"ALTER TABLE $t ADD COLUMN added_after int AFTER ${Core.long0.columnName}") { view =>
+      val names = liveColumns(view).map(_._1)
+      assert(names.indexOf("added_after") == names.indexOf(Core.long0.columnName) + 1, s"added_after not after long0: $names")
+    }
+
+  val ddlAlterColumnTypeWiden: TableTest[CoreTable.type] =
+    TableTest(Core).sql("ddl.alterColumn.typeWiden")(t => s"ALTER TABLE $t ALTER COLUMN ${Core.int0.columnName} TYPE bigint") { view =>
+      assert(liveColumns(view).toMap.get(Core.int0.columnName).contains("bigint"), s"int0 not widened: ${liveColumns(view).toMap.get(Core.int0.columnName)}")
+      val vals = view.spark.sql(s"SELECT ${Core.int0.columnName} FROM ${view.table} ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(vals == Seq(1L, 2L, 3L), s"values not preserved after widening: $vals")
+    }
+
+  /** Phase 12 DDL schema-evolution behaviors, crossed with every layout. */
+  val ddlSchemaOperations: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.addColumn.single"      -> ddlAddColumnSingle,
+    "ddl.addColumn.multiple"    -> ddlAddColumnMultiple,
+    "ddl.addColumn.comment"     -> ddlAddColumnComment,
+    "ddl.addColumn.position"    -> ddlAddColumnPosition,
+    "ddl.alterColumn.typeWiden" -> ddlAlterColumnTypeWiden
+  )
+
   /** The operations crossed with every layout, each a headless segment, in report order. */
   val operations: List[(String, TableTest[CoreTable.type])] = List(
     "read.projection"                -> readProjection,
@@ -1390,8 +1441,14 @@ object Plan {
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
 
+    // DDL Phase 12: schema-evolution behaviors crossed with every layout.
+    val ddlSchema = for {
+      layout     <- Scenarios.layouts
+      (name, op) <- Scenarios.ddlSchemaOperations
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
+
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
-      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates
+      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema
   }
 }
 

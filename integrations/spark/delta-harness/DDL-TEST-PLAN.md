@@ -159,9 +159,11 @@ the control-plane track is opted in.
 
 # Data-plane track (Spark SQL)
 
-## Phase 12 — Schema: ADD COLUMN family  (B, ×layouts)
-- [ ] add single / multiple / nested-child column → present, existing rows read null
-- [ ] ❓ add with `COMMENT`; ❓ add at `FIRST`/`AFTER`; ❓ type widening `int→bigint`/`float→double`/decimal↑
+## Phase 12 — Schema: ADD COLUMN family  (B, ×layouts) — ✅ 30/30 green
+- [x] add single / multiple column → present, existing rows read null (×6 layouts)
+- [x] add with `COMMENT` → stored (❓→B); add `AFTER col` → positioned (❓→B); type widening `int→bigint`
+      → values preserved (❓→B). All three probes resolved to supported.
+- [ ] follow-ups: nested-child `ADD COLUMN s.e int` (needs NestedTable); wider promotions `float→double`, decimal↑
 
 ## Phase 13 — Schema negatives  (N)
 - [ ] `DROP COLUMN` (top-level + nested) → "Some columns are dropped"; `RENAME COLUMN` → "not found in newSchema"
