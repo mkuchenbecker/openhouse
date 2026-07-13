@@ -138,6 +138,21 @@ instead of failing on the `VACUUM` `ParseException`. To run: build the 3.5 VACUU
 - [x] Iceberg dep + real e2e gated behind `iceberg-integration-tests` profile (3.5).
 - [x] OpenHouse integration question answered; `VacuumTestSpark3_5` written & pushed (this branch).
 - [ ] Run `VacuumTestSpark3_5` in an env with a VACUUM-carrying Spark 3.5 (OpenHouse CI / real infra).
+- [x] Harden the real-Iceberg e2e suites to the delta-harness quality bar (see PR #9,
+      `integrations/spark/delta-harness`). `VacuumIcebergSuite` (PR #2, commit 71cc90d8) and
+      `OptimizeIcebergSuite` (PR #3) now: pin a self-defending baseline before every relative
+      assertion; assert the metadata DELTA/direction (from `.files`/`.manifests`/`.snapshots`, not
+      raw dir listings) + the data-preserved invariant + that the op actually committed a snapshot
+      (no silent no-op); verify OFD by exact per-path existence (orphan gone, referenced files
+      survive) not a fragile listing diff; add negative tests (`intercept` with the actual message
+      naming the missing table) and behavior pins (VACUUM w/o REMOVE ORPHAN FILES must not delete;
+      OPTIMIZE must not expire). Verified DETERMINISTIC: 7 tests (4 VACUUM + 3 OPTIMIZE) passed
+      **3x back-to-back** on JDK 17 -- no flakes.
+- [ ] EVENTUAL: fold VACUUM/OPTIMIZE into the PR #9 delta-harness (`claude/spark-scala-test-env-k7drzg`)
+      as first-class maintenance operations (typed pipelines, `StepView` delta assertions), stacked
+      on that branch. The harness already exercises the underlying `expire_snapshots` /
+      `rewrite_data_files` / `remove_orphan_files` procedures against the real OpenHouse catalog
+      (`OpenHouseMatrix.scala` `maintenance.*`), so VACUUM/OPTIMIZE drop in as thin verbs over them.
 - [x] Implement OPTIMIZE per `.agent-notes/optimize-plan.md` (3.5 first). Done: PR #3
       (`claude/iceberg-optimize-semantics-43tl45-spark3.5`, base = VACUUM branch). Surface
       `OPTIMIZE <table> [REWRITE MANIFESTS]`; keyword spelling `REWRITE MANIFESTS`, output silent.
