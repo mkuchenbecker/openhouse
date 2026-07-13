@@ -252,13 +252,18 @@ Repository-layer (needs the control-plane extension — see Phase 27):
       — the +1 column changes INSERT arity. That constraint is itself a finding: on an evolved schema,
       positional full-column INSERT breaks (no null-fill), consistent with the `insert.explicitColumns` bug.
 
-## Phase 24b — Encryption (OSS plaintext-default path; KMS plugin private → out of scope)  (N + finding) — ✅ green
-- [x] create with `encryption.key-id` / `write.metadata.encryption.gcm-key-id` set → table round-trips
-      with **no key configured**, and the on-disk data file starts with the plaintext parquet magic
-      `PAR1` — proving no encryption is in force (OSS has no crypto wiring)
-- [ ] document the **plugin contract** the private KMS plugin must satisfy (override `encryption()` /
-      wire a `KeyManagementClient` or `parquet.crypto.factory.class`) so a future private-plugin harness
-      can drive encryption-ON — mirrors the external replication-mover contract
+## Phase 24b — Encryption — ◻ NOT TESTABLE in-repo (documented finding, not a case)
+A repo-wide search finds **no encryption implementation at all** — no `EncryptionManager`,
+`KeyManagementClient`, parquet crypto factory, interface, abstract hook, or mock (only
+`DummyTokenInterceptor` (auth) and `IcebergDataUtils` (Iceberg's stock `EncryptedOutputFile` writer
+type, which wraps plaintext). The KMS plugin is entirely external/private. So there is **nothing
+in-repo to exercise** — asserting "files are plaintext" only confirms the absence (trivially true
+with nothing encrypting the bytes), so it is **not a test** and was removed.
+- Documented as a finding: OSS default is unencrypted, silently, with the `encryption()` hook un-wired.
+- **Plugin contract** the private KMS plugin must satisfy (for a future private-plugin harness):
+  override `encryption()` / wire a `KeyManagementClient` or set `parquet.crypto.factory.class`;
+  then encryption-ON is testable (write ciphertext, fail to read without a key, round-trip with one) —
+  mirrors the external replication-mover contract.
 
 ---
 
