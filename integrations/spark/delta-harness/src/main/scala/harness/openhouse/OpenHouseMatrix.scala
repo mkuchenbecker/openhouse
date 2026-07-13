@@ -28,7 +28,31 @@ import scala.util.control.NonFatal
 // extended); no OpenHouse test is altered.
 // =====================================================================================
 
-final case class Ctx(spark: SparkSession, namespace: String)
+final case class Ctx(spark: SparkSession, namespace: String, restUri: String = "", restToken: String = "")
+
+// Minimal REST client to the embedded OpenHouse server (control-plane ops with no SQL surface:
+// lock/unlock). Uses JDK 17's java.net.http; auth is the same Bearer token the Spark catalog uses.
+object Rest {
+  import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+  import java.net.URI
+  private lazy val client = HttpClient.newHttpClient()
+  private def base(ctx: Ctx, path: String): HttpRequest.Builder =
+    HttpRequest.newBuilder(URI.create(ctx.restUri + path))
+      .header("Authorization", s"Bearer ${ctx.restToken}")
+      .header("Content-Type", "application/json")
+  def post(ctx: Ctx, path: String, body: String): (Int, String) = {
+    val r = client.send(base(ctx, path).POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
+  def delete(ctx: Ctx, path: String): (Int, String) = {
+    val r = client.send(base(ctx, path).DELETE().build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
+  def get(ctx: Ctx, path: String): (Int, String) = {
+    val r = client.send(base(ctx, path).GET().build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
+}
 
 sealed trait Outcome { def label: String }
 object Outcome {
@@ -1352,6 +1376,36 @@ object Scenarios {
     "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles
   )
 
+  // ── Control-plane (REST) ops with no SQL surface — driven via the embedded server's HTTP API ──
+  // Lock enforcement: POST /lock (a real public entry), then a Spark mutation is rejected server-side
+  // (LOCKED_TABLE_OPERATION); DELETE /lock restores mutability. High-fidelity — the embedded server
+  // runs the real TablesController/TablesServiceImpl (see REST-FIDELITY-EVAL.md).
+  def controlLockEnforcement(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_lock"
+    val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(coreCreateParquet(table))
+    spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 3)}")
+    try {
+      val (lockStatus, lockBody) = Rest.post(ctx, s"/v1/databases/$db/tables/$tbl/lock", """{"locked":true}""")
+      assert(lockStatus >= 200 && lockStatus < 300, s"lock POST failed: $lockStatus $lockBody")
+      val e = Check.intercept[Exception](spark.sql(
+        s"UPDATE $table SET ${Core.string0.columnName} = 'locked-write' WHERE ${Core.long0.columnName} = 1"))
+      assert(Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(_.toLowerCase.contains("locked"))),
+        s"expected a locked-table rejection, got: ${e.getMessage.take(200)}")
+      val (unlockStatus, unlockBody) = Rest.delete(ctx, s"/v1/databases/$db/tables/$tbl/lock")
+      assert(unlockStatus >= 200 && unlockStatus < 300, s"unlock DELETE failed: $unlockStatus $unlockBody")
+      spark.sql(s"UPDATE $table SET ${Core.string0.columnName} = 'unlocked-write' WHERE ${Core.long0.columnName} = 1")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.string0.columnName} = 'unlocked-write'").collect()(0).getLong(0) == 1,
+        "post-unlock update did not apply")
+    } finally spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val controlPlane: List[(String, Ctx => Unit)] = List(
+    "control.lock.enforcement" -> controlLockEnforcement
+  )
+
   // ── negative / contract tests ───────────────────────────────────────────────────────────
   // Create + seed a valid CoreTable, then assert the bad operation is rejected.
   private def coreNegative(label: String)(bad: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
@@ -1812,6 +1866,7 @@ object Plan {
     val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
@@ -1849,7 +1904,7 @@ object Plan {
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
-      maintenance ++ ddlPrepOrdered ++ ddlPrepEvolved
+      maintenance ++ control ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
@@ -1888,7 +1943,7 @@ object OpenHouseEnv {
       .config(s"spark.sql.catalog.$name.cluster", "local-cluster")
       .config(s"spark.sql.catalog.$name.auth-token", token)
 
-  def start(): (OpenHouseLocalServer, SparkSession) = {
+  def start(): (OpenHouseLocalServer, SparkSession, String, String) = {
     val server = new OpenHouseLocalServer()
     server.start()
     val uri = s"http://localhost:${server.getPort}"
@@ -1907,15 +1962,15 @@ object OpenHouseEnv {
       .config("spark.ui.enabled", "false")
 
     val wired = Seq("openhouse", "default_iceberg").foldLeft(base)(wireCatalog(_, _, uri, token))
-    (server, wired.getOrCreate())
+    (server, wired.getOrCreate(), uri, token)
   }
 }
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val (server, spark) = OpenHouseEnv.start()
+    val (server, spark, restUri, restToken) = OpenHouseEnv.start()
     spark.sparkContext.setLogLevel("ERROR")
-    val ctx = Ctx(spark, "openhouse.dbMatrix")
+    val ctx = Ctx(spark, "openhouse.dbMatrix", restUri, restToken)
 
     // Each command-line arg is an include-substring; a case runs only if its id contains ALL of
     // them (AND). No args = run everything.

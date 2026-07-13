@@ -275,10 +275,14 @@ data-plane track and is **green**. Only **lock** and **undrop** are genuinely RE
 build a REST client is under discussion (the harness embeds `OpenHouseLocalServer`, so a local REST
 call may be cheap — see the discussion).
 
-## Phase 25 — Table lock enforcement matrix  (B + N) — REST-only, pending stack discussion
-- [ ] lock via REST → update / rename / GRANT on the locked table rejected (`LOCKED_TABLE_OPERATION` /
-      `GRANT_ON_LOCKED_TABLES`, typed); read requires `LOCK_ADMIN`; unlock restores mutability
-      (also exercises the G2 lock-on-replace bypass finding, if REST is wired)
+## Phase 25 — Table lock enforcement  (B + N) — ✅ green via the REST shim
+Built a minimal `java.net.http` client (`Rest`) to the embedded server (`Ctx.restUri`/`restToken`).
+The embedded server runs the REAL `TablesController`/`TablesServiceImpl` (REST-FIDELITY-EVAL.md), so
+this is high-fidelity.
+- [x] `POST …/lock {"locked":true}` → a Spark `UPDATE` is rejected server-side (message contains
+      "locked"); `DELETE …/lock` → the same update then applies. `control.lock.enforcement @ embedded`.
+- [ ] follow-ups: locked-rename rejection; G2 lock-on-replace bypass (RTAS on a locked table — the
+      concrete bug); `LOCK_ADMIN`-gated read (needs auth → Docker/OPA, out of scope)
 
 ## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — REST-only, pending stack discussion
 - [ ] drop (soft) → table appears in soft-deleted list → restore → loads with identical schema/rows
