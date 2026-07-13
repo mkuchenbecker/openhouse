@@ -1434,6 +1434,77 @@ object Scenarios {
     "control.undrop.lifecycle"  -> controlUndropLifecycle
   )
 
+  // ── Branching / WAP (format-agnostic → parquet only; behavior-focused, not matrixed) ─────────
+  // A CoreTable row literal for branch writes (long,int,string,double,boolean,datepartition).
+  private def coreRow(long: Long, tag: String): String =
+    s"(CAST($long AS BIGINT), ${long.toInt}, '$tag', ${long}.5, false, '2024-01-01-00')"
+
+  // B1(a) direct branch ops (no WAP needed): write to t.branch_b, read it via VERSION AS OF 'b';
+  // main stays isolated.
+  val branchDirectIsolation: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.direct.create")(t => s"ALTER TABLE $t CREATE BRANCH b")()
+      .step("branch.direct.isolation") { (spark, table) =>
+        spark.sql(s"INSERT INTO $table.branch_b VALUES ${coreRow(99, "branch")}")
+        val onBranch = spark.sql(s"SELECT count(*) FROM $table VERSION AS OF 'b'").collect()(0).getLong(0)
+        val onMain   = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+        assert(onBranch == 4, s"branch b should have 4 rows, got $onBranch")
+        assert(onMain == 3, s"main should be unchanged at 3, got $onMain")                // isolation
+      }()
+
+  // B1(b) spark.wap.branch conf: with write.wap.enabled, the conf routes BOTH reads and writes to the
+  // branch transparently; unsetting reverts to main.
+  val branchWapConfRouting: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.wapconf.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .sql("branch.wapconf.create")(t => s"ALTER TABLE $t CREATE BRANCH wapbr")()
+      .step("branch.wapConf.routing") { (spark, table) =>
+        spark.conf.set("spark.wap.branch", "wapbr")
+        val onBranch =
+          try {
+            spark.sql(s"INSERT INTO $table VALUES ${coreRow(99, "wap")}")                 // routed to branch
+            spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)             // reads branch
+          } finally spark.conf.unset("spark.wap.branch")
+        assert(onBranch == 4, s"on-branch read should see 4, got $onBranch")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "main leaked")
+      }()
+
+  // B2 WAP stage → publish: a staged write (spark.wap.id) does NOT advance main; cherrypick publishes it.
+  val wapStagePublish: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("wap.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .step("wap.stagePublish") { (spark, table) =>
+        spark.conf.set("spark.wap.id", "w1")
+        try spark.sql(s"INSERT INTO $table VALUES ${coreRow(99, "staged")}")
+        finally spark.conf.unset("spark.wap.id")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "staged write leaked to main")
+        val stagedId = spark.sql(s"SELECT snapshot_id FROM $table.snapshots WHERE summary['wap.id'] = 'w1'").collect()(0).getLong(0)
+        spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', $stagedId)")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "publish did not advance main")
+      }()
+
+  // B3 DDL-on-branch is NOT isolated — characterizes the leak (finding): schema/props/sortOrder are
+  // table-global; ADD COLUMN while "on branch" mutates MAIN's schema, with no guard.
+  val branchDdlLeakAddColumn: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("branch.leak.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .sql("branch.leak.create")(t => s"ALTER TABLE $t CREATE BRANCH leakbr")()
+      .step("branch.ddlLeak.addColumn") { (spark, table) =>
+        spark.conf.set("spark.wap.branch", "leakbr")
+        try spark.sql(s"ALTER TABLE $table ADD COLUMN leaked_col int")
+        finally spark.conf.unset("spark.wap.branch")
+        val mainCols = spark.table(table).schema.fields.map(_.name).toSeq
+        assert(mainCols.contains("leaked_col"),
+          s"characterizing the leak: ADD COLUMN on a branch mutated MAIN's schema — expected leaked_col in $mainCols")
+      }()
+
+  val branching: List[(String, TableTest[CoreTable.type])] = List(
+    "branch.direct.isolation" -> branchDirectIsolation,
+    "branch.wapConf.routing"  -> branchWapConfRouting,
+    "wap.stagePublish"        -> wapStagePublish,
+    "branch.ddlLeak.addColumn" -> branchDdlLeakAddColumn
+  )
+
   // ── negative / contract tests ───────────────────────────────────────────────────────────
   // Create + seed a valid CoreTable, then assert the bad operation is rejected.
   private def coreNegative(label: String)(bad: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
@@ -1909,6 +1980,7 @@ object Plan {
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
+    val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
@@ -1946,7 +2018,7 @@ object Plan {
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
-      maintenance ++ control ++ ddlPrepOrdered ++ ddlPrepEvolved
+      maintenance ++ control ++ branching ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 

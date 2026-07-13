@@ -26,34 +26,27 @@ BLOCKED, not matrixed**. This is a bounded, behavior-focused axis (~2 dozen case
 
 ---
 
-## Phase B1 — Branch targeting: the two mechanisms  (B + N)
+## Phase B1 — Branch targeting: the two mechanisms  (B + N) — ✅ green (core)
 **(a) Direct branch ops** (no WAP needed):
-- [ ] `ALTER TABLE t CREATE BRANCH b`; `INSERT INTO t.branch_b VALUES …`; `SELECT … FROM t VERSION AS OF 'b'`
-      (or `t.branch_b`) shows the branch write; `SELECT … FROM t` (main) does NOT → **branch isolation**
-- [ ] `DELETE`/`UPDATE` on `t.branch_b` isolated from main
+- [x] `branch.direct.isolation`: CREATE BRANCH b; `INSERT INTO t.branch_b`; `SELECT … VERSION AS OF 'b'`
+      = 4, main = 3 → **branch isolation**
+- [ ] follow-up: `DELETE`/`UPDATE` on `t.branch_b` isolated (B4)
 
 **(b) `spark.wap.branch` conf ("everything on branch")** (requires `write.wap.enabled=true`):
-- [ ] set conf → `INSERT INTO t` and `SELECT * FROM t` both transparently hit branch `b`; unset → reverts to main
-- [ ] **negatives:** `spark.wap.id` + `spark.wap.branch` set together → error; writing `t.branch_x` while
-      `wap.branch` is set → error; insert into a non-existent branch → error
+- [x] `branch.wapConf.routing`: conf routes INSERT + SELECT to the branch (=4); main unchanged (=3); unset reverts
+- [ ] follow-up negatives: `spark.wap.id`+`spark.wap.branch` together → error; `t.branch_x` while `wap.branch` set → error
 
-## Phase B2 — WAP stage → publish isolation  (B + N)
-- [ ] `write.wap.enabled=true`; `spark.wap.id=w1`; `INSERT` → **staged**: main row-count unchanged,
-      `main` ref still at the pre-stage snapshot, `t.snapshots` +1 but `t.refs` unchanged; staged
-      snapshot discoverable only via `t.snapshots WHERE summary['wap.id']='w1'`
-- [ ] `CALL … cherrypick_snapshot('db.t', <stagedId>)` publishes → main advances (fast-forward: main==staged;
-      non-fast-forward: new snapshot tagged `summary['published-wap-id']='w1'`)
-- [ ] **negatives:** cherry-pick the same `wap.id` twice → `DuplicateWAPCommitException`; `expire_snapshots`
-      on a still-referenced snapshot → error
+## Phase B2 — WAP stage → publish isolation  (B + N) — ✅ green (core)
+- [x] `wap.stagePublish`: `spark.wap.id=w1` INSERT → staged (main stays 3); staged snapshot found via
+      `t.snapshots WHERE summary['wap.id']='w1'`; `cherrypick_snapshot` publishes → main = 4
+- [ ] follow-up negatives: double cherry-pick → `DuplicateWAPCommitException`; expire a referenced snapshot → error
 
-## Phase B3 — DDL-on-branch is NOT isolated (SHOULD-BE-BLOCKED → findings)  (finding)
-Main-affecting DDL executed while "on a branch" leaks to main (no guard). Test as a **characterization
-of the leak** (proves the finding), and record as a product gap in `AUDIT-FINDINGS.md`:
-- [ ] with `spark.wap.branch=b` set (or targeting a branch), run `ADD COLUMN` → assert **main's schema
-      changed** (the leak) — the DDL was NOT branch-scoped and was NOT blocked
-- [ ] same for `SET TBLPROPERTIES` and `WRITE ORDERED BY` → main's props / sort order changed
-- **Finding:** OpenHouse has no guard preventing table-global DDL while operating on a branch; it should
-  reject (analogous to the RTAS-while-WAP block). Ranks with the missing-guard audit (G-series).
+## Phase B3 — DDL-on-branch is NOT isolated (characterization → finding G8)  — ✅ green (leak demonstrated)
+- [x] `branch.ddlLeak.addColumn`: with `spark.wap.branch=leakbr` set, `ADD COLUMN` → **main's schema
+      gained the column** (the leak). Recorded as missing-guard **G8** in `AUDIT-FINDINGS.md`.
+- [ ] follow-up: same characterization for `SET TBLPROPERTIES` and `WRITE ORDERED BY`
+- **Finding G8:** no guard prevents table-global DDL while operating on a branch; it should reject
+  (analogous to RTAS-while-WAP).
 
 ## Phase B4 — Representative branch DML  (B, minimal)
 - [ ] a small slice (`delete.byPredicate`, `update.byPredicate`, `merge.upsert`) executed on a branch,
