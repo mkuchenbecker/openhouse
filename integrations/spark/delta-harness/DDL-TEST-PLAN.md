@@ -215,10 +215,11 @@ the control-plane track is opted in.
 - [ ] follow-ups: RETENTION on a time-partitioned table + granularity/pattern negatives; replication
       bad-interval (→ 500 finding, AUDIT-FINDINGS B#2)
 
-## Phase 21 — Clustering columns  (B + N) — NEW
-- [ ] CREATE with clustering column(s) (identity) → spec reflects it; write/read round-trips
-- [ ] clustering with `TRUNCATE[w]` / `BUCKET[n]` transform; ❓ SQL surface (`CLUSTERED BY` vs API)
-- [ ] negatives: > max clustering columns; clustering-evolution (ALTER) → `PARTITION_EVOLUTION` typed N
+## Phase 21 — Clustering columns  (B + N) — ◻ largely subsumed by Phase 7
+- OpenHouse "clustering" columns are materialized as identity/`bucket`/`truncate` **partition-spec**
+  fields; via Spark SQL they ARE `PARTITIONED BY (bucket(n,col))` — already covered by Phase 7
+  transforms + the partition-evolution negative. A distinct `CLUSTERED BY` SQL surface doesn't exist.
+- [ ] follow-up: clustering-column-count cap negative (if reachable via PARTITIONED BY)
 
 ## Phase 22 — Column tags + sharing / ACL  (B + N) — ✅ green
 - [x] `MODIFY COLUMN c SET TAG = (PII)` → succeeds; **query results unaffected** (no masking — asserted)
@@ -242,9 +243,13 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] replication is a **snapshot walk** (expiration = a replicated snapshot in the chain) → the copy
       is ordered/consistent by construction (no dangling-ref race; G1 withdrawn)
 
-## Phase 24 — Data-plane preparation multipliers  (FULL DML cross — promoted from smoke per cross-all-once)
-- [ ] `createSeedAddColumn(layout)` × **all DML × all layouts** — DML holds on an evolved schema (~+660)
-- [ ] `createSeedOrdered(layout)` × **all DML × all layouts** — DML holds under a sort order (~+660)
+## Phase 24 — Data-plane preparation multipliers  (FULL DML cross — promoted from smoke) — ✅ green
+- [x] `createAndSeedOrdered(layout)` × **all operations × all layouts** → **318/318** (sort order is
+      arity-neutral, crosses everything)
+- [x] `createAndSeedEvolved(layout)` (ADD COLUMN) × **delete/update/read × all layouts** → **174/174**.
+      Excludes ops that internally INSERT full-column rows (insert/merge/overwrite + `delete.byNullCondition`)
+      — the +1 column changes INSERT arity. That constraint is itself a finding: on an evolved schema,
+      positional full-column INSERT breaks (no null-fill), consistent with the `insert.explicitColumns` bug.
 
 ## Phase 24b — Encryption (OSS plaintext-default path; KMS plugin private → out of scope)  (N + finding) — NEW
 - [ ] set `write.metadata.encryption.*` / `parquet.encryption.*` / `encryption.key-id` on CREATE/ALTER →

@@ -348,6 +348,15 @@ object Scenarios {
         view => assert(view.after.size == numberOfRows,
           s"single-file seed expected $numberOfRows rows, got ${view.after.size}"))
 
+  // Phase 24 preparation multipliers: a DDL evolves the starting state, then a DML op runs on it.
+  // Ordered prep (sort order) is arity-neutral → crosses ALL operations. Evolved prep adds a column
+  // → INSERT arity changes, so it crosses only ops that don't re-insert all columns (delete/update/read).
+  def createAndSeedOrdered(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeed(layout, numberOfRows).sql("prep.ordered")(t => s"ALTER TABLE $t WRITE ORDERED BY ${CoreTable.long0.columnName}")()
+
+  def createAndSeedEvolved(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeed(layout, numberOfRows).sql("prep.evolved")(t => s"ALTER TABLE $t ADD COLUMN prep_extra int")()
+
   // ── reads ────────────────────────────────────────────────────────────────────────────
   val readProjection: TableTest[CoreTable.type] =
     TableTest(Core).check("read.projection") { view =>
@@ -1745,6 +1754,21 @@ object Plan {
     val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlTagAcl       = Scenarios.ddlTagAclFeatureOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
+    // Phase 24 prep multipliers (full DML cross). Ordered prep × all operations; evolved prep ×
+    // delete/update/read only (ADD COLUMN changes INSERT arity, breaking full-column inserts).
+    val ddlPrepOrdered = for {
+      layout     <- Scenarios.layouts
+      (name, op) <- Scenarios.operations
+    } yield Case(s"prep.ordered:$name @ ${layout.label}", Scenarios.createAndSeedOrdered(layout, 3).andThen(op).run)
+
+    // delete/update/read only, and excluding ops that internally INSERT a full-column row
+    // (delete.byNullCondition seeds a null row) — those hit the arity mismatch on the +1-column table.
+    val ddlPrepEvolved = for {
+      layout     <- Scenarios.layouts
+      (name, op) <- Scenarios.operations.filter { case (n, _) =>
+        (n.startsWith("delete.") || n.startsWith("update.") || n.startsWith("read.")) && !n.contains("byNullCondition") }
+    } yield Case(s"prep.evolved:$name @ ${layout.label}", Scenarios.createAndSeedEvolved(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -1757,7 +1781,8 @@ object Plan {
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
-      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl
+      ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++
+      ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
