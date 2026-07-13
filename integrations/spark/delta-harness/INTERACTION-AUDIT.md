@@ -191,7 +191,32 @@ flips it to a loud failure — the signal to rewrite the pin as a positive test 
 - **Confirmed sound:** OpenHouse's expiration job is ref-aware (Iceberg `ExpireSnapshots`), matching
   the probe result — branch heads survive, shared ancestry prunes per `retain_last`.
 
-## 5. Prioritized execution plan (next phase)
+## 5. Prioritized execution plan — ✅ EXECUTED (23 cases, all green: `interact.*`)
+
+**Results (all live, embedded server):**
+- Probes promoted with real assertions: DDL×travel (historical schema), DDL×restore (data-only
+  rollback, schema kept), drop-col-after-data pin, RTAS history preserved + travel works, rollback
+  across RTAS rejected typed, branch-TT-before-branch-point (+ explicit AS OF overrides `wap.branch`),
+  main-DDL→branch immediacy (old-arity writer breaks — G8's mirror), expire protects refs / prunes
+  shared ancestry, wap+replace at CREATE honored (+ RTAS⊕WAP guard fires from create-time flags).
+- **G2 demonstrated live** (`interact.rtas.onLockedTable`): lock rejects UPDATE, RTAS replaces the
+  locked table anyway.
+- **G9 demonstrated live, both halves** (`interact.rtas.partitionSpecChange`, `interact.rtas.dropsColumn`):
+  RTAS re-partitioned an unpartitioned table and dropped 4 of 6 columns — both rejected via ALTER.
+- **NEW G10 discovered & demonstrated** (`interact.rtas.props.reservedPlane`): **RTAS silently wipes
+  `policies`** — a retention policy set before the replace is absent after it (tableUUID survives).
+  Governance loss through the same replace-path hole as G2/G9. Filed in AUDIT-FINDINGS.md.
+- Property merge semantics settled: user props survive a plain replace; statement `TBLPROPERTIES`
+  win over old values while unmentioned props still survive (merge, not wholesale replace); RTAS can
+  change `write.format.default` (parquet→orc, then writable); forced `format-version=2` holds.
+- P2/P3 settled: `set_current_snapshot` IS the recovery path across RTAS (no ancestry check, 3 rows
+  back); RTAS preserves existing branch refs (old-lineage head still readable); restore procedures
+  target MAIN even with `spark.wap.branch` set (branch untouched); expire-after-rollback makes the
+  rollback permanent (rolled-past snapshot gone, travel to it fails); ALTER-to-MoR governs subsequent
+  deletes (1 position-delete file on a single-file seed); compaction over mixed-schema files
+  preserves evolved-column values.
+
+### The plan as scoped (all items landed):
 
 **P1 — promote the 7 probes to real assertion tests** (~10 cases, code already drafted in
 `interaction-probes.patch`; convert DIAG→assert): `ddl.tt.afterAddColumn`, `ddl.restore.afterAddColumn`,
