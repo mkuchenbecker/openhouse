@@ -14,185 +14,206 @@ exists so that multiplication is **deliberate and budgeted**, not accidental.
 
 Every DDL test is exactly one of six **roles**, ordered by blast radius:
 
-- **B — Behavior** (the DDL statement _is_ the operation under test). Authored like a DML
-  operation: a headless segment composed after `createAndSeed(layout)`, asserting a schema/row
-  delta. Crosses the **layout axis** (×6) — linear, bounded.
-- **N — Negative / contract** (OpenHouse rejects the statement). Authored once on parquet, asserts
-  the **actual typed exception + message substring** (same discipline as the DML negatives). ×1.
-- **P — Preparation multiplier** (the DDL produces an evolved starting state that DML runs on).
-  **Does NOT cross the full DML matrix.** It crosses a fixed **representative smoke slice** —
-  `{delete.byPredicate, update.byPredicate, merge.upsert, insert.append, read.projection}` (5 ops)
-  × a **reduced 2-layout set** `{unpartitioned/parquet, partitioned/parquet}` = ~10 cases per prep.
-- **S — Substrate flag** (a table property that changes the physical write/read path for _every_
-  operation: MoR, and — newly — **encryption** and **replication**). Proven once as a behavior, then
-  optionally graduated to a smoke-slice prep (P) or a full cross. MoR is the precedent that _did_
-  earn the full 264-case cross; encryption/replication default to **P** unless a real interaction
-  forces more. Each is enabled by a property/policy and must not silently no-op — an S flag that
-  claims to be on but changes nothing is itself a finding.
-- **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. Reserved for the
-  incremental-model validation. **RTAS is the one F**, and it comes _before_ the branch mega-axis.
-- **X — Cross-cutting mega-axis: WAP / branching** (the largest, reserved for **last, after RTAS**).
+- **B — Behavior** (the DDL statement _is_ the operation). Headless segment after
+  `createAndSeed(layout)`, asserting a schema/row delta. Crosses the **layout axis** (×6) — bounded.
+- **N — Negative / contract** (OpenHouse rejects it). Authored once on parquet, asserts the **actual
+  typed exception + message substring** (same discipline as the DML negatives). ×1.
+- **P — Preparation multiplier** (evolved starting state DML runs on). **Does NOT cross the full DML
+  matrix** — crosses a fixed **smoke slice** `{delete.byPredicate, update.byPredicate, merge.upsert,
+  insert.append, read.projection}` (5 ops) × `{unpartitioned/parquet, partitioned/parquet}` ≈ 10.
+- **S — Substrate flag** (a property that changes the physical path for _every_ operation). MoR is
+  the only real one in OSS OpenHouse and it is already done (264 cases). **Encryption and replication
+  were investigated as candidates and are NOT substrate flags** (see recon findings below) — so no new
+  S multiplier exists. An S flag that claims to be on but changes nothing is itself a finding.
+- **F — Full cross** (opt-in, expensive). `prep × all DML × all layouts` ≈ +650. **RTAS is the one F**,
+  and it comes _before_ the branch mega-axis.
+- **X — Cross-cutting mega-axis: WAP / branching** (largest, reserved for **last, after RTAS**).
   Enabling branches/WAP is not a preparation — it is a **~3× re-run of the entire combined DML+DDL
-  surface** across `{main, branch, staged-unpublished}`: every operation must hold on main, hold in
-  isolation on a named branch, and (under WAP) stage invisibly then publish. Its budget is decided
-  on its own, at the end, once everything beneath it is green — never crossed casually.
+  surface** across `{main, branch, staged-unpublished}`: every op must hold on main, hold in isolation
+  on a branch, and (under WAP) stage invisibly then publish. Its budget is decided on its own, at the
+  end, once everything beneath it is green.
 
-**Table properties** get a sub-classification (from the property recon), because most of them must
-_not_ be crossed with anything:
-- **Feature-flag property** (changes observable behavior: `write.wap.enabled`, `write.{delete,
-  update,merge}.mode`, `write.distribution-mode`, `format-version` as-read): **one behavioral test
-  proving the flag's effect (role B/×1).** A flag graduates to a P/F preparation only if it changes
-  the substrate for _all_ DML — which is exactly what MoR already did (264 cases); nothing else gets
-  that budget without justification.
-- **Tuning property** (no observable contract: `commit.retry.*` waits, compression codec, target
-  file size, arbitrary user keys): assert **"accepted, table still works" once.** Never multiplied.
-- **Reserved property** (`openhouse.*`, `policies`): role N (rejection) + a few "server stamps/forces
-  it" positive assertions.
-- **Property _combinations_**: **representative tuples, not the cross-product.** Test the specific
-  enforced interaction (`wap.enabled` ⊕ `replace.enabled` exclusivity), not the cartesian grid.
+## Two tracks: data-plane (Spark SQL) vs control-plane (REST/Jobs)
 
-**Build order (largest axis last):** bounded phases (B/N/S-as-behavior) → the S smoke-slice preps
-(encryption, replication, schema-evolved, sort-ordered) → **RTAS full cross (F)** → **WAP/branching
-mega-axis (X)**. Each tier must be green before the next is spent.
+The recon surfaced that **most of what makes OpenHouse ≠ Iceberg lives in the control plane**, which
+the current SQL-only harness cannot reach. So the work splits:
 
-**Budgeted total (rough, refined once the encryption/replication recon lands):**
-- Bounded B+N+S-behaviors (schema, props, sort, rename, CTAS/RTAS-contract, namespace, policy,
-  encryption-on, replication-on) ≈ **+120–150**
-- S smoke-slice preps (×~10 each: encryption, replication, schema-evolved, sort-ordered) ≈ **+40**
+- **Data-plane track (Spark SQL)** — fits the harness as-is (`.sql(label)(stmt)` already runs DDL):
+  schema DDL, properties, sort order, rename, CTAS/RTAS, namespace, policy DDL, branches, **clustering
+  columns, column tags, GRANT/REVOKE ACL**. Phases 12–24.
+- **Control-plane track (REST + Jobs)** — needs a harness extension (a REST client to the embedded
+  `OpenHouseLocalServer`, or direct `Operations`/service calls): **table lock, soft-delete/undrop,
+  maintenance jobs (compaction / snapshot-expiration / retention / orphan-file)**. Phases 25–27.
+  **Decision:** do we extend the harness to the control plane, or keep it Spark-SQL-only and defer
+  these? They're the highest-differentiation OpenHouse features but the biggest framework lift.
+
+## Build order (largest axis strictly last)
+
+`data-plane bounded (B/N) → S/P smoke preps → [control-plane track, if opted in] → RTAS (F) → WAP/branching (X)`.
+Each tier green before the next is spent.
+
+**Budgeted total (grounded in the recon; the two substrate axes shrank, not grew):**
+- Data-plane bounded B+N (schema, props+metadata-retention, sort, rename, CTAS/RTAS-contract,
+  namespace, policy, clustering, column-tags, ACL, replication-contract) ≈ **+115**
+- P smoke preps (schema-evolved, sort-ordered — encryption/replication preps **dropped**) ≈ **+20**
+- Control-plane track (lock / undrop / maintenance jobs) ≈ **+20** *(gated on the harness-extension decision)*
 - **RTAS full cross (F)** ≈ **+650**
-- **WAP/branching mega-axis (X)** ≈ **~3× the then-current combined surface** — the single biggest
-  spend, quantified and decided only when we reach it (order-of-thousands if taken fully; far less if
-  crossed against a smoke slice on the branch).
+- **WAP/branching mega-axis (X)** ≈ **+150** (smoke-on-branch) … **up to ~+2,400** (full 3× cross)
 
-So the pre-branch plan lands near **+160** (bounded + S preps), **+810** with RTAS, and the branch
-axis is a deliberate final multiplier on top — never accidental.
+Cumulative on the 660 DML baseline: **~795** (data-plane) → **~815** (+control-plane) → **~1,465**
+(+RTAS) → **~1,615 / up to ~3,900** (+branch). The branch axis is the only order-of-magnitude lever.
 
-## Gate #0 — OpenHouse DDL support matrix (verified against source; ❓ = must probe at runtime)
-
-Established from the server rules (`OpenHouseInternalRepositoryImpl`, `BaseIcebergSchemaValidator`,
-`BasePreservedKeyChecker`) and existing itests. Confirm each ❓ against the running catalog before
-writing its test; a ❓ that rejects becomes an **N**, one that succeeds becomes a **B**.
+## Gate #0 — OpenHouse support matrix (verified against source; ❓ = probe at runtime)
 
 **Supported (→ Behavior):** `ADD COLUMN(S)` incl. nested; `SET/UNSET TBLPROPERTIES` (user keys);
-`WRITE ORDERED BY` / `WRITE UNORDERED` / distribution; `RENAME TO` (same catalog); `SET POLICY` /
-`UNSET POLICY`; `CTAS`; `RTAS` **iff `replace.enabled=true`**; `CREATE BRANCH` + `cherrypick_snapshot`
-/ `fast_forward` / `rollback_to_snapshot` / `set_current_snapshot`; `SHOW DATABASES` / `SHOW TABLES`;
-`DROP TABLE` / `IF EXISTS` / `PURGE` (purge always forced true); `CREATE TABLE IF NOT EXISTS`.
+`WRITE ORDERED BY`/`UNORDERED`/distribution; `RENAME TO` (same catalog); `SET/UNSET POLICY`
+(retention/history/sharing/replication); `MODIFY COLUMN … SET TAG (PII|HC)`; `GRANT`/`REVOKE`/`SHOW
+GRANTS` (table- and **database**-scoped); clustering columns at CREATE; `CTAS`; `RTAS` **iff
+`replace.enabled=true`**; `CREATE BRANCH` + `cherrypick_snapshot`/`fast_forward`/`rollback_to_snapshot`
+/`set_current_snapshot`; `SHOW DATABASES`/`SHOW TABLES`; `DROP TABLE`/`IF EXISTS`/`PURGE`.
 
 **Rejected (→ Negative):** `DROP COLUMN` ("Some columns are dropped"); `RENAME COLUMN` ("Column not
-found in newSchema"); `ADD/DROP/REPLACE PARTITION FIELD` ("recreate the table with new partition
-spec" — already in the suite); `SET`/`UNSET` of `openhouse.*` or `policies` (`ALTER_RESERVED_TBLPROPS`);
+found in newSchema"); `ADD/DROP/REPLACE PARTITION FIELD` and **clustering** evolution ("recreate the
+table" — partition already in suite); `SET/UNSET` of `openhouse.*`/`policies` (`ALTER_RESERVED_TBLPROPS`);
 change `openhouse.tableType` (`ALTER_TABLE_TYPE`); `RTAS` without `replace.enabled` (`RTAS_DISABLED`);
-`RTAS` while `wap.enabled`/replication on; `RENAME TO` cross-catalog; `CREATE`/`DROP`/`ALTER`/`DESCRIBE
-NAMESPACE`.
+`RTAS` while `wap.enabled` **or replication** enabled; `RENAME TO` cross-catalog;
+`CREATE/DROP/ALTER/DESCRIBE NAMESPACE`; `GRANT` on an unshared table (`GRANT_ON_UNSHARED_TABLES`) or a
+locked table (`GRANT_ON_LOCKED_TABLES`); lock/unlock on a REPLICA (`checkReplicaTable`); update/rename
+of a locked table (`LOCKED_TABLE_OPERATION`); REPLICA create without a valid `openhouse.tableUUID`;
+`isTableReplicated=true` create without a sane `last-updated-ms`.
 
 **Forced / silently overridden on CREATE (→ "you didn't get what you set" findings):**
-`format-version` → cluster default (2), user value ignored; `write.metadata.delete-after-commit.enabled`
-→ cluster default. Contrast honored-if-set: `write.format.default`, `write.metadata.previous-versions-max`.
+`format-version` → cluster default (2); `write.metadata.delete-after-commit.enabled` → cluster default.
+Honored-if-set: `write.format.default`, `write.metadata.previous-versions-max`.
 
-**❓ Probe first:** type widening (`int→bigint`, `float→double`, decimal precision↑); column
-`COMMENT`; nullability `DROP/SET NOT NULL`; column reorder `FIRST/AFTER`; `SET/DROP IDENTIFIER FIELDS`;
-`CREATE TABLE LIKE`; `SET LOCATION`; `WRITE LOCALLY ORDERED BY`; `CREATE TAG` / `DROP`/`REPLACE BRANCH`.
+**Recon findings that reshaped this plan:**
+- **Encryption: does not exist in OSS OpenHouse** (no KMS / Parquet modular encryption / column
+  encryption). Collapses to a single negative (encryption/KMS props ignored), not an axis.
+- **Replication is not a per-operation substrate.** Replica tables are written only by an external
+  cross-cluster job; user DML results are unchanged. It reduces to bounded negatives + policy
+  round-trips. Cross-cluster mechanics + `enable_tabletype` toggle are **out of scope** for a single
+  embedded server. Note: **OpenHouse's own tests do not cover the RTAS-while-replication rejection** —
+  a real gap we fill.
+- **Column tags (`SET TAG PII|HC`) and sharing are metadata/ACL-plane only** — they do NOT mask or
+  alter query results. Test = round-trip + assert reads unaffected.
+- **Genuinely new axes:** clustering columns (separate from partitioning); table lock enforcement;
+  soft-delete/undrop lifecycle; maintenance jobs that mutate table state; database-scoped grants.
 
-## Framework additions (small — DDL is just SQL, so `.sql(label)(stmt)` already runs it)
+**❓ Probe first:** type widening (`int→bigint`…); column `COMMENT`; nullability `SET/DROP NOT NULL`;
+column reorder `FIRST/AFTER`; `SET/DROP IDENTIFIER FIELDS`; `CREATE TABLE LIKE`; `SET LOCATION`;
+`WRITE LOCALLY ORDERED BY`; `CREATE TAG`/`DROP`/`REPLACE BRANCH`; clustering SQL surface
+(`CLUSTERED BY`?); whether OSS `AuthorizationHandler` enforces GRANT (may be a stub → tests degrade to
+parse+persist).
 
-The only real gap is **structure introspection** for the assertions. Add typed `StepView` helpers:
-- [ ] `columnsOf(view)` → `List[(name, type, nullable, comment)]` (from `spark.table(t).schema` — the
-  `create.schema` test already reads this).
-- [ ] `propertiesOf(view)` → `Map[String,String]` (`SHOW TBLPROPERTIES t`) — needed for the
-  forced-override findings and user-key round-trips.
-- [ ] `partitionSpecOf(view)` (`.partitions` metadata / `DESCRIBE EXTENDED`) — reused from Phase 7.
-- [ ] `sortOrderOf(view)` — ❓ Spark has no clean surface; Gate #0 probe (`DESCRIBE EXTENDED` vs a
-  metadata read). Blocks Phase 16's read-back assertion; find the surface before writing it.
+## Framework additions
 
-The typed `Column[T]` handles stay for **value** assertions (DML). DDL asserts **structure** via the
-helpers above. Schema-mutating behaviors (ADD COLUMN) assert on the column list, not on typed handles
-for the new column (the typed `CoreTable` schema is fixed).
+Data-plane (small — DDL is just SQL): typed `StepView` introspection helpers —
+- [ ] `columnsOf(view)` → `List[(name,type,nullable,comment)]` (schema already read by `create.schema`)
+- [ ] `propertiesOf(view)` → `Map[String,String]` (`SHOW TBLPROPERTIES`) — for forced-override findings
+- [ ] `partitionSpecOf(view)` / `sortOrderOf(view)` — ❓ sort-order surface (Gate #0; else assert via `distribution-mode`)
+
+Control-plane (larger — the Phase 25–27 gate): a REST client to the embedded server (lock/undrop/jobs
+endpoints) or direct `Operations`/service invocation, plumbed as new `TableTest` steps. Only built if
+the control-plane track is opted in.
 
 ---
 
-## Phase 12 — Schema DDL: ADD COLUMN family  (role B, × layouts)
-- [ ] add a single top-level column → column present, type/nullable correct, existing rows read null
-- [ ] add multiple columns in one statement
-- [ ] add a nested struct child (`ADD COLUMN s.e int`) → nested field present, old rows null
-- [ ] ❓ add column with `COMMENT` → comment stored (probe; likely B)
-- [ ] ❓ add column at position `FIRST` / `AFTER c` → column order reflects it (probe; likely B)
-- [ ] ❓ type widening `int→bigint`, `float→double`, decimal precision↑ → values preserved (probe)
+# Data-plane track (Spark SQL)
 
-## Phase 13 — Schema DDL negatives  (role N, ×1)
-- [ ] `DROP COLUMN` → `ALTER_RESERVED`/`InvalidSchemaEvolution` "Some columns are dropped" (typed)
-- [ ] `DROP COLUMN` on a nested field → same rejection
-- [ ] `RENAME COLUMN` → "Column [..] not found in newSchema" (typed)
-- [ ] ❓ narrowing type (`bigint→int`) → Iceberg rejection (probe; expected N)
-- [ ] ❓ `SET NOT NULL` on an existing optional column → rejection (probe; expected N)
+## Phase 12 — Schema: ADD COLUMN family  (B, ×layouts)
+- [ ] add single / multiple / nested-child column → present, existing rows read null
+- [ ] ❓ add with `COMMENT`; ❓ add at `FIRST`/`AFTER`; ❓ type widening `int→bigint`/`float→double`/decimal↑
 
-## Phase 14 — Table properties: user keys, reserved keys, forced overrides  (B + N + findings)
-- [ ] user key `SET TBLPROPERTIES ('k'='v')` then read-back = v; then `UNSET` removes it (B)
-- [ ] reserved `SET TBLPROPERTIES ('policies'=…)` → `ALTER_RESERVED_TBLPROPS` (typed N)
-- [ ] reserved `SET TBLPROPERTIES ('openhouse.tableType'=…)` → `ALTER_TABLE_TYPE`/reserved (typed N)
-- [ ] **finding:** create with `format-version=1` → read-back is **2** (server forces cluster default)
-- [ ] **finding:** create with `write.metadata.delete-after-commit.enabled=true` → read-back is the
-      cluster default, not the user's value
-- [ ] honored-if-set: create with `write.format.default=avro` → read-back = avro; `previous-versions-max=5` → = 5
-- [ ] tuning: create with `commit.retry.max-wait-ms` / a compression codec → accepted, table still writes/reads (assert-once, C)
+## Phase 13 — Schema negatives  (N)
+- [ ] `DROP COLUMN` (top-level + nested) → "Some columns are dropped"; `RENAME COLUMN` → "not found in newSchema"
+- [ ] ❓ narrowing type; ❓ `SET NOT NULL` on an optional column → rejection
 
-## Phase 15 — Feature-flag properties with observable behavior  (role B, ×1 — prove the flag's effect)
-- [ ] `write.wap.enabled=true`: a write stages a snapshot with no ref; base read excludes it;
-      `cherrypick_snapshot` publishes it → now visible (the WAP contract)
-- [ ] `write.distribution-mode=range` vs `none`: observable in write layout / summary (light assertion)
-- [ ] (CoW vs MoR feature flags — already covered by the 264-case MoR axis + the physical discriminator)
+## Phase 14 — Table properties + metadata retention  (B + N + findings)
+- [ ] user key set→read-back→unset (B); reserved `policies`/`openhouse.tableType` set → typed N
+- [ ] **finding:** `format-version=1` → read-back 2; `delete-after-commit.enabled` forced to cluster default
+- [ ] honored-if-set: `write.format.default=avro`, `previous-versions-max=5` → read-back matches
+- [ ] metadata-version retention: old `metadata.json` pruned to `previous-versions-max` (B)
+- [ ] tuning: retry-wait / compression codec accepted, table still round-trips (assert-once)
 
-## Phase 16 — Sort order / write distribution  (role B; ❓ read-back surface)
-- [ ] `WRITE ORDERED BY (foo_col_long)` → sort order set; `write.distribution-mode=range` appears
-- [ ] multi-column `WRITE ORDERED BY a, b`; `… DESC NULLS FIRST`
-- [ ] `WRITE UNORDERED` clears it
-- [ ] ❓ assertion surface for sort order (Gate #0) — if none, assert via the `distribution-mode` side effect
+## Phase 15 — Feature-flag properties  (B)
+- [ ] `write.distribution-mode=range` vs `none` observable in write layout (light)
+- [ ] (WAP flag effect deferred into the Phase 29 mega-axis; MoR already covered)
+
+## Phase 16 — Sort order / write distribution  (B; ❓ read-back surface)
+- [ ] `WRITE ORDERED BY` single/multi/`DESC NULLS FIRST`; `WRITE UNORDERED` clears; `distribution-mode=range` appears
 
 ## Phase 17 — Rename table  (B + N)
-- [ ] `RENAME TO` (same db) → old name gone, new name loads with identical schema + rows
-- [ ] `RENAME TO` onto an existing name → conflict rejection (typed)
-- [ ] cross-catalog `RENAME TO` → `UnsupportedOperationException "Cannot rename tables across catalogs"` (typed N)
+- [ ] rename same-db → old gone / new loads identical; onto existing → conflict; cross-catalog → typed N
 
-## Phase 18 — CTAS / RTAS  (B + N + findings + the one optional F)
-- [ ] `CTAS` from a seeded source → new table has the projected rows + schema
-- [ ] **finding:** SQL `CTAS` drops `NOT NULL` (target column becomes optional) and drops sort order
-- [ ] `RTAS` with `replace.enabled=true` → table replaced, new schema/rows; user props preserved, `policies=""`
-- [ ] `RTAS` without the flag → `RTAS_DISABLED` "REPLACE TABLE AS SELECT is not enabled" (typed N)
-- [ ] `RTAS` while `write.wap.enabled=true` → rejected (WAP/RTAS mutual exclusion) (typed N)
-- [ ] `CREATE OR REPLACE` on a non-existent table → just creates it (no opt-in needed)
-- [ ] **[decision] RTAS as a full-cross preparation (role F)** — `createViaRtas(layout).andThen(op)` over
-      all DML × all layouts, validating the incremental model. **Gated on your Rule-2 call below.**
+## Phase 18 — CTAS / RTAS contract  (B + N + finding)
+- [ ] CTAS rows+schema; **finding:** CTAS drops NOT NULL + sort order
+- [ ] RTAS w/ `replace.enabled` → replaced, props preserved, `policies=""`
+- [ ] RTAS without flag → `RTAS_DISABLED` (N); RTAS ⊕ WAP → N; **RTAS ⊕ replication → N (OpenHouse's own gap)**
+- [ ] `CREATE OR REPLACE` on a non-existent table → creates it
 
-## Phase 19 — Namespace / catalog DDL  (mostly N)
-- [ ] `CREATE NAMESPACE` / `DROP NAMESPACE` / `ALTER NAMESPACE SET PROPERTIES` / `DESCRIBE NAMESPACE`
-      → each `UnsupportedOperationException "… is not supported"` (typed N)
-- [ ] `SHOW DATABASES` / `SHOW TABLES IN db` → succeed and list the managed table (B)
-- [ ] a database is created implicitly by creating a table in it (B)
+## Phase 19 — Namespace / catalog DDL  (N + B)
+- [ ] CREATE/DROP/ALTER/DESCRIBE NAMESPACE → typed N each; SHOW DATABASES/TABLES → B; implicit db-on-create
 
-## Phase 20 — Policy DDL (OpenHouse extension: `ALTER TABLE … SET POLICY`)  (B + rich N)
-- [ ] `SET POLICY (RETENTION=…)` on a time-partitioned table → policy stored/read-back
-- [ ] `SET POLICY (HISTORY MAX_AGE=…d VERSIONS=…)` within bounds → stored
-- [ ] `SET POLICY (SHARING=true)` → stored; `UNSET POLICY (REPLICATION)` → cleared
-- [ ] negatives (validator bounds): history `MAX_AGE` > 3 days; `VERSIONS` > 100 or < 2; retention
-      granularity coarser than partition; retention on non-time-partition without a column pattern (typed N each)
+## Phase 20 — Policy DDL (`ALTER TABLE … SET/UNSET POLICY`)  (B + rich N)
+- [ ] SET RETENTION (time-partitioned) / HISTORY (in-bounds) / SHARING; UNSET REPLICATION → round-trip
+- [ ] negatives: history `MAX_AGE` > 3d, `VERSIONS` > 100 / < 2; retention granularity coarser than
+      partition; retention on non-time-partition without a column pattern; replication bad interval format (parse)
 
-## Phase 21 — Branches & tags  (B; ❓ tags)
-- [ ] `ALTER TABLE … CREATE BRANCH b` → branch ref exists; write to `t.branch_b` is isolated from main;
-      `VERSION AS OF 'b'` reads the branch
-- [ ] ❓ `CREATE TAG` / `DROP BRANCH` / `REPLACE BRANCH` (probe; B or N per Gate #0)
+## Phase 21 — Clustering columns  (B + N) — NEW
+- [ ] CREATE with clustering column(s) (identity) → spec reflects it; write/read round-trips
+- [ ] clustering with `TRUNCATE[w]` / `BUCKET[n]` transform; ❓ SQL surface (`CLUSTERED BY` vs API)
+- [ ] negatives: > max clustering columns; clustering-evolution (ALTER) → `PARTITION_EVOLUTION` typed N
 
-## Phase 22 — DDL-as-preparation multipliers  (role P — smoke slice only; F only where decided)
-- [ ] **P:** `createSeedAddColumn(layout)` (add a column + backfill) × smoke-slice(5) × {unpart,part}/parquet
-      — DML stays correct against an evolved schema (~10 cases)
-- [ ] **P:** `createSeedOrdered(layout)` (table with a sort order) × smoke-slice × 2 layouts (~10 cases)
-- [ ] **F (optional):** RTAS preparation × full DML × full layouts — see Phase 18 decision
+## Phase 22 — Column tags + sharing / ACL  (B + N; ❓ enforcement) — NEW
+- [ ] `MODIFY COLUMN c SET TAG (PII|HC)` → tag round-trips; **reads unaffected** (no masking — assertion)
+- [ ] `SET POLICY (SHARING=TRUE)` then `GRANT SELECT … TO p` → accepted; `SHOW GRANTS` lists it
+- [ ] negatives: GRANT with sharing off → `GRANT_ON_UNSHARED_TABLES`; ❓ database-scoped GRANT/REVOKE
+- [ ] ❓ probe whether OSS `AuthorizationHandler` enforces (else degrade to parse+persist)
+
+## Phase 23 — Replication / table-type contract  (N, bounded) — NEW
+- [ ] REPLICA_TABLE create without valid `openhouse.tableUUID` → typed N
+- [ ] `isTableReplicated=true` create without sane `last-updated-ms` (missing / future) → typed N
+- [ ] change `openhouse.tableType` on an existing table → `ALTER_TABLE_TYPE` typed N
+
+## Phase 24 — Data-plane preparation multipliers  (P — smoke slice)
+- [ ] `createSeedAddColumn(layout)` × smoke-slice × {unpart,part}/parquet — DML holds on an evolved schema
+- [ ] `createSeedOrdered(layout)` × smoke-slice × 2 layouts — DML holds under a sort order
 
 ---
-**Execution protocol** (same as DML): add a phase, run it, each case passes or is a tagged known-bug
-with a recorded reason. Genuine product bug → tag + `BUGS.md`, don't build on it. ❓ probes run first
-within a phase to settle B-vs-N before the rest of that phase is written.
 
-**Decision (Rule 2 / Phase 18 + 22):** RTAS gets the **F** full-cross budget (+~650) because it
-validates the incremental model — but it is **deferred to Phase 22 (last)**, so Phases 12–21 (the
-bounded ~+130) are built and green first, and the +650 is spent only when we deliberately reach it.
-Every other preparation stays on the **P** smoke slice. This is the only lever between ~+130 and ~+780.
+# Control-plane track (REST + Jobs) — GATED on the harness-extension decision
+
+## Phase 25 — Table lock enforcement matrix  (B + N) — NEW
+- [ ] lock via REST → update / rename / GRANT on the locked table rejected (`LOCKED_TABLE_OPERATION` /
+      `GRANT_ON_LOCKED_TABLES`, typed); read requires `LOCK_ADMIN`; unlock restores mutability
+
+## Phase 26 — Soft-delete / undrop lifecycle  (B + N) — NEW
+- [ ] drop (soft) → table appears in soft-deleted list → restore → loads with identical schema/rows
+- [ ] restore onto an in-use name → `AlreadyExistsException`; purge → gone; hard-vs-soft default per drop path
+
+## Phase 27 — Maintenance jobs (state-changing control-plane ops)  (B) — NEW
+- [ ] snapshot-expiration → old snapshots dropped, time-travel reachability shrinks
+- [ ] data-compaction (`RewriteDataFiles`) → file count/layout changes, new snapshot, rows preserved
+- [ ] retention → rows past the retention window deleted; orphan-file deletion → dangling files removed
+
+---
+
+# Terminal multipliers (spent last, on purpose)
+
+## Phase 28 — RTAS full cross  (F ≈ +650)
+- [ ] `createViaRtas(layout).andThen(op)` × all DML × all layouts — the incremental-model validation
+
+## Phase 29 — WAP / branching mega-axis  (X — the ~3× multiplier, decided on its own)
+- [ ] every DML **and** DDL op re-run on `{main, branch, staged}`: main correctness, branch isolation,
+      WAP stage→`cherrypick`→publish visibility. Budget (smoke-on-branch ~+150 vs full 3× ~+2,400)
+      chosen only when we reach it, with everything beneath it green.
+
+---
+**Execution protocol** (same as DML): add a phase, run it; each case passes or is a tagged known-bug
+with a recorded reason. ❓ probes run first within a phase to settle B-vs-N. Genuine product bug →
+tag + `BUGS.md`, don't build on it.
+
+**Open decisions:**
+1. **Control-plane track (Phases 25–27):** extend the harness to REST/Jobs, or keep it Spark-SQL-only
+   and defer? Highest OpenHouse-differentiation coverage vs. the biggest framework lift.
+2. **Branch mega-axis budget (Phase 29):** smoke-on-branch (~+150) or the full 3× (~+2,400)? Decided last.
