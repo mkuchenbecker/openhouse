@@ -109,23 +109,30 @@ of a locked table (`LOCKED_TABLE_OPERATION`); REPLICA create without a valid `op
 Honored-if-set: `write.format.default`, `write.metadata.previous-versions-max`.
 
 **Recon findings that reshaped this plan (verified in code):**
-- **Encryption: ABSENT in OSS OpenHouse — proven by an un-wired hook, not just "not found".**
-  `OpenHouseInternalTableOperations extends BaseMetastoreTableOperations` overrides `io()` but **not
-  `encryption()`**, so it inherits Iceberg's no-op `PlaintextEncryptionManager`; no
-  `parquet.crypto.factory.class`, no KMS client, no storage-backend SSE. Files are plaintext on disk.
-  → ~2 **negatives** (encryption/KMS props stored inert; `.parquet`/`metadata.json` readable with no
-  key) + a **plaintext-on-disk finding**. Not a substrate. If encryption must be a real feature, the
-  repo has to add it (override `encryption()` + wire a KMS client / crypto factory).
+- **Encryption: KMS-based and REAL, but the plugin is in a private repo (external, like the
+  replication mover).** In OSS the Iceberg `encryption()` hook is un-wired
+  (`OpenHouseInternalTableOperations` overrides `io()` but not `encryption()` → inherits the no-op
+  `PlaintextEncryptionManager`; no `parquet.crypto.factory.class`, no KMS client), so **OSS writes
+  plaintext by default**. The production KMS plugin — which wires `encryption()` / a
+  `KeyManagementClient` (or a Parquet crypto factory) — lives outside this repo. → In the embedded
+  OSS harness only the **plaintext-default path** is exercisable (encryption props inert;
+  `.parquet`/`metadata.json` readable with no key). Encryption-ON is **out of scope for OSS** exactly
+  like the cross-region replication mover; document the **plugin contract** it must satisfy so a
+  future private-plugin harness can drive it. Encryption is a must-work feature — the fact that OSS
+  has no default wiring (plaintext, silently) is itself worth stating.
 - **Replication: EXTERNAL data-mover, brittle raw-snapshot copy.** The copy+commit executor is **not
   in-repo** — no `OperationTask` registers `OPERATION_TYPE=REPLICATION`, `JobsScheduler` throws
   "Unsupported job type REPLICATION", no `ReplicationSparkApp`. Only the primary-side scheduling and
-  the destination **commit-acceptance** path exist. OpenHouse stores snapshots **verbatim** (no path
-  rewrite), so a replica carries **source-region absolute paths** — correctness depends on the
-  external mover staging files where they resolve. **DDL that breaks it:** source-side snapshot
-  expiration / retention / orphan-file-deletion delete files the replica's copied snapshot list still
-  references → **dangling refs, with no existence validation on commit**. → bounded ~15 cases,
-  SQL-reachable + repository-layer (see Phase 23 / 27); the RTAS-while-replication rejection is a gap
-  OpenHouse's own tests miss. Cross-cluster + `enable_tabletype` are out of scope for one server.
+  the destination **commit-acceptance** path exist. **Mechanism (clarified):** every primary
+  operation — including snapshot expiration — is itself a **snapshot** that then replicates to the
+  replica via the verbatim snapshot-list copy (no path rewrite), so the replica carries
+  **source-region absolute paths**; correctness depends on the external mover staging files where they
+  resolve. **How DDL/maintenance breaks it:** because the replica references the same file paths, a
+  source-side expiration / orphan-file-deletion that physically deletes files the replica's copied
+  snapshot list still points at leaves **dangling refs — with no existence validation on commit**.
+  → bounded ~15 cases, SQL-reachable + repository-layer (Phase 23 / 27). Cross-cluster +
+  `enable_tabletype` are out of scope for one server. **Missing-guard + message-readability audits
+  (below) are in flight to find where a block *should* exist and where errors read as stacktraces.**
 - **Column tags (`SET TAG PII|HC`) and sharing are metadata/ACL-plane only** — they do NOT mask or
   alter query results. Test = round-trip + assert reads unaffected.
 - **Genuinely new axes:** clustering columns (separate from partitioning); table lock enforcement;
@@ -222,11 +229,14 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] `createSeedAddColumn(layout)` × **all DML × all layouts** — DML holds on an evolved schema (~+660)
 - [ ] `createSeedOrdered(layout)` × **all DML × all layouts** — DML holds under a sort order (~+660)
 
-## Phase 24b — Encryption negatives  (N + finding) — NEW
+## Phase 24b — Encryption (OSS plaintext-default path; KMS plugin private → out of scope)  (N + finding) — NEW
 - [ ] set `write.metadata.encryption.*` / `parquet.encryption.*` / `encryption.key-id` on CREATE/ALTER →
-      stored as inert user props, no error
+      stored as inert user props, no error (OSS has no crypto wiring)
 - [ ] **finding:** written `.parquet` (magic `PAR1`) + `metadata.json` are **plaintext on disk**, readable
-      with no key material configured — proving no encryption is in force
+      with no key material configured — OSS default is unencrypted
+- [ ] document the **plugin contract** the private KMS plugin must satisfy (override `encryption()` /
+      wire a `KeyManagementClient` or `parquet.crypto.factory.class`) so a future private-plugin harness
+      can drive encryption-ON — mirrors the external replication-mover contract
 
 ---
 
@@ -258,6 +268,34 @@ Repository-layer (needs the control-plane extension — see Phase 27):
 - [ ] every DML **and** DDL op re-run on `{main, branch, staged}`: main correctness, branch isolation,
       WAP stage→`cherrypick`→publish visibility. Budget (smoke-on-branch ~+150 vs full 3× ~+2,400)
       chosen only when we reach it, with everything beneath it green.
+
+---
+
+# Cross-cutting audits (findings, not just pass/fail) — populate `BUGS.md` / `FINDINGS.md`
+
+These two run ACROSS the phases above rather than as a numbered phase. They produce **findings and
+recommendations**, and each concrete instance becomes a test assertion where feasible.
+
+## Audit A — Missing guards (where an op breaks the table but isn't blocked)
+The RTAS-while-{WAP,replication} block (`validateReplaceTable`) is the model: a diligent engineer
+rejected an op that would corrupt the table. **Wherever an incompatible op would break the table, a
+block should exist.** Call out the gaps (in flight; from the missing-guard recon):
+- [ ] source-side partition/clustering change on a replication-enabled table (skipped via
+      `skipEligibilityCheck` → silent replica divergence) — should it be blocked?
+- [ ] source-side snapshot-expiration / orphan-file-deletion vs. a replica that still references the
+      files (dangling refs, no existence validation) — ordering/guard gap
+- [ ] any WAP / branch / format-version / rename edge that reaches mutation without a guard
+- For each gap: op → why it breaks the table → severity → recommend block-vs-handle. Each becomes a
+  **finding** (and, where a block *does* exist, a negative test asserting it).
+
+## Audit B — Error-message readability (SQL-noob test; a stacktrace is "dumb")
+Every rejection a user can hit should read clearly and name the fix. Grade each message
+**GOOD** (clear + actionable, names table + remedy) / **MEH** (correct but jargony) / **BAD**
+(stacktrace / `[INTERNAL_ERROR]` / NPE / HTTP 500 / cryptic). The negative tests already assert a
+message substring — extend them to also **assert the message is not a raw stacktrace/internal error**,
+and file every BAD/MEH message as a **finding** with a suggested wording. Known BAD to confirm: the
+nested-field `DELETE` optimizer NPE (`[INTERNAL_ERROR] … NullPointerException`) — already tagged in
+`BUGS.md`; the readability angle makes it a message-quality finding too. (Audit in flight.)
 
 ---
 **Execution protocol** (same as DML): add a phase, run it; each case passes or is a tagged known-bug
