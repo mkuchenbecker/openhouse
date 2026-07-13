@@ -57,6 +57,14 @@ Grade for a non-expert SQL user: **GOOD** = names the table + the fix · **MEH**
    fact ("dropping columns is not supported; recreate without column X") is buried in schema blobs.
 5. **S1/S2 above.**
 
+### Confirmed by execution (Phase 13)
+- **DROP COLUMN message is worse than expected:** the message is `Column[foo_col_int] not found in
+  newSchema` buried inside a **double** Iceberg schema dump — it **never says "you cannot drop
+  columns."** A novice has no idea drops are unsupported. (Type: Iceberg `BadRequestException`,
+  wrapped as `"400 , {body}"` per S1.)
+- **RENAME COLUMN is a SILENT NO-OP** (not a message issue but a silent-failure defect; see
+  `BUGS.md`) — neither errors nor renames. The worst readability outcome is *no signal at all*.
+
 ### MEH (correct but could name the fix / drop a raw dump)
 reserved-tblprops (dumps a Gson diff), `ALTER_TABLE_TYPE` (no remedy named), GRANT-on-unshared (no
 "enable SHARING" hint), REPLICA-UUID / "snapshot is invalid" (internal-sounding), namespace DDL

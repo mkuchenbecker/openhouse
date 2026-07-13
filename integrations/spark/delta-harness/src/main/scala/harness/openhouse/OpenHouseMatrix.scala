@@ -1,6 +1,7 @@
 package harness
 
 import org.apache.spark.sql.{AnalysisException, Row, SparkSession}
+import org.apache.iceberg.exceptions.BadRequestException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import scala.annotation.tailrec
@@ -909,13 +910,28 @@ object Scenarios {
       assert(vals == Seq(1L, 2L, 3L), s"values not preserved after widening: $vals")
     }
 
+  // RENAME COLUMN is a SILENT NO-OP on OpenHouse (tagged bug): the statement neither errors nor renames
+  // — verified via REFRESH TABLE + fresh DESCRIBE, the column keeps its old name. The recon predicted a
+  // server rejection ("not found in newSchema"), but the client drops the rename before it reaches the
+  // server, so nothing happens. This test asserts the CORRECT behavior (rename applies) and is tagged in
+  // Plan.knownBugs, so it reports SKIP until fixed. A silent no-op is worse than a clean rejection.
+  val ddlRenameColumn: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("ddl.renameColumn.seed")(t => s"ALTER TABLE $t ADD COLUMN to_rename int")()
+      .sql("ddl.renameColumn")(t => s"ALTER TABLE $t RENAME COLUMN to_rename TO renamed_col") { view =>
+        val names = liveColumns(view).map(_._1)
+        assert(names.contains("renamed_col") && !names.contains("to_rename"), s"RENAME COLUMN silently no-oped: $names")
+        assert(view.after.size == view.before.size)
+      }
+
   /** Phase 12 DDL schema-evolution behaviors, crossed with every layout. */
   val ddlSchemaOperations: List[(String, TableTest[CoreTable.type])] = List(
     "ddl.addColumn.single"      -> ddlAddColumnSingle,
     "ddl.addColumn.multiple"    -> ddlAddColumnMultiple,
     "ddl.addColumn.comment"     -> ddlAddColumnComment,
     "ddl.addColumn.position"    -> ddlAddColumnPosition,
-    "ddl.alterColumn.typeWiden" -> ddlAlterColumnTypeWiden
+    "ddl.alterColumn.typeWiden" -> ddlAlterColumnTypeWiden,
+    "ddl.renameColumn"          -> ddlRenameColumn
   )
 
   /** The operations crossed with every layout, each a headless segment, in report order. */
@@ -1374,6 +1390,39 @@ object Scenarios {
     "negative.mergeCardinalityViolation" -> negMergeCardinalityViolation,
     "negative.partitionByNonExistent"   -> negPartitionByNonExistent
   )
+
+  // ── DDL Phase 13: schema-evolution negatives ────────────────────────────────────────────
+  // DROP COLUMN fails at COMMIT (server 400 → Iceberg BadRequestException); the message carries the
+  // full body incl. schema dump (AUDIT-FINDINGS B — a "dumb" message), so we anchor on the meaningful
+  // "Some columns are dropped" reason. Narrowing / SET NOT NULL are caught earlier at Spark analysis
+  // (ExtendedAnalysisException, a subtype of AnalysisException) with clean messages.
+  // NOTE: RENAME COLUMN is NOT rejected — it is supported (see ddlRenameColumn in Phase 12).
+  // DROP COLUMN rejects — but the message is `Column[foo_col_int] not found in newSchema` (buried in a
+  // double schema dump); it never says "you cannot drop columns" (AUDIT-FINDINGS B, a readability gap).
+  val ddlNegDropColumn: TableTest[CoreTable.type] =
+    coreNegative("ddl.neg.dropColumn") { (spark, table) =>
+      val e = Check.intercept[BadRequestException](spark.sql(s"ALTER TABLE $table DROP COLUMN ${Core.int0.columnName}"))
+      assert(e.getMessage.contains("not found in newSchema"), s"unexpected message: ${e.getMessage.take(160)}")
+      assert(e.getMessage.contains(Core.int0.columnName), s"message should name the dropped column: ${e.getMessage.take(160)}")
+    }
+
+  val ddlNegNarrowType: TableTest[CoreTable.type] =
+    coreNegative("ddl.neg.narrowType") { (spark, table) =>
+      val e = Check.intercept[AnalysisException](spark.sql(s"ALTER TABLE $table ALTER COLUMN ${Core.long0.columnName} TYPE int"))
+      assert(e.getMessage.contains("NOT_SUPPORTED_CHANGE_COLUMN"), s"unexpected message: ${e.getMessage.take(160)}")
+    }
+
+  val ddlNegSetNotNull: TableTest[CoreTable.type] =
+    coreNegative("ddl.neg.setNotNull") { (spark, table) =>
+      val e = Check.intercept[AnalysisException](spark.sql(s"ALTER TABLE $table ALTER COLUMN ${Core.string0.columnName} SET NOT NULL"))
+      assert(e.getMessage.contains("Cannot change nullable column to non-nullable"), s"unexpected message: ${e.getMessage.take(160)}")
+    }
+
+  val ddlNegatives: List[(String, TableTest[CoreTable.type])] = List(
+    "ddl.neg.dropColumn" -> ddlNegDropColumn,
+    "ddl.neg.narrowType" -> ddlNegNarrowType,
+    "ddl.neg.setNotNull" -> ddlNegSetNotNull
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -1387,7 +1436,9 @@ object Plan {
     "insert.explicitColumns" ->
       "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md",
     "nested.deleteByNestedField" ->
-      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md"
+      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md",
+    "ddl.renameColumn" ->
+      "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -1436,6 +1487,7 @@ object Plan {
     val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
@@ -1448,7 +1500,7 @@ object Plan {
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeed(layout, 3).andThen(op).run)
 
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
-      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema
+      partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++ ddlNegatives
   }
 }
 

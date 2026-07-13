@@ -165,9 +165,14 @@ the control-plane track is opted in.
       → values preserved (❓→B). All three probes resolved to supported.
 - [ ] follow-ups: nested-child `ADD COLUMN s.e int` (needs NestedTable); wider promotions `float→double`, decimal↑
 
-## Phase 13 — Schema negatives  (N)
-- [ ] `DROP COLUMN` (top-level + nested) → "Some columns are dropped"; `RENAME COLUMN` → "not found in newSchema"
-- [ ] ❓ narrowing type; ❓ `SET NOT NULL` on an optional column → rejection
+## Phase 13 — Schema negatives  (N) — ✅ green (3 N + 1 tagged bug)
+- [x] `DROP COLUMN` → Iceberg `BadRequestException`, msg `Column[foo_col_int] not found in newSchema`
+      (typed; message never says "drop" — AUDIT-FINDINGS B)
+- [x] narrowing `bigint→int` → `AnalysisException` `NOT_SUPPORTED_CHANGE_COLUMN` (❓→N)
+- [x] `SET NOT NULL` on an optional column → `AnalysisException` "Cannot change nullable column to non-nullable" (❓→N)
+- [🐛] `RENAME COLUMN` → **SILENT NO-OP** (neither errors nor renames) — tagged bug, SKIP ×6, see `BUGS.md`.
+      Recon predicted a rejection; reality is a silent failure (client drops the change pre-server).
+- [ ] follow-up: `DROP COLUMN` on a nested field (needs NestedTable)
 
 ## Phase 14 — Table properties + metadata retention  (B + N + findings)
 - [ ] user key set→read-back→unset (B); reserved `policies`/`openhouse.tableType` set → typed N
