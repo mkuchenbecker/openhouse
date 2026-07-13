@@ -144,7 +144,13 @@ instead of failing on the `VACUUM` `ParseException`. To run: build the 3.5 VACUU
       Verified locally on JDK 17 (14 tests: SQLKeywordSuite, SparkSqlParserSuite, OptimizeTableSuite,
       SQLQueryTestSuite keywords, ThriftServer getSQLKeywords) AND CI-green on catalyst/hive-thriftserver
       + sql-other/slow/extended + Scala 2.13 SBT + Java 11/17 Maven. Only red = the known
-      `StatisticsSuite` hive flake (hive module untouched by OPTIMIZE). `OptimizeIcebergSuite` (real
-      compaction e2e) is profile-gated (`iceberg-integration-tests`) and not run in default CI.
+      `StatisticsSuite` hive flake (hive module untouched by OPTIMIZE). REAL Iceberg e2e EXECUTED
+      and passing on JDK 17: ran `OptimizeIcebergSuite` (compaction 6 data files -> fewer;
+      `REWRITE MANIFESTS` reduces `.manifests`; data intact) AND `VacuumIcebergSuite` (3 snapshots
+      -> 1; orphan-only deletion, table readable) together = 4/4. Run via
+      `build/sbt -Piceberg-integration-tests 'set unmanagedSourceDirectories in Test in
+      LocalProject("sql") += file(".../sql/core/src/test/iceberg")' 'sql/testOnly *IcebergSuite'`
+      (sbt-pom-reader honors the profile's iceberg dep but not build-helper add-test-source, hence
+      the source-dir `set`). It stays profile-gated so default CI never pulls the iceberg jar.
 - [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM (and now OPTIMIZE).
 - [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM.
