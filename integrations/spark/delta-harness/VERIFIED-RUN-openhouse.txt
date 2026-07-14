@@ -1,7 +1,7 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1298 cases: 1275 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
-Wall-time 6m26s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
+1519 cases: 1492 passed, 27 skipped (5 tagged bugs/skips), 0 failed.
+Wall-time 7m59s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
 2.6x vs the ~16 min sequential baseline; HARNESS_PARALLELISM to override). Cases are independent
 (atomic table counter) and each worker task runs in its own spark.newSession(), isolating the
 session-global conf some tests mutate; output order is unchanged. Parallelism scales with cores /
@@ -61,6 +61,14 @@ checkpoint bricked by expiration (with restart control); CDC changelog typed-but
 expired lineage; RTAS wipes PII column tags (G10 extension; comments survive); lock starves
 maintenance (NEW G12) while not stopping RTAS (G2); retention x branch / rename / wap-toggle
 invariants held; ADD COLUMN breaks the identical pre-evolution explicit-column writer (H8).
+
+Plus the substrate-cross axes (SURFACE-APPRAISAL.md, +221): branchWap:<op> - the whole DML catalog
+routed onto a branch via spark.wap.branch (53 ops x {unpart,part}/parquet = 106; each asserts its
+delta on the branch AND that main is isolated); prep.rtas:<op> - the whole DML catalog on an RTAS'd
+(replace-lineage) table (106, the P-axis replace leg; undrop leg gated on embedded-HTS); prep.morRead
+- reads with a live position delete applied at scan time across formats (9, closes the MoR read-path
+gap). branch x format and RTAS x format are pruned as vacuous; the undrop leg and the P x S x T
+composition dial toward ~10-15k remain future work.
 
 Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
 ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
