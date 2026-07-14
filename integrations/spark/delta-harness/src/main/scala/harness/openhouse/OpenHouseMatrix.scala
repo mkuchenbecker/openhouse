@@ -386,6 +386,29 @@ object Scenarios {
   def createAndSeedEvolved(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
     createAndSeed(layout, numberOfRows).sql("prep.evolved")(t => s"ALTER TABLE $t ADD COLUMN prep_extra int")()
 
+  // Branch-routing prep (the T axis, wap-conf mechanism): seed on main, fork a branch, then set
+  // spark.wap.branch so the ENTIRE downstream operation (writes AND reads) routes to the branch —
+  // no per-op rewrite needed. The op's delta assertions are relative to view.before (also the
+  // branch), so they hold unchanged. Each case runs in its own spark.newSession() (parallel runner),
+  // so the conf never leaks across cases. This crosses the whole DML catalog onto a branch.
+  def createAndSeedOnBranch(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeed(layout, numberOfRows)
+      .sql("prep.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .step("prep.routeToBranch") { (spark, table) =>
+        spark.sql(s"ALTER TABLE $table CREATE BRANCH b")
+        spark.conf.set("spark.wap.branch", "b")
+      }()
+
+  // Closing assertion for the branch axis: after the branch-routed op, MAIN must be untouched
+  // (still the 3-row seed) — the isolation half of the branch contract. Uniform across all ops
+  // because with spark.wap.branch set every write routes to the branch, never to main.
+  val branchMainIsolation: TableTest[CoreTable.type] =
+    TableTest(Core).step("branch.mainIsolated") { (spark, table) =>
+      spark.conf.unset("spark.wap.branch")
+      val mainCount = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+      assert(mainCount == 3, s"branch op leaked to MAIN — expected 3 rows, got $mainCount (isolation broken)")
+    }()
+
   // ── reads ────────────────────────────────────────────────────────────────────────────
   val readProjection: TableTest[CoreTable.type] =
     TableTest(Core).check("read.projection") { view =>
@@ -3277,6 +3300,18 @@ object Plan {
         (n.startsWith("delete.") || n.startsWith("update.") || n.startsWith("read.")) && !n.contains("byNullCondition") }
     } yield Case(s"prep.evolved:$name @ ${layout.label}", Scenarios.createAndSeedEvolved(layout, 3).andThen(op).run)
 
+    // T axis — the whole DML catalog routed onto a BRANCH via spark.wap.branch (SURFACE-APPRAISAL
+    // step 3). Format is vacuous for branches (refs never touch file encoding), so parquet only;
+    // both partitionings kept (partitioning changes overwrite/dynamic-overwrite semantics on the
+    // branch). Every op asserts its normal delta — now proving the op works branch-routed AND that
+    // main is untouched (isolation). ~106 cases.
+    val branchParquetLayouts = Scenarios.layouts.filter(_.label.endsWith("/parquet"))
+    val branchWap = for {
+      layout     <- branchParquetLayouts
+      (name, op) <- Scenarios.operations
+    } yield Case(s"branchWap:$name @ ${layout.label}",
+      Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3290,7 +3325,8 @@ object Plan {
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
-      maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ ddlPrepOrdered ++ ddlPrepEvolved
+      maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
+      ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
