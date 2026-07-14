@@ -1,6 +1,11 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1297 cases: 1274 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
+1298 cases: 1275 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
+Wall-time 6m26s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
+2.6x vs the ~16 min sequential baseline; HARNESS_PARALLELISM to override). Cases are independent
+(atomic table counter) and each worker task runs in its own spark.newSession(), isolating the
+session-global conf some tests mutate; output order is unchanged. Parallelism scales with cores /
+executors - on a real cluster the runner is bounded only by provisioned capacity.
 
 Full-suite wall-time: ~879s baseline (~14.6 min, fresh classpath) for the prior 1215-case run →
 ~0.6s/case + ~120s fixed startup (gradle resolve + Scala compile + embedded server + Spark). A cached
