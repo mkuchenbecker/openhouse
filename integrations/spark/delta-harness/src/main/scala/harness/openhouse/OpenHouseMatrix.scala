@@ -2912,7 +2912,33 @@ object Scenarios {
         println(s"DIAG pin.analyze: ${analyze.getClass.getName} :: ${Option(analyze.getMessage).getOrElse("").take(160)}")
       }()
 
+  // Compaction × branch: does rewrite_data_files touch/break branch state, and where does it land
+  // when spark.wap.branch is set? (Untested cell flagged in the surface appraisal.)
+  val surfaceMaintCompactWithBranch: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("surface.maint.compactWithBranch") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH cb")
+      spark.sql(s"INSERT INTO $table.branch_cb VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')")
+      spark.sql(s"INSERT INTO $table VALUES (CAST(7 AS BIGINT), 7, 'row-7', 7.5, true, '2024-01-07-06')")
+      val r = spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('min-input-files', '2'))").collect()(0)
+      println(s"DIAG compactWithBranch: mainCompaction rewritten=${r.get(0)} added=${r.get(1)}")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "6", "main data preserved by compaction")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'cb'") == "6",
+        "branch data preserved and readable after main compaction")
+      spark.conf.set("spark.wap.branch", "cb")
+      val confOutcome = try {
+        val rc = spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}')").collect()(0)
+        s"RAN (rewritten=${rc.get(0)}, added=${rc.get(1)})"
+      } catch { case t: Throwable => s"THREW ${t.getClass.getSimpleName} :: ${Option(t.getMessage).getOrElse("").take(140)}" }
+      finally spark.conf.unset("spark.wap.branch")
+      println(s"DIAG compactUnderWapConf: $confOutcome")
+      spark.sql(s"REFRESH TABLE $table")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "6", "main intact after conf-routed compaction attempt")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'cb'") == "6", "branch intact after conf-routed compaction attempt")
+    }()
+
   val surfaceOps: List[(String, TableTest[CoreTable.type])] = List(
+    "surface.maint.compactWithBranch"     -> surfaceMaintCompactWithBranch,
     "surface.msg.readabilityGuard"        -> surfaceMsgReadabilityGuard,
     "branch.leak.setProps"                -> surfaceBranchLeakSetProps,
     "branch.leak.writeOrderedBy"          -> surfaceBranchLeakWriteOrdered,
