@@ -1,6 +1,6 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1254 cases: 1231 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
+1289 cases: 1266 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
 
 Full-suite wall-time: ~879s baseline (~14.6 min, fresh classpath) for the prior 1215-case run →
 ~0.6s/case + ~120s fixed startup (gradle resolve + Scala compile + embedded server + Spark). A cached
@@ -37,6 +37,19 @@ preserves refs), expire-after-rollback permanence, ALTER-to-MoR, compaction over
 and three live guard-gap characterizations: G2 (RTAS replaces a LOCKED table), G9 (RTAS re-partitions
 + drops columns where ALTER rejects both), and NEW G10 (RTAS silently wipes the policies plane —
 retention lost across replace). See AUDIT-FINDINGS.md.
+
+Plus the surface-completion axis (35 cases): structured streaming read+write, CDC changelog view,
+rewrite_manifests / rewrite_position_delete_files / publish_changes / ancestors_of / real orphan
+removal, hidden metadata columns + 13-metadata-table sweep, invariant-based concurrency (append/append,
+update/update, RTAS-vs-append), schema edges (DROP NOT NULL relax, decimal widen, nested struct
+add/drop, reorder), write configs (hash distribution, target-file-size, DataFrame-to-branch),
+readability guard, G8 legs (props + sort order leak), G4 pin, WAP negatives, fast_forward/REPLACE
+BRANCH lifecycle, import-procedure pins (register_table imports UN-blocked - noted for recon).
+
+Plus the G11 composite-defect characterizations (interact.branch.expireMerge.*): expiration destroys
+merge connectivity between live refs -> fast_forward spuriously rejected though main never advanced;
+cherry-pick fallback SUCCEEDS while silently losing the expired intermediate commit; staged WAP
+snapshots silently expired pre-publish. See AUDIT-FINDINGS.md G11 + INTERACTION-AUDIT.md section 6.
 
 Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
 ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
