@@ -1,9 +1,27 @@
 # Modality-hazard recon — code-verified answers for the predicted breaks
 
 Companion to FEATURE-ANALYSIS-PLAN.md. Each hazard was predicted by the state-flow model (a
-destroyer's D(O) intersecting a feature's consumed state S(F)) and then verified in source
-([file:line]) or disassembled fork bytecode ([BYTECODE]). None of these has been run live yet —
-each ends with the test that would demonstrate it (execution phase, gated on the plan).
+destroyer's D(O) intersecting a feature's consumed state S(F)), verified in source ([file:line]) or
+disassembled fork bytecode ([BYTECODE]), and — as of the `hazard.*` suite — DEMONSTRATED LIVE
+(all 8 green). Live refinements vs prediction:
+- **H1 DEMONSTRATED** (`hazard.stream.expiredCheckpoint`): control restart delivers the incremental
+  row; after expiration the restart is bricked with the typed "expired or removed" error.
+- **H2 DEMONSTRATED, refined** (`hazard.cdc.expiredRange`): all three bound placements fail TYPED
+  but MISLEADING — explicit expired id → "Starting snapshot ... is not a parent ancestor of end
+  snapshot" (blames ancestry); timestamp bounds → "Cannot find snapshot older than <ts>" (blames the
+  timestamp). Neither names expiration — the G11 message pattern. The predicted SILENT under-report
+  did not reproduce at these placements (the punctured walk throws rather than shifts); silent
+  variants may still exist at other placements, but the demonstrated tier is broken-messaging.
+- **H3 DEMONSTRATED, refined** (`hazard.rtas.wipesColumnTags`): the PII column tag IS wiped by RTAS
+  (policies plane, as predicted); the column COMMENT survived (star projection carries schema-level
+  comments — so the loss boundary is exactly the policies plane, not schema metadata).
+- **H4 DEMONSTRATED** (`hazard.lock.starvesMaintenance`): expire on a locked table rejected
+  (LOCKED_TABLE_OPERATION path), snapshots accumulate; unlock → maintenance proceeds.
+- **H5/H6/H7 invariants HELD live** (`hazard.retentionBranch.defended`, `hazard.rename.consumers`,
+  `hazard.wapToggle.branchesSurvive`): branch survives retention+expire+OFD; rename preserves refs/
+  history/writability; the WAP toggle does not strand named branches.
+- **H8 DEMONSTRATED** (`hazard.addColumn.breaksWriters`): the identical explicit-column INSERT that
+  passed pre-evolution fails CANNOT_FIND_DATA after ADD COLUMN.
 
 ## H1 — Streaming checkpoint × snapshot expiration — CONFIRMED HAZARD (G11's streaming twin)
 The Spark streaming source persists a raw `StreamingOffset(snapshotId, position, ...)` in the

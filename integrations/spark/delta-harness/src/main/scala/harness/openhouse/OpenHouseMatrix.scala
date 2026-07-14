@@ -2947,6 +2947,211 @@ object Scenarios {
     "surface.pin.importProcs"             -> surfacePinImportProcs,
     "surface.pin.viewsAnalyze"            -> surfacePinViewsAnalyze
   )
+
+  // ═══ Hazard demonstrations H1-H8 (MODALITY-RECON.md; gates cleared per FEATURE-ANALYSIS-PLAN) ══
+  // Each was PREDICTED by the state-flow model, verified in code/bytecode, and is demonstrated
+  // live here. Characterizations flip loudly if the product fixes the hazard.
+
+  // H1 — streaming checkpoint × expiration (G11's streaming twin). Three acts:
+  // (1) stream + checkpoint; (2) CONTROL: plain restart picks up new rows (restart mechanics fine);
+  // (3) expire past the checkpointed offset → restart is BRICKED with the typed error.
+  val hazardStreamExpiredCheckpoint: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("hazard.stream.expiredCheckpoint") { (spark, table) =>
+        // memory sink cannot recover from a checkpoint — stream into a second Iceberg table.
+        val dst = s"${table}_sink"
+        spark.sql(s"DROP TABLE IF EXISTS $dst")
+        spark.sql(coreCreateParquet(dst))
+        val ckpt = java.nio.file.Files.createTempDirectory("ck-hazard").toString
+        def runStream(): Unit = {
+          val q = spark.readStream.table(table)
+            .writeStream.format("iceberg").outputMode("append")
+            .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+            .option("checkpointLocation", ckpt).toTable(dst)
+          assert(q.awaitTermination(120000), "stream did not finish"); q.stop()
+        }
+        try {
+          runStream()                                                              // act 1: offset -> s1
+          assert(countOf(spark, s"SELECT count(*) FROM $dst") == "3", "initial stream delivered the seed")
+          spark.sql(s"INSERT INTO $table VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')") // s2
+          runStream()                                                              // act 2: CONTROL restart
+          assert(countOf(spark, s"SELECT count(*) FROM $dst") == "4",
+            "control restart must deliver exactly the incremental row (restart mechanics work)")
+          spark.sql(s"INSERT INTO $table VALUES (CAST(7 AS BIGINT), 7, 'row-7', 7.5, true, '2024-01-07-06')") // s3
+          spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+          // act 3: the checkpointed offset (s2) is expired -> restart bricked, typed.
+          val e = Check.intercept[Exception](runStream())
+          assert(Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(m =>
+            m.contains("expired or removed") || m.contains("Cannot load current offset") || m.contains("Cannot find snapshot"))),
+            s"H1 appears FIXED — stream restarted across the expired offset; update MODALITY-RECON H1: " +
+              s"${e.getClass.getName} ${Option(e.getMessage).getOrElse("").take(200)}")
+        } finally spark.sql(s"DROP TABLE IF EXISTS $dst")
+      }()
+
+  // H2 — CDC/changelog over expired lineage: expired explicit bound → hard typed error;
+  // timestamp bound → SILENT under-report (the truth was 5 changes; the view shows fewer).
+  val hazardCdcExpiredRange: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()                 // s1: 3 rows
+      .step("hazard.cdc.expiredRange") { (spark, table) =>
+        spark.sql(s"INSERT INTO $table VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')") // s2
+        spark.sql(s"INSERT INTO $table VALUES (CAST(7 AS BIGINT), 7, 'row-7', 7.5, true, '2024-01-07-06')") // s3
+        val snaps = snapshotIds(spark, table)
+        val ts0 = spark.sql(s"SELECT committed_at FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getTimestamp(0)
+        val tsMid = spark.sql(s"SELECT committed_at FROM $table.snapshots WHERE snapshot_id = ${snaps(1)}").collect()(0).getTimestamp(0)
+        spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+        // Characterize each bound placement over the punctured lineage. FULL truth would mean fixed.
+        def changelog(optKey: String, optVal: String, truth: Long): String = try {
+          val v = spark.sql(
+            s"CALL openhouse.system.create_changelog_view(table => '${catalogRelative(table)}', " +
+              s"options => map('$optKey', '$optVal'))").collect()(0).getString(0)
+          val n = spark.sql(s"SELECT count(*) FROM $v").collect()(0).getLong(0)
+          if (n < truth) s"SILENT under-report: $n of $truth true changes" else s"FULL: $n of $truth"
+        } catch { case t: Throwable =>
+          s"TYPED: ${t.getClass.getSimpleName} :: ${Option(t.getMessage).getOrElse("").take(140)}" }
+        val a  = changelog("start-snapshot-id", snaps.head.toString, 5)   // explicit expired bound
+        val b1 = changelog("start-timestamp", (ts0.getTime - 1000).toString, 5)   // before all history
+        val b2 = changelog("start-timestamp", (tsMid.getTime - 1).toString, 2)    // mid-history, expired region
+        println(s"DIAG cdc.explicitExpiredId: $a")
+        println(s"DIAG cdc.tsBeforeHistory:  $b1")
+        println(s"DIAG cdc.tsMidExpired:     $b2")
+        Seq("explicitId" -> a, "tsBeforeHistory" -> b1, "tsMidExpired" -> b2).foreach { case (k, o) =>
+          assert(!o.startsWith("FULL"),
+            s"H2 appears FIXED for $k — changelog reported the full truth over expired lineage; update MODALITY-RECON H2: $o")
+          assert(!o.toLowerCase.contains("expir"),
+            s"H2 error now NAMES expiration for $k (readability improved) — update MODALITY-RECON H2/Audit B: $o")
+        }
+      }()
+
+  // H3 — RTAS wipes column tags (same policies plane as G10) and column comments (new schema from SELECT).
+  val hazardRtasWipesColumnTags: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("enableReplace")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('replace.enabled'='true')")()
+      .sql("tagPii")(t => s"ALTER TABLE $t MODIFY COLUMN ${Core.string0.columnName} SET TAG = (PII)")()
+      .step("hazard.rtas.wipesColumnTags") { (spark, table) =>
+        spark.sql(s"ALTER TABLE $table ALTER COLUMN ${Core.string0.columnName} COMMENT 'contains-pii'")
+        val before = tableProps(spark, table).getOrElse("policies", "")
+        assert(before.toLowerCase.contains("pii") || before.toLowerCase.contains("columntags"),
+          s"PII tag not stored in policies before replace: '$before'")
+        spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table WHERE ${Core.long0.columnName} <= 2")
+        val after = tableProps(spark, table).getOrElse("policies", "")
+        assert(!(after.toLowerCase.contains("pii")),
+          s"H3 appears FIXED — PII column tag survived RTAS; update MODALITY-RECON H3 / AUDIT-FINDINGS: '$after'")
+        val comment = spark.sql(s"DESCRIBE TABLE $table").collect().toSeq
+          .find(_.getString(0) == Core.string0.columnName).map(_.getString(2)).getOrElse("")
+        println(s"DIAG rtas.columnComment after replace: '${comment}' (was 'contains-pii')")
+      }()
+
+  // H5 — retention × branches: the DEFENDED path (positive invariant): main-side TTL delete +
+  // expiration + orphan removal leave a live branch fully readable.
+  val hazardRetentionBranchDefended: TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (${Core.datePartition.columnName}) TBLPROPERTIES ('write.format.default'='parquet')")()
+      .insert(3)()
+      .step("hazard.retentionBranch.defended") { (spark, table) =>
+        spark.sql(s"ALTER TABLE $table CREATE BRANCH rbb")
+        spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} <= 2")     // retention-shaped main delete
+        spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+        spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
+        assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'rbb'") == "3",
+          "H5 invariant: branch must remain fully readable after retention-delete + expire + orphan removal")
+        assert(countOf(spark, s"SELECT count(*) FROM $table") == "1", "main reflects the TTL delete")
+      }()
+
+  // H6 — rename × consumers: metadata continuity (branch refs, history, writability survive rename).
+  val hazardRenameConsumers: TableTest[CoreTable.type] =
+    coreTwoSnapshots.step("hazard.rename.consumers") { (spark, table) =>
+      val snaps = snapshotIds(spark, table)
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH rnb")
+      spark.sql(s"INSERT INTO $table.branch_rnb VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')")
+      val renamed = s"${table}_rn"
+      spark.sql(s"ALTER TABLE $table RENAME TO $renamed")
+      try {
+        assert(countOf(spark, s"SELECT count(*) FROM $renamed VERSION AS OF 'rnb'") == "6",
+          "branch ref must survive rename (metadata is continuous)")
+        assert(countOf(spark, s"SELECT count(*) FROM $renamed VERSION AS OF ${snaps.head}") == "3",
+          "time travel must survive rename (same snapshot log)")
+        spark.sql(s"INSERT INTO $renamed VALUES (CAST(7 AS BIGINT), 7, 'row-7', 7.5, true, '2024-01-07-06')")
+        assert(countOf(spark, s"SELECT count(*) FROM $renamed") == "6", "renamed table writable")
+      } finally spark.sql(s"ALTER TABLE $renamed RENAME TO $table")               // restore for teardown
+    }()
+
+  // H7 — wap.enabled=false does NOT strand named branches (only staged wap.id snapshots — G4).
+  val hazardWapToggleBranchesSurvive: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql("enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .step("hazard.wapToggle.branchesSurvive") { (spark, table) =>
+        spark.sql(s"ALTER TABLE $table CREATE BRANCH wtb")
+        spark.sql(s"INSERT INTO $table.branch_wtb VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')")
+        spark.sql(s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='false')")
+        spark.sql(s"INSERT INTO $table.branch_wtb VALUES (CAST(7 AS BIGINT), 7, 'row-7', 7.5, true, '2024-01-07-06')")
+        assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'wtb'") == "5",
+          "named branches must survive the WAP toggle (branch surface is not wap-gated)")
+        assert(countOf(spark, s"SELECT count(*) FROM $table") == "3", "main untouched")
+      }()
+
+  // H8 — ADD COLUMN breaks every existing explicit-column writer (composition with the
+  // partial-INSERT rejection): schema evolution is NOT writer-backward-compatible here,
+  // contrary to ANSI SQL (omitted columns default to NULL).
+  val hazardAddColumnBreaksWriters: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("hazard.addColumn.breaksWriters") { (spark, table) =>
+        val allCols = Core.tableColumns.map(_.columnName).mkString(", ")
+        val writerStatement = s"INSERT INTO $table ($allCols) VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')"
+        spark.sql(writerStatement)                                                // the fleet's writer: green today
+        assert(countOf(spark, s"SELECT count(*) FROM $table") == "4", "writer works pre-evolution")
+        spark.sql(s"ALTER TABLE $table ADD COLUMN extra_col INT")
+        val e = Check.intercept[AnalysisException](spark.sql(writerStatement))    // IDENTICAL statement
+        assert(e.getMessage.contains("extra_col") &&
+               (e.getMessage.contains("CANNOT_FIND_DATA") || e.getMessage.toLowerCase.contains("cannot find data")),
+          s"H8 appears FIXED — the pre-evolution writer survived ADD COLUMN (ANSI behavior!); update MODALITY-RECON H8 and BUGS.md: ${e.getMessage.take(200)}")
+      }()
+
+  val hazardOps: List[(String, TableTest[CoreTable.type])] = List(
+    "hazard.stream.expiredCheckpoint"   -> hazardStreamExpiredCheckpoint,
+    "hazard.cdc.expiredRange"           -> hazardCdcExpiredRange,
+    "hazard.rtas.wipesColumnTags"       -> hazardRtasWipesColumnTags,
+    "hazard.retentionBranch.defended"   -> hazardRetentionBranchDefended,
+    "hazard.rename.consumers"           -> hazardRenameConsumers,
+    "hazard.wapToggle.branchesSurvive"  -> hazardWapToggleBranchesSurvive,
+    "hazard.addColumn.breaksWriters"    -> hazardAddColumnBreaksWriters
+  )
+
+  // H4 — lock starves maintenance (needs the REST lock → Ctx-based). The same gate G2 shows the
+  // replace path SKIPS is hit by every maintenance commit: upkeep is blocked, replacement is not.
+  def hazardLockStarvesMaintenance(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_lockmaint"
+    val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(coreCreateParquet(table))
+    spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 3)}")
+    spark.sql(s"INSERT INTO $table VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')")
+    try {
+      val (lockStatus, lockBody) = Rest.post(ctx, s"/v1/databases/$db/tables/$tbl/lock", """{"locked":true}""")
+      assert(lockStatus >= 200 && lockStatus < 300, s"lock POST failed: $lockStatus $lockBody")
+      val snapsBefore = spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
+      val e = Check.intercept[Exception](spark.sql(
+        s"CALL openhouse.system.expire_snapshots(table => '${table.stripPrefix("openhouse.")}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)"))
+      assert(Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(_.toLowerCase.contains("locked"))),
+        s"expected LOCKED rejection for the maintenance commit: ${e.getClass.getName} ${Option(e.getMessage).getOrElse("").take(180)}")
+      spark.sql(s"REFRESH TABLE $table")
+      val snapsAfter = spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0)
+      assert(snapsAfter == snapsBefore, "locked table must accumulate snapshots (maintenance starved)")
+      val (unlockStatus, _) = Rest.delete(ctx, s"/v1/databases/$db/tables/$tbl/lock")
+      assert(unlockStatus >= 200 && unlockStatus < 300, "unlock failed")
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${table.stripPrefix("openhouse.")}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      spark.sql(s"REFRESH TABLE $table")
+      assert(spark.sql(s"SELECT count(*) FROM $table.snapshots").collect()(0).getLong(0) < snapsBefore,
+        "maintenance must proceed after unlock")
+    } finally {
+      Rest.delete(ctx, s"/v1/databases/$db/tables/$tbl/lock")
+      spark.sql(s"DROP TABLE IF EXISTS $table")
+    }
+  }
+
+  val hazardCtxOps: List[(String, Ctx => Unit)] = List(
+    "hazard.lock.starvesMaintenance" -> hazardLockStarvesMaintenance
+  )
 }
 
 /** Assembles the run: every operation x every layout, plus create.schema per layout. */
@@ -3020,6 +3225,8 @@ object Plan {
     val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
     val surface         = Scenarios.surfaceOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val hazards         = Scenarios.hazardOps.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
+      Scenarios.hazardCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
@@ -3057,7 +3264,7 @@ object Plan {
     dml ++ partitioned ++ mor ++ morVerify ++ cowVerify ++ nested ++ types ++ partitionTransforms ++
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
-      maintenance ++ control ++ branching ++ interactions ++ surface ++ ddlPrepOrdered ++ ddlPrepEvolved
+      maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
