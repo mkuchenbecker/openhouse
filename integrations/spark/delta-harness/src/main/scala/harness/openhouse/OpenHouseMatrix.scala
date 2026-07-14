@@ -3369,12 +3369,34 @@ object Main {
 
     // Known-bug cases are tagged (Plan.knownBugs) and reported SKIP rather than run — deferred,
     // not passing. Everything else executes.
-    val results = cases.map { c =>
+    //
+    // Cases are independent (each owns its table via the atomic counter), so they run on a worker
+    // pool. Each worker task gets its OWN SparkSession (spark.newSession(): separate SQLConf —
+    // isolating the session-global state some tests mutate, e.g. spark.wap.branch/wap.id and
+    // changelog temp views — over the shared SparkContext). Results are collected and printed in
+    // the original case order, so output is identical to a sequential run.
+    // HARNESS_PARALLELISM overrides; <=1 falls back to the sequential path.
+    val parallelism = sys.env.get("HARNESS_PARALLELISM").map(_.toInt)
+      .getOrElse(math.max(1, Runtime.getRuntime.availableProcessors()))
+    println(s"parallelism: $parallelism worker sessions\n")
+
+    def runOne(c: Plan.Case): (String, (Outcome, Int)) =
       Plan.bugReason(c.id) match {
         case Some(reason) => (c.id, (Outcome.Skipped(reason): Outcome, 0))
-        case None         => (c.id, Runner.execute(c, ctx))
+        case None         => (c.id, Runner.execute(c, ctx.copy(spark = ctx.spark.newSession())))
       }
-    }
+
+    val results =
+      if (parallelism <= 1) cases.map(runOne)
+      else {
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(parallelism)
+        try {
+          val futures = cases.map(c => pool.submit(new java.util.concurrent.Callable[(String, (Outcome, Int))] {
+            def call(): (String, (Outcome, Int)) = runOne(c)
+          }))
+          futures.map(_.get(60, java.util.concurrent.TimeUnit.MINUTES))
+        } finally pool.shutdown()
+      }
 
     results.foreach { case (id, (outcome, attempts)) =>
       val note = outcome match {
