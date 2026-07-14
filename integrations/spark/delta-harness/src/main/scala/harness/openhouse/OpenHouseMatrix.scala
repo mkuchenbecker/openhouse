@@ -407,6 +407,22 @@ object Scenarios {
   val rtasPrepShapes: List[(String, String)] =
     partitionVariants.map { case (pl, pc) => (s"$pl/parquet", pc) }   // (label, partitionClause)
 
+  // MoR-read prep (closes the review's "reads on MoR with deletes is a distinct scan path" gap —
+  // SURFACE-APPRAISAL step 1). The current MoR bucket runs mutation ops (each reads back once), but
+  // never crosses the READ variants against a table carrying a LIVE position delete. Seed a single
+  // data file (COALESCE(1)) on a MoR layout, delete a strict subset → a position-delete file the
+  // reader must APPLY at scan time (not a whole-file elimination). Downstream read ops then assert
+  // the deleted row is excluded under each read shape (projection, filter-pushdown, ...).
+  def createAndSeedMorDeleted(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeedSingleFile(layout, numberOfRows)
+      .step("prep.morDelete") { (spark, table) =>
+        spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} = 1")   // strict subset → position delete
+      } { view =>
+        assert(view.after.size == numberOfRows - 1, s"MoR prep delete failed: ${view.after.size}")
+        val deleteFiles = view.spark.sql(s"SELECT count(*) FROM ${view.table}.all_delete_files").collect()(0).getLong(0)
+        assert(deleteFiles == 1, s"MoR prep must leave a live position-delete file, got $deleteFiles")
+      }
+
   def createAndSeedRtas(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
@@ -3336,6 +3352,14 @@ object Plan {
       (name, op)               <- Scenarios.operations
     } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3).andThen(op).run)
 
+    // MoR reads with a live position delete (closes the scan-path gap, step 1). Read/scan ops only —
+    // they must apply the position delete at read time. Across formats (delete-file encoding differs).
+    val morReadOps = Scenarios.operations.filter { case (n, _) => n.startsWith("read.") || n == "format.materialization" }
+    val prepMorRead = for {
+      layout     <- Scenarios.morVerifyLayouts   // single-file-friendly MoR layouts, per format
+      (name, op) <- morReadOps
+    } yield Case(s"prep.morRead:$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3350,7 +3374,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      prepRtas ++ ddlPrepOrdered ++ ddlPrepEvolved
+      prepRtas ++ prepMorRead ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
