@@ -244,5 +244,54 @@ rollback (C1, the permanence footgun); write-after-RTAS on `ddl.rtas.enabled`.
 **P3 (~2 cases):** ALTER-to-MoR with single-file seed (A8); `rewrite_data_files` on an evolved-schema
 table (C3). *(user-prop survival across RTAS promoted into the P1 property-merge block above.)*
 
+---
+
+## 6. The composite defect: branch × expiration × merge (G11) — found, demonstrated, and what it teaches
+
+The suite's pairwise cell "branch × maintenance" was GREEN (`interact.branch.expireProtectsRefs`:
+refs survive, branch readable) — and the matrix was still incomplete: a known real bug lived in the
+**three-way** interaction branch → expiration → **merge**. Root cause (bytecode-verified in the
+fork's `iceberg-core`; full trail in AUDIT-FINDINGS G11):
+
+- `RemoveSnapshots` retention is **per-ref, head-anchored** — nothing protects the ancestry BETWEEN
+  two live refs. The branch point and intermediate branch commits are neither ref's head → expired.
+- `SnapshotUtil`'s ancestry walk **silently truncates at an expired hole and returns false** — it
+  cannot distinguish "not an ancestor" from "ancestry destroyed".
+- OpenHouse's scheduled expiration job applies a **default 3-day TTL even when unconfigured**, so the
+  destroyer runs automatically between branch work and merge.
+
+### Properties (the testable contract), with today's status
+| # | Property | Status | Test |
+|---|---|---|---|
+| P1 | A `fast_forward(A←B)` valid before expiration stays valid after, if neither ref moved | **VIOLATED** — spurious `"not an ancestor"` | `interact.branch.expireMerge.spuriousReject` (control: `branch.fastForward.merge`) |
+| P2 | Expiration never deletes the branch point / connectivity path between live refs | **VIOLATED** — per-ref head-anchored retention | same test (asserts the intermediate snapshot is gone while both refs live) |
+| P3 | Staged WAP snapshots survive expiration within their publish window, or the loss is loud AT EXPIRATION | **VIOLATED** — silent delete; loud only at publish (`Cannot apply unknown WAP ID`) | `interact.branch.expireMerge.stagedWapLoss` |
+| P4 | A ref never points to a snapshot absent from metadata (no dangling refs) | **HOLDS** — `TableMetadata.Builder` validates ref→snapshot | (no test needed; builder-enforced) |
+| P5 | A stale writer's payload cannot resurrect a catalog-expired snapshot | **HOLDS (conditional)** — CAS guard active because the client always sends COMMIT_KEY+snapshots for ref changes | (would break only if a payload omitted SNAPSHOTS_JSON_KEY) |
+| P6 | A branch severed by expiration remains mergeable or documented-recoverable | **VIOLATED** — no rebase; **cherry-pick "succeeds" and silently LOSES the expired intermediate commit** (main 3→4, one branch row gone); copy-out is the only full recovery | same test (cherry-pick fallback characterized) |
+| P7 | An expired *source head* fails loud and distinguishable | HOLDS — `"Cannot find snapshot"` hard throw | covered implicitly |
+
+The single worst outcome is P6's cherry-pick variant: **a merge that reports success and silently
+drops committed branch work** — worse than the spurious rejection, because nothing signals the loss.
+
+### Why the matrix missed it — "latent state consumed later"
+The pair test (branch × expire) passed *because it validated the wrong consumer*. Expiration destroys
+**ancestry connectivity** — state that reads never touch (a read needs only the ref head and its
+reachable files, which per-head retention preserves). The only operations that CONSUME ancestry are
+the merges — which sat in a different cell of the matrix. A pairwise matrix is complete over
+operation *pairs*, but state flows through *chains*: setup → destroyer → consumer.
+
+**Test-design rules adopted from this miss:**
+1. **For every passing pair test, enumerate the downstream operations that consume the state the
+   pair mutated, and add the third step.** "Readable after X" does not imply "operable after X".
+2. **Lifecycle-complete fixtures**: a branch fixture must terminate in **merge-or-drop**, never just
+   read — a branch that is only read can never exercise ancestry consumption. (Applies today:
+   `branch.direct.isolation`, `branch.dml.updateDelete` end in reads.)
+3. **Interpose the destroyer**: any test creating divergent refs should run policy-shaped
+   expiration between setup and the terminal operation — with OpenHouse's real defaults (3-day TTL,
+   `retain_last`), not just benign parameters.
+4. **Assert the precondition, not only the outcome**: P2 (branch point survives) is cheaper and more
+   diagnostic than P1 (merge works) — P1's failure masquerades as a legitimate ancestry error.
+
 Budget: ~20 new cases, all single-layout — interaction behaviors, not multipliers. No new axes crossed
 with format/partitioning (the ⛔ rows above say why).
