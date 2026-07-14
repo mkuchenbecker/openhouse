@@ -399,6 +399,22 @@ object Scenarios {
         spark.conf.set("spark.wap.branch", "b")
       }()
 
+  // RTAS prep prefix (the P axis, replace-lineage leg — SURFACE-APPRAISAL step 2): create + seed,
+  // then CREATE OR REPLACE ... AS SELECT * re-specifying the SAME shape, so the table is
+  // functionally identical but reached via the replace path (the path G9/G10 showed misbehaves).
+  // Every downstream DML op then runs on a replace-lineage table. Format is vacuous for the
+  // replace-lineage question (replace rebuilds metadata, not file encoding) → parquet shapes only.
+  val rtasPrepShapes: List[(String, String)] =
+    partitionVariants.map { case (pl, pc) => (s"$pl/parquet", pc) }   // (label, partitionClause)
+
+  def createAndSeedRtas(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ('write.format.default'='parquet', 'replace.enabled'='true')")()
+      .insert(numberOfRows)()
+      .sql("prep.rtas")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ('write.format.default'='parquet') AS SELECT * FROM $t")()
+
   // Closing assertion for the branch axis: after the branch-routed op, MAIN must be untouched
   // (still the 3-row seed) — the isolation half of the branch contract. Uniform across all ops
   // because with spark.wap.branch set every write routes to the branch, never to main.
@@ -3312,6 +3328,14 @@ object Plan {
     } yield Case(s"branchWap:$name @ ${layout.label}",
       Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
 
+    // P axis (replace-lineage leg) — the whole DML catalog on an RTAS'd table (SURFACE-APPRAISAL
+    // step 2). ~106 cases. (The undrop leg is gated on the embedded-HTS restructure — see
+    // REST-FIDELITY-EVAL.md — so only the RTAS leg is runnable now.)
+    val prepRtas = for {
+      (label, partitionClause) <- Scenarios.rtasPrepShapes
+      (name, op)               <- Scenarios.operations
+    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3326,7 +3350,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      ddlPrepOrdered ++ ddlPrepEvolved
+      prepRtas ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
