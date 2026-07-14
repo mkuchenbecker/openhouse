@@ -1,6 +1,6 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1289 cases: 1266 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
+1297 cases: 1274 passed, 23 skipped (5 tagged bugs/skips), 0 failed.
 
 Full-suite wall-time: ~879s baseline (~14.6 min, fresh classpath) for the prior 1215-case run →
 ~0.6s/case + ~120s fixed startup (gradle resolve + Scala compile + embedded server + Spark). A cached
@@ -50,6 +50,12 @@ Plus the G11 composite-defect characterizations (interact.branch.expireMerge.*):
 merge connectivity between live refs -> fast_forward spuriously rejected though main never advanced;
 cherry-pick fallback SUCCEEDS while silently losing the expired intermediate commit; staged WAP
 snapshots silently expired pre-publish. See AUDIT-FINDINGS.md G11 + INTERACTION-AUDIT.md section 6.
+
+Plus the hazard suite (hazard.*, 8 cases — MODALITY-RECON.md H1-H8 demonstrated live): streaming
+checkpoint bricked by expiration (with restart control); CDC changelog typed-but-misleading over
+expired lineage; RTAS wipes PII column tags (G10 extension; comments survive); lock starves
+maintenance (NEW G12) while not stopping RTAS (G2); retention x branch / rename / wap-toggle
+invariants held; ADD COLUMN breaks the identical pre-evolution explicit-column writer (H8).
 
 Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
 ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
