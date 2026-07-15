@@ -8,6 +8,12 @@
 #   - A Gradle able to build the repo (system gradle 8.x works; the pinned 7.6.2 wrapper
 #     may be blocked from downloading in restricted networks).
 #   - Scala 2.12.18 compiler jars in the local Maven cache (~/.m2), or adjust SCALAC_CP.
+#
+# Real-HTS mode (HARNESS_REAL_HTS=1): boots the REAL embedded House Table Service as a 2nd Spring
+# context and points the tables server at it (replacing the in-memory stub), and enables the undrop
+# preparation axis + undropAdmin lifecycle cases (soft-delete/restore/purge). Requires the housetables
+# classes on the classpath — run once with FORCE_CP=1 after adding them (print-cp.init.gradle already
+# pulls :services:housetables). See HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md. Default (unset) uses the stub.
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../../.. && pwd)"

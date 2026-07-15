@@ -87,3 +87,20 @@ exists — it's a test source), (ii) booting it on a second port and setting
 `cluster.housetables.base-uri=http://localhost:<htsPort>`, (iii) de-`@Primary`-ing the stub so the real
 HTTP-client `HouseTableRepositoryImpl` is injected. Even then the DROP half must be driven at the HTS
 layer (public DROP can't soft-delete). Substantial restructure → deferred; `control.undrop` tagged SKIP.
+
+---
+
+## RESOLVED — the embedded real HTS is implemented (HARNESS_REAL_HTS=1)
+All three wiring steps above are now done (HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md), with **0
+production-code changes**:
+1. `print-cp.init.gradle` puts `:services:housetables` on the harness classpath; `HtsBootApp`
+   (in the harness, replicating `SpringH2HtsApplication`'s scan) boots the **real** HTS on H2.
+2. `HtsEnv` boots it on a 2nd port; `OpenHouseEnv` sets `cluster.housetables.base-uri` to it.
+3. The `@Primary` stub gained a `@ConditionalOnProperty(matchIfMissing=true)` guard (test-only,
+   backward-compatible); `openhouse.htsStub.enabled=false` disables it so the real
+   `HouseTableRepositoryImpl` is injected.
+The DROP half is driven at the HTS layer (`HtsAdmin.softDelete` → `DELETE /v1/hts/tables?...&
+isSoftDelete=true`), then restored via the customer Tables API. Under `HARNESS_REAL_HTS=1` the entire
+existing suite runs **identically** to the stub baseline (regression gate green), and undrop now runs
+for real: the `undrop:*` surface-doubling battery (106, restore preserves all state) + `undropAdmin.*`
+lifecycle (3). The stub remains the default (flag unset), so this is purely additive.

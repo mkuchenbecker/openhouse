@@ -1670,6 +1670,60 @@ object Scenarios {
     "control.undrop.lifecycle"  -> controlUndropLifecycle
   )
 
+  // ── Undrop admin-lifecycle block (Phase 5 — REAL HTS only, HtsAdmin.enabled) ─────────────────
+  // With an embedded real HTS the full soft-delete → list → restore / purge lifecycle is exercisable
+  // (the customer DROP still hard-deletes — soft-delete is driven directly on HTS). These are the
+  // HTS-admin lifecycle cases that sit ALONGSIDE the surface-doubling undrop battery.
+  private def undropSeed(ctx: Ctx, name: String): (String, String, String) = {
+    val table = s"${ctx.namespace}.$name"
+    val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+    ctx.spark.sql(coreCreateParquet(table))
+    ctx.spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 3)}")
+    (table, db, tbl)
+  }
+
+  // Soft-delete → the customer softDeletedTables listing shows it → restore → rows intact.
+  def undropAdminRestoreRoundTrip(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_undrop_rt")
+    val (sd, sdb) = HtsAdmin.softDelete(db, tbl); assert(sd >= 200 && sd < 300, s"soft-delete failed ($sd): $sdb")
+    val (ls, lb) = Rest.get(ctx, s"/v1/databases/$db/softDeletedTables")
+    assert(ls == 200 && lb.contains(tbl), s"soft-deleted table not listed via Tables API ($ls): $lb")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
+    val (rs, rb) = HtsAdmin.restore(db, tbl, ms); assert(rs >= 200 && rs < 300, s"restore failed ($rs): $rb")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "restored table lost rows")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Two soft-deleted tables both appear in the listing (paging/enumeration works).
+  def undropAdminListSoftDeleted(ctx: Ctx): Unit = {
+    val (_, db, t1) = undropSeed(ctx, "t_undrop_l1")
+    val (_, _,  t2) = undropSeed(ctx, "t_undrop_l2")
+    assert(HtsAdmin.softDelete(db, t1)._1 / 100 == 2, "soft-delete t1 failed")
+    assert(HtsAdmin.softDelete(db, t2)._1 / 100 == 2, "soft-delete t2 failed")
+    val (ls, lb) = Rest.get(ctx, s"/v1/databases/$db/softDeletedTables")
+    assert(ls == 200 && lb.contains(t1) && lb.contains(t2), s"both soft-deleted tables should list ($ls): $lb")
+  }
+
+  // Restore AFTER purge must be rejected — purge is permanent. Pin whatever the real HTS returns
+  // (a 4xx; the point is that restore no longer succeeds once the row is purged).
+  def undropAdminRestoreAfterPurgeRejected(ctx: Ctx): Unit = {
+    val (_, db, tbl) = undropSeed(ctx, "t_undrop_purge")
+    assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, "soft-delete failed")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError("no deletedAtMs"))
+    // purge everything deleted before a far-future instant → removes this row permanently
+    val (ps, _) = Rest.delete(ctx, s"/v1/databases/$db/tables/$tbl/purge?purgeAfterMs=${Long.MaxValue}")
+    assert(ps / 100 == 2, s"purge should succeed ($ps)")
+    val (rs, _) = HtsAdmin.restore(db, tbl, ms)
+    assert(rs >= 400, s"restore after purge must be rejected, got $rs")
+  }
+
+  val undropAdminOps: List[(String, Ctx => Unit)] = List(
+    "undropAdmin.restoreRoundTrip"        -> undropAdminRestoreRoundTrip,
+    "undropAdmin.listSoftDeleted"         -> undropAdminListSoftDeleted,
+    "undropAdmin.restoreAfterPurgeRejected" -> undropAdminRestoreAfterPurgeRejected
+  )
+
   // ── Branching / WAP (format-agnostic → parquet only; behavior-focused, not matrixed) ─────────
   // A CoreTable row literal for branch writes (long,int,string,double,boolean,datepartition).
   private def coreRow(long: Long, tag: String): String =
@@ -3555,7 +3609,7 @@ object Plan {
     "ddl.encryption" ->
       "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md",
     "control.undrop" ->
-      "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md"
+      "undrop is SKIP under the DEFAULT stub path (HouseTableRepository is a @Primary in-memory stub; the public Tables DELETE hard-codes purge=true). Under HARNESS_REAL_HTS=1 the real embedded HTS is booted and undrop runs for real as the undrop:* battery + undropAdmin.* lifecycle (NOT SKIP) — see HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md / REST-FIDELITY-EVAL.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -3685,6 +3739,11 @@ object Plan {
         Scenarios.createAndSeedUndropped(layout, 3).andThen(op).run)
       else Nil
 
+    // Undrop admin-lifecycle block (Phase 5) — soft-delete/list/restore/purge, real HTS only.
+    val undropAdmin =
+      if (HtsAdmin.enabled) Scenarios.undropAdminOps.map { case (name, run) => Case(name, run) }
+      else Nil
+
     // DDL × consumer battery (task #3): each state-changing DDL, then each consumer must still work.
     // 4 DDL × 6 consumers × {unpartitioned, partitioned}/parquet = 48.
     val ddlConsumerBattery = for {
@@ -3723,7 +3782,7 @@ object Plan {
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
-      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop
+      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin
   }
 }
 

@@ -6,10 +6,12 @@ build-out the suite is at **1,697** verified green (8m40s parallel), and the hon
 **~2,600–3,000**, not 4,200. This tracks every block so the gap is never buried. The live task list
 mirrors it.
 
-**Headline: ~1,697 built; ~2,700 is the honest non-vacuous ceiling for the runnable (non-undrop)
-surface.** The 4,200 figure included ~1,400 vacuous cases (reads/inserts on delete-free MoR ==
-CoW; RTAS/branch × format; DDL×consumer over rejected/one-shot DDLs). Undrop leg (~660) is the only
-genuinely-gated real block (embedded-HTS).
+**Headline: ~1,806 built (1,697 stub-baseline + 109 undrop under real HTS); the undrop leg is no
+longer gated.** The 4,200 figure included ~1,400 vacuous cases (reads/inserts on delete-free MoR ==
+CoW; RTAS/branch × format; DDL×consumer over rejected/one-shot DDLs). The undrop leg — once the only
+genuinely-gated real block — is now BUILT via an embedded real House Table Service
+(HTS-EMBED-PLAN.md/HTS-EMBED-IMPL.md): 106 surface-doubling cases + 3 admin-lifecycle, all green, with
+**restore preserving every feature's state**. The full suite runs identically stub-vs-real-HTS.
 
 ## Block ledger
 
@@ -19,7 +21,7 @@ genuinely-gated real block (embedded-HTS).
 | 1b | MoR delete-file **coexistence** | `coexist.* @ mor-verify/*` | — | the real new MoR surface | 18 | ✅ NEW (task #5) |
 | 2 | Prep RTAS'd (parquet) | `prep.rtas:*` | 660 | ×format vacuous → ~106 | 106 | ✅ |
 | 2b | Prep RTAS × **MoR** | `prep.rtasMor:*` | — | non-vacuous (task #2 fix) | 44 | ✅ NEW |
-| 3 | Prep undrop'd | — | 660 | real, gated | 0 | ⛔ GATED on embedded-HTS (REST-FIDELITY-EVAL.md) |
+| 3 | Prep undrop'd (drop→soft-delete→restore) | `undrop:*`, `undropAdmin.*` | 660 | ×format vacuous → ~106 + ~3 admin | 109 | ✅ **BUILT** — embedded real HTS (HTS-EMBED-PLAN/IMPL.md) |
 | 4 | Schema-state {evolved, ordered} | `prep.ordered:*`, `prep.evolved:*` | 1,080 | ×12 mostly vacuous → ~492 | ~492 | ✅ at the non-vacuous count |
 | 5 | Branch/WAP surface (DML) | `branchWap:*` | 440 | ×format vacuous → ~106 | 106 | ✅ |
 | 5b | Branch × **MoR** | `branchWap:* @ mor-*` | — | non-vacuous (task #2 fix) | 44 | ✅ NEW |
@@ -48,10 +50,22 @@ genuinely-gated real block (embedded-HTS).
 - DDL×consumer over **rejected or one-shot** DDLs has no post-state to consume → only state-changing
   DDL × real consumers is non-vacuous (56, not 420).
 
+## Undrop leg — BUILT (embedded real HTS, Option A)
+The undrop leg is no longer gated. `HARNESS_REAL_HTS=1` boots the **real** House Table Service as a
+2nd in-JVM Spring context (0 production-code changes; see HTS-EMBED-PLAN.md/HTS-EMBED-IMPL.md), so the
+harness can drive the real soft-delete → restore lifecycle. Two sub-blocks:
+- **`undrop:*` (106)** — the full non-vacuous op catalog run on a table taken through a real
+  soft-delete → restore round-trip. The surface-doubling P-axis leg (parquet × both partitionings ×
+  53 ops = 106, mirroring the RTAS leg). **104 pass / 2 skip (pre-tagged bugs) / 0 fail** →
+  **restore preserves every feature's state** (rows, snapshot lineage, refs, spec, sort order,
+  properties, schema): no modality hazard in undrop's destruction set. (Format is vacuous for
+  metadata/ref reconstruction, as with RTAS/branch.)
+- **`undropAdmin.*` (3)** — HTS-admin lifecycle: restore round-trip, list-soft-deleted,
+  restore-after-purge-rejected. All pass.
+
 ## Remaining real work (value-ordered)
-1. **Undrop leg** (~660) — gated on the embedded-HTS restructure. The one large real block left.
-2. Deepen partial blocks (8/9/10) toward their non-vacuous ceilings (~+150).
-3. The P×S×T composition dial toward the ~10–15k stress ceiling — documented, not pursued (mostly
+1. Deepen partial blocks (8/9/10) toward their non-vacuous ceilings (~+150).
+2. The P×S×T composition dial toward the ~10–15k stress ceiling — documented, not pursued (mostly
    redundant beyond the non-vacuous core).
 
 ## Discipline note
