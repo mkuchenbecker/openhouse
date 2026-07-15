@@ -168,16 +168,32 @@ mapper + a novel co-boot while *losing* transport coverage. Option C is off the 
 
 ---
 
-## 5. Scope correction this surfaces (important)
+## 5. Undrop is a PREPARATION AXIS — it re-runs the whole battery (~doubles the surface)
 
-The customer-facing `DROP TABLE` path hard-codes **`purge=true`** (`HouseTableRepositoryImpl.deleteById(key)`
-→ `deleteTable(..., !purge)`), so from Spark a dropped table is **hard-deleted**, not soft-deleted.
-Soft-delete / restore is therefore an **HTS-admin** lifecycle, not a Spark-DML one. Consequence for the
-tracker: the **undrop leg is a handful of admin-lifecycle cases, NOT the ~660** the BUILD-STATUS ledger
-implied (that figure assumed "every CREATE gets an undrop twin" at the DML surface). Real embedded-HTS
-undrop coverage is: soft-delete via admin, TTL/purge window, restore-before-purge, restore-after-purge
-(rejected), restore-name-collision, list-soft-deleted — order ~10–20 cases. This should be reflected in
-BUILD-STATUS.md when the undrop leg is built.
+Undrop is a **P-axis preparation**, exactly like RTAS — **not** a small lifecycle sub-block. For every
+table shape and every prep, the harness will: **seed → soft-delete → restore → then run the ENTIRE
+battery on the restored table**. The thing under test is not "does restore return a table"; it is
+**"does every feature's state survive the drop→undrop round-trip"** — snapshot lineage, refs/branches,
+partition spec, sort order, table properties, policies/PII tags, MoR position-delete files, and schema-
+evolution state. That is a full modality audit of restore's *destruction set* against every feature's
+*state-dependency set* (the same lens that surfaced G9/G10 for RTAS). It roughly **doubles the runnable
+surface (~660 order), matching the original BUILD-STATUS estimate** — my earlier "~10–20 cases" note was
+wrong and is retracted.
+
+**What `purge=true` actually changes — the setup mechanism, not the scope.** The customer `DROP TABLE`
+path hard-codes `purge=true` (`HouseTableRepositoryImpl.deleteById(key)` → `deleteTable(..., !purge)`),
+so a Spark drop **hard-deletes** and cannot be undropped. Therefore the harness cannot create an
+undrop-prep table via Spark DDL; it must drive HTS's **soft-delete + restore directly** (the
+`UserTablesService` soft-delete path + `restoreUserTable`), then hand the restored table back to Spark
+and run the battery. This is precisely why a **real HTS** (Option A) is required to build the leg at all
+— the in-memory stub can't model soft-delete/restore/purge with fidelity.
+
+Two distinct sub-blocks result, and both need building:
+1. **Undrop-prep battery (~660 order):** restored-table × the full non-vacuous operation surface (all
+   DML×M, schema states, branch/WAP, DDL×consumer, TT, compaction). This is the surface-doubling leg.
+2. **Restore admin-lifecycle (~10–20):** TTL/purge window, restore-before-purge, restore-after-purge
+   (rejected), restore-name-collision, list-soft-deleted. A *small* block that lives *alongside* — not
+   *instead of* — the prep battery.
 
 ---
 
@@ -187,8 +203,11 @@ BUILD-STATUS.md when the undrop leg is built.
 2. `OpenHouseLocalServer` real-HTS mode: start HTS on a port, set `cluster.housetables.base-uri`,
    suppress the `@Primary` stub for that boot; wire start/stop lifecycle.
 3. Green the existing suite unchanged against real HTS (regression gate — behavior must not move).
-4. Un-SKIP + build the undrop/restore/purge admin-lifecycle cases (~10–20, per §5).
-5. Update BUILD-STATUS.md (correct the ~660 → ~10–20 undrop figure) and REST-FIDELITY-EVAL.md.
+4. Add the undrop preparation (`createAndSeedUndropped`: seed → HTS soft-delete → HTS restore) and
+   route the **full non-vacuous battery** through it — the surface-doubling P-axis leg (~660, per §5.1).
+5. Add the restore admin-lifecycle sub-block (~10–20, per §5.2).
+6. Update BUILD-STATUS.md (undrop leg restored to ~660 as the real surface-doubling block, +~20 admin)
+   and REST-FIDELITY-EVAL.md (stub → real HTS).
 
 All of the above is test/fixtures code. If review agrees it's non-invasive, it merges into PR #9; if
 not, it stays an isolated stacked PR.
