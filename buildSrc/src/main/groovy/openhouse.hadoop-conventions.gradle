@@ -15,4 +15,9 @@ dependencies {
     exclude group: 'com.squareup.okhttp', module: 'okhttp'
   }
   api 'org.apache.commons:commons-lang3:3.12.0'
+  // spark4-upgrade rung 1: Hadoop 2.10 transitively supplied the EOL commons-lang 2.x
+  // (org.apache.commons.lang.*); Hadoop 3.3.4 dropped it. Several modules still import it
+  // (StringUtils, math.NumberUtils, StringEscapeUtils). Restore it explicitly to keep this rung a
+  // pure version bump — migrating those call sites to commons-lang3/commons-text is separate cleanup.
+  api 'commons-lang:commons-lang:2.6'
 }
