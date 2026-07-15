@@ -3672,9 +3672,56 @@ object Runner {
   }
 }
 
+// Boot app for the REAL House Table Service as a 2nd Spring context in-JVM (HTS-embed, Option A).
+// Mirrors services/.../e2e/SpringH2HtsApplication's annotation set (test-scope, so replicated here).
+// Security auto-config is excluded (spring-security-web is only partially present on the harness
+// classpath, and the harness runs unauthenticated) — exactly as the tables boot does.
+// internal.catalog.mapper is intentionally NOT scanned (a client-side concern needing FileIOManager;
+// the HTS server does not use it). Proven by HtsBootProbe.
+@org.springframework.boot.autoconfigure.SpringBootApplication(
+  exclude = Array(
+    classOf[org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration],
+    classOf[org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration]))
+@org.springframework.context.annotation.ComponentScan(basePackages = Array(
+  "com.linkedin.openhouse.housetables.api",
+  "com.linkedin.openhouse.housetables.dto.mapper",
+  "com.linkedin.openhouse.housetables.controller",
+  "com.linkedin.openhouse.housetables.services",
+  "com.linkedin.openhouse.common.exception.handler",
+  "com.linkedin.openhouse.common.audit",
+  "com.linkedin.openhouse.housetables.repository",
+  "com.linkedin.openhouse.housetables.properties",
+  "com.linkedin.openhouse.housetables.config",
+  "com.linkedin.openhouse.cluster.configs",
+  "com.linkedin.openhouse.cluster.storage"))
+@org.springframework.boot.autoconfigure.domain.EntityScan(
+  basePackages = Array("com.linkedin.openhouse.housetables.model"))
+class HtsBootApp
+
+/** Boots the embedded real House Table Service (H2, MySQL-mode) as its own Spring context. */
+object HtsEnv {
+  import org.springframework.boot.builder.SpringApplicationBuilder
+  import org.springframework.boot.web.context.WebServerApplicationContext
+  import org.springframework.context.ConfigurableApplicationContext
+
+  /** @return (context, base-uri) for the embedded HTS. */
+  def start(): (ConfigurableApplicationContext, String) = {
+    val root = System.getProperty("java.io.tmpdir") + "/hts-embed"
+    val ctx = new SpringApplicationBuilder(classOf[HtsBootApp])
+      .properties(
+        "server.port=0",
+        "cluster.storage.root-path=" + root,
+        "cluster.tables.allowed-client-name-values=trino,spark")
+      .run()
+    val port = ctx.asInstanceOf[WebServerApplicationContext].getWebServer.getPort
+    (ctx, s"http://localhost:$port")
+  }
+}
+
 /** Boots the embedded OpenHouse server and wires a SparkSession to the OpenHouse catalog. */
 object OpenHouseEnv {
   import com.linkedin.openhouse.tablestest.OpenHouseLocalServer
+  import org.springframework.context.ConfigurableApplicationContext
 
   private def authToken(): String =
     Option(getClass.getClassLoader.getResourceAsStream("dummy.token"))
@@ -3689,7 +3736,36 @@ object OpenHouseEnv {
       .config(s"spark.sql.catalog.$name.cluster", "local-cluster")
       .config(s"spark.sql.catalog.$name.auth-token", token)
 
-  def start(): (OpenHouseLocalServer, SparkSession, String, String) = {
+  def start(): (OpenHouseLocalServer, SparkSession, String, String, Option[ConfigurableApplicationContext]) = {
+    // HTS-embed (Option A): when HARNESS_REAL_HTS=1, boot the real House Table Service as a 2nd
+    // Spring context, point the embedded tables server's HouseTableRepositoryImpl at it via
+    // cluster.housetables.base-uri, and disable the @Primary in-memory stub (openhouse.htsStub.enabled
+    // =false) so the real HTTP client is the sole HouseTableRepository. Default (flag unset) keeps the
+    // stub — the existing green baseline is always reproducible.
+    val realHts = sys.env.get("HARNESS_REAL_HTS").contains("1")
+    val htsCtxOpt: Option[ConfigurableApplicationContext] =
+      if (realHts) {
+        // Boot the HTS context FIRST, while no spring.sql.init.mode System property is set, so it
+        // uses its own application.properties (spring.sql.init.mode=always) and runs schema.sql +
+        // data.sql on its MySQL-mode H2. Only AFTER it has fully refreshed do we set the System
+        // property to `never` — System properties outrank SpringApplicationBuilder defaults, so
+        // setting it earlier would (and did) suppress the HTS schema too. `never` then applies to
+        // the tables context (booted next), which ships no SQL scripts (Hibernate auto-DDL) and
+        // must not run housetables-lib.jar's root data.sql/schema.sql against its non-MySQL H2.
+        val (ctx, htsUri) = HtsEnv.start()
+        System.setProperty("spring.sql.init.mode", "never")
+        // Restore Hibernate auto-DDL for the tables context. Putting housetables-lib.jar on the
+        // classpath adds a root schema.sql, which flips Spring Boot's embedded-H2 ddl-auto default
+        // to `none`; with spring.sql.init.mode=never that script does not run either, so the tables
+        // server's own H2 tables (feature-toggle status/rules, etc.) would be missing. The tables
+        // side ships no SQL scripts and relied on auto-DDL in the stub baseline — make it explicit.
+        System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop")
+        System.setProperty("cluster.housetables.base-uri", htsUri)
+        System.setProperty("openhouse.htsStub.enabled", "false")
+        println(s">> REAL HTS mode: embedded HTS at $htsUri (stub disabled)")
+        Some(ctx)
+      } else None
+
     val server = new OpenHouseLocalServer()
     server.start()
     val uri = s"http://localhost:${server.getPort}"
@@ -3708,13 +3784,13 @@ object OpenHouseEnv {
       .config("spark.ui.enabled", "false")
 
     val wired = Seq("openhouse", "default_iceberg").foldLeft(base)(wireCatalog(_, _, uri, token))
-    (server, wired.getOrCreate(), uri, token)
+    (server, wired.getOrCreate(), uri, token, htsCtxOpt)
   }
 }
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val (server, spark, restUri, restToken) = OpenHouseEnv.start()
+    val (server, spark, restUri, restToken, htsCtxOpt) = OpenHouseEnv.start()
     spark.sparkContext.setLogLevel("ERROR")
     val ctx = Ctx(spark, "openhouse.dbMatrix", restUri, restToken)
 
@@ -3775,6 +3851,7 @@ object Main {
 
     try spark.stop() catch { case _: Throwable => () }
     try server.stop() catch { case _: Throwable => () }
+    htsCtxOpt.foreach(ctx => try ctx.close() catch { case _: Throwable => () })
     // A run that validated nothing (0 cases, or everything skipped) is NOT success.
     System.exit(if (failed == 0 && passed > 0) 0 else 1)
   }

@@ -108,11 +108,21 @@ suppression proves impractical from a harness-owned boot, the documented fallbac
 This is the payload. Undrop is a P-axis prep like RTAS — the whole battery runs **on the restored
 table**, verifying every feature's state survives the drop→undrop round-trip.
 
+**Confirmed mechanism (endpoints):**
+- Soft-delete is HTS-only (customer `DROP` → `catalog.dropTable(id, purge=true)` → HTS row hard-deleted,
+  `OpenHouseInternalRepositoryImpl.deleteById:764`). Drive it directly on the embedded HTS:
+  `DELETE {htsUri}/v1/hts/tables?databaseId=<db>&tableId=<t>&isSoftDelete=true`
+  (`UserHouseTablesController` V1 delete, `isSoftDelete` param).
+- List to recover the `deletedAtMs`: `GET {tablesUri}/v1/databases/<db>/softDeletedTables`
+  (Tables API) or `GET {htsUri}/hts/tables/querySoftDeleted`.
+- Restore: `PUT {tablesUri}/v1/databases/<db>/tables/<t>/restore?deletedAtMs=<ms>` (Tables API →
+  `restoreTable` → HTS `restoreUserTable`).
+- The harness must expose `htsUri` to cases (add to `Ctx`), since soft-delete bypasses the customer API.
+
 **Do:**
-1. `createAndSeedUndropped(layout, prep, n)`: seed the table via Spark → drive **HTS soft-delete**
-   (`UserTablesService` delete with `isSoftDeleted=true`, via the HTS admin endpoint — **not** Spark
-   `DROP`, which purges) → drive **HTS restore** (`restoreUserTable`) → return the restored table to
-   Spark. Assert the table is queryable again post-restore.
+1. `createAndSeedUndropped(layout, prep, n)`: seed the table via Spark → `DELETE .../v1/hts/tables?...&
+   isSoftDelete=true` on the embedded HTS → list to get `deletedAtMs` → `PUT .../restore?deletedAtMs=`
+   → return the restored table to Spark. Assert the table is queryable again post-restore.
 2. Route the **full non-vacuous operation surface** through the restored table (mirror how `prep.rtas:*`
    and `branchWap:*` fan the DML/DDL catalog): `undrop:<op> @ <layout>` for core DML×M, schema states,
    branch/WAP, DDL×consumer, time travel, compaction.
