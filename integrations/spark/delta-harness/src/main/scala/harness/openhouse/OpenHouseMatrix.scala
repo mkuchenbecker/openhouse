@@ -59,6 +59,44 @@ object Rest {
   }
 }
 
+// Drives the soft-delete / list / restore lifecycle for the UNDROP preparation axis (Phase 4).
+// The customer DROP hard-codes purge=true (a hard delete), so soft-delete is unreachable via the
+// Tables API — we trigger it directly on the EMBEDDED real HTS (only available under HARNESS_REAL_HTS=1),
+// then restore via the customer-facing Tables API. Endpoints are process-global (one HTS, one tables
+// server for the whole run) so they are held here and set once at startup; TableTest steps see only
+// (spark, table) and reach the endpoints through this holder.
+object HtsAdmin {
+  import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+  import java.net.URI
+  @volatile var htsUri: String = ""      // embedded HTS base (soft-delete + querySoftDeleted)
+  @volatile var tablesUri: String = ""   // tables server base (restore, customer-facing)
+  @volatile var token: String = ""       // Bearer token for the tables server
+  def enabled: Boolean = htsUri.nonEmpty
+
+  private lazy val client = HttpClient.newHttpClient()
+  private def send(b: HttpRequest.Builder): (Int, String) = {
+    val r = client.send(b.header("Content-Type", "application/json").build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
+
+  /** Soft-delete on the embedded HTS (V1 endpoint carries the isSoftDelete flag). No auth (HTS security excluded). */
+  def softDelete(db: String, tbl: String): (Int, String) =
+    send(HttpRequest.newBuilder(URI.create(s"$htsUri/v1/hts/tables?databaseId=$db&tableId=$tbl&isSoftDelete=true")).DELETE())
+
+  /** Recover the deletedAtMs of a soft-deleted table (needed to restore) from the HTS querySoftDeleted view. */
+  def softDeletedAtMs(db: String, tbl: String): Option[Long] = {
+    val (code, body) = send(HttpRequest.newBuilder(URI.create(s"$htsUri/hts/tables/querySoftDeleted?databaseId=$db&tableId=$tbl")).GET())
+    if (code < 200 || code >= 300) None
+    else "\"deletedAtMs\"\\s*:\\s*(\\d+)".r.findFirstMatchIn(body).map(_.group(1).toLong)
+  }
+
+  /** Restore via the customer-facing Tables API (PUT .../restore?deletedAtMs=). Requires the Bearer token. */
+  def restore(db: String, tbl: String, deletedAtMs: Long): (Int, String) =
+    send(HttpRequest.newBuilder(URI.create(s"$tablesUri/v1/databases/$db/tables/$tbl/restore?deletedAtMs=$deletedAtMs"))
+      .header("Authorization", s"Bearer $token")
+      .PUT(HttpRequest.BodyPublishers.ofString("")))
+}
+
 sealed trait Outcome { def label: String }
 object Outcome {
   case object Passed extends Outcome { val label = "PASS" }
@@ -421,6 +459,27 @@ object Scenarios {
         assert(view.after.size == numberOfRows - 1, s"MoR prep delete failed: ${view.after.size}")
         val deleteFiles = view.spark.sql(s"SELECT count(*) FROM ${view.table}.all_delete_files").collect()(0).getLong(0)
         assert(deleteFiles == 1, s"MoR prep must leave a live position-delete file, got $deleteFiles")
+      }
+
+  // Undrop prep (the P axis, drop→undrop leg — SURFACE-APPRAISAL, requires embedded real HTS). Seed a
+  // plain table, then take it through the FULL soft-delete → restore round-trip on the real HTS, and
+  // hand the RESTORED table to the downstream op. The point is a modality audit: every feature's state
+  // (rows, snapshot lineage, refs, spec, sort order, properties, MoR delete files, schema) must survive
+  // the round-trip, so the whole DML/DDL catalog is crossed onto the restored table. Soft-delete is
+  // driven directly on HTS (customer DROP hard-deletes); restore uses the customer Tables API.
+  def createAndSeedUndropped(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeed(layout, numberOfRows)
+      .step("prep.undrop") { (spark, table) =>
+        val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+        val (sdCode, sdBody) = HtsAdmin.softDelete(db, tbl)
+        assert(sdCode >= 200 && sdCode < 300, s"HTS soft-delete failed ($sdCode): $sdBody")
+        val deletedAtMs = HtsAdmin.softDeletedAtMs(db, tbl)
+          .getOrElse(throw new AssertionError(s"soft-deleted table $db.$tbl not found in querySoftDeleted"))
+        val (rCode, rBody) = HtsAdmin.restore(db, tbl, deletedAtMs)
+        assert(rCode >= 200 && rCode < 300, s"restore failed ($rCode): $rBody")
+      } { view =>
+        assert(view.after.size == numberOfRows,
+          s"restored table must keep its $numberOfRows rows, got ${view.after.size}")
       }
 
   def createAndSeedRtas(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
@@ -3612,6 +3671,20 @@ object Plan {
     } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/parquet",
       Scenarios.createAndSeedRtasMor("", 3).andThen(op).run)
 
+    // P axis (drop→undrop leg) — the whole DML catalog on a table taken through a real HTS soft-delete
+    // → restore round-trip (SURFACE-APPRAISAL). Requires the embedded real HTS (HARNESS_REAL_HTS=1);
+    // empty otherwise. This is the surface-DOUBLING leg: every op re-verifies that the restored table
+    // still behaves identically, i.e. that restore's destruction set does not intersect the feature's
+    // state-dependency set. Undrop is metadata/ref reconstruction — file encoding is vacuous → parquet
+    // layouts only (as with RTAS/branch).
+    val undrop =
+      if (HtsAdmin.enabled) for {
+        layout     <- branchParquetLayouts
+        (name, op) <- Scenarios.operations
+      } yield Case(s"undrop:$name @ ${layout.label}",
+        Scenarios.createAndSeedUndropped(layout, 3).andThen(op).run)
+      else Nil
+
     // DDL × consumer battery (task #3): each state-changing DDL, then each consumer must still work.
     // 4 DDL × 6 consumers × {unpartitioned, partitioned}/parquet = 48.
     val ddlConsumerBattery = for {
@@ -3650,7 +3723,7 @@ object Plan {
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
-      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved
+      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop
   }
 }
 
@@ -3753,6 +3826,7 @@ object OpenHouseEnv {
         // the tables context (booted next), which ships no SQL scripts (Hibernate auto-DDL) and
         // must not run housetables-lib.jar's root data.sql/schema.sql against its non-MySQL H2.
         val (ctx, htsUri) = HtsEnv.start()
+        HtsAdmin.htsUri = htsUri   // enables the undrop preparation axis (Phase 4)
         System.setProperty("spring.sql.init.mode", "never")
         // Restore Hibernate auto-DDL for the tables context. Putting housetables-lib.jar on the
         // classpath adds a root schema.sql, which flips Spring Boot's embedded-H2 ddl-auto default
@@ -3792,6 +3866,7 @@ object Main {
   def main(args: Array[String]): Unit = {
     val (server, spark, restUri, restToken, htsCtxOpt) = OpenHouseEnv.start()
     spark.sparkContext.setLogLevel("ERROR")
+    HtsAdmin.tablesUri = restUri; HtsAdmin.token = restToken   // undrop restore path (Phase 4)
     val ctx = Ctx(spark, "openhouse.dbMatrix", restUri, restToken)
 
     // Each command-line arg is an include-substring; a case runs only if its id contains ALL of
