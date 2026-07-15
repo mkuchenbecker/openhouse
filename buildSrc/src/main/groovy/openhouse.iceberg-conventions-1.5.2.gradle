@@ -13,7 +13,7 @@ ext {
 // contract). So we raise ONLY the *resolution* attribute of the consuming (resolvable) configs to
 // 11, keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement.
 configurations.configureEach {
-  if (canBeResolved) {
+  if (canBeResolved && !canBeConsumed) {
     attributes {
       attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11)
     }

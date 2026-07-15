@@ -4,8 +4,24 @@ plugins {
   id 'jacoco'
 }
 
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 sourceCompatibility = JavaVersion.VERSION_1_8
 targetCompatibility = JavaVersion.VERSION_1_8
+
+// spark4-upgrade rung 1: keep -target 8 bytecode (HDFS-client requirement) while consuming Apache
+// Iceberg 1.10, whose Gradle Module Metadata declares jvm.version=11. Raise the TARGET_JVM_VERSION
+// request ONLY on resolution-only configs (canBeResolved && !canBeConsumed) — the compile/runtime
+// classpaths — so they accept the Java-11 library. Consumable configs (apiElements, runtimeElements,
+// shadow) are left untouched, so this module still ADVERTISES Java 8 to its consumers (a Java-8 jar
+// is compatible with a Java-11 consumer, so nothing downstream breaks). v52 bytecode runs fine on
+// the Java 11+ runtime beside Java-11 Iceberg — bytecode target is a JVM floor, not an inter-jar
+// contract. Harmless for coexistence modules that still consume Java-8 fork Iceberg (8 <= 11).
+configurations.configureEach {
+  if (canBeResolved && !canBeConsumed) {
+    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11) }
+  }
+}
 
 ext {
   lombokVersion = '1.18.20'

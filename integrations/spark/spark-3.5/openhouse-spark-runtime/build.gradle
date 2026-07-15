@@ -5,21 +5,11 @@ plugins {
   id 'scala'
 }
 
-import org.gradle.api.attributes.java.TargetJvmVersion
-
 ext {
-  // spark4-upgrade rung 1: stock Apache Iceberg 1.10 (was com.linkedin.iceberg 1.5.2.15)
+  // spark4-upgrade rung 1: stock Apache Iceberg 1.10 (was com.linkedin.iceberg 1.5.2.15).
+  // TARGET_JVM_VERSION resolution relax is centralized in openhouse.java-minimal-conventions.
   icebergVersion = rootProject.ext.iceberg_1_10_version
   sparkVersion = '3.5.2'
-}
-
-// Iceberg 1.10 GMM declares jvm.version=11; allow it on this target-8 module by raising only the
-// resolution attribute (see openhouse.iceberg-conventions-1.5.2.gradle for the rationale). Keeps
-// -target 8 bytecode; the v52 classes run fine on the Java 11+ runtime beside Java-11 Iceberg.
-configurations.configureEach {
-  if (canBeResolved) {
-    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11) }
-  }
 }
 
 configurations {
