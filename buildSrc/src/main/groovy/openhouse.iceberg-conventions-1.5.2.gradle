@@ -1,11 +1,29 @@
+// spark4-upgrade rung 1: bumped from com.linkedin.iceberg 1.5.2.15 -> stock org.apache.iceberg 1.10.
+// Group changed (fork artifacts are LinkedIn-published; stock 1.10 comes from Maven Central).
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 ext {
-  icebergVersion = rootProject.ext.iceberg_1_5_version
+  icebergVersion = rootProject.ext.iceberg_1_10_version
+}
+
+// Iceberg 1.10 publishes Gradle Module Metadata declaring jvm.version=11, so Gradle's variant
+// resolver refuses to place it on a targetCompatibility=8 module's classpath. That guard is
+// metadata-conservative: -target 8 (v52) bytecode loads and runs fine on the Java 11+ runtime this
+// rung uses, next to the Java-11 Iceberg classes (bytecode target is a JVM floor, not an inter-jar
+// contract). So we raise ONLY the *resolution* attribute of the consuming (resolvable) configs to
+// 11, keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement.
+configurations.configureEach {
+  if (canBeResolved) {
+    attributes {
+      attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11)
+    }
+  }
 }
 
 dependencies {
-  api('com.linkedin.iceberg:iceberg-bundled-guava:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-data:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-core:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-common:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-bundled-guava:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-data:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-core:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-common:' + icebergVersion)
   implementation('org.testcontainers:testcontainers:1.19.8')
 }

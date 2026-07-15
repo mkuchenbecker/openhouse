@@ -8,8 +8,8 @@ tagged, reasoned known-bug). The plan is `10-phase-plan.md`; risks/decisions `20
 
 | Rung | Stack | Harness gate | Status |
 |---|---|---|---|
-| **0** | Spark 3.5 / Iceberg 1.5.2 fork / Scala 2.12 / JDK-17 build | ~1,697 green baseline (frozen) | ⬜ not yet re-frozen (0.1) |
-| **1** | Spark 3.5 / Iceberg **1.10** / Java **11** | full matrix ≡ rung-0 | ⬜ not started |
+| **0** | Spark 3.5 / Iceberg 1.5.2 fork / Scala 2.12 / JDK-17 build | **1670 passed, 27 skipped, 0 failed (1697)** — FROZEN | ✅ frozen (0.1) |
+| **1** | Spark 3.5 / Iceberg **1.10** / Java **11** | full matrix ≡ rung-0 | ◐ in progress (stock apache 1.10; fork-patch re-port tracked separately) |
 | **2** | **Spark 4.0** / Iceberg 1.10 / **Scala 2.13** / Java **17** (REST) | full matrix ≡ rung-1 | ⬜ not started |
 | **3** | Spark 4.0 / **Iceberg 1.11** / Java 17 | matrix ≡ rung-2 + **DV battery** | ⬜ not started |
 | **4** | both lanes, coexistence | legacy itests + rung-3 in one CI pass | ⬜ not started |
