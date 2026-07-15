@@ -445,6 +445,52 @@ object Scenarios {
       .sql("prep.rtasMor")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
         s"TBLPROPERTIES ($morProps) AS SELECT * FROM $t")()
 
+  // ── MoR delete-file coexistence battery (BUILD-STATUS task #5, the NON-vacuous core) ─────────
+  // The appraisal's "core DML → L×M=12" is ~90% vacuous: a read/insert on a DELETE-FREE MoR table
+  // is byte-identical to CoW (no delete files to apply; append is mode-independent). The mutation
+  // ops ARE crossed with MoR already (the `mor` bucket, 264). The genuinely-new MoR surface is
+  // operating on a table that ALREADY carries a live position-delete file — data-file/delete-file
+  // COEXISTENCE. `createAndSeedMorDeleted` leaves 2 rows (keys 2,3) with a live delete for key 1;
+  // these ops then act on that state.
+  val morCoexistOps: List[(String, TableTest[CoreTable.type])] = List(
+    // A new data file must coexist with the existing delete file; the read applies the delete to
+    // OLD data only, not the appended rows.
+    "coexist.append" -> TableTest(Core).step("coexist.append") { (spark, table) =>
+      spark.sql(s"INSERT INTO $table VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "append over live delete file wrong count")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "deleted row resurrected by append")
+    }(),
+    // A second delete adds a second position-delete file over the same data file.
+    "coexist.secondDelete" -> TableTest(Core).step("coexist.secondDelete") { (spark, table) =>
+      spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} = 2")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 1, "second delete over existing delete file wrong count")
+      assert(spark.sql(s"SELECT count(*) FROM $table.all_delete_files").collect()(0).getLong(0) >= 1, "delete files missing after second delete")
+    }(),
+    // Update a surviving row while a delete file is live.
+    "coexist.update" -> TableTest(Core).step("coexist.update") { (spark, table) =>
+      spark.sql(s"UPDATE $table SET ${Core.string0.columnName} = 'cx' WHERE ${Core.long0.columnName} = 3")
+      assert(spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 3").collect()(0).getString(0) == "cx", "update over live delete failed")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "update over live delete changed count")
+    }(),
+    // A filtered read must apply the position delete (the deleted key must never appear).
+    "coexist.readFilter" -> TableTest(Core).step("coexist.readFilter") { (spark, table) =>
+      val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(keys == Seq(2L), s"filter must apply the position delete (key 1 gone): $keys")
+    }(),
+    // Compacting the position deletes materializes them; the row set is unchanged.
+    "coexist.compactDeletes" -> TableTest(Core).step("coexist.compactDeletes") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_position_delete_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "compact position deletes changed row set")
+    }(),
+    // Merge onto a table with a live delete file.
+    "coexist.merge" -> TableTest(Core).step("coexist.merge") { (spark, table) =>
+      spark.sql(s"MERGE INTO $table t USING (SELECT CAST(3 AS BIGINT) k) s ON t.${Core.long0.columnName} = s.k " +
+        s"WHEN MATCHED THEN UPDATE SET ${Core.string0.columnName} = 'mg'")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "merge over live delete changed count")
+      assert(spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 3").collect()(0).getString(0) == "mg", "merge over live delete failed")
+    }()
+  )
+
   // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
   // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
   // modality thesis at the DDL level). DDL preps leave a distinct post-state; consumers are
@@ -3582,6 +3628,13 @@ object Plan {
       (name, op) <- morReadOps
     } yield Case(s"prep.morRead:$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
 
+    // MoR delete-file COEXISTENCE (task #5 non-vacuous core): ops on a table that already carries a
+    // live position delete. Format matters (delete-file encoding) → × 3 MoR formats.
+    val morCoexist = for {
+      layout     <- Scenarios.morVerifyLayouts
+      (name, op) <- Scenarios.morCoexistOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3596,8 +3649,8 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlConsumerBattery ++ readerWriter ++
-      ddlPrepOrdered ++ ddlPrepEvolved
+      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
+      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
