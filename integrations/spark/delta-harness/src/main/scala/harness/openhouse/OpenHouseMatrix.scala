@@ -556,17 +556,24 @@ object Scenarios {
   // with a live delete for key 1. The hunt: does each maintenance procedure handle the delete file
   // correctly (fold / preserve / not resurrect the deleted row)?
 
-  // rewrite_data_files must FOLD the position delete into the rewritten data — physically dropping
-  // key 1 and leaving NO delete files behind. This decodes the delete file, so it is format-relevant
-  // (crossed × 3 MoR formats). A fold bug shows as a wrong count, a resurrected row, or lingering
-  // delete files.
+  // rewrite_data_files over a live position delete: it applies the delete to the rewritten data
+  // (key 1 physically gone, row set correct) — but it does NOT remove the now-dangling position
+  // delete from the CURRENT snapshot. FINDING G14 (characterization): the compacted table still
+  // carries a live delete-file reference that points at data already removed; it lingers until
+  // rewrite_position_delete_files or expire_snapshots. Reads stay correct throughout. Crossed × 3 MoR
+  // formats to confirm the behavior is format-consistent (the delete decode differs per format).
   val maintenanceMorFoldOps: List[(String, TableTest[CoreTable.type])] = List(
-    "maint.mor.rewriteDataFilesFold" -> TableTest(Core).step("maint.mor.rewriteDataFilesFold") { (spark, table) =>
+    "maint.mor.rewriteDataFilesDanglingDelete" -> TableTest(Core).step("maint.mor.rewriteDataFilesDanglingDelete") { (spark, table) =>
       spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      // the delete IS applied logically — row set is correct
       assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_data_files changed the live row set over a MoR delete")
       assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "rewrite_data_files RESURRECTED the deleted row")
-      val delFiles = spark.sql(s"SELECT count(*) FROM $table.all_delete_files").collect()(0).getLong(0)
-      assert(delFiles == 0, s"rewrite_data_files must FOLD the position delete (0 delete files left), got $delFiles")
+      // G14 PIN: the position delete is NOT removed from the current snapshot — it dangles.
+      val delFiles = spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+      assert(delFiles == 1, s"characterized: rewrite_data_files leaves the position delete dangling in the current snapshot (expected 1), got $delFiles — if this is 0, the build now folds deletes and the pin should flip")
+      // despite the dangling delete, reads remain correct (the removed row never reappears)
+      val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(keys == Seq(2L), s"read after rewrite_data_files must stay correct despite the dangling delete: $keys")
     }()
   )
 
@@ -606,7 +613,7 @@ object Scenarios {
     "hazard.mor.timeTravelBeforeDelete" -> TableTest(Core).step("hazard.mor.timeTravelBeforeDelete") { (spark, table) =>
       val seedSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
       assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "current MoR state should have the delete applied")
-      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF ${seedSnap}L").collect()(0).getLong(0) == 3,
+      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF $seedSnap").collect()(0).getLong(0) == 3,
         "pre-delete snapshot must still see the deleted row (delete must not be retroactive)")
     }(),
     // Rollback to the pre-delete snapshot UNDOES the delete — the row returns and no delete is live.
@@ -1829,7 +1836,7 @@ object Scenarios {
     ctx.spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 2)}")            // 2nd snapshot: 5 rows
     softDeleteRestore(ctx, db, tbl)
     assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 5, "current state changed across undrop")
-    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF ${firstSnap}L").collect()(0).getLong(0) == 3,
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF $firstSnap").collect()(0).getLong(0) == 3,
       "pre-restore snapshot not time-travellable after undrop (lineage lost)")
     ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
   }
