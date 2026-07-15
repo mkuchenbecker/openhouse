@@ -550,6 +550,81 @@ object Scenarios {
     }()
   )
 
+  // ── Maintenance × MoR-with-live-delete (BUILD-STATUS block 8 deepening) ──────────────────────
+  // The maintenance.* block runs on plain CoW; the genuinely-distinct surface is maintenance over a
+  // table that carries a LIVE position-delete file. `createAndSeedMorDeleted` leaves keys 2,3 live
+  // with a live delete for key 1. The hunt: does each maintenance procedure handle the delete file
+  // correctly (fold / preserve / not resurrect the deleted row)?
+
+  // rewrite_data_files must FOLD the position delete into the rewritten data — physically dropping
+  // key 1 and leaving NO delete files behind. This decodes the delete file, so it is format-relevant
+  // (crossed × 3 MoR formats). A fold bug shows as a wrong count, a resurrected row, or lingering
+  // delete files.
+  val maintenanceMorFoldOps: List[(String, TableTest[CoreTable.type])] = List(
+    "maint.mor.rewriteDataFilesFold" -> TableTest(Core).step("maint.mor.rewriteDataFilesFold") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_data_files changed the live row set over a MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "rewrite_data_files RESURRECTED the deleted row")
+      val delFiles = spark.sql(s"SELECT count(*) FROM $table.all_delete_files").collect()(0).getLong(0)
+      assert(delFiles == 0, s"rewrite_data_files must FOLD the position delete (0 delete files left), got $delFiles")
+    }()
+  )
+
+  // Metadata-only maintenance over a live delete — format is vacuous (these never decode the delete
+  // file), so × 1 MoR layout. Each must PRESERVE the delete (2 live rows, key 1 still gone).
+  val maintenanceMorMetaOps: List[(String, TableTest[CoreTable.type])] = List(
+    "maint.mor.expireSnapshots" -> TableTest(Core).step("maint.mor.expireSnapshots") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "expire_snapshots changed the live row set over a MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "expire_snapshots resurrected the deleted row")
+    }(),
+    "maint.mor.rewriteManifests" -> TableTest(Core).step("maint.mor.rewriteManifests") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_manifests(table => '${catalogRelative(table)}', use_caching => false)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_manifests changed the live row set over a MoR delete")
+    }(),
+    "maint.mor.removeOrphanFiles" -> TableTest(Core).step("maint.mor.removeOrphanFiles") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "remove_orphan_files changed the live row set over a MoR delete")
+    }(),
+    // Modality: compact the position deletes, THEN expire the pre-compact snapshot — the folded
+    // state must survive (the deleted row must not reappear via the retained/expired lineage).
+    "maint.mor.compactThenExpire" -> TableTest(Core).step("maint.mor.compactThenExpire") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_position_delete_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "compact-then-expire changed the live row set")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "compact-then-expire resurrected the deleted row")
+    }()
+  )
+
+  // ── MoR delete-file modality hazards (BUILD-STATUS block 10 deepening) ───────────────────────
+  // A live position delete is snapshot-scoped state. These hunt for it being mis-resolved across the
+  // history/restore axes: a delete must NOT be retroactive (pre-delete snapshots still see the row),
+  // rollback must UNDO it, and it must SURVIVE expiration of older snapshots. Time-travel/rollback
+  // logic is format-vacuous (it resolves snapshots, not file bytes) → × 1 MoR layout.
+  val morHazardOps: List[(String, TableTest[CoreTable.type])] = List(
+    // The delete is snapshot-scoped: time-travel to the pre-delete snapshot still sees key 1.
+    "hazard.mor.timeTravelBeforeDelete" -> TableTest(Core).step("hazard.mor.timeTravelBeforeDelete") { (spark, table) =>
+      val seedSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "current MoR state should have the delete applied")
+      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF ${seedSnap}L").collect()(0).getLong(0) == 3,
+        "pre-delete snapshot must still see the deleted row (delete must not be retroactive)")
+    }(),
+    // Rollback to the pre-delete snapshot UNDOES the delete — the row returns and no delete is live.
+    "hazard.mor.rollbackUndoesDelete" -> TableTest(Core).step("hazard.mor.rollbackUndoesDelete") { (spark, table) =>
+      val seedSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+      spark.sql(s"CALL openhouse.system.rollback_to_snapshot(table => '${catalogRelative(table)}', snapshot_id => ${seedSnap}L)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "rollback did not undo the MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 1, "rolled-back row not restored")
+    }(),
+    // The delete must SURVIVE expiration of the older (pre-delete) snapshot — a filtered read still
+    // excludes key 1 after expire.
+    "hazard.mor.expireThenDeleteHolds" -> TableTest(Core).step("hazard.mor.expireThenDeleteHolds") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(keys == Seq(2L), s"delete must survive expiration of the pre-delete snapshot (key 1 gone): $keys")
+    }()
+  )
+
   // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
   // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
   // modality thesis at the DDL level). DDL preps leave a distinct post-state; consumers are
@@ -1722,6 +1797,61 @@ object Scenarios {
     "undropAdmin.restoreRoundTrip"        -> undropAdminRestoreRoundTrip,
     "undropAdmin.listSoftDeleted"         -> undropAdminListSoftDeleted,
     "undropAdmin.restoreAfterPurgeRejected" -> undropAdminRestoreAfterPurgeRejected
+  )
+
+  private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
+    assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, s"soft-delete $db.$tbl failed")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
+    assert(HtsAdmin.restore(db, tbl, ms)._1 / 100 == 2, s"restore $db.$tbl failed")
+  }
+
+  // ── Undrop 3-way compositions (Block 9, real HTS only) — restore's state-preservation, per feature ──
+  // The undrop:* battery proves the whole op catalog works post-restore. These are pointed 3-way
+  // chains that set up a SPECIFIC feature's state (branch / snapshot history / evolved schema),
+  // destroy via soft-delete→restore, then consume that exact feature — the direct modality check that
+  // restore's destruction set does not intersect refs / lineage / schema.
+
+  // A pre-existing branch must survive the drop→undrop round-trip.
+  def interactUndropBranchSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_branch")
+    ctx.spark.sql(s"ALTER TABLE $table CREATE BRANCH b")
+    ctx.spark.sql(s"INSERT INTO $table.branch_b ${RowGenerator.valuesClause(Core, 2)}")   // branch diverges: 3+2=5
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "main row set changed across undrop")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF 'b'").collect()(0).getLong(0) == 5, "branch 'b' did not survive undrop")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Snapshot history (time travel) must survive restore.
+  def interactUndropTimeTravelSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_tt")
+    val firstSnap = ctx.spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+    ctx.spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 2)}")            // 2nd snapshot: 5 rows
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 5, "current state changed across undrop")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF ${firstSnap}L").collect()(0).getLong(0) == 3,
+      "pre-restore snapshot not time-travellable after undrop (lineage lost)")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Evolved schema must survive restore, and the restored table must still accept the evolved shape.
+  def interactUndropSchemaSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_schema")
+    ctx.spark.sql(s"ALTER TABLE $table ADD COLUMN extra int")
+    ctx.spark.sql(s"INSERT INTO $table VALUES (CAST(9 AS BIGINT), 9, 'row-9', 9.5, false, '2024-01-09-08', 99)")
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT extra FROM $table WHERE ${Core.long0.columnName} = 9").collect()(0).getInt(0) == 99,
+      "evolved column value lost across undrop")
+    ctx.spark.sql(s"INSERT INTO $table VALUES (CAST(10 AS BIGINT), 10, 'row-10', 10.5, true, '2024-01-10-09', 100)")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table WHERE extra IS NOT NULL").collect()(0).getLong(0) == 2,
+      "restored table did not accept the evolved schema for new writes")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val undropInteractOps: List[(String, Ctx => Unit)] = List(
+    "interact.undrop.branchSurvives"    -> interactUndropBranchSurvives,
+    "interact.undrop.timeTravelSurvives" -> interactUndropTimeTravelSurvives,
+    "interact.undrop.schemaSurvives"    -> interactUndropSchemaSurvives
   )
 
   // ── Branching / WAP (format-agnostic → parquet only; behavior-focused, not matrixed) ─────────
@@ -3744,6 +3874,11 @@ object Plan {
       if (HtsAdmin.enabled) Scenarios.undropAdminOps.map { case (name, run) => Case(name, run) }
       else Nil
 
+    // Block 9 deepening: undrop 3-way compositions (branch/time-travel/schema survival), real HTS only.
+    val undropInteract =
+      if (HtsAdmin.enabled) Scenarios.undropInteractOps.map { case (name, run) => Case(name, run) }
+      else Nil
+
     // DDL × consumer battery (task #3): each state-changing DDL, then each consumer must still work.
     // 4 DDL × 6 consumers × {unpartitioned, partitioned}/parquet = 48.
     val ddlConsumerBattery = for {
@@ -3767,6 +3902,25 @@ object Plan {
       (name, op) <- Scenarios.morCoexistOps
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
 
+    // Block 8 deepening: maintenance × MoR-with-live-delete. The delete-DECODE op (rewrite_data_files
+    // fold) is format-relevant → × 3 MoR formats; metadata-only maintenance is format-vacuous → × 1.
+    val maintenanceMorFold = for {
+      layout     <- Scenarios.morVerifyLayouts
+      (name, op) <- Scenarios.maintenanceMorFoldOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+    val morParquetVerify = Scenarios.morVerifyLayouts.filter(_.label == "mor-verify/parquet")
+    val maintenanceMorMeta = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.maintenanceMorMetaOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
+    // Block 10 deepening: MoR delete-file modality hazards (time-travel / rollback / expire). Snapshot
+    // logic is format-vacuous → × 1 MoR layout.
+    val morHazard = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.morHazardOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3782,7 +3936,8 @@ object Plan {
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
-      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin
+      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
+      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard
   }
 }
 
@@ -3879,25 +4034,26 @@ object OpenHouseEnv {
       if (realHts) {
         // Boot the HTS context FIRST, while no spring.sql.init.mode System property is set, so it
         // uses its own application.properties (spring.sql.init.mode=always) and runs schema.sql +
-        // data.sql on its MySQL-mode H2. Only AFTER it has fully refreshed do we set the System
-        // property to `never` — System properties outrank SpringApplicationBuilder defaults, so
-        // setting it earlier would (and did) suppress the HTS schema too. `never` then applies to
-        // the tables context (booted next), which ships no SQL scripts (Hibernate auto-DDL) and
-        // must not run housetables-lib.jar's root data.sql/schema.sql against its non-MySQL H2.
+        // data.sql on its MySQL-mode H2. The tables-context suppression props below are set AFTER
+        // this returns (the HTS context is already fully refreshed), so they don't affect HTS.
         val (ctx, htsUri) = HtsEnv.start()
         HtsAdmin.htsUri = htsUri   // enables the undrop preparation axis (Phase 4)
-        System.setProperty("spring.sql.init.mode", "never")
-        // Restore Hibernate auto-DDL for the tables context. Putting housetables-lib.jar on the
-        // classpath adds a root schema.sql, which flips Spring Boot's embedded-H2 ddl-auto default
-        // to `none`; with spring.sql.init.mode=never that script does not run either, so the tables
-        // server's own H2 tables (feature-toggle status/rules, etc.) would be missing. The tables
-        // side ships no SQL scripts and relied on auto-DDL in the stub baseline — make it explicit.
-        System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop")
         System.setProperty("cluster.housetables.base-uri", htsUri)
         System.setProperty("openhouse.htsStub.enabled", "false")
         println(s">> REAL HTS mode: embedded HTS at $htsUri (stub disabled)")
         Some(ctx)
       } else None
+
+    // ALWAYS (both stub and real-HTS modes): housetables-lib.jar is on the harness classpath
+    // unconditionally (print-cp.init.gradle pulls it in for the real-HTS path). Its root
+    // data.sql/schema.sql are MySQL-dialect and would be auto-run by the TABLES context's H2
+    // (non-MySQL mode) → INSERT IGNORE syntax error. The tables side ships no SQL scripts and relies
+    // on Hibernate auto-DDL, so (i) never run classpath SQL init for it, and (ii) make auto-DDL
+    // explicit (the stray schema.sql otherwise flips Spring Boot's embedded-H2 ddl-auto default to
+    // `none`, leaving the tables server's own H2 tables — feature-toggle status/rules — missing).
+    // In real-HTS mode this runs AFTER HtsEnv.start(), so the HTS schema (which needs init) is safe.
+    System.setProperty("spring.sql.init.mode", "never")
+    System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop")
 
     val server = new OpenHouseLocalServer()
     server.start()
