@@ -27,14 +27,18 @@ genuinely-gated real block — is now BUILT via an embedded real House Table Ser
 | 5b | Branch × **MoR** | `branchWap:* @ mor-*` | — | non-vacuous (task #2 fix) | 44 | ✅ NEW |
 | 6 | DDL × consumer battery | `ddlConsume:*` | 420 | negatives/one-shots vacuous → ~56 | 56 | ✅ NEW (task #3) |
 | 7 | Reader × writer-class | `readerWriter:*` | 120 | core writer×reader×M → ~16 | 16 | ✅ NEW (task #4) — surfaced **G13** |
-| 8 | Maintenance × substrates | `maintenance.*`, `surface.maint.*` | 150 | partial | ~32 | ◐ partial |
-| 9 | 3-way prefix compositions | `interact.*` (subset) | 250 | partial | ~25 | ◐ partial |
-| 10 | Hazards / interactions on M | `hazard.*`, `interact.*` | 150 | partial | ~33 | ◐ partial |
+| 8 | Maintenance × substrates | `maintenance.*`, `surface.maint.*`, `maint.mor.*` | 150 | partial + MoR-delete cross | ~39 | ✅ deepened — surfaced **G14** |
+| 9 | 3-way prefix compositions | `interact.*`, `interact.undrop.*` | 250 | partial + undrop 3-ways (real HTS) | ~28 | ✅ deepened |
+| 10 | Hazards / interactions on M | `hazard.*`, `hazard.mor.*` | 150 | partial + MoR delete-file modality | ~36 | ✅ deepened |
 | 11 | Negatives / pins / control / concurrency | `*.neg.*`, `surface.pin.*`, `control.*`, `surface.conc.*` | 250 | real | ~250 | ✅ done |
 | — | Nested / types / transforms / TT / restore / creates | various | — | baseline | ~430 | ✅ done |
 | — | MoR-read (live position delete) | `prep.morRead:*` | — | non-vacuous | 9 | ✅ done |
 
 ## Findings surfaced by the build-out
+- **G14** (block 8): `rewrite_data_files` over a live MoR position delete **applies** the delete (row
+  set correct) but leaves the position delete **dangling** in the current snapshot (`.delete_files`
+  still 1) — not folded/removed until `rewrite_position_delete_files`/`expire`. Format-consistent.
+  Pinned by `maint.mor.rewriteDataFilesDanglingDelete @ {parquet,orc,avro}`; filed AUDIT-FINDINGS G14.
 - **G13** (task #4): CDC changelog is **unsupported over a MoR table whose update/merge wrote
   position-delete files** ("Delete files are currently not supported in changelog scans"). MoR
   delete-only and all CoW work; MoR update/merge don't — CDC silently breaks on the shapes MoR
