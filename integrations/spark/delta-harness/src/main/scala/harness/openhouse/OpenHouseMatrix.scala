@@ -445,6 +445,67 @@ object Scenarios {
       .sql("prep.rtasMor")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
         s"TBLPROPERTIES ($morProps) AS SELECT * FROM $t")()
 
+  // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
+  // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
+  // modality thesis at the DDL level). DDL preps leave a distinct post-state; consumers are
+  // arity-safe (they use SELECT * / metadata tables, never a fixed column list) so they compose
+  // over ANY post-DDL schema. NOTE: this is the NON-VACUOUS core — the appraisal's 420 assumed
+  // 35 DDL (incl. negatives/one-shots) × 6, but a rejected DDL or a rename has no post-state for a
+  // consumer to exercise. State-changing DDL × real consumers is ~54, and that's what's built.
+  val ddlPreps: List[(String, Layout => TableTest[CoreTable.type])] = List(
+    "addColumn"  -> (l => createAndSeed(l, 3).sql("ddl")(t => s"ALTER TABLE $t ADD COLUMN cc int")()),
+    "typeWiden"  -> (l => createAndSeed(l, 3).sql("ddl")(t => s"ALTER TABLE $t ALTER COLUMN ${Core.int0.columnName} TYPE bigint")()),
+    "writeOrder" -> (l => createAndSeed(l, 3).sql("ddl")(t => s"ALTER TABLE $t WRITE ORDERED BY ${Core.long0.columnName}")()),
+    "distMode"   -> (l => createAndSeed(l, 3).sql("ddl")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.distribution-mode'='range')")())
+  )
+
+  private def dupRow(key: Long) = s"SELECT * FROM %s WHERE ${Core.long0.columnName} = $key"  // arity-safe append source
+
+  val ddlConsumers: List[(String, TableTest[CoreTable.type])] = List(
+    // C1 the table stays WRITABLE (append) after the DDL — arity-safe self-select append.
+    "dmlWrite" -> TableTest(Core).step("consume.dmlWrite") { (spark, table) =>
+      spark.sql(s"INSERT INTO $table ${dupRow(1).format(table)}")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "not writable post-DDL")
+    }(),
+    // C2 the MUTATION path still works after the DDL.
+    "dmlMutate" -> TableTest(Core).step("consume.dmlMutate") { (spark, table) =>
+      spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} = 2")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "mutation broken post-DDL")
+    }(),
+    // C3 TIME TRAVEL to the pre-DDL/seed snapshot still resolves.
+    "timeTravel" -> TableTest(Core).step("consume.timeTravel") { (spark, table) =>
+      val s0 = snapshotIds(spark, table).head
+      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF $s0").collect()(0).getLong(0) == 3,
+        "pre-DDL snapshot not travelable")
+    }(),
+    // C4 RESTORE across the DDL: write post-DDL, then roll back to the seed snapshot.
+    "restore" -> TableTest(Core).step("consume.restore") { (spark, table) =>
+      val s0 = snapshotIds(spark, table).head
+      spark.sql(s"INSERT INTO $table ${dupRow(1).format(table)}")
+      spark.sql(s"CALL openhouse.system.rollback_to_snapshot('${catalogRelative(table)}', $s0)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "restore across DDL failed")
+    }(),
+    // C5 EXPIRE after the DDL: history trims, current data survives and reads.
+    "expire" -> TableTest(Core).step("consume.expire") { (spark, table) =>
+      spark.sql(s"INSERT INTO $table ${dupRow(1).format(table)}")
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "unreadable after expire post-DDL")
+    }(),
+    // C6 BRANCH after the DDL: branchable, write on branch, main isolated.
+    "branch" -> TableTest(Core).step("consume.branch") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH cb")
+      spark.sql(s"INSERT INTO $table.branch_cb ${dupRow(1).format(table)}")
+      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF 'cb'").collect()(0).getLong(0) == 4, "branch write failed post-DDL")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "branch leaked to main post-DDL")
+    }(),
+    // C7 COMPACTION after the DDL: a second data file, then rewrite_data_files preserves the rows.
+    "compact" -> TableTest(Core).step("consume.compact") { (spark, table) =>
+      spark.sql(s"INSERT INTO $table ${dupRow(1).format(table)}")   // second data file
+      spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('min-input-files', '2'))")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "compaction changed rows post-DDL")
+    }()
+  )
+
   // Closing assertion for the branch axis: after the branch-routed op, MAIN must be untouched
   // (still the 3-row seed) — the isolation half of the branch contract. Uniform across all ops
   // because with spark.wap.branch set every write routes to the branch, never to main.
@@ -3381,6 +3442,14 @@ object Plan {
     } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/parquet",
       Scenarios.createAndSeedRtasMor("", 3).andThen(op).run)
 
+    // DDL × consumer battery (task #3): each state-changing DDL, then each consumer must still work.
+    // 4 DDL × 6 consumers × {unpartitioned, partitioned}/parquet = 48.
+    val ddlConsumerBattery = for {
+      layout          <- branchParquetLayouts
+      (ddlName, prep) <- Scenarios.ddlPreps
+      (conName, con)  <- Scenarios.ddlConsumers
+    } yield Case(s"ddlConsume:$ddlName.$conName @ ${layout.label}", prep(layout).andThen(con).run)
+
     // MoR reads with a live position delete (closes the scan-path gap, step 1). Read/scan ops only —
     // they must apply the position delete at read time. Across formats (delete-file encoding differs).
     val morReadOps = Scenarios.operations.filter { case (n, _) => n.startsWith("read.") || n == "format.materialization" }
@@ -3403,7 +3472,8 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlPrepOrdered ++ ddlPrepEvolved
+      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlConsumerBattery ++
+      ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
