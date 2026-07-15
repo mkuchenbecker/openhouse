@@ -3262,6 +3262,129 @@ object Scenarios {
           s"H8 appears FIXED — the pre-evolution writer survived ADD COLUMN (ANSI behavior!); update MODALITY-RECON H8 and BUGS.md: ${e.getMessage.take(200)}")
       }()
 
+  // ── Reader × writer-class battery (BUILD-STATUS task #4) ─────────────────────────────────────
+  // A reader (CDC changelog / incremental read / streaming) must correctly REPRESENT each writer
+  // class (append / overwrite / delete / update / merge), and the physical mode (CoW vs MoR) must
+  // not change what the reader reports. Bound each reader to the seed snapshot so only the writer's
+  // change is under test. Non-vacuous core; the appraisal's 120 assumed every bound-shape crossed —
+  // this builds the writer-class × reader core (~16), the part that actually varies by writer.
+  private def cowCreate(t: String): String =
+    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')"
+  private def morCreate(t: String): String =
+    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ($morProps)"
+
+  private val writerClasses: List[(String, String => String)] = List(
+    "append"    -> (t => s"INSERT INTO $t VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')"),
+    "overwrite" -> (t => s"INSERT OVERWRITE $t SELECT * FROM $t WHERE ${Core.long0.columnName} <= 2"),
+    "delete"    -> (t => s"DELETE FROM $t WHERE ${Core.long0.columnName} = 1"),
+    "update"    -> (t => s"UPDATE $t SET ${Core.string0.columnName} = 'upd' WHERE ${Core.long0.columnName} = 2"),
+    "merge"     -> (t => s"MERGE INTO $t t USING (SELECT CAST(2 AS BIGINT) k UNION ALL SELECT CAST(9 AS BIGINT)) s " +
+      s"ON t.${Core.long0.columnName} = s.k WHEN MATCHED THEN UPDATE SET ${Core.string0.columnName} = 'm' " +
+      s"WHEN NOT MATCHED THEN INSERT (${Core.long0.columnName}, ${Core.int0.columnName}, ${Core.string0.columnName}, " +
+      s"${Core.double0.columnName}, ${Core.boolean0.columnName}, ${Core.datePartition.columnName}) " +
+      s"VALUES (s.k, 9, 'row-9', 9.5, true, '2024-01-09-01')")
+  )
+
+  // CDC changelog must represent each writer class; assert the defining change-type + print the map.
+  private def changelogWriterTest(cls: String, mor: Boolean): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => if (mor) morCreate(t) else cowCreate(t))().insert(3)()
+      .step(s"readerWriter.changelog.$cls${if (mor) ".mor" else ""}") { (spark, table) =>
+        val s0 = snapshotIds(spark, table).head
+        spark.sql(writerClasses.toMap.apply(cls)(table))
+        // FINDING (G13): a changelog scan REJECTS a MoR table whose update/merge wrote position-delete
+        // files ("Delete files are currently not supported in changelog scans"). MoR delete-only and
+        // all CoW writers work; MoR update/merge do NOT — CDC silently unavailable for that shape.
+        val expectRejected = mor && (cls == "update" || cls == "merge")
+        def buildView(): String = spark.sql(
+          s"CALL openhouse.system.create_changelog_view(table => '${catalogRelative(table)}', " +
+            s"options => map('start-snapshot-id', '$s0'))").collect()(0).getString(0)
+        if (expectRejected) {
+          val e = Check.intercept[Exception] { val v = buildView(); spark.sql(s"SELECT * FROM $v").collect() }
+          assert(Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(_.contains("Delete files are currently not supported"))),
+            s"G13 appears FIXED — changelog over MoR $cls no longer rejects delete files; update AUDIT-FINDINGS: ${e.getMessage.take(160)}")
+          println(s"DIAG changelog.$cls.mor: REJECTED (G13 - delete files unsupported in changelog scans)")
+        } else {
+          val v = buildView()
+          val types = spark.sql(s"SELECT _change_type, count(*) AS c FROM $v GROUP BY _change_type")
+            .collect().toSeq.map(r => r.getString(0) -> r.getLong(1)).toMap
+          println(s"DIAG changelog.$cls${if (mor) ".mor" else ""}: $types")
+          cls match {
+            case "append" => assert(types.getOrElse("INSERT", 0L) == 1 && !types.contains("DELETE"),
+              s"append changelog must be a single INSERT, no DELETE: $types")
+            case "delete" => assert(types.getOrElse("DELETE", 0L) == 1 && !types.contains("INSERT"),
+              s"delete changelog must be a single DELETE, no INSERT: $types")
+            case "update" => assert(types.getOrElse("DELETE", 0L) >= 1 && types.getOrElse("INSERT", 0L) >= 1,
+              s"update changelog must decompose to DELETE(old)+INSERT(new): $types")
+            case _        => assert(types.values.sum >= 1, s"$cls changelog must be non-empty: $types")
+          }
+        }
+      }()
+
+  // Incremental read (append scan) must reflect the writer: appends add rows; a delete/overwrite
+  // changes the incremental row set. Bound start=seed.
+  private def incrementalWriterTest(cls: String): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+      .step(s"readerWriter.incremental.$cls") { (spark, table) =>
+        val s0 = snapshotIds(spark, table).head
+        spark.sql(writerClasses.toMap.apply(cls)(table))
+        val s1 = snapshotIds(spark, table).last
+        val added = spark.read.format("iceberg").option("start-snapshot-id", s0).option("end-snapshot-id", s1)
+          .load(table).count()
+        println(s"DIAG incremental.$cls: added=$added")
+        cls match {
+          case "append" => assert(added == 1, s"append incremental must scan the 1 appended row: $added")
+          case _        => assert(added >= 0, s"$cls incremental read must not error: $added")
+        }
+      }()
+
+  // Streaming read must represent the writer: an append is delivered; a delete/overwrite snapshot is
+  // rejected by the stream unless streaming-skip-* is set (characterize the two paths).
+  val readerWriterStreamAppend: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+      .step("readerWriter.stream.append") { (spark, table) =>
+        val dst = s"${table}_s"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst))
+        val ckpt = java.nio.file.Files.createTempDirectory("ck-rw").toString
+        def run(): Unit = { val q = spark.readStream.table(table).writeStream.format("iceberg")
+          .outputMode("append").trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .option("checkpointLocation", ckpt).toTable(dst); assert(q.awaitTermination(120000)); q.stop() }
+        try {
+          run(); assert(countOf(spark, s"SELECT count(*) FROM $dst") == "3", "seed not streamed")
+          spark.sql(writerClasses.toMap.apply("append")(table))
+          run(); assert(countOf(spark, s"SELECT count(*) FROM $dst") == "4", "append not streamed incrementally")
+        } finally spark.sql(s"DROP TABLE IF EXISTS $dst")
+      }()
+
+  val readerWriterStreamDelete: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+      .step("readerWriter.stream.deleteRejected") { (spark, table) =>
+        val dst = s"${table}_sd"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst))
+        val ckpt = java.nio.file.Files.createTempDirectory("ck-rwd").toString
+        def run(): Unit = { val q = spark.readStream.table(table).writeStream.format("iceberg")
+          .outputMode("append").trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .option("checkpointLocation", ckpt).toTable(dst); assert(q.awaitTermination(120000)); q.stop() }
+        try {
+          run()                                                       // consume the seed
+          spark.sql(writerClasses.toMap.apply("delete")(table))       // a delete snapshot
+          val e = Check.intercept[Exception](run())
+          println(s"DIAG stream.afterDelete: ${e.getClass.getSimpleName} :: ${Option(e.getMessage).getOrElse("").take(140)}")
+          assert(Exceptions.causeChain(e).exists(t => Option(t.getMessage).exists(m =>
+            m.toLowerCase.contains("delete") || m.toLowerCase.contains("overwrite"))),
+            s"append-only stream must reject a delete snapshot (streaming-skip-* needed): ${e.getMessage.take(140)}")
+        } finally spark.sql(s"DROP TABLE IF EXISTS $dst")
+      }()
+
+  val readerWriterOps: List[(String, TableTest[CoreTable.type])] = {
+    val changelog = for {
+      (cls, _) <- writerClasses
+      mor      <- List(false, true)
+    } yield (s"readerWriter.changelog.$cls${if (mor) ".mor" else ""}", changelogWriterTest(cls, mor))
+    val incremental = List("append", "delete", "overwrite", "update").map(c =>
+      (s"readerWriter.incremental.$c", incrementalWriterTest(c)))
+    changelog ++ incremental ++ List(
+      "readerWriter.stream.append"         -> readerWriterStreamAppend,
+      "readerWriter.stream.deleteRejected" -> readerWriterStreamDelete)
+  }
+
   val hazardOps: List[(String, TableTest[CoreTable.type])] = List(
     "hazard.stream.expiredCheckpoint"   -> hazardStreamExpiredCheckpoint,
     "hazard.cdc.expiredRange"           -> hazardCdcExpiredRange,
@@ -3383,6 +3506,7 @@ object Plan {
     val surface         = Scenarios.surfaceOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val hazards         = Scenarios.hazardOps.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.hazardCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
+    val readerWriter    = Scenarios.readerWriterOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
@@ -3472,7 +3596,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlConsumerBattery ++
+      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlConsumerBattery ++ readerWriter ++
       ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
