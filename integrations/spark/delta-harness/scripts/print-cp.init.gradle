@@ -17,6 +17,13 @@ allprojects {
         exclude group: 'com.linkedin.iceberg', module: 'iceberg-common'
         exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
       }
+      // HTS-embed (Option A): pull the REAL House Table Service classes
+      // (UserTablesServiceImpl, controllers, JDBC repos, api-spec model) onto the harness
+      // classpath so the harness can boot a real HTS as a 2nd Spring context and point the
+      // embedded tables server's HouseTableRepositoryImpl at it. Only needed for the real-HTS
+      // mode; the default stub path does not use these classes. Same single-Iceberg exclusion
+      // above covers housetables' transitive unshaded iceberg.
+      dependencies.add('testImplementation', project(':services:housetables'))
     }
     tasks.register('printHarnessCp') {
       doLast {
