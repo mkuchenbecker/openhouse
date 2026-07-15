@@ -24,7 +24,7 @@ ext {
   icebergVersion = rootProject.ext.iceberg_1_10_version
   sparkVersion = '3.5.2'
   springVersion = '2.7.8'
-  hadoopVersion = '2.10.0'
+  hadoopVersion = '3.3.4' // spark4-upgrade rung 1: Iceberg 1.10 needs Hadoop 3.3+ (FileSystem.openFile)
 }
 
 sourceSets {

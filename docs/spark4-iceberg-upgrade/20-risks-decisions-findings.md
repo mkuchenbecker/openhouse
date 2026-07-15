@@ -147,6 +147,20 @@ Format: `Fn — one-line symptom → root cause → disposition`. Seed carried f
   the stock `BaseMetastoreTableOperations.commit`) to avoid the forced `doRefresh()` after
   `doCommit()`. Note for rung-3 DV work: the v3-metadata authoring change lands in this same
   override + `writeMetadata`/`doCommit` — a concentrated, well-scoped touch point, not scattered.
+- **F-JVM1 (rung 1, C4 confirmed)** — Gradle refuses iceberg-core/spark-runtime 1.10 on
+  `targetCompatibility=8` modules because 1.10's Gradle Module Metadata declares `jvm.version=11`.
+  This is a **metadata guard, not a real incompatibility** (v52 bytecode runs on the Java 11+
+  runtime). Resolved by raising `TARGET_JVM_VERSION=11` on **resolution-only** configs
+  (`canBeResolved && !canBeConsumed`) in `java-minimal-conventions` + `iceberg-conventions-1.5.2`,
+  keeping `-target 8` bytecode. First attempt over-broadly tagged the consumable `shadow` config
+  Java 11 and broke the target-8 itest consuming it → narrowed to resolution-only. **Keeps the
+  HDFS-client Java-8-bytecode requirement intact.**
+- **F-HADOOP1 (rung 1, C5 confirmed)** — with 1.10 building/resolving, the harness hit
+  `NoSuchMethodError: FileSystem.openFile(Path)` at runtime: Iceberg 1.10 calls the Hadoop **3.3+**
+  `openFile` API, but OpenHouse pinned `hadoop-client 2.10.0`. Bumped the 1.10-lane Hadoop
+  2.10.0 → **3.3.4** (`hadoop-conventions` + `java-runtime-1.5`); 3.3.4 matches Spark 3.5.2's
+  bundled Hadoop and is wire-compatible with the 3.1/3.2 RBF cluster (per C5). iceberg-1.2/spark-3.1
+  coexistence lane left on 2.10. This is the concrete manifestation of the rung-1 Hadoop axis.
 - *(rung-1…3 findings appended here during execution.)*
 
 ---
