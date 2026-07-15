@@ -11,11 +11,15 @@
 allprojects {
   if (path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
     afterEvaluate {
+      // spark4-upgrade rung 1: the unshaded modules are now stock org.apache.iceberg (was the
+      // com.linkedin.iceberg fork). Exclude the org.apache.iceberg unshaded modules so only the
+      // shaded iceberg-spark-runtime fat jar remains — otherwise shaded vs unshaded parquet/avro/
+      // jackson collide (ClassCastException MessageType, JsonUtil.factory NoSuchMethodError). F1.
       configurations.testRuntimeClasspath {
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-core'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-api'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-common'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+        exclude group: 'org.apache.iceberg', module: 'iceberg-core'
+        exclude group: 'org.apache.iceberg', module: 'iceberg-api'
+        exclude group: 'org.apache.iceberg', module: 'iceberg-common'
+        exclude group: 'org.apache.iceberg', module: 'iceberg-data'
       }
     }
     tasks.register('printHarnessCp') {
