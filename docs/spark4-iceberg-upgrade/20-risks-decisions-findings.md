@@ -161,7 +161,18 @@ Format: `Fn — one-line symptom → root cause → disposition`. Seed carried f
   2.10.0 → **3.3.4** (`hadoop-conventions` + `java-runtime-1.5`); 3.3.4 matches Spark 3.5.2's
   bundled Hadoop and is wire-compatible with the 3.1/3.2 RBF cluster (per C5). iceberg-1.2/spark-3.1
   coexistence lane left on 2.10. This is the concrete manifestation of the rung-1 Hadoop axis.
-- *(rung-1…3 findings appended here during execution.)*
+- **F-VACUITY-HADOOP (rung 1, honesty caveat — do NOT let rung-1-green imply this)** — the
+  delta-harness runs against **LocalFileSystem** (`spark.hadoop.fs.defaultFS=file:///`,
+  `master=local[2]`) and the **H2 in-memory HTS stub** (`HouseTablesH2Repository`), NOT HDFS and NOT
+  the real HTS JPA service. Therefore rung-1 green validates the Hadoop 2.10→3.3.4 bump ONLY at:
+  (a) **build/resolve/compile** level, and (b) the **LocalFileSystem FileIO** path (which is what
+  caught the real `FileSystem.openFile` NoSuchMethodError — a base-FileSystem method, so it fired on
+  local FS). It does **NOT** exercise `DistributedFileSystem`, the HDFS **RPC wire protocol**, RBF
+  routing, kerberos/auth, or the real chown (`fileSecurer` is a no-op here). The client-3.3.4 ↔
+  server-3.1/3.2 wire compatibility (C5) rests on wire-protocol stability + **Spike A on a real
+  cluster** (blocked in this sandbox), not on the harness. **Rung-1 gate = Iceberg-1.10 core
+  behavior + build compat; the Hadoop-on-HDFS leg is build-validated + wire-stability-asserted,
+  harness-agnostic.**
 
 ---
 
