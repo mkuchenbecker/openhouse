@@ -43,11 +43,11 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
       TableMetadata metadata = ops.current();
       TableMetadata evolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(evolvedSchema, evolvedSchema.highestFieldId())
+              .addSchema(evolvedSchema)
               .build();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(evolvedMetadata)
-              .addSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
+              .addSchema(finalEvolvedSchema)
               .setCurrentSchema(2)
               .build();
 
@@ -84,7 +84,7 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
       TableMetadata metadata = ops.current();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
+              .addSchema(finalEvolvedSchema)
               .setCurrentSchema(1)
               .build();
 
@@ -153,16 +153,16 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
 
       TableMetadata evolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(schemaColumnOrdering2, schemaColumnOrdering2.highestFieldId())
+              .addSchema(schemaColumnOrdering2)
               .build();
       TableMetadata secondaryEvolvedMetadata =
           TableMetadata.buildFrom(evolvedMetadata)
-              .addSchema(schemaColumnOrdering3, schemaColumnOrdering3.highestFieldId())
+              .addSchema(schemaColumnOrdering3)
               .setCurrentSchema(2)
               .build();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(secondaryEvolvedMetadata)
-              .addSchema(schemaColumnOrdering4, schemaColumnOrdering4.highestFieldId())
+              .addSchema(schemaColumnOrdering4)
               .setCurrentSchema(3)
               .build();
 
