@@ -2,7 +2,7 @@
 
 **Lead with this.** `SURFACE-APPRAISAL.md` priced the runnable surface at **~4,200 cases** — but that
 estimate double-counted vacuous crosses (see the "estimate correction" column). After the checklist
-build-out the suite is at **~1,697** verified green, and the honest **non-vacuous** target is
+build-out the suite is at **1,697** verified green (8m40s parallel), and the honest **non-vacuous** target is
 **~2,600–3,000**, not 4,200. This tracks every block so the gap is never buried. The live task list
 mirrors it.
 

@@ -1,7 +1,7 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
-1519 cases: 1492 passed, 27 skipped (5 tagged bugs/skips), 0 failed.
-Wall-time 7m59s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
+1697 cases: 1670 passed, 27 skipped (5 tagged bugs/skips), 0 failed.
+Wall-time 8m40s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
 2.6x vs the ~16 min sequential baseline; HARNESS_PARALLELISM to override). Cases are independent
 (atomic table counter) and each worker task runs in its own spark.newSession(), isolating the
 session-global conf some tests mutate; output order is unchanged. Parallelism scales with cores /
@@ -69,6 +69,13 @@ delta on the branch AND that main is isolated); prep.rtas:<op> - the whole DML c
 - reads with a live position delete applied at scan time across formats (9, closes the MoR read-path
 gap). branch x format and RTAS x format are pruned as vacuous; the undrop leg and the P x S x T
 composition dial toward ~10-15k remain future work.
+
+Plus the checklist build-out (BUILD-STATUS.md, +178): branch x MoR + RTAS x MoR (the over-prune misses,
+88); DDL x consumer battery (4 state-changing DDL x 7 consumers x 2 layouts, 56); reader x writer-class
+(changelog/incremental/stream x writer x CoW/MoR, 16 - surfaced NEW finding G13: CDC changelog
+unsupported over MoR update/merge); MoR delete-file coexistence (ops on a table with a live position
+delete, 18). The core-DML L x M=12 "promotion" was found ~90% vacuous (delete-free MoR reads/inserts ==
+CoW) and deliberately not built; the honest non-vacuous ceiling is ~2,700 (see BUILD-STATUS.md).
 
 Tagged bugs/skips (SKIP, tracked in BUGS.md): insert.explicitColumns, nested.deleteByNestedField,
 ddl.renameColumn (RENAME COLUMN silent no-op), ddl.encryption (KMS plugin in a private repo — asserts
