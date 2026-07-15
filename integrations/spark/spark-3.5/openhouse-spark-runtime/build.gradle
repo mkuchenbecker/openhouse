@@ -5,9 +5,21 @@ plugins {
   id 'scala'
 }
 
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 ext {
-  icebergVersion = rootProject.ext.iceberg_1_5_version
+  // spark4-upgrade rung 1: stock Apache Iceberg 1.10 (was com.linkedin.iceberg 1.5.2.15)
+  icebergVersion = rootProject.ext.iceberg_1_10_version
   sparkVersion = '3.5.2'
+}
+
+// Iceberg 1.10 GMM declares jvm.version=11; allow it on this target-8 module by raising only the
+// resolution attribute (see openhouse.iceberg-conventions-1.5.2.gradle for the rationale). Keeps
+// -target 8 bytecode; the v52 classes run fine on the Java 11+ runtime beside Java-11 Iceberg.
+configurations.configureEach {
+  if (canBeResolved) {
+    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11) }
+  }
 }
 
 configurations {
@@ -38,7 +50,7 @@ dependencies {
     exclude group: 'org.apache.hadoop', module: 'hadoop-client'
   }
 
-  testImplementation("com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion) {
+  testImplementation("org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion) {
     exclude group: "io.netty"
   }
   testImplementation(project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')) {
@@ -58,7 +70,7 @@ dependencies {
   implementation(project(path: ':integrations:spark:spark-3.1:openhouse-spark-runtime_2.12', configuration: 'shadow')) {
     exclude group: "com.linkedin.iceberg", module: "iceberg-spark-runtime-3.1_2.12"
   }
-  implementation("com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion)
+  implementation("org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion)
 }
 
 
