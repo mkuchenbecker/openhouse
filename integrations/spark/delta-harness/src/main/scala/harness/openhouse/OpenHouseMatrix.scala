@@ -431,6 +431,20 @@ object Scenarios {
       .sql("prep.rtas")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
         s"TBLPROPERTIES ('write.format.default'='parquet') AS SELECT * FROM $t")()
 
+  // RTAS prep on a MERGE-ON-READ table (over-prune miss #1): the replace re-specifies the MoR delete/
+  // update/merge modes, so downstream mutation ops exercise the MoR write path on a replace-lineage
+  // table. Non-vacuous per the appraisal — replace + MoR is a distinct combination.
+  private val morProps = "'write.format.default'='parquet', 'format-version'='2', " +
+    "'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read'"
+
+  def createAndSeedRtasMor(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+    TableTest(Core)
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ($morProps, 'replace.enabled'='true')")()
+      .insert(numberOfRows)()
+      .sql("prep.rtasMor")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
+        s"TBLPROPERTIES ($morProps) AS SELECT * FROM $t")()
+
   // Closing assertion for the branch axis: after the branch-routed op, MAIN must be untouched
   // (still the 3-row seed) — the isolation half of the branch contract. Uniform across all ops
   // because with spark.wap.branch set every write routes to the branch, never to main.
@@ -3344,6 +3358,15 @@ object Plan {
     } yield Case(s"branchWap:$name @ ${layout.label}",
       Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
 
+    // Over-prune miss #2: branch × MoR. The mutation ops routed onto a branch of a MoR table —
+    // NOT vacuous (the MoR-branch merge story differs; cherry-pick rejects row-delete snapshots).
+    val branchMorLayout = Scenarios.morLayouts.filter(_.label == "mor-unpartitioned/parquet")
+    val branchWapMor = for {
+      layout     <- branchMorLayout
+      (name, op) <- Scenarios.mutationOperations
+    } yield Case(s"branchWap:$name @ ${layout.label}",
+      Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
+
     // P axis (replace-lineage leg) — the whole DML catalog on an RTAS'd table (SURFACE-APPRAISAL
     // step 2). ~106 cases. (The undrop leg is gated on the embedded-HTS restructure — see
     // REST-FIDELITY-EVAL.md — so only the RTAS leg is runnable now.)
@@ -3351,6 +3374,12 @@ object Plan {
       (label, partitionClause) <- Scenarios.rtasPrepShapes
       (name, op)               <- Scenarios.operations
     } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3).andThen(op).run)
+
+    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table.
+    val prepRtasMor = for {
+      (name, op) <- Scenarios.mutationOperations
+    } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/parquet",
+      Scenarios.createAndSeedRtasMor("", 3).andThen(op).run)
 
     // MoR reads with a live position delete (closes the scan-path gap, step 1). Read/scan ops only —
     // they must apply the position delete at read time. Across formats (delete-file encoding differs).
@@ -3374,7 +3403,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      prepRtas ++ prepMorRead ++ ddlPrepOrdered ++ ddlPrepEvolved
+      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ ddlPrepOrdered ++ ddlPrepEvolved
   }
 }
 
