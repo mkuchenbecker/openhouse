@@ -95,6 +95,39 @@ Re-port shortlist (provisional): **Core/API** — #236, #229, #219 (+ #251 if no
 **Spark-integration** — #249, #228, #214 (+ #224 pending Spark-4 re-eval). Everything else DROP/BUMP
 after verification.
 
+### C.1 — Verified scope of the KEEP patches (Phase 0.6, read against the fork)
+All six KEEP candidates are **LinkedIn-original** (not backports). Their file scope:
+
+| PR | Core touch | Spark touch | Nature |
+|---|---|---|---|
+| #249 distribution-mode NONE | — | `SparkWriteConf` | write-planning **default** |
+| #229 delete-file replication | `core/TableProperties` | `SparkSQLProperties`, `SparkWriteConf`, `SparkWriteOptions` | table-prop + write knob |
+| #228 split-size SQL prop | — | `SparkReadConf`, `SparkSQLProperties` | read-planning knob |
+| #219 delete-file replication factor | `io/FileIO`, `hadoop/HadoopOutputFile` | `SparkWriteOptions`, `SparkWrite` | HDFS write-side |
+| #214 app-name in snapshot | — | `SparkWrite`, `SparkWriteBuilder`, `SparkTable`, `SparkPositionDeltaWrite` | commit metadata |
+| #224 don't-rewrite-views | — | `IcebergSparkSqlExtensionsParser.scala` | LinkedIn-Spark parser |
+
+### C.2 — KEY IMPLICATION for REST-first (refines D3)
+The Spark-4 client under REST-first is **stock Iceberg** — so these **engine-write-path** patches do
+**not** auto-carry to the Spark-4 lane. Disposition per patch on the new lane:
+- **#249 distribution-mode NONE** → set as a **server-side default table property**
+  (`write.distribution-mode=none`); the stock client honors it. No fork needed.
+- **#219/#229 delete-file replication (+ factor)** → the *replication factor* is an HDFS-write
+  concern. Delete/DV files are written by the **engine**, so a stock client won't apply it unless
+  it is a table property the client honors; the metadata/`FileIO` half is server-side. **Re-express
+  as table property + server FileIO**; treat the engine-side factor as a possibly-lost optimization
+  to re-raise (tag if dropped).
+- **#228 split-size** → likely covered by stock `read.split.target-size` table property + read
+  options; **verify equivalence**, drop the custom SparkSQLProperty if so.
+- **#214 app-name in snapshot** → prefer stock `EnvironmentContext`/commit-summary injection (pairs
+  with #236); **verify** the stock client can stamp it, else a small server-side summary enrichment.
+- **#224 don't-rewrite-views** → **likely moot** on stock Spark 4 + stock Iceberg extensions;
+  confirm at rung 2, expect DROP.
+
+Net: on the **rung-1** (fork-on-1.10, still custom Spark 3.5 client) lane these are re-ported as
+today; on the **rung-2 stock-client** lane most collapse into **server-set table properties**, not
+fork patches. This is the fork **shrinking toward zero on the new lane** — the intended direction.
+
 ---
 
 ## D. Findings (append as the work surfaces them)
@@ -104,6 +137,16 @@ Format: `Fn — one-line symptom → root cause → disposition`. Seed carried f
 - **G13 (carried)** — CDC/changelog unsupported over a MoR table with position-delete files at
   1.5.2. **Re-evaluate under 1.11 DVs at rung 3.3** — DVs may change the outcome; record whether
   fixed, still-unsupported (tag), or newly-shaped.
+- **F-REST1 (Phase 0 recon)** — the REST-catalog prior-art (linkedin/openhouse #607, #498–500) is
+  **not merged into this fork** (`mkuchenbecker/openhouse`); no `iceberg/v1` controller exists here.
+  So rung-2 REST work is a **port/fresh-build**, not already present. Reuse target is confirmed
+  in-repo: the native commit path `IcebergSnapshotsService` + `OpenHouseInternalTableOperations`
+  (`extends BaseMetastoreTableOperations`, overrides `commit`/`doCommit`, writes via
+  `TableMetadataParser.write`). Spike B = a REST protocol adapter over these existing handlers.
+- **F-COMMIT1** — `OpenHouseInternalTableOperations.commit(base, metadata)` is **overridden** (not
+  the stock `BaseMetastoreTableOperations.commit`) to avoid the forced `doRefresh()` after
+  `doCommit()`. Note for rung-3 DV work: the v3-metadata authoring change lands in this same
+  override + `writeMetadata`/`doCommit` — a concentrated, well-scoped touch point, not scattered.
 - *(rung-1…3 findings appended here during execution.)*
 
 ---

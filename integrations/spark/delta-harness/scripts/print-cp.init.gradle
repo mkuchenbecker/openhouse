@@ -19,6 +19,12 @@ allprojects {
       }
     }
     tasks.register('printHarnessCp') {
+      // Depend on the configuration so its project artifacts (the runtime uber jars, the
+      // tables-test-fixtures jar, and each service module jar) are actually BUILT — not merely
+      // resolved to paths. Without this, a fresh container resolves valid paths to jars that were
+      // never assembled, and the harness scalac fails with "object linkedin is not a member of
+      // package com".
+      dependsOn configurations.testRuntimeClasspath
       doLast {
         def cp = configurations.testRuntimeClasspath.resolve().collect { it.absolutePath }
         new File(System.getProperty('cpOut')).text = cp.join(':')
