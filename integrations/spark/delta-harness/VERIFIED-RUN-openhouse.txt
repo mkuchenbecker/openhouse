@@ -1,5 +1,25 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
+--- REAL EMBEDDED HTS (HARNESS_REAL_HTS=1), HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md ---
+1806 cases: 1777 passed, 29 skipped, 0 failed. Wall-time 12m41s (parallel, 4 workers; real HTS adds
+HTTP soft-delete/restore round-trips per undrop case). This is the STUB baseline below (1697) PLUS the
+undrop leg, now UNGATED:
+  - undrop:<op> @ {unpartitioned,partitioned}/parquet (106 = 53 ops x 2 layouts) — the whole operation
+    catalog run on a table taken through a REAL soft-delete -> restore round-trip on the embedded HTS.
+    104 pass / 2 skip (pre-tagged insert.explicitColumns) / 0 fail => restore preserves EVERY feature's
+    state (rows, snapshot lineage, refs, partition spec, sort order, table properties, schema): no
+    modality hazard in undrop's destruction set (a clean bill for OpenHouse restore).
+  - undropAdmin.{restoreRoundTrip, listSoftDeleted, restoreAfterPurgeRejected} (3) — HTS-admin
+    lifecycle; all pass (restore-after-purge is correctly rejected).
+How: the real House Table Service is booted as a 2nd in-JVM Spring context on H2 (0 production-code
+changes; the @Primary in-memory stub gains a backward-compatible @ConditionalOnProperty guard). The
+tables server's HouseTableRepositoryImpl (real HTTP client) is pointed at it via
+cluster.housetables.base-uri; soft-delete is driven directly on HTS (customer DROP hard-codes
+purge=true), restore via the customer Tables API. Under this mode the entire pre-existing suite runs
+IDENTICALLY to the stub baseline (regression gate green) — the embedding is purely additive; the stub
+remains the default when HARNESS_REAL_HTS is unset.
+
+--- STUB baseline (default; in-memory HouseTableRepository) ---
 1697 cases: 1670 passed, 27 skipped (5 tagged bugs/skips), 0 failed.
 Wall-time 8m40s under the PARALLEL runner (session-per-worker, default = cores; 4-way on this box,
 2.6x vs the ~16 min sequential baseline; HARNESS_PARALLELISM to override). Cases are independent
