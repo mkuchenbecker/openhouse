@@ -688,6 +688,26 @@ object Scenarios {
     }()
   )
 
+  // Encryption capability PIN (characterization). OpenHouse delegates table-data encryption to an
+  // external KMS plugin (private repo); in OSS the catalog never wires a KeyManagementClient, so
+  // customer tables use the default PlaintextEncryptionManager and data is written UNENCRYPTED.
+  // Discriminator: a Parquet file's FOOTER magic is "PAR1" when unencrypted and "PARE" under modular
+  // encryption — robust regardless of compression. This pins that OSS writes plaintext; it FLIPS to
+  // "PARE" the moment table-data encryption is wired (then update BUGS.md and this pin). An off-the-
+  // shelf KMS does NOT change this — nothing in the OpenHouse write path invokes the encryption hook.
+  val encryptionPlaintextPin: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("surface.pin.dataPlaintext") { (spark, table) =>
+        val path = spark.sql(s"SELECT file_path FROM $table.data_files LIMIT 1").collect()(0).getString(0)
+        val local = path.stripPrefix("file:")
+        val bytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(local))
+        assert(bytes.length >= 8, s"data file too small to inspect: ${bytes.length} bytes")
+        val footerMagic = new String(bytes.takeRight(4), "US-ASCII")
+        assert(footerMagic == "PAR1",
+          s"expected UNENCRYPTED parquet footer magic PAR1 (OSS encryption is un-wired — capability gap, BUGS.md); " +
+          s"got '$footerMagic' — if 'PARE', table-data encryption is now active and this pin should flip to assert ciphertext")
+      }()
+
   // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
   // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
   // modality thesis at the DDL level). DDL preps leave a distinct post-state; consumers are
@@ -3991,6 +4011,9 @@ object Plan {
       (name, op) <- Scenarios.morBranchMergeOps
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedSingleFile(layout, 3).andThen(op).run)
 
+    // Encryption capability pin (characterization): OSS writes plaintext parquet (encryption un-wired).
+    val encryptionPin = List(Case("surface.pin.dataPlaintext @ parquet", Scenarios.encryptionPlaintextPin.run))
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -4007,7 +4030,8 @@ object Plan {
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
-      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge
+      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
+      encryptionPin
   }
 }
 
