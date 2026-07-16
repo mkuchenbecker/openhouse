@@ -362,7 +362,7 @@ object Scenarios {
 
   val layouts: List[Layout] =
     for {
-      format                        <- List("parquet", "orc", "avro")
+      format                        <- List("parquet", "orc")   // Avro dropped (D6 policy); ORC+Parquet on all
       (partitionLabel, partitionClause) <- partitionVariants
     } yield Layout(s"$partitionLabel/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
@@ -372,7 +372,7 @@ object Scenarios {
   // (format v2) instead of rewriting data files. Crossed with the mutation operations only.
   val morLayouts: List[Layout] =
     for {
-      format                        <- List("parquet", "orc", "avro")
+      format                        <- List("parquet", "orc")   // Avro dropped (D6 policy); ORC+Parquet on all
       (partitionLabel, partitionClause) <- partitionVariants
     } yield Layout(s"mor-$partitionLabel/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
@@ -387,13 +387,13 @@ object Scenarios {
   // `morLayouts` seed splits across files, so a boundary-aligned delete can legitimately drop a
   // whole file with no position delete — correct Iceberg behaviour, but not what we want to pin.)
   val morVerifyLayouts: List[Layout] =
-    List("parquet", "orc", "avro").map(format => Layout(s"mor-verify/$format", table =>
+    List("parquet", "orc").map(format => Layout(s"mor-verify/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
         s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
         s"'write.delete.mode'='merge-on-read')"))
 
   val cowVerifyLayouts: List[Layout] =
-    List("parquet", "orc", "avro").map(format => Layout(s"cow-verify/$format", table =>
+    List("parquet", "orc").map(format => Layout(s"cow-verify/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
         s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
         s"'write.delete.mode'='copy-on-write')"))
@@ -1251,8 +1251,13 @@ object Scenarios {
   // This is an ENGINE limitation, not an OpenHouse policy: OpenHouse creates columns nullable-by-default
   // and the server round-trips the schema verbatim (verified) — but Iceberg 1.5's SparkTable does not
   // advertise column defaults (no SupportsColumnDefaultValue), so Spark's byName output resolution never
-  // inserts the NULL-fill projection for the omitted (nullable) columns. Pin the rejection; it flips if
-  // the stack gains column-default support (e.g. Iceberg >= 1.7), at which point restore null-fill.
+  // inserts the NULL-fill projection for the omitted (nullable) columns. Pin the rejection; it flips
+  // only when the read+write APPLICATION of column defaults is wired (SparkTable implements
+  // SupportsColumnDefaultValue + the reader injects initial-default for missing columns). NOTE (fork
+  // audit): the com.linkedin.iceberg 1.5.2 fork #251 backported the NestedField initial/write-default
+  // APIs + SchemaParser serialization ONLY — no SparkTable, no reader wiring — so the fork does NOT
+  // satisfy the flip condition (and persists v3-style defaults on a v2 table with no gate). See
+  // ICEBERG-FORK-AUDIT.md.
   val insertExplicitColumns: TableTest[CoreTable.type] =
     TableTest(Core).step("insert.explicitColumns") { (spark, table) =>
       val e = Check.intercept[Exception](
@@ -1467,7 +1472,7 @@ object Scenarios {
 
   // ── nested / complex types (NestedTable) ───────────────────────────────────────────────
   val nestedLayouts: List[Layout] =
-    List("parquet", "orc", "avro").map(format => Layout(s"nested-unpartitioned/$format", table =>
+    List("parquet", "orc").map(format => Layout(s"nested-unpartitioned/$format", table =>
       s"CREATE TABLE $table (${NestedTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
 
   def createAndSeedNested(layout: Layout, numberOfRows: Int): TableTest[NestedTable.type] =
@@ -1541,7 +1546,7 @@ object Scenarios {
 
   // ── type-edge coverage (TypesTable) ─────────────────────────────────────────────────────
   val typesLayouts: List[Layout] =
-    List("parquet", "orc", "avro").map(format => Layout(s"types-unpartitioned/$format", table =>
+    List("parquet", "orc").map(format => Layout(s"types-unpartitioned/$format", table =>
       s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
 
   def createAndSeedTypes(layout: Layout, numberOfRows: Int): TableTest[TypesTable.type] =
