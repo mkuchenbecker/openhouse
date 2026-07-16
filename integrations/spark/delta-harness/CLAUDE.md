@@ -20,12 +20,31 @@ repo owner and must persist across sessions.
 - **Never stop without a global status update** covering the full scope (done / in-flight / remaining).
 
 ## Test quality
-- No vacuous or stupid tests. When an estimate is inflated by vacuous cells, correct it in the open
-  rather than chasing the number. Prune vacuous crosses (e.g. format is vacuous for metadata/ref
-  reconstruction; delete-free MoR reads == CoW).
+- **Format policy: every test covers ORC + Parquet. Avro is dropped (not needed).** Format-sensitive
+  surfaces (delete/data file encoding) get both; there is no parquet-only or single-format default.
+- **Never silently skip or prune coverage.** It is fine to DEFER, but not silently: write the test,
+  tag it low-quality/deferred, and BRING IT HERE for a decision. Proceed without blocking on the
+  answer, but the decision must be surfaced explicitly in chat — never made silently in a doc. (Strong
+  lesson from the user.)
+- Approvals: the user is NOT reading markdown. A decision is closed ONLY by the user's explicit opinion
+  in chat (or a +1 on the PR). Writing it in a doc or getting no pushback does NOT close it. Enumerate
+  open decisions in chat.
+- No vacuous or stupid tests. When an estimate is inflated by vacuous cells, correct it in the open.
+  (But format is NOT a vacuity axis to prune away — see the ORC+Parquet policy above.)
 - The goal is to find BROKEN feature interactions, not just to rack up green cases. Rejections are
   behavior PINS (tripwires), not contracts — if OpenHouse later supports X, the pinned test should
   flip and be updated, not silently pass.
+
+## PR discipline
+- Work ONLY on the current stacked PR (one above the previous). NEVER touch the parent PR (#9) — other
+  agents reference it. Do not open new PRs. Persist all working knowledge in the PR so any agent can
+  bootstrap from it later.
+
+## Role
+- Currently the TESTING + UNDERSTANDING silo for OpenHouse AND the iceberg fork — not the master agent
+  (the user will say when). The master plan is orthogonal to testing the iceberg surface on OpenHouse.
+  Sequence the user set: bootstrap tests → fix → modify. For now: document findings, don't fix
+  production code.
 
 ## Mechanics
 - Run under JDK 17 (`JAVA17_HOME=/usr/lib/jvm/java-17-openjdk-amd64`); Lombok breaks on 21.
