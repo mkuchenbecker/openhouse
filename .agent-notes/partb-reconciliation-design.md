@@ -63,34 +63,26 @@ The only true conflict is an intervening commit that **removed** an `F_remove` f
 position/equality **delete** targeting rows in `F_remove` (a concurrent MERGE/DELETE/expire on the
 same settled partition) — which Part A's hold-back already makes rare.
 
-## Candidate approaches
+## The design is settled by the plan: server-side file-disjoint reconciliation (NOT retry)
 
-### A. Server-side content-aware replay (the "eliminate deterministically" version)
-On base divergence AND incoming `operation = replace`: read the incoming manifests → `F_add` /
-`F_remove`; load current base `B1`; verify every `F_remove` is still live in `B1` and no intervening
-delete-file targets it; if clean, replay as `Transaction.newRewrite().deleteFile(f).addFile(g)
-.validateFromSnapshot(B1)...commit()` server-side and return 200 (transparent rebase); else reject as
-today.
-- **Pro:** deterministic; no client round-trips; works even with retries off.
-- **Con:** large new correctness surface in the commit core — duplicates Iceberg client validation
-  server-side, must handle MoR delete files / sequence numbers correctly, and directly overrides the
-  maintainers' deliberate reject-on-rebase stance. Highest risk.
+`optimize-clustering-plan.md` already fixed Part B as **one** thing — the catalog rebases the losing
+commit onto head and accepts it *iff the two commits are file-disjoint*, enforced server-side. It
+**explicitly rejected retry** as the mechanism: _"a client retry re-plans against a moving target and
+can starve. Server-side reconciliation resolves at commit time with full knowledge of both deltas — no
+re-plan, no starvation — and turns the append case into a guaranteed accept rather than a bounded
+gamble."_ On the 2–5 min streaming workload the rewrite's base advances faster than the rewrite
+completes, so retry (client- or application-level) starves. Any "re-enable retry" variant is off the
+table by the plan's own reasoning — do not re-open it (an earlier draft of this doc did; that was the
+mistake).
 
-### B. Re-enable bounded, scoped client retry for rewrite ops (recommended first)
-Lift the retry suppression **only** for `operation = replace` commits: allow
-`commit.retry.num-retries > 0` and exempt rewrites from `failIfRetryUpdate`. Iceberg's client then
-refreshes to `B1` and re-applies the `RewriteFiles` through its own `validateFromSnapshot` — the
-battle-tested path. Part A already sets `use-starting-sequence-number=true` + SNAPSHOT isolation,
-which is precisely what makes client-side rewrite retry safe against concurrent appends/deletes.
-- **Pro:** minimal new server code; reuses Iceberg's proven conflict resolution; low correctness risk.
-- **Con:** N client round-trips under contention (bounded); and it is only safe if the reason retries
-  were suppressed does not also apply to rewrites (**gating question**).
+Mechanism (unchanged from the plan): on base divergence AND incoming `operation = replace`, read the
+incoming manifests → `F_remove` / `F_add`; load current base `B1`; if every `F_remove` is still live
+in `B1` and no delete/DV added since `B0` references any `F_remove`, produce the rebased snapshot on
+`B1` (current files − `F_remove` + `F_add`, preserving starting sequence numbers) and commit; else
+reject as today. The [Architectural anchor] above is why this belongs server-side: OpenHouse is the
+sole `metadata.json` writer and already builds metadata from "incoming snapshots + base."
 
-### C. Hybrid
-Keep server CAS; on rewrite-op conflict, return the current base pointer so the client rebases in one
-fast hop; re-enable retry only for rewrites. Between A and B in effort.
-
-## GATING QUESTION — ANSWERED (2026-07-16)
+## Supporting finding — why retry can't be the fix (confirms the plan) (2026-07-16)
 
 **Why are client commit retries suppressed?** The answer is **correctness (category c), not
 housekeeping.** Both guards are one design aimed at the **silent-rebase / subtractive-snapshot-merge**
@@ -123,24 +115,23 @@ refresh + re-derive `COMMIT_KEY` for rewrites, and (ii) exempting rewrites from 
 That spans **two deployable artifacts** (the `com.linkedin.iceberg` fork + the tables service) and
 couples Part B to a fork release picked up by every Spark client.
 
-## Recommendation — Approach A (revised)
+## The one open gate is phasing (measurement), not design
 
-Given the fork-retry finding, **A (server-side replay) is now the recommended path**, reversing the
-initial lean toward B. A lives entirely in OpenHouse's own commit core (`internalcatalog` +
-`services/tables`, both already deployed as one unit) and is **transparent to clients** — the server
-simply succeeds where it used to 409, with no new client behavior and no iceberg-fork rebuild/redeploy
-across the fleet. B's only advantage (reusing the client's `RewriteFiles` validation) is undercut by
-the fork's broken retry-refresh, which would itself have to be fixed in the fork.
+Per the plan's phasing: (1) ship Part A [done — PRs #2/#3]; (2) **measure the residual conflict rate on
+real streamed tables**; (3) build Part B server-side reconciliation **if the residual is non-trivial**.
+The residual is late data landing in a partition OPTIMIZE just treated as settled — its size is an
+empirical property of the real tables and cannot be measured from this sandbox. So Part B stays as this
+design of record until that measurement exists (or until someone decides the 2–5 min starvation
+argument alone justifies building it preemptively). This is the honest blocker — not a requirements
+question and not a design choice.
 
-The server already has what A needs: `FileIO`/`Storage` (`OpenHouseInternalTableOperations:363-364,
-808`), the partition spec (`metadata.spec()`), and the incoming snapshot's manifests. A's validation
-is a **bounded** slice of Iceberg's logic, not the whole surface: for `operation = replace` on a
-diverged base, read the incoming manifests → `F_remove` / `F_add`; confirm every `F_remove` is still
-live in the current base `B1` and no delete-file added since `B0` targets it; if clean, produce the
-rebased snapshot on `B1` and commit; else abort as today. Only rewrites take this path — append/
-overwrite keep the existing reject-on-divergence guard untouched.
+The server already has everything Part B needs when the time comes: `FileIO`/`Storage`
+(`OpenHouseInternalTableOperations:363-364, 808`), the partition spec (`metadata.spec()`), and the
+incoming snapshot's manifests; and it is the sole metadata writer. The validation is a **bounded** slice
+of Iceberg's logic (the `RewriteFiles` precondition on `F_remove`), scoped strictly to
+`operation = replace` — append/overwrite keep the existing reject-on-divergence guard untouched.
 
-## Implementation + test plan (Approach A)
+## Implementation + test plan (server-side reconciliation — build only when phasing gate #2 clears)
 
 1. In `OpenHouseInternalTableOperations.doCommit`, before `abortIfWriterBaseDivergedFromCatalog`
    aborts: if the incoming snapshot's `operation = replace` AND the base diverged, enter a
@@ -163,12 +154,7 @@ overwrite keep the existing reject-on-divergence guard untouched.
 - True conflict: an intervening DELETE/MERGE (position/equality delete) on a file the rewrite is
   compacting → must still reject (no silent data loss).
 - MoR: rewrite over a partition carrying a live position delete → correct precondition handling.
-- Regression: append-vs-append silent-rebase guard still fires (A must not weaken it).
-
-**Fallback (B)** only if A proves intractable: fix the `com.linkedin.iceberg` fork's retry to refresh
-+ re-derive `COMMIT_KEY` for rewrites, exempt rewrites from `failIfRetryUpdate` + the base-CAS, and
-re-enable `commit.retry.num-retries` for replace ops. Larger blast radius (fork release across all
-Spark clients).
+- Regression: append-vs-append silent-rebase guard still fires (reconciliation must not weaken it).
 
 ## Note on ANALYZE depth at scale (item 9)
 
