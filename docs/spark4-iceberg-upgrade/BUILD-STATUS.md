@@ -9,7 +9,8 @@ tagged, reasoned known-bug). The plan is `10-phase-plan.md`; risks/decisions `20
 | Rung | Stack | Harness gate | Status |
 |---|---|---|---|
 | **0** | Spark 3.5 / Iceberg 1.5.2 fork / Scala 2.12 / JDK-17 build | **1670 passed, 27 skipped, 0 failed (1697)** — FROZEN | ✅ frozen (0.1) |
-| **1** | Spark 3.5 / Iceberg **1.10** / Hadoop **3.3.4** / Java 17 rt | full matrix ≡ rung-0 | ✅ **1669/27/1 → the 1 delta tagged** (F-WAP-BRANCH, Iceberg WAP×branch version-change, not OH bug) → **1696 green + 1 tagged, 0 unexplained**. 6 dep/API deltas fixed en route. **Caveats: harness LocalFS+H2 → Hadoop validated at build+local-FS only, NOT HDFS (F-VACUITY-HADOOP, needs Spike A); fork-patch re-port separate.** |
+| **1 (stock)** | Spark 3.5 / stock Iceberg **1.10** / Hadoop **3.3.4** / Java 17 rt | full matrix ≡ rung-0 | ✅ 1669/28/0 (1 WAP tagged). Compat test — NOT the real upgrade. |
+| **F (fork)** | Spark 3.5 / **LinkedIn fork ported onto Apache 1.10** (`1.10.0-openhouse`) / Hadoop 3.3.4 / Java 17 rt | full matrix ≡ stock-1.10 | ✅ **1669 passed / 28 skipped / 0 failed — IDENTICAL to stock-1.10.** All 10 custom patches ported (half were already upstream); fork compiles (core+spark-3.5), published to mavenLocal, **OpenHouse recompiled against it, harness green.** F6 push pending (destructive fork-branch overwrite + publish target = user decisions). Partial: #234 stream-results optimization (correctness wired), #219/#214 end-to-end HDFS behavior (non-harness-tested). |
 | **2** | **Spark 4.0** / Iceberg 1.10 / **Scala 2.13** / Java **17** (REST) | full matrix ≡ rung-1 | ⬜ not started |
 | **3** | Spark 4.0 / **Iceberg 1.11** / Java 17 | matrix ≡ rung-2 + **DV battery** | ⬜ not started |
 | **4** | both lanes, coexistence | legacy itests + rung-3 in one CI pass | ⬜ not started |
