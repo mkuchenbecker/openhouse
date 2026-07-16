@@ -191,23 +191,47 @@ Both mirror `VacuumTestSpark3_5` exactly: extend `OpenHouseSparkITest` (embedded
 auth), compile against stock Spark (command is a SQL string), and are `@Disabled` with the same
 runtime-requirement note so OpenHouse CI (stock spark-sql 3.5.2) stays green.
 
-### In-sandbox execution: re-verified BLOCKED (the honest status)
+### In-sandbox execution: DONE — 6/6 green, and it found + fixed a real OpenHouse bug
 
-The actual run of any of the three itests remains NOT executed in-sandbox. Re-verified this session:
+The three itests were **executed in-sandbox against the embedded OpenHouse server** this session
+(2026-07-16). The prior "blocked" verdict was wrong on two counts, both re-checked:
 
-- JDK is **no longer** the blocker — this sandbox has JDK 17 (Spark 3.5 builds fine here; the
-  Hadoop-catalog suites were built and run on it).
-- The itest module binds stock `sparkVersion = '3.5.2'` (Maven Central) + `iceberg_1_5_version =
-  '1.5.2.15'` (custom `com.linkedin.iceberg`). Neither the **patched Spark 3.5** (grammar-carrying)
-  nor the **custom iceberg 1.5.2.15** is present in `~/.m2`, and neither is published here.
-- The run driver is OpenHouse's pinned **Gradle 7.6.2**, whose distribution download is a hard
-  proxy **403** (`github.com/gradle/gradle-distributions/...`); the proxy README says report such
-  policy denials, do not route around them. (A system Gradle 8.14.3 exists but the build is pinned
-  to 7.6.2.)
+- `com.linkedin.iceberg:iceberg-*:1.5.2.15` is on **Maven Central** (HTTP 200) — it never needed
+  building.
+- OpenHouse's pinned Gradle 7.6.2 distribution download is a proxy 403, but the **system Gradle
+  8.14.3** (`/opt/gradle/bin/gradle`) drives the build fine (configures + compiles + runs).
 
-So a green OpenHouse run needs an environment with: the patched Spark 3.5 published to Maven local,
-the custom iceberg 1.5.2.15 available, and Gradle 7.6.2 — i.e. OpenHouse CI or real LinkedIn infra.
-To run there: build the grammar branch -> `publishToMavenLocal` -> point the itest module's
-`sparkVersion` at that build -> remove the three `@Disabled` annotations ->
-`./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test --tests
-'*VacuumTestSpark3_5' --tests '*OptimizeTestSpark3_5' --tests '*AnalyzeClusteringTestSpark3_5'`.
+How it was run (all local-only working-tree changes, NOT committed — they would turn OpenHouse CI
+red on stock spark):
+1. Built + installed the grammar-carrying Spark 3.5.9-SNAPSHOT to `~/.m2`:
+   `./build/mvn -DskipTests -Dscalastyle.skip=true -Dcheckstyle.skip=true -Dspotbugs.skip=true
+   -pl sql/core -am install` (JDK 17, ~18 min; installs spark-sql_2.12 + all upstream modules).
+2. In the itest module `build.gradle`: added `repositories { mavenLocal() }` and set
+   `sparkVersion = '3.5.9-SNAPSHOT'`.
+3. Removed the three `@Disabled` annotations.
+4. `JAVA_HOME=<jdk17> /opt/gradle/bin/gradle --no-daemon
+   :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:catalogTest --tests '*VacuumTestSpark3_5'
+   --tests '*OptimizeTestSpark3_5' --tests '*AnalyzeClusteringTestSpark3_5'`.
+
+Result: VACUUM 2/2 and ANALYZE 2/2 passed immediately. **OPTIMIZE 0/2 failed** with
+`IllegalStateException: Cannot parse order: parser is not an Iceberg ExtendedParser`.
+
+Root cause (a real OpenHouse platform bug, independent of the patched Spark):
+`OpenhouseSparkSqlExtensionsParser` extended only `ParserInterface`, not Iceberg's `ExtendedParser`.
+Because OpenHouse's parser extension is applied AFTER Iceberg's (`spark.sql.extensions =
+IcebergSparkSessionExtensions,OpenhouseSparkSessionExtensions`), OpenHouse's wrapper is the
+session's top-level parser. Iceberg's `rewrite_data_files` parses its `sort_order` / `zorder(...)`
+argument via `ExtendedParser.parseSortOrder(spark, ...)`, which requires the top parser to be an
+`ExtendedParser` — so **every sort/zorder compaction fails on OpenHouse**. Plain binpack (no
+sort_order, what the jobs app uses) never hit it; clustering OPTIMIZE is the first to.
+
+Fix (committed to this branch, production runtime code, compiles against stock spark + iceberg):
+`OpenhouseSparkSqlExtensionsParser` now `extends ExtendedParser` and implements `parseSortOrder`
+by delegating to the wrapped Iceberg parser. With the fix, the full re-run is **6/6 green**
+(VACUUM 2/2, OPTIMIZE 2/2, ANALYZE 2/2) — OPTIMIZE FULL performs a real zorder rewrite through the
+OpenHouse catalog, commits, and preserves data.
+
+The itests remain `@Disabled` in the committed form (OpenHouse CI still builds stock spark-sql
+3.5.2, which lacks the grammar). To run them: build the grammar branch -> install to Maven local
+-> repoint the itest `sparkVersion` + add `mavenLocal()` -> drop the `@Disabled` -> the gradle
+command above. The parser fix, however, is committed and CI-safe regardless.
