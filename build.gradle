@@ -32,10 +32,10 @@ ext {
   junit_version = "5.11.0"
   iceberg_1_2_version = "1.2.0.19"
   iceberg_1_5_version = "1.5.2.15"
-  // spark4-upgrade rung 1: stock Apache Iceberg 1.10 (fork has no 1.10 build; harness asserts
-  // row-level DML deltas, not the fork's write-distribution/replication/app-name behavior, so
-  // stock 1.10 validates the 1.5.2->1.10 core delta. Fork-patch re-port tracked separately.)
-  iceberg_1_10_version = "1.10.0"
+  // spark4-upgrade Phase F: the LinkedIn fork ported onto Apache Iceberg 1.10 and published to
+  // mavenLocal as org.apache.iceberg:*:1.10.0-openhouse (all 10 custom patches; see
+  // /home/user/apache-iceberg@openhouse-1.10-port). Resolved via mavenLocal() above.
+  iceberg_1_10_version = "1.10.0-openhouse"
   otel_agent_version = "2.12.0" // Bundles OTel SDK 1.47.0
   otel_annotations_version = "2.12.0" // Match agent version
 }
@@ -73,6 +73,7 @@ allprojects {
   group = 'com.linkedin.openhouse'
 
   repositories {
+    mavenLocal() // spark4-upgrade Phase F: resolve the ported fork org.apache.iceberg:1.10.0-openhouse
     maven {
       url "https://repo.maven.apache.org/maven2/"
       metadataSources {
