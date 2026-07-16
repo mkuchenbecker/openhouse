@@ -77,35 +77,85 @@ which is precisely what makes client-side rewrite retry safe against concurrent 
 Keep server CAS; on rewrite-op conflict, return the current base pointer so the client rebases in one
 fast hop; re-enable retry only for rewrites. Between A and B in effort.
 
-## Recommendation
+## GATING QUESTION — ANSWERED (2026-07-16)
 
-Pursue **B first**, fall back to **A** only if B is blocked. Rationale: B reuses Iceberg's proven
-`RewriteFiles` rebase instead of re-implementing it in OpenHouse's commit core, and Part A already
-configured the rewrite for exactly this. A is the deterministic ideal but is a large,
-correctness-critical change that contradicts an explicit maintainer decision — worth it only if
-client retry proves insufficient.
+**Why are client commit retries suppressed?** The answer is **correctness (category c), not
+housekeeping.** Both guards are one design aimed at the **silent-rebase / subtractive-snapshot-merge**
+bug: a stale append/overwrite commit whose `SNAPSHOTS_JSON` list gets applied onto a
+concurrently-advanced base would **drop the snapshots the concurrent writer added** (data loss). The
+in-code evidence is explicit:
+- `abortIfWriterBaseDivergedFromCatalog` Javadoc (`OpenHouseInternalTableOperations:588-602`): guards
+  the case where `BaseTransaction.applyUpdates` "re-stamps the writer's original `COMMIT_KEY` on top
+  of a concurrently-advanced base" and "a subtractive merge would silently expire" concurrent
+  snapshots.
+- `failIfRetryUpdate` (`:642-664`) error text: the resubmitted version "is stale, please consider
+  retry **from application**" — push retry up to a fresh job load, don't let the client silently
+  re-apply. Its Javadoc scopes it to "Iceberg built-in retry in `PropertiesUpdate#commit()`" — the
+  in-client loop that `commit.retry.num-retries=0` disables. No comment anywhere ties the suppression
+  to orphaned `metadata.json` (that's only an incidental side effect of aborting before the write).
 
-## GATING QUESTION (must answer before implementing B)
+**Does a rewrite-scoped retry reintroduce the bug? No** — the hazard is specific to the un-validated
+subtractive snapshot-list merge, which append/overwrite use. A rewrite is an Iceberg `RewriteFiles`
+(`operation = replace`) re-applied through content-aware `RewriteFiles.validateFromSnapshot(...)`,
+which detects the only true conflict (an intervening removal of / delete on an `F_remove` file) and
+otherwise commutes with appends. For rewrites, retry *replaces* the silent-rebase risk with a
+validation check rather than reintroducing it.
 
-**Why are client commit retries suppressed** (`commit.retry.num-retries=0` at
-`OpenHouseInternalRepositoryImpl:197-203`, and `failIfRetryUpdate`'s `COMMIT_KEY` cache at
-`OpenHouseInternalTableOperations:642-664`)? Hypotheses to confirm via git history / PRs / design
-docs: (a) preventing orphaned UUID-named `metadata.json` accumulation on retry; (b) avoiding double
-HTS `@Version` bumps; (c) a past correctness incident with silent rebase. If the rationale is
-rewrite-neutral (e.g. orphan cleanup), B is viable with orphan handling; if it is a correctness
-concern that also covers rewrites, escalate to A.
+**CRITICAL CAVEAT that reshapes the recommendation:** OpenHouse's **forked iceberg-core builds the
+retry base from the `COMMIT_KEY` property, not from a fresh on-disk refresh**
+(`OpenHouseInternalRepositoryImpl:192-196` comment). So a naive re-enable of retries would resubmit
+the **same stale** `COMMIT_KEY`, re-tripping both guards — it would not rebase. Approach B is
+therefore **not a config flip**: it requires (i) changing the **iceberg fork's** retry to genuinely
+refresh + re-derive `COMMIT_KEY` for rewrites, and (ii) exempting rewrites from both server guards.
+That spans **two deployable artifacts** (the `com.linkedin.iceberg` fork + the tables service) and
+couples Part B to a fork release picked up by every Spark client.
 
-## Implementation + test plan (for B, once the gating question is answered)
+## Recommendation — Approach A (revised)
 
-1. Thread the incoming snapshot `operation` into the repository/commit layer; gate the retry-config
-   override + `failIfRetryUpdate` exemption on `operation = replace`.
-2. Test with the existing delta-harness (PR #9/#11) which already drives real OpenHouse concurrent
-   commits: add a case — append to the hot partition concurrently with a `rewrite_data_files` on a
-   settled partition; assert both commit, the rewrite's files are replaced, the appended rows survive,
-   and no retry storm/hard failure. Add the true-conflict case (delete on a rewritten file) and assert
-   it still rejects.
-3. Only if escalating to A: server-side manifest read + `newRewrite().validateFromSnapshot` replay,
-   with MoR delete-file conflict tests.
+Given the fork-retry finding, **A (server-side replay) is now the recommended path**, reversing the
+initial lean toward B. A lives entirely in OpenHouse's own commit core (`internalcatalog` +
+`services/tables`, both already deployed as one unit) and is **transparent to clients** — the server
+simply succeeds where it used to 409, with no new client behavior and no iceberg-fork rebuild/redeploy
+across the fleet. B's only advantage (reusing the client's `RewriteFiles` validation) is undercut by
+the fork's broken retry-refresh, which would itself have to be fixed in the fork.
+
+The server already has what A needs: `FileIO`/`Storage` (`OpenHouseInternalTableOperations:363-364,
+808`), the partition spec (`metadata.spec()`), and the incoming snapshot's manifests. A's validation
+is a **bounded** slice of Iceberg's logic, not the whole surface: for `operation = replace` on a
+diverged base, read the incoming manifests → `F_remove` / `F_add`; confirm every `F_remove` is still
+live in the current base `B1` and no delete-file added since `B0` targets it; if clean, produce the
+rebased snapshot on `B1` and commit; else abort as today. Only rewrites take this path — append/
+overwrite keep the existing reject-on-divergence guard untouched.
+
+## Implementation + test plan (Approach A)
+
+1. In `OpenHouseInternalTableOperations.doCommit`, before `abortIfWriterBaseDivergedFromCatalog`
+   aborts: if the incoming snapshot's `operation = replace` AND the base diverged, enter a
+   rewrite-rebase path instead of aborting.
+2. Read the incoming snapshot's manifests (via `FileIO`) → `F_add` (ADDED entries) and `F_remove`
+   (DELETED entries). Read the current base `B1`'s current data-file set + any delete files added
+   since `B0`.
+3. Validate the `RewriteFiles` precondition on `B1`: every `F_remove` is still live in `B1`, and no
+   delete-file added since `B0` targets rows in `F_remove`. If violated → abort as today (genuine
+   conflict).
+4. If clean → build the rebased snapshot on `B1` (current files − `F_remove` + `F_add`, carrying the
+   rewrite's sequence-number semantics), write the new `metadata.json`, swap the pointer, return
+   success. The client sees a normal 200 — transparent rebase.
+5. Keep append/overwrite on the existing reject path (untouched); scope the whole new path to
+   `operation = replace`.
+
+**Tests** (existing delta-harness, PR #9/#11, already drives real OpenHouse concurrent commits):
+- Disjoint: append to hot partition concurrently with `rewrite_data_files` on a settled partition →
+  both commit, rewrite's files replaced, appended rows survive, no hard failure.
+- True conflict: an intervening DELETE/MERGE (position/equality delete) on a file the rewrite is
+  compacting → must still reject (no silent data loss).
+- MoR: rewrite over a partition carrying a live position delete → correct precondition handling.
+- Regression: append-vs-append silent-rebase guard still fires (A must not weaken it).
+
+**Fallback (B)** only if A proves intractable: fix the `com.linkedin.iceberg` fork's retry to refresh
++ re-derive `COMMIT_KEY` for rewrites, exempt rewrites from `failIfRetryUpdate` + the base-CAS, and
+re-enable `commit.retry.num-retries` for replace ops. Larger blast radius (fork release across all
+Spark clients).
 
 ## Note on ANALYZE depth at scale (item 9)
 
