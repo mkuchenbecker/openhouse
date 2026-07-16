@@ -169,3 +169,45 @@ instead of failing on the `VACUUM` `ParseException`. To run: build the 3.5 VACUU
       the source-dir `set`). It stays profile-gated so default CI never pulls the iceberg jar.
 - [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM (and now OPTIMIZE).
 - [ ] (Deferred by user) 4.0 / 4.1 backports of VACUUM.
+
+---
+
+## 8. OpenHouse itest coverage completed for OPTIMIZE + ANALYZE (2026-07-16, session iceberg-optimize-semantics-43tl45)
+
+Added the two missing OpenHouse itests so all three verbs now have real-catalog coverage
+(previously only `VacuumTestSpark3_5` existed):
+
+- `OptimizeTestSpark3_5.java` — `OPTIMIZE t FULL` (asserts a rewrite snapshot committed + data
+  preserved + `optimize.cluster.*` props survive the OpenHouse create round-trip) and `OPTIMIZE t
+  REWRITE MANIFESTS` (both CALLs drive through the catalog/auth path; data + manifests intact).
+- `AnalyzeClusteringTestSpark3_5.java` — `ANALYZE TABLE t COMPUTE CLUSTERING QUALITY`. This is the
+  distinctive one: unlike VACUUM/OPTIMIZE (thin `CALL` passthroughs) it reads the `.files` /
+  `.partitions` metadata tables and runs distributed aggregation SQL through the OpenHouse catalog,
+  returning scalar metrics only (no per-file driver collect). Asserts `clustering_configured`,
+  `keys`, a valid `coverage_bytes_pct`, and `depth_avg >= 2` on interleaved data; plus a graceful
+  `clustering_configured=false` on an unclustered table; plus that ANALYZE commits no snapshot.
+
+Both mirror `VacuumTestSpark3_5` exactly: extend `OpenHouseSparkITest` (embedded real server +
+auth), compile against stock Spark (command is a SQL string), and are `@Disabled` with the same
+runtime-requirement note so OpenHouse CI (stock spark-sql 3.5.2) stays green.
+
+### In-sandbox execution: re-verified BLOCKED (the honest status)
+
+The actual run of any of the three itests remains NOT executed in-sandbox. Re-verified this session:
+
+- JDK is **no longer** the blocker — this sandbox has JDK 17 (Spark 3.5 builds fine here; the
+  Hadoop-catalog suites were built and run on it).
+- The itest module binds stock `sparkVersion = '3.5.2'` (Maven Central) + `iceberg_1_5_version =
+  '1.5.2.15'` (custom `com.linkedin.iceberg`). Neither the **patched Spark 3.5** (grammar-carrying)
+  nor the **custom iceberg 1.5.2.15** is present in `~/.m2`, and neither is published here.
+- The run driver is OpenHouse's pinned **Gradle 7.6.2**, whose distribution download is a hard
+  proxy **403** (`github.com/gradle/gradle-distributions/...`); the proxy README says report such
+  policy denials, do not route around them. (A system Gradle 8.14.3 exists but the build is pinned
+  to 7.6.2.)
+
+So a green OpenHouse run needs an environment with: the patched Spark 3.5 published to Maven local,
+the custom iceberg 1.5.2.15 available, and Gradle 7.6.2 — i.e. OpenHouse CI or real LinkedIn infra.
+To run there: build the grammar branch -> `publishToMavenLocal` -> point the itest module's
+`sparkVersion` at that build -> remove the three `@Disabled` annotations ->
+`./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test --tests
+'*VacuumTestSpark3_5' --tests '*OptimizeTestSpark3_5' --tests '*AnalyzeClusteringTestSpark3_5'`.
