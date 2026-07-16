@@ -632,6 +632,62 @@ object Scenarios {
     }()
   )
 
+  // ── MoR × branch MERGE (position deletes carried across fast_forward / cherry_pick / REPLACE BRANCH) ──
+  // A DELETE/UPDATE on a branch of a MoR table writes position-delete files ON THE BRANCH; merging the
+  // branch back to main must carry those deletes correctly. This is the known-fragile neighborhood of
+  // G11 (branch × merge) and the "cherry-pick rejects row-delete snapshots" note — the merge is where
+  // MoR-branch breakage hides. Base is a single-file MoR seed (COALESCE(1)) so a strict-subset DELETE
+  // is a real position delete, not a file elimination. Merge is a ref/snapshot carry → format-vacuous
+  // (× 1 MoR layout). Each hunts for: deletes lost/not-carried, deleted rows resurrecting on main,
+  // cherry-pick rejecting row-delete snapshots.
+  val morBranchMergeOps: List[(String, TableTest[CoreTable.type])] = List(
+    // fast_forward must carry a branch position-delete into main: after merge the deleted row is gone.
+    "mbranch.fastForwardDelete" -> TableTest(Core).step("mbranch.fastForwardDelete") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mfb")
+      spark.sql(s"DELETE FROM $table.branch_mfb WHERE ${Core.long0.columnName} = 1")   // position delete on branch
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "3", "main advanced before merge")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mfb'") == "2", "branch delete not applied on the branch")
+      spark.sql(s"CALL openhouse.system.fast_forward('${catalogRelative(table)}', 'main', 'mfb')")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "2", "fast_forward did not carry the branch position-delete to main")
+      assert(countOf(spark, s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1") == "0", "deleted row resurrected on main after fast_forward")
+    }(),
+    // fast_forward must carry a branch UPDATE (MoR update = position delete + new data file).
+    "mbranch.fastForwardUpdate" -> TableTest(Core).step("mbranch.fastForwardUpdate") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mub")
+      spark.sql(s"UPDATE $table.branch_mub SET ${Core.string0.columnName} = 'br-upd' WHERE ${Core.long0.columnName} = 2")
+      spark.sql(s"CALL openhouse.system.fast_forward('${catalogRelative(table)}', 'main', 'mub')")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "3", "fast_forward of a MoR update changed the row count on main")
+      assert(spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 2").collect()(0).getString(0) == "br-upd",
+        "MoR update not carried to main by fast_forward")
+    }(),
+    // Cherry-pick a branch ROW-DELETE snapshot onto main — CHARACTERIZE (the fragile path): it either
+    // applies the delete (main → 2) or is rejected; pin the outcome and assert the row set matches it.
+    "mbranch.cherrypickDelete" -> TableTest(Core).step("mbranch.cherrypickDelete") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mcb")
+      spark.sql(s"DELETE FROM $table.branch_mcb WHERE ${Core.long0.columnName} = 1")
+      val delSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1").collect()(0).getLong(0)
+      val outcome =
+        try { spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', ${delSnap}L)"); "ok" }
+        catch { case NonFatal(e) => s"rejected:${Exceptions.root(e).getClass.getSimpleName}" }
+      val mainCount = countOf(spark, s"SELECT count(*) FROM $table")
+      println(s"DIAG mbranch.cherrypickDelete: $outcome, mainCount=$mainCount")
+      if (outcome == "ok")
+        assert(mainCount == "2", s"cherrypick reported ok but did not apply the branch delete to main (got $mainCount)")
+      else
+        assert(mainCount == "3", s"cherrypick was rejected but main changed anyway (got $mainCount)")
+    }(),
+    // REPLACE BRANCH retargets a MoR branch to a pre-delete snapshot — the delete must follow the target.
+    "mbranch.replaceBranchDelete" -> TableTest(Core).step("mbranch.replaceBranchDelete") { (spark, table) =>
+      val preSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1").collect()(0).getLong(0) // seed (3 rows)
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mrb")
+      spark.sql(s"DELETE FROM $table.branch_mrb WHERE ${Core.long0.columnName} = 1")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mrb'") == "2", "branch delete not applied")
+      spark.sql(s"ALTER TABLE $table REPLACE BRANCH mrb AS OF VERSION $preSnap")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mrb'") == "3",
+        "REPLACE BRANCH to the pre-delete snapshot did not undo the branch position-delete")
+    }()
+  )
+
   // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
   // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
   // modality thesis at the DDL level). DDL preps leave a distinct post-state; consumers are
@@ -3928,6 +3984,13 @@ object Plan {
       (name, op) <- Scenarios.morHazardOps
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
 
+    // MoR × branch MERGE: position deletes carried across fast_forward / cherry_pick / REPLACE BRANCH.
+    // Single-file MoR seed so a branch DELETE is a real position delete; merge is format-vacuous → ×1.
+    val morBranchMerge = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.morBranchMergeOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedSingleFile(layout, 3).andThen(op).run)
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3944,7 +4007,7 @@ object Plan {
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
-      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard
+      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge
   }
 }
 
