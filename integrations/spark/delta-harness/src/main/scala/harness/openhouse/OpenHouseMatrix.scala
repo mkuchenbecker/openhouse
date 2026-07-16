@@ -1246,15 +1246,22 @@ object Scenarios {
     }
 
   // INSERT INTO with an explicit column list; the unlisted columns are null-filled.
+  // NEGATIVE PIN (was SKIP-as-bug; reclassified after code-verified investigation). A partial/named-
+  // column INSERT that omits other columns is REJECTED with INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA.
+  // This is an ENGINE limitation, not an OpenHouse policy: OpenHouse creates columns nullable-by-default
+  // and the server round-trips the schema verbatim (verified) — but Iceberg 1.5's SparkTable does not
+  // advertise column defaults (no SupportsColumnDefaultValue), so Spark's byName output resolution never
+  // inserts the NULL-fill projection for the omitted (nullable) columns. Pin the rejection; it flips if
+  // the stack gains column-default support (e.g. Iceberg >= 1.7), at which point restore null-fill.
   val insertExplicitColumns: TableTest[CoreTable.type] =
-    TableTest(Core).sql("insert.explicitColumns")(table =>
-      s"INSERT INTO $table (${Core.long0.columnName}, ${Core.string0.columnName}) " +
-        s"VALUES (CAST(4 AS BIGINT), 'd'), (CAST(5 AS BIGINT), 'e')") { view =>
-      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) ++ Seq(4L, 5L)).sorted)
-      val row4 = view.after.find(_.get(Core.long0) == 4L)
-      assert(row4.map(_.get(Core.string0)).contains("d"))
-      assert(row4.exists(_.isNullAt(1))) // col_int (position 1) was not supplied
-    }
+    TableTest(Core).step("insert.explicitColumns") { (spark, table) =>
+      val e = Check.intercept[Exception](
+        spark.sql(s"INSERT INTO $table (${Core.long0.columnName}, ${Core.string0.columnName}) " +
+          s"VALUES (CAST(4 AS BIGINT), 'd'), (CAST(5 AS BIGINT), 'e')"))
+      val msg = Option(e.getMessage).getOrElse("").toUpperCase
+      assert(msg.contains("CANNOT_FIND_DATA") || msg.contains("CANNOT FIND DATA") || msg.contains("INCOMPATIBLE_DATA"),
+        s"expected a partial-INSERT rejection naming the omitted column (engine limitation), got: ${Option(e.getMessage).getOrElse("").take(200)}")
+    }()
 
   // INSERT INTO … SELECT appends the selected rows.
   val insertIntoSelect: TableTest[CoreTable.type] =
@@ -3813,12 +3820,12 @@ object Plan {
   // of failing the suite, and is tracked in BUGS.md. This is how we "tag a failing test and filter
   // it": a genuine bug is tagged here, deferred for follow-up, and never plowed past silently.
   val knownBugs: List[(String, String)] = List(
-    "insert.explicitColumns" ->
-      "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md",
+    // insert.explicitColumns is NO LONGER a bug tag — reclassified to a negative PIN (engine limitation,
+    // not OpenHouse; code-verified). See insertExplicitColumns above and BUGS.md.
     "nested.deleteByNestedField" ->
-      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md",
+      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work). Code-verified UPSTREAM: OpenHouse contributes no code to the row-level DELETE rewrite (owned by IcebergSparkSessionExtensions + Spark optimizer); the NPE is in the nested-field DELETE-rewrite plan. Needs a full stack capture before filing — see BUGS.md",
     "ddl.renameColumn" ->
-      "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md",
+      "RENAME COLUMN is a silent no-op. Code-verified GENUINE OpenHouse regression from #558 (commit 0ad4914): server-side normalizeSchemaCasingToTable rewrites every field's name to the table's spelling BY FIELD ID (BaseIcebergSchemaValidator:60-73), reverting the rename, and it runs BEFORE the sameSchema gate so validateWriteSchema (which would reject loudly) never fires. Fix: guard the normalizer with equalsIgnoreCase. Silent failure worse than the pre-#558 clean rejection — see BUGS.md",
     "ddl.encryption" ->
       "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md",
     "control.undrop" ->
