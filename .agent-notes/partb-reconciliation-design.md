@@ -13,6 +13,19 @@ closes that on the one side we control: the OpenHouse catalog.
 
 ## Current state (verified — file:line)
 
+**Architectural anchor (verified):** only the **server** writes `metadata.json`
+(`OpenHouseInternalTableOperations:363-364` is the sole `TableMetadataParser.write`; the client
+`OpenHouseTableOperations` has none). The **client** writes the data files + manifests to storage and
+PUTs the server the **snapshot JSON + declared base** (`commitSnapshots:361-377`,
+`jsonSnapshots(...SnapshotParser::toJson)`); the server builds the `TableMetadata` and writes the one
+`metadata.json`. Two consequences that decide the design: (1) the server is the **single serialization
+point and sole metadata writer**, and already builds metadata from "incoming snapshots + a base" on
+every commit — so reconciliation belongs there (Approach A is a change to a branch it already runs);
+(2) a rewrite's physical outputs (compacted data files + manifests) are **already materialized in
+storage by the client** before the server sees the commit, so a client-retry (Approach B) re-runs and
+re-sends work that is already done — the wrong shape. The stale-base merge the guards defend against
+happens **server-side**, inside the server's own `applyUpdates`, not in a client write race.
+
 Conflict handling is **pure compare-and-swap on the `metadata.json` pointer**, at three layers, with
 **no content awareness and no rebase**:
 
