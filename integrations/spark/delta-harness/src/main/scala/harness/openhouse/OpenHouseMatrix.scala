@@ -3498,7 +3498,7 @@ object Plan {
     "control.undrop" ->
       "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md",
     "interact.branch.ttBeforeBranchPoint" ->
-      "Iceberg 1.10 VERSION CHANGE (not an OpenHouse bug): the test's setup deliberately combines write.wap.enabled=true (stage-only, don't advance a ref) with INSERT INTO table.branch_tb (advance branch tb's ref) to then test AS-OF override precedence. Iceberg 1.10 rejects that contradiction with IllegalArgumentException 'Cannot override ref, already set' (an Iceberg-internal SnapshotProducer message; 1.5.2 permitted it). Tagged at rung 1; disposition (rewrite the setup to test AS-OF precedence without the WAP+branch-write contradiction, vs confirm whether real users lose WAP+branch writes) deferred — see 20-risks F-WAP-BRANCH"
+      "Iceberg 1.10 READ-path change (not an OpenHouse bug; named refs are NOT deprecated). With spark.wap.branch=tb set, `SELECT count(*) ... VERSION AS OF <snapshot-id>` triggers aggregate pushdown; SparkScanBuilder.buildBatchScan passes SnapshotScan.useRef BOTH the explicit snapshot id AND the wap.branch ref, and 1.10 rejects the combination (IllegalArgumentException 'Cannot override ref, already set' at SnapshotScan.useRef:100). 1.5.2 let the explicit VERSION AS OF win. Real stack captured via HARNESS_STACK=1. Disposition: (a) precedence tightening (explicit snapshot-id vs branch ref on one scan) — likely an Iceberg-side change worth confirming vs upstream; (b) the harness assertion `explicit VERSION AS OF must override spark.wap.branch` encodes the 1.5.2 precedence — revisit under 1.11 at rung 3. See 20-risks F-WAP-BRANCH"
   )
 
   def bugReason(id: String): Option[String] =
@@ -3664,7 +3664,9 @@ object Runner {
     @tailrec def attempt(n: Int): (Outcome, Int) = {
       val outcome =
         try { c.run(ctx); Outcome.Passed }
-        catch { case NonFatal(t) => Outcome.Failed(t) }
+        catch { case NonFatal(t) =>
+          if (sys.env.get("HARNESS_STACK").contains("1")) { System.err.println(s"[HARNESS_STACK] ${c.id}:"); t.printStackTrace() }
+          Outcome.Failed(t) }
       outcome match {
         case f: Outcome.Failed if f.retryable && n + 1 < MaxAttempts => attempt(n + 1)
         case terminal                                                => (terminal, n + 1)

@@ -173,18 +173,27 @@ Format: `Fn — one-line symptom → root cause → disposition`. Seed carried f
   cluster** (blocked in this sandbox), not on the harness. **Rung-1 gate = Iceberg-1.10 core
   behavior + build compat; the Hadoop-on-HDFS leg is build-validated + wire-stability-asserted,
   harness-agnostic.**
-- **F-WAP-BRANCH (rung 1, the ONE behavior delta 1.5.2→1.10)** — full matrix went 1670/27/0 →
-  **1669/27/1**; the single regression is `interact.branch.ttBeforeBranchPoint`. Iceberg 1.10 throws
-  `IllegalArgumentException: Cannot override ref, already set snapshot id=…` (an Iceberg-internal
-  `SnapshotProducer`/ref-update message — OpenHouse never emits it) when the test combines
-  `write.wap.enabled=true` (WAP = stage-only, do not advance a ref) with `INSERT INTO
-  table.branch_tb` (advance branch tb's ref). That combination is semantically contradictory; 1.10
-  rejects it, 1.5.2 permitted it. **Not an OpenHouse regression** — an Iceberg-Spark WAP×branch
-  tightening. Tagged SKIP (Plan.knownBugs) → rung 1 is all-green-or-tagged (1696 green + 1 tagged,
-  0 unexplained). **Open disposition (flag to user):** (a) rewrite the harness setup to test AS-OF
-  override precedence without the contradictory WAP+branch write (likely correct — the combo is
-  ill-defined), OR (b) confirm whether any real OpenHouse workflow does WAP + explicit-branch writes
-  and would be affected. Revisit under 1.11 at rung 3.
+- **F-WAP-BRANCH (rung 1, the ONE behavior delta 1.5.2→1.10) — ROOT-CAUSED via stack (an earlier
+  message-only inference was wrong; corrected here).** Full matrix 1670/27/0 → **1669/27/1**; the
+  single regression is `interact.branch.ttBeforeBranchPoint`. **It is a READ-path change, not a
+  write, and named refs are NOT deprecated.** Real stack (captured with the new `HARNESS_STACK=1`
+  dump):
+  `IllegalArgumentException: Cannot override ref, already set` → `SnapshotScan.useRef:100` →
+  `BaseDistributedDataScan.useRef` → `SparkScanBuilder.buildBatchScan` → `pushAggregation`.
+  Mechanism: with `spark.wap.branch=tb` set, `SELECT count(*) … VERSION AS OF <snapshot-id>` triggers
+  **aggregate pushdown**, and `SparkScanBuilder` hands the scan **both** an explicit snapshot id (from
+  `VERSION AS OF`) **and** the `wap.branch` ref; Iceberg 1.10's `SnapshotScan.useRef` now rejects
+  setting a ref when a snapshot id is already pinned. 1.5.2 let the explicit `VERSION AS OF` win.
+  So it's a **snapshot-id-vs-branch-ref precedence tightening on the scan builder**, surfaced via
+  aggregate pushdown — Iceberg-side, not OpenHouse. **User-relevant:** anyone who sets
+  `spark.wap.branch` *and* runs a time-travel `VERSION AS OF` query could hit this on 1.10. Tagged
+  SKIP → rung 1 all-green-or-tagged (1696 green + 1 tagged, 0 unexplained). **Open disposition:**
+  (a) confirm against upstream Iceberg whether this precedence change is intended/known; (b) the
+  harness assertion `explicit VERSION AS OF must override spark.wap.branch` encodes 1.5.2 precedence
+  — revisit under 1.11 at rung 3.
+- **F-TOOLING (rung 1, keeper)** — added an env-gated `HARNESS_STACK=1` full-stack dump to the
+  harness runner (was message-only via `Failed.reason`). Off by default; invaluable for
+  root-causing version-behavior deltas at rungs 2–3 (as it just corrected F-WAP-BRANCH).
 
 ---
 
