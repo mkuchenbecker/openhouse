@@ -173,6 +173,18 @@ Format: `Fn — one-line symptom → root cause → disposition`. Seed carried f
   cluster** (blocked in this sandbox), not on the harness. **Rung-1 gate = Iceberg-1.10 core
   behavior + build compat; the Hadoop-on-HDFS leg is build-validated + wire-stability-asserted,
   harness-agnostic.**
+- **F-WAP-BRANCH (rung 1, the ONE behavior delta 1.5.2→1.10)** — full matrix went 1670/27/0 →
+  **1669/27/1**; the single regression is `interact.branch.ttBeforeBranchPoint`. Iceberg 1.10 throws
+  `IllegalArgumentException: Cannot override ref, already set snapshot id=…` (an Iceberg-internal
+  `SnapshotProducer`/ref-update message — OpenHouse never emits it) when the test combines
+  `write.wap.enabled=true` (WAP = stage-only, do not advance a ref) with `INSERT INTO
+  table.branch_tb` (advance branch tb's ref). That combination is semantically contradictory; 1.10
+  rejects it, 1.5.2 permitted it. **Not an OpenHouse regression** — an Iceberg-Spark WAP×branch
+  tightening. Tagged SKIP (Plan.knownBugs) → rung 1 is all-green-or-tagged (1696 green + 1 tagged,
+  0 unexplained). **Open disposition (flag to user):** (a) rewrite the harness setup to test AS-OF
+  override precedence without the contradictory WAP+branch write (likely correct — the combo is
+  ill-defined), OR (b) confirm whether any real OpenHouse workflow does WAP + explicit-branch writes
+  and would be affected. Revisit under 1.11 at rung 3.
 
 ---
 

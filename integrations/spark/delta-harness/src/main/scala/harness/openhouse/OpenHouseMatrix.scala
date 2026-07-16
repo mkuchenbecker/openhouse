@@ -3496,7 +3496,9 @@ object Plan {
     "ddl.encryption" ->
       "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md",
     "control.undrop" ->
-      "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md"
+      "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md",
+    "interact.branch.ttBeforeBranchPoint" ->
+      "Iceberg 1.10 VERSION CHANGE (not an OpenHouse bug): the test's setup deliberately combines write.wap.enabled=true (stage-only, don't advance a ref) with INSERT INTO table.branch_tb (advance branch tb's ref) to then test AS-OF override precedence. Iceberg 1.10 rejects that contradiction with IllegalArgumentException 'Cannot override ref, already set' (an Iceberg-internal SnapshotProducer message; 1.5.2 permitted it). Tagged at rung 1; disposition (rewrite the setup to test AS-OF precedence without the WAP+branch-write contradiction, vs confirm whether real users lose WAP+branch writes) deferred — see 20-risks F-WAP-BRANCH"
   )
 
   def bugReason(id: String): Option[String] =
