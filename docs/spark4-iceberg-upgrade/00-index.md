@@ -94,6 +94,7 @@ later decision gated on consumer migration — out of scope here.
 |---|---|
 | `00-index.md` (this) | Goal, constraints, committed strategy, coexistence, invariants |
 | `10-phase-plan.md` | The five phases, each with Steps × {Solution, Verification, Enumeration} |
+| `30-rung2-detailed-plan.md` | **Deep** rung-2 plan: Spike-B REST write path, spark-4.0 module set, Scala 2.13, Path A/B, harness port, Spark-4 behavior diff surface |
 | `20-risks-decisions-findings.md` | Risks, open decisions (incl. the rung-2 REST-write spike), fork-patch ledger, running findings |
 | `BUILD-STATUS.md` | Built-vs-plan ledger; per-rung gate records |
 
