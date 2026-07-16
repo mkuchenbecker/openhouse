@@ -1,5 +1,15 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
+--- BOTH MODES, latest (blocks 8/9/10 + G14 included) ---
+STUB (default):        1707 cases: 1680 passed, 27 skipped, 0 failed.  (~13m, 4 workers)
+REAL HTS (HARNESS_REAL_HTS=1): 1819 cases: 1790 passed, 29 skipped, 0 failed.  10m52s, 4 workers.
+The two differ only by the 112 real-HTS-gated cases (undrop:* 106 + undropAdmin 3 + interact.undrop 3);
+every shared case behaves identically in both modes (the embedding is purely additive, and the tables
+context's SQL-init/auto-DDL fix applies in both). New since the 1806 run below: block 8 maintenance ×
+MoR-with-live-delete (7; surfaced G14 — rewrite_data_files leaves a DANGLING position delete,
+characterization-pinned ×3 formats), block 9 undrop 3-way survival (branch/time-travel/schema, 3),
+block 10 MoR delete-file modality (time-travel-not-retroactive / rollback-undoes / expire-holds, 3).
+
 --- REAL EMBEDDED HTS (HARNESS_REAL_HTS=1), HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md ---
 1806 cases: 1777 passed, 29 skipped, 0 failed. Wall-time 12m41s (parallel, 4 workers; real HTS adds
 HTTP soft-delete/restore round-trips per undrop case). This is the STUB baseline below (1697) PLUS the
