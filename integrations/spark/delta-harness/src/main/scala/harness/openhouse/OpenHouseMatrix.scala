@@ -362,7 +362,7 @@ object Scenarios {
 
   val layouts: List[Layout] =
     for {
-      format                        <- List("parquet", "orc")   // Avro dropped (D6 policy); ORC+Parquet on all
+      format                        <- List("parquet", "orc", "avro")
       (partitionLabel, partitionClause) <- partitionVariants
     } yield Layout(s"$partitionLabel/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
@@ -372,7 +372,7 @@ object Scenarios {
   // (format v2) instead of rewriting data files. Crossed with the mutation operations only.
   val morLayouts: List[Layout] =
     for {
-      format                        <- List("parquet", "orc")   // Avro dropped (D6 policy); ORC+Parquet on all
+      format                        <- List("parquet", "orc", "avro")
       (partitionLabel, partitionClause) <- partitionVariants
     } yield Layout(s"mor-$partitionLabel/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg $partitionClause " +
@@ -387,13 +387,13 @@ object Scenarios {
   // `morLayouts` seed splits across files, so a boundary-aligned delete can legitimately drop a
   // whole file with no position delete — correct Iceberg behaviour, but not what we want to pin.)
   val morVerifyLayouts: List[Layout] =
-    List("parquet", "orc").map(format => Layout(s"mor-verify/$format", table =>
+    List("parquet", "orc", "avro").map(format => Layout(s"mor-verify/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
         s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
         s"'write.delete.mode'='merge-on-read')"))
 
   val cowVerifyLayouts: List[Layout] =
-    List("parquet", "orc").map(format => Layout(s"cow-verify/$format", table =>
+    List("parquet", "orc", "avro").map(format => Layout(s"cow-verify/$format", table =>
       s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
         s"'write.format.default'='$format', 'format-version'='2', 'write.distribution-mode'='none', " +
         s"'write.delete.mode'='copy-on-write')"))
@@ -440,10 +440,10 @@ object Scenarios {
   // RTAS prep prefix (the P axis, replace-lineage leg — SURFACE-APPRAISAL step 2): create + seed,
   // then CREATE OR REPLACE ... AS SELECT * re-specifying the SAME shape, so the table is
   // functionally identical but reached via the replace path (the path G9/G10 showed misbehaves).
-  // Every downstream DML op then runs on a replace-lineage table. Format is vacuous for the
-  // replace-lineage question (replace rebuilds metadata, not file encoding) → parquet shapes only.
-  val rtasPrepShapes: List[(String, String)] =
-    partitionVariants.map { case (pl, pc) => (s"$pl/parquet", pc) }   // (label, partitionClause)
+  // Every downstream DML op then runs on a replace-lineage table. Crossed with ORC + Parquet (format
+  // policy: test both, no single-format pruning). (label, partitionClause, format).
+  val rtasPrepShapes: List[(String, String, String)] =
+    for { (pl, pc) <- partitionVariants; fmt <- List("parquet", "orc") } yield (s"$pl/$fmt", pc, fmt)
 
   // MoR-read prep (closes the review's "reads on MoR with deletes is a distinct scan path" gap —
   // SURFACE-APPRAISAL step 1). The current MoR bucket runs mutation ops (each reads back once), but
@@ -482,27 +482,28 @@ object Scenarios {
           s"restored table must keep its $numberOfRows rows, got ${view.after.size}")
       }
 
-  def createAndSeedRtas(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+  def createAndSeedRtas(partitionClause: String, numberOfRows: Int, format: String = "parquet"): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ('write.format.default'='parquet', 'replace.enabled'='true')")()
+        s"TBLPROPERTIES ('write.format.default'='$format', 'replace.enabled'='true')")()
       .insert(numberOfRows)()
       .sql("prep.rtas")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ('write.format.default'='parquet') AS SELECT * FROM $t")()
+        s"TBLPROPERTIES ('write.format.default'='$format') AS SELECT * FROM $t")()
 
   // RTAS prep on a MERGE-ON-READ table (over-prune miss #1): the replace re-specifies the MoR delete/
   // update/merge modes, so downstream mutation ops exercise the MoR write path on a replace-lineage
   // table. Non-vacuous per the appraisal — replace + MoR is a distinct combination.
-  private val morProps = "'write.format.default'='parquet', 'format-version'='2', " +
+  private def morPropsFmt(format: String) = s"'write.format.default'='$format', 'format-version'='2', " +
     "'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read'"
+  private val morProps = morPropsFmt("parquet")
 
-  def createAndSeedRtasMor(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+  def createAndSeedRtasMor(partitionClause: String, numberOfRows: Int, format: String = "parquet"): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ($morProps, 'replace.enabled'='true')")()
+        s"TBLPROPERTIES (${morPropsFmt(format)}, 'replace.enabled'='true')")()
       .insert(numberOfRows)()
       .sql("prep.rtasMor")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ($morProps) AS SELECT * FROM $t")()
+        s"TBLPROPERTIES (${morPropsFmt(format)}) AS SELECT * FROM $t")()
 
   // ── MoR delete-file coexistence battery (BUILD-STATUS task #5, the NON-vacuous core) ─────────
   // The appraisal's "core DML → L×M=12" is ~90% vacuous: a read/insert on a DELETE-FREE MoR table
@@ -1472,7 +1473,7 @@ object Scenarios {
 
   // ── nested / complex types (NestedTable) ───────────────────────────────────────────────
   val nestedLayouts: List[Layout] =
-    List("parquet", "orc").map(format => Layout(s"nested-unpartitioned/$format", table =>
+    List("parquet", "orc", "avro").map(format => Layout(s"nested-unpartitioned/$format", table =>
       s"CREATE TABLE $table (${NestedTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
 
   def createAndSeedNested(layout: Layout, numberOfRows: Int): TableTest[NestedTable.type] =
@@ -1546,7 +1547,7 @@ object Scenarios {
 
   // ── type-edge coverage (TypesTable) ─────────────────────────────────────────────────────
   val typesLayouts: List[Layout] =
-    List("parquet", "orc").map(format => Layout(s"types-unpartitioned/$format", table =>
+    List("parquet", "orc", "avro").map(format => Layout(s"types-unpartitioned/$format", table =>
       s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$format')"))
 
   def createAndSeedTypes(layout: Layout, numberOfRows: Int): TableTest[TypesTable.type] =
@@ -3920,7 +3921,10 @@ object Plan {
     // both partitionings kept (partitioning changes overwrite/dynamic-overwrite semantics on the
     // branch). Every op asserts its normal delta — now proving the op works branch-routed AND that
     // main is untouched (isolation). ~106 cases.
-    val branchParquetLayouts = Scenarios.layouts.filter(_.label.endsWith("/parquet"))
+    // Format policy: ORC + Parquet (both), not parquet-only. Avro is intentionally NOT added to these
+    // ref/metadata-routed blocks (branch/undrop/DDL-consumer) — the additive ask was ORC, and the
+    // 3-format blocks keep Avro separately.
+    val branchParquetLayouts = Scenarios.layouts.filter(l => l.label.endsWith("/parquet") || l.label.endsWith("/orc"))
     val branchWap = for {
       layout     <- branchParquetLayouts
       (name, op) <- Scenarios.operations
@@ -3929,7 +3933,7 @@ object Plan {
 
     // Over-prune miss #2: branch × MoR. The mutation ops routed onto a branch of a MoR table —
     // NOT vacuous (the MoR-branch merge story differs; cherry-pick rejects row-delete snapshots).
-    val branchMorLayout = Scenarios.morLayouts.filter(_.label == "mor-unpartitioned/parquet")
+    val branchMorLayout = Scenarios.morLayouts.filter(l => l.label == "mor-unpartitioned/parquet" || l.label == "mor-unpartitioned/orc")
     val branchWapMor = for {
       layout     <- branchMorLayout
       (name, op) <- Scenarios.mutationOperations
@@ -3940,15 +3944,16 @@ object Plan {
     // step 2). ~106 cases. (The undrop leg is gated on the embedded-HTS restructure — see
     // REST-FIDELITY-EVAL.md — so only the RTAS leg is runnable now.)
     val prepRtas = for {
-      (label, partitionClause) <- Scenarios.rtasPrepShapes
-      (name, op)               <- Scenarios.operations
-    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3).andThen(op).run)
+      (label, partitionClause, fmt) <- Scenarios.rtasPrepShapes
+      (name, op)                    <- Scenarios.operations
+    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3, fmt).andThen(op).run)
 
-    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table.
+    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table. ORC + Parquet.
     val prepRtasMor = for {
+      fmt        <- List("parquet", "orc")
       (name, op) <- Scenarios.mutationOperations
-    } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/parquet",
-      Scenarios.createAndSeedRtasMor("", 3).andThen(op).run)
+    } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/$fmt",
+      Scenarios.createAndSeedRtasMor("", 3, fmt).andThen(op).run)
 
     // P axis (drop→undrop leg) — the whole DML catalog on a table taken through a real HTS soft-delete
     // → restore round-trip (SURFACE-APPRAISAL). Requires the embedded real HTS (HARNESS_REAL_HTS=1);
@@ -4003,7 +4008,7 @@ object Plan {
       layout     <- Scenarios.morVerifyLayouts
       (name, op) <- Scenarios.maintenanceMorFoldOps
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
-    val morParquetVerify = Scenarios.morVerifyLayouts.filter(_.label == "mor-verify/parquet")
+    val morParquetVerify = Scenarios.morVerifyLayouts.filter(l => l.label == "mor-verify/parquet" || l.label == "mor-verify/orc")
     val maintenanceMorMeta = for {
       layout     <- morParquetVerify
       (name, op) <- Scenarios.maintenanceMorMetaOps

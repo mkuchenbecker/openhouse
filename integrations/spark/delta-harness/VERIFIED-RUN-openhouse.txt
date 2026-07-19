@@ -1,6 +1,17 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
---- BOTH MODES, latest (Avro dropped — D6 policy: ORC+Parquet on the 3-format blocks) ---
+--- BOTH MODES, latest (CORRECTED D6: Avro RESTORED + broad ORC added; Avro-drop was a mistake) ---
+STUB (default):        2079 cases: 2068 passed, 11 skipped, 0 failed.  10m41s, 4 workers.
+REAL HTS (HARNESS_REAL_HTS=1): 2297 cases: 2286 passed, 11 skipped, 0 failed.  11m56s, 4 workers.
+Format policy (final): Parquet everywhere (primary); ORC broad — added to the previously-parquet-only
+blocks (branch/undrop/RTAS/RTAS-MoR/maintenance-MoR/hazard-MoR/MoR-merge/DDL-consumer) AND kept on the
+3-format blocks; Avro = full DML smoke, kept on all 3-format blocks (core DML, MoR-mutation, MoR/CoW
+physics, nested, types), NOT added to metadata-routed blocks. Each format-crossed case asserts PARITY,
+so any ORC↔Parquet divergence would trip — NONE surfaced (clean migration baseline). Coverage rose from
+1712/1824 to 2079/2297 (Avro restored + ~367/473 new ORC cases). The earlier "Avro dropped" run below
+was MY ERROR (misread an additive request as a deletion); corrected here.
+
+--- SUPERSEDED / ERRONEOUS run (Avro wrongly dropped — do not use) ---
 STUB (default):        1314 cases: 1306 passed, 8 skipped, 0 failed.  7m37s, 4 workers.
 REAL HTS (HARNESS_REAL_HTS=1): 1426 cases: 1418 passed, 8 skipped, 0 failed.  8m16s, 4 workers.
 Avro dropped from the 3-format blocks (core layouts, morLayouts, morVerify, cowVerify, nested, types)

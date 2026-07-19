@@ -20,8 +20,12 @@ repo owner and must persist across sessions.
 - **Never stop without a global status update** covering the full scope (done / in-flight / remaining).
 
 ## Test quality
-- **Format policy: every test covers ORC + Parquet. Avro is dropped (not needed).** Format-sensitive
-  surfaces (delete/data file encoding) get both; there is no parquet-only or single-format default.
+- **Format policy is ADDITIVE: every test covers at least ORC + Parquet.** Blocks that were
+  parquet-only get ORC added. This is a STRICTLY ADDITIVE correction — do NOT remove existing Avro
+  coverage. The 3-format blocks (core layouts, morVerify, cowVerify, nested, types) keep parquet+orc+
+  avro. "Avro is not needed" meant do-not-also-add-Avro to the newly-ORC'd blocks, NOT delete Avro.
+  (Hard lesson: I misread this as "drop Avro" and destroyed prior coverage — never turn an additive
+  request into a destructive change.)
 - **Never silently skip or prune coverage.** It is fine to DEFER, but not silently: write the test,
   tag it low-quality/deferred, and BRING IT HERE for a decision. Proceed without blocking on the
   answer, but the decision must be surfaced explicitly in chat — never made silently in a doc. (Strong
