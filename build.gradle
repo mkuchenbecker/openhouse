@@ -178,8 +178,21 @@ allprojects {
 // Local Git Hooks cannot be shared, as .git directory is gitignore'd.
 tasks.register('CopyGitHooksTask', Copy) {
   println 'Make the git hook available in .git/hooks directory.'
+  // In a linked git worktree, '.git' is a file ("gitdir: <path>") rather than a
+  // directory, so 'into .git/hooks/' is not a writable directory and Gradle 8
+  // fails task validation. Resolve the real gitdir (main repo or per-worktree)
+  // and target its hooks/ directory.
+  def gitPath = file('.git')
+  def hooksDir
+  if (gitPath.isFile()) {
+    def gitdir = gitPath.text.replaceFirst(/(?s)^\s*gitdir:\s*/, '').trim()
+    hooksDir = new File(gitdir, 'hooks')
+  } else {
+    hooksDir = new File(gitPath, 'hooks')
+  }
   from file('scripts/git-hooks')
-  into file('.git/hooks/')
+  into hooksDir
+  onlyIf { gitPath.exists() }
 }
 
 // =============================================================================

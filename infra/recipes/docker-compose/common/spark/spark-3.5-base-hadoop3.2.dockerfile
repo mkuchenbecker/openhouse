@@ -9,6 +9,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN update-alternatives --install "/usr/bin/python" "python" "$(which python3)" 1
 
+# Trust any extra CA certificates staged in the build context (e.g. a
+# TLS-terminating egress proxy's CA). Without this, curl (Spark download), git
+# (Livy source clone), and Maven (Livy build) fail HTTPS with "self-signed
+# certificate in certificate chain" behind such a proxy. The directory is always
+# present (committed with a README/.gitkeep); real *.crt files are gitignored and
+# staged per-environment, so this is a no-op when no CA is provided.
+COPY /infra/recipes/docker-compose/common/spark/extra-ca-certs/ /usr/local/share/ca-certificates/openhouse-extra/
+RUN if ls /usr/local/share/ca-certificates/openhouse-extra/*.crt >/dev/null 2>&1; then \
+      update-ca-certificates && \
+      for c in /usr/local/share/ca-certificates/openhouse-extra/*.crt; do \
+        csplit -z -s -f /tmp/xcert- -b '%03d.pem' "$c" '/-----BEGIN CERTIFICATE-----/' '{*}' && \
+        i=0 ; for f in /tmp/xcert-*.pem; do \
+          keytool -importcert -noprompt -alias "extra-$(basename $c)-$i" -file "$f" \
+            -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit || true ; \
+          i=$((i+1)) ; \
+        done ; rm -f /tmp/xcert-*.pem ; \
+      done ; \
+    else echo "no extra CA certs staged; skipping" ; fi
+
 # Fix the value of PYTHONHASHSEED
 # Note: this is needed when you use Python 3.3 or greater
 ENV SPARK_VERSION=3.5.2 \
