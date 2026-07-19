@@ -12,9 +12,10 @@ SILO — NOT master agent yet (user will say when). Master plan is undisclosed +
 testing; sequence = bootstrap tests → fix → modify. Work only on PR #11 (stacked on #9); never touch #9.
 
 ## CURRENTLY EXECUTING
-Sub-goal C (format coverage) + F (repair the Avro regression) — BOTH BLOCKED on user:
-  (1) ORC rationale + target (blanket vs format-sensitive-only) — see CHECKLIST-2026-07-16-orc-coverage.md.
-  (2) "go" to verify→commit the staged Avro-restore/ORC fix — remote still holds the Avro-deleted commit.
+IDLE — awaiting user direction. Sub-goals C (format/ORC) + F (Avro repair) are DONE (commit 2436fc5,
+pushed; remote repaired). Both modes green: STUB 2079 (2068/11/0), REAL HTS 2297 (2286/11/0), 0 fail,
+0 ORC↔Parquet divergence. Highest-value remaining = the #251 column-default correctness tests (sub-goal
+B follow-ups) — BLOCKED on user +1 (dormant-feature tests).
 
 ## SUB-GOALS (index → sub-checklists / artifacts)
 - A. OpenHouse harness surface testing — ✅ DONE. HTS-embed, undrop axis+admin+3-way, blocks 8/9/10,
