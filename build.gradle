@@ -32,9 +32,10 @@ ext {
   junit_version = "5.11.0"
   iceberg_1_2_version = "1.2.0.19"
   iceberg_1_5_version = "1.5.2.15"
-  // spark4-upgrade Phase F: the LinkedIn fork ported onto Apache Iceberg 1.10 and published to
-  // mavenLocal as org.apache.iceberg:*:1.10.0-openhouse (all 10 custom patches; see
-  // /home/user/apache-iceberg@openhouse-1.10-port). Resolved via mavenLocal() above.
+  // spark4-upgrade: the LinkedIn custom Iceberg patches ported onto Apache Iceberg 1.10.
+  // Source of truth: mkuchenbecker/iceberg branch 1.10.x. To build OpenHouse against it,
+  // build that fork and `publishToMavenLocal` (produces org.apache.iceberg:*:1.10.0-openhouse),
+  // which is resolved via the mavenLocal() repository declared below.
   iceberg_1_10_version = "1.10.0-openhouse"
   otel_agent_version = "2.12.0" // Bundles OTel SDK 1.47.0
   otel_annotations_version = "2.12.0" // Match agent version
