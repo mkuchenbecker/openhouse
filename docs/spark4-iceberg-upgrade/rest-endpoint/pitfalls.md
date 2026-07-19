@@ -3,34 +3,62 @@
 Technical facts only. These are the known gaps in the REST-first endpoint as delivered; do not
 assume the delta-harness will pass CREATE TABLE without addressing #1.
 
-## 1. CREATE TABLE via a stock RESTCatalog does not populate OpenHouse reserved state (BLOCKER for create)
+## 1. CREATE TABLE via a stock RESTCatalog -- CLOSED (plain create); CTAS/stage-create still gapped
 
-`POST .../tables` -> `CatalogHandlers.createTable` -> `catalog.buildTable(ident, schema)
-.withLocation(request.location())...create()`. Two things a stock client does not supply:
+**Status: closed for plain `CREATE TABLE`.** `POST .../tables` no longer delegates to
+`CatalogHandlers.createTable` (which called `catalog.buildTable(ident, schema).create()` and failed
+because `OpenHouseInternalCatalog.defaultWarehouseLocation(...)` throws and no `openhouse.*` reserved
+state is populated). Instead the REST `createTable` handler
+(`IcebergRestCatalogController.createTable`) now translates the Iceberg `CreateTableRequest` into an
+OpenHouse `CreateUpdateTableRequestBody` and calls the **same** `TablesApiHandler.createTable` bean
+the native `TablesController` PUT path uses. Location allocation (`StorageSelector`), reserved-prop
+population (`computePropsForTableCreation`), policy management, and creation eligibility checks all
+run unchanged in the service/repository layer. The response is a real Iceberg `LoadTableResponse`
+produced by loading the freshly created table through the same `CatalogHandlers.loadTable` path the
+load handler uses, so the `RESTCatalog` immediately sees the new table.
 
-- **Table location.** `OpenHouseInternalCatalog.defaultWarehouseLocation(...)` throws
-  `UnsupportedOperationException("Location will be provided explicitly")`. A stock `RESTCatalog`
-  create request typically carries **no** `location`, so `create()` fails before any commit. OpenHouse
-  normally allocates the location in `OpenHouseInternalRepositoryImpl` via `StorageSelector`, which
-  is not on the `CatalogHandlers` path.
-- **Reserved HTS/property state.** `OpenHouseInternalRepositoryImpl.computePropsForTableCreation`
-  sets the OpenHouse-prefixed properties that `HouseTableMapper.toHouseTable` reads to build the HTS
-  row -- `openhouse.tableId`, `openhouse.databaseId`, `openhouse.tableUUID`, `openhouse.tableLocation`,
-  `openhouse.clusterId`, `openhouse.tableType`, policies, etc. `CatalogHandlers.createTable` sets
-  none of these, so even if a location were provided, the HTS `save` at the end of
-  `OpenHouseInternalTableOperations.doCommit` would persist a row with null `databaseId`/`tableId`/
-  `tableUUID` (or fail the HTS write).
+Translation (mirrors the client-side `OpenHouseTableOperations` request-builder, the authoritative
+reference):
 
-Consequence: pure delegation is sufficient for **load / list / exists / drop / rename / INSERT
-(commit into an already-created table)**, but **not** for creating a brand-new table from a stock
-client. Closing this requires the REST `createTable` handler to allocate a location and populate the
-OpenHouse reserved properties before delegating to `catalog.buildTable(...).create()` (still the
-Catalog/TableOperations path, not a bypass) -- i.e. porting the relevant part of
-`computePropsForTableCreation`. That was intentionally **not** done here per the "delegate to
-CatalogHandlers, do not re-derive" scoping; it is the first follow-up if the harness needs CREATE.
+- **Schema**: `SchemaParser.toJson(request.schema())` (inverse of
+  `IcebergSchemaHelper.getSchemaFromSchemaJson`).
+- **Identity/auth**: `clusterId` = server `ClusterProperties.getClusterName()`; caller principal =
+  `AuthenticationUtils.extractAuthenticatedUserPrincipal()` (same as the native controller);
+  `baseTableVersion` = `INITIAL_VERSION`.
+- **Partitioning**: the Iceberg `PartitionSpec` is reduced to OpenHouse's single `TimePartitionSpec`
+  + `List<ClusteringColumn>` by the new inverse methods `PartitionSpecMapper.toTimePartitionSpec` /
+  `toClusteringColumns`. Specs OpenHouse cannot model are **rejected with HTTP 400** (mapped to the
+  Iceberg `ErrorResponse` envelope), never silently dropped.
+- **Sort order**: passed through as JSON when the request carries a sort order.
+- **Table properties**: user properties passed through unchanged.
 
-CTAS/stage-create (`CreateTableRequest.stageCreate()==true`) is delegated to
-`CatalogHandlers.stageTableCreate`, which has the same location/reserved-prop gap.
+### Accepted vs rejected partition specs (the OpenHouse model subset)
+
+OpenHouse models partitioning as **at most one time transform on one timestamp column** plus **up to
+`MAX_ALLOWED_CLUSTERING_COLUMNS` identity/truncate/bucket clustering columns**. Precisely:
+
+- **Unpartitioned** -> accepted (no time partitioning, no clustering).
+- **Time partitioning**: a single `TIMESTAMP`/`TIMESTAMPTZ` column with `hour` / `day` / `month` /
+  `year` -> accepted. Rejected: more than one time-transformed column; any non-time transform on a
+  timestamp column (`identity`, `bucket[n]`, `truncate[n]`, `void`).
+- **Clustering**: columns of type `STRING` / `INTEGER` / `LONG` / `DATE` with `identity`,
+  `truncate[n]`, or `bucket[n]` -> accepted (`identity` maps to a null OpenHouse transform;
+  truncate/bucket map to the corresponding `Transform`). Rejected: any other column type; any other
+  transform (including `void`); more than `MAX_ALLOWED_CLUSTERING_COLUMNS` clustering columns.
+- Anything else (e.g. `bucket`/`truncate`/`void` on an unsupported type) -> rejected with HTTP 400.
+
+This subset matches exactly what OpenHouse's own create path (`PartitionSpecMapper.toPartitionSpec`)
+can round-trip, so a REST-created table loads back with the same spec.
+
+### CTAS / stage-create -- still gapped
+
+`CreateTableRequest.stageCreate() == true` (Spark **CTAS/RTAS**) is **rejected with HTTP 501**. Iceberg
+staged create returns metadata for an as-yet-uncommitted table and relies on a follow-up
+commit-transaction to publish it atomically; OpenHouse's create path commits the table to the HTS
+immediately and does not expose those staged-transaction semantics through this single call. Plain
+`CREATE TABLE` followed by `INSERT` works; `CREATE TABLE ... AS SELECT` does not. Closing this would
+require wiring the Iceberg transaction/commit-requirement flow (or an OpenHouse `stageReplace` /
+`replaceCommit` equivalent) through the REST update path and is the next follow-up.
 
 ## 2. Namespace existence is optimistic
 

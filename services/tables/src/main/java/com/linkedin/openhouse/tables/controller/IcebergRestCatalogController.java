@@ -1,17 +1,33 @@
 package com.linkedin.openhouse.tables.controller;
 
+import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
+
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
+import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
+import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
+import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.services.DatabasesService;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -84,6 +100,20 @@ public class IcebergRestCatalogController {
   @Autowired private Catalog catalog;
 
   @Autowired private DatabasesService databasesService;
+
+  /**
+   * The same service bean the native {@code TablesController} PUT create path uses. Reusing it means
+   * REST-driven creates go through OpenHouse's own create pipeline (location allocation via {@code
+   * StorageSelector}, reserved {@code openhouse.*} property population, policy management, and
+   * eligibility checks) instead of a parallel path.
+   */
+  @Autowired private TablesApiHandler tablesApiHandler;
+
+  /** Used to build the OpenHouse {@code TimePartitionSpec}/{@code ClusteringColumn}s from a spec. */
+  @Autowired private PartitionSpecMapper partitionSpecMapper;
+
+  /** Supplies the server cluster name that the create request body must carry and match. */
+  @Autowired private ClusterProperties clusterProperties;
 
   /** Configured identically to Iceberg's package-private {@code RESTObjectMapper}. */
   private static final ObjectMapper MAPPER = newRestObjectMapper();
@@ -213,15 +243,92 @@ public class IcebergRestCatalogController {
     return json(HttpStatus.OK, CatalogHandlers.listTables(catalog, ns));
   }
 
+  /**
+   * Creates a brand-new OpenHouse table from a stock {@code RESTCatalog} {@code CreateTableRequest}.
+   *
+   * <p>Rather than delegating to {@code CatalogHandlers.createTable} (which calls {@code
+   * catalog.buildTable(...).create()} and fails because {@code
+   * OpenHouseInternalCatalog.defaultWarehouseLocation} throws and no {@code openhouse.*} reserved
+   * state is populated), this translates the Iceberg request into an OpenHouse {@link
+   * CreateUpdateTableRequestBody} and calls the SAME {@link TablesApiHandler#createTable} bean the
+   * native controller uses. The service/repository layer then allocates the table location,
+   * computes the reserved properties, manages policies, and runs the creation eligibility checks.
+   *
+   * <p>The response is a valid Iceberg {@code LoadTableResponse}, produced by loading the freshly
+   * created table through the same {@code CatalogHandlers.loadTable} path the load handler uses, so
+   * the client immediately sees the new table's metadata and per-table config.
+   *
+   * <p>Staged create ({@code stageCreate == true}, used by Spark CTAS/RTAS) is not supported: see
+   * {@code docs/spark4-iceberg-upgrade/rest-endpoint/pitfalls.md}.
+   */
   @PostMapping("/namespaces/{namespace}/tables")
   public ResponseEntity<String> createTable(
       @PathVariable("namespace") String namespace, @RequestBody(required = false) String body) {
     Namespace ns = RESTUtil.decodeNamespace(namespace);
+    validateSingleLevel(ns);
     CreateTableRequest request = readRequest(body, CreateTableRequest.class);
+    request.validate(); // Iceberg-side: name + schema required.
+
     if (request.stageCreate()) {
-      return json(HttpStatus.OK, CatalogHandlers.stageTableCreate(catalog, ns, request));
+      // Iceberg staged create returns metadata for an as-yet-uncommitted table and expects a later
+      // commit-transaction to atomically publish it. OpenHouse's create path commits the table to
+      // the HTS immediately, so it cannot honor those staged-transaction semantics through this
+      // single call. Reject clearly instead of silently creating a non-atomic table (CTAS/RTAS gap).
+      throw new UnsupportedOperationException(
+          "Staged create (Spark CTAS/RTAS, stageCreate=true) is not supported by the OpenHouse "
+              + "Iceberg REST endpoint; use a plain CREATE TABLE followed by INSERT.");
     }
-    return json(HttpStatus.OK, CatalogHandlers.createTable(catalog, ns, request));
+
+    String databaseId = ns.level(0);
+    String tableId = request.name();
+    CreateUpdateTableRequestBody requestBody = toCreateUpdateTableRequestBody(databaseId, request);
+    tablesApiHandler.createTable(databaseId, requestBody, extractAuthenticatedUserPrincipal());
+
+    // Load the freshly created table and return it as a LoadTableResponse (same as the load path).
+    TableIdentifier ident = TableIdentifier.of(ns, tableId);
+    return json(HttpStatus.OK, CatalogHandlers.loadTable(catalog, ident));
+  }
+
+  /**
+   * Translates an Iceberg {@link CreateTableRequest} into an OpenHouse {@link
+   * CreateUpdateTableRequestBody}, mirroring the client-side {@code OpenHouseTableOperations}
+   * request-builder so a REST-created table maps to the same OpenHouse model as a natively created
+   * one.
+   *
+   * <ul>
+   *   <li><b>Schema</b>: the Iceberg schema serialized with {@code SchemaParser.toJson} (the inverse
+   *       of {@code IcebergSchemaHelper.getSchemaFromSchemaJson}).
+   *   <li><b>Partitioning</b>: the Iceberg {@code PartitionSpec} is reduced to OpenHouse's single
+   *       {@code TimePartitionSpec} plus {@code List<ClusteringColumn>} via {@link
+   *       PartitionSpecMapper}; specs OpenHouse cannot model are rejected (HTTP 400).
+   *   <li><b>Sort order</b>: passed through as JSON when the request carries a sort order.
+   *   <li><b>Properties</b>: user table properties are passed through unchanged.
+   * </ul>
+   */
+  private CreateUpdateTableRequestBody toCreateUpdateTableRequestBody(
+      String databaseId, CreateTableRequest request) {
+    TimePartitionSpec timePartitioning =
+        partitionSpecMapper.toTimePartitionSpec(request.schema(), request.spec());
+    List<ClusteringColumn> clustering =
+        partitionSpecMapper.toClusteringColumns(request.schema(), request.spec());
+    Map<String, String> tableProperties =
+        request.properties() == null ? new HashMap<>() : new HashMap<>(request.properties());
+    String sortOrder =
+        (request.writeOrder() != null && request.writeOrder().isSorted())
+            ? SortOrderParser.toJson(request.writeOrder())
+            : null;
+
+    return CreateUpdateTableRequestBody.builder()
+        .tableId(request.name())
+        .databaseId(databaseId)
+        .clusterId(clusterProperties.getClusterName())
+        .schema(SchemaParser.toJson(request.schema()))
+        .timePartitioning(timePartitioning)
+        .clustering(clustering)
+        .tableProperties(tableProperties)
+        .sortOrder(sortOrder)
+        .baseTableVersion(ValidatorConstants.INITIAL_TABLE_VERSION)
+        .build();
   }
 
   @GetMapping("/namespaces/{namespace}/tables/{table}")
@@ -331,7 +438,10 @@ public class IcebergRestCatalogController {
   @ExceptionHandler({
     AlreadyExistsException.class,
     CommitFailedException.class,
-    CommitStateUnknownException.class
+    CommitStateUnknownException.class,
+    // OpenHouse service-layer equivalents thrown by the reused create path:
+    com.linkedin.openhouse.common.exception.AlreadyExistsException.class,
+    EntityConcurrentModificationException.class
   })
   public ResponseEntity<String> handleConflict(Exception e) {
     return error(HttpStatus.CONFLICT, e);
@@ -350,7 +460,10 @@ public class IcebergRestCatalogController {
   @ExceptionHandler({
     ValidationException.class,
     BadRequestException.class,
-    IllegalArgumentException.class
+    IllegalArgumentException.class,
+    // OpenHouse service-layer equivalents thrown by the reused create path:
+    RequestValidationFailureException.class,
+    UnsupportedClientOperationException.class
   })
   public ResponseEntity<String> handleBadRequest(Exception e) {
     return error(HttpStatus.BAD_REQUEST, e);
