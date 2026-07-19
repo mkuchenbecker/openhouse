@@ -8,18 +8,27 @@
 // exclusion so the graph carries a single Iceberg — rather than filtering resolved jars by hand.
 // The shaded fat jar provides all org.apache.iceberg.* classes, so excluding the unshaded modules
 // is safe. This exclusion applies only to this classpath-extraction invocation.
+// The harness classpath source module. Overridable via -DharnessItestPath for the spark-4.0
+// (Scala 2.13) lane; defaults to the spark-3.5 (Scala 2.12) lane.
+def harnessItestPath = System.getProperty('harnessItestPath') ?: ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest'
+
+// The F1 exclusion (shaded-runtime lane only). The spark-3.5 lane uses the SHADED
+// iceberg-spark-runtime fat jar, so the unshaded org.apache.iceberg modules must be excluded or
+// shaded-vs-unshaded parquet/avro/jackson collide. The spark-4.0 REST-first lane instead uses the
+// UNSHADED iceberg-spark modules (its embedded server's /iceberg REST controller needs unshaded
+// jackson serializers), so a single unshaded Iceberg spans server+client — no exclusion there.
+def shadedRuntimeLane = harnessItestPath == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest'
+
 allprojects {
-  if (path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
-    afterEvaluate {
-      // spark4-upgrade rung 1: the unshaded modules are now stock org.apache.iceberg (was the
-      // com.linkedin.iceberg fork). Exclude the org.apache.iceberg unshaded modules so only the
-      // shaded iceberg-spark-runtime fat jar remains — otherwise shaded vs unshaded parquet/avro/
-      // jackson collide (ClassCastException MessageType, JsonUtil.factory NoSuchMethodError). F1.
-      configurations.testRuntimeClasspath {
-        exclude group: 'org.apache.iceberg', module: 'iceberg-core'
-        exclude group: 'org.apache.iceberg', module: 'iceberg-api'
-        exclude group: 'org.apache.iceberg', module: 'iceberg-common'
-        exclude group: 'org.apache.iceberg', module: 'iceberg-data'
+  if (path == harnessItestPath) {
+    if (shadedRuntimeLane) {
+      afterEvaluate {
+        configurations.testRuntimeClasspath {
+          exclude group: 'org.apache.iceberg', module: 'iceberg-core'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-api'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-common'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-data'
+        }
       }
     }
     tasks.register('printHarnessCp') {
