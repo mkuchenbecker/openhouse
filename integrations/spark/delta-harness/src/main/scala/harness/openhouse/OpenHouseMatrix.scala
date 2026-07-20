@@ -2568,6 +2568,57 @@ object Scenarios {
         assert(e.getMessage.contains("does not exist"), s"msg: ${e.getMessage.take(140)}")
       }()
 
+  // ── WAP mega-axis Stage B — systematic branch-DDL leak (G8) ──────────────────────────────────
+  // Table-global DDL (schema / props / sortOrder / policy) run WHILE `spark.wap.branch` is set: per G8
+  // these apply table-globally at every layer, so they LEAK to MAIN rather than staying branch-scoped.
+  // Each pins the ACTUAL outcome on MAIN (wap.branch unset after the DDL) — leak / silent-no-op / rejected.
+  // If OpenHouse later scopes branch DDL, these flip. Format-multiplexed by crossFmt (seedFmt-aware create).
+  private def branchDdlOnBranch(label: String)(ddl: String => String)(assertMain: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql(s"$label.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .sql(s"$label.createBranch")(t => s"ALTER TABLE $t CREATE BRANCH bddl")()
+      .step(label) { (spark, table) =>
+        spark.conf.set("spark.wap.branch", "bddl")
+        val outcome = try { spark.sql(ddl(table)); "accepted" }
+          catch { case NonFatal(e) => s"rejected:${Exceptions.root(e).getClass.getSimpleName}" }
+        finally spark.conf.unset("spark.wap.branch")
+        println(s"DIAG $label: branch-routed DDL $outcome")
+        assertMain(spark, table)
+      }()
+
+  val branchDdlOps: List[(String, TableTest[CoreTable.type])] = List(
+    // ADD COLUMN on a branch → main's schema gains the column (schema is table-global → leak).
+    "branchDdl.addColumn.leaksToMain" -> branchDdlOnBranch("branchDdl.addColumn.leaksToMain")(
+      t => s"ALTER TABLE $t ADD COLUMN br_added int") { (spark, table) =>
+        val cols = spark.sql(s"DESCRIBE TABLE $table").collect().map(_.getString(0).trim).toSet
+        assert(cols.contains("br_added"),
+          "G8: ADD COLUMN on a branch should LEAK to main's schema (table-global); main did not gain the column — re-audit G8")
+      },
+    // SET TBLPROPERTIES on a branch → main gets the property (props are table-global → leak).
+    "branchDdl.setTblProp.leaksToMain" -> branchDdlOnBranch("branchDdl.setTblProp.leaksToMain")(
+      t => s"ALTER TABLE $t SET TBLPROPERTIES ('user.branchkey'='v1')") { (spark, table) =>
+        val props = spark.sql(s"SHOW TBLPROPERTIES $table").collect().map(r => r.getString(0) -> r.getString(1)).toMap
+        assert(props.get("user.branchkey").contains("v1"),
+          s"G8: SET TBLPROPERTIES on a branch should LEAK to main; got ${props.get("user.branchkey")} — re-audit G8")
+      },
+    // ALTER COLUMN comment on a branch → main's schema metadata changes (leak).
+    "branchDdl.alterColumnComment.leaksToMain" -> branchDdlOnBranch("branchDdl.alterColumnComment.leaksToMain")(
+      t => s"ALTER TABLE $t ALTER COLUMN ${Core.string0.columnName} COMMENT 'br-comment'") { (spark, table) =>
+        val c = spark.sql(s"DESCRIBE TABLE $table").collect()
+          .find(_.getString(0).trim == Core.string0.columnName).map(_.getString(2)).getOrElse("")
+        assert(Option(c).getOrElse("").contains("br-comment"),
+          s"G8: ALTER COLUMN COMMENT on a branch should LEAK to main; main comment='$c' — re-audit G8")
+      },
+    // DROP COLUMN is rejected on main (unsupported) — assert it is ALSO rejected via a branch (the guard
+    // is schema-global, not branch-aware): pin the rejection is unchanged under wap.branch.
+    "branchDdl.dropColumn.rejected" -> branchDdlOnBranch("branchDdl.dropColumn.rejected")(
+      t => s"ALTER TABLE $t DROP COLUMN ${Core.string0.columnName}") { (spark, table) =>
+        val cols = spark.sql(s"DESCRIBE TABLE $table").collect().map(_.getString(0).trim).toSet
+        assert(cols.contains(Core.string0.columnName),
+          "DROP COLUMN must remain rejected (main keeps the column) whether or not spark.wap.branch is set")
+      }
+  )
+
   val branching: List[(String, TableTest[CoreTable.type])] = List(
     "branch.direct.isolation" -> branchDirectIsolation,
     "branch.wapConf.routing"  -> branchWapConfRouting,
@@ -4412,6 +4463,7 @@ object Plan {
     val forkBinPackByLength = Scenarios.forkBinPackByLengthOps.map { case (name, f) => Case(name, f) }
     val forkCompactionOrder = Scenarios.forkCompactionOrderOps.map { case (name, f) => Case(name, f) }
     val branching       = crossFmt(Scenarios.branching)
+    val branchDdl       = crossFmt(Scenarios.branchDdlOps)   // WAP mega-axis Stage B (G8 leak, systematic)
     val interactions    = crossFmt(Scenarios.interactions) ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
     val surface         = crossFmt(Scenarios.surfaceOps)
@@ -4588,7 +4640,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapPartitioned ++ branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
+      branchDdl ++ branchWapPartitioned ++ branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
       encryptionPin ++ forkColDefault ++ forkPartitionDist ++
