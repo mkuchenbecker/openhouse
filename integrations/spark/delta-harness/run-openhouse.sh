@@ -8,6 +8,12 @@
 #   - A Gradle able to build the repo (system gradle 8.x works; the pinned 7.6.2 wrapper
 #     may be blocked from downloading in restricted networks).
 #   - Scala 2.12.18 compiler jars in the local Maven cache (~/.m2), or adjust SCALAC_CP.
+#
+# Real-HTS mode (HARNESS_REAL_HTS=1): boots the REAL embedded House Table Service as a 2nd Spring
+# context and points the tables server at it (replacing the in-memory stub), and enables the undrop
+# preparation axis + undropAdmin lifecycle cases (soft-delete/restore/purge). Requires the housetables
+# classes on the classpath — run once with FORCE_CP=1 after adding them (print-cp.init.gradle already
+# pulls :services:housetables). See HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md. Default (unset) uses the stub.
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../../.. && pwd)"
@@ -32,6 +38,37 @@ else
       :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
 fi
 OHCP="$(cat "$WORK/oh-cp.txt")"
+
+# ── Test-the-BRANCH override ────────────────────────────────────────────────────────────────────
+# The harness normally resolves the PUBLISHED com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12
+# (e.g. 1.5.2.15) — a Maven-Central snapshot that can LAG the openhouse-1.5.2 branch HEAD (it predates
+# #251 column-defaults, etc.). To test the actual BRANCH, build the shaded runtime jar from branch HEAD
+# (`gradle :iceberg-spark:iceberg-spark-runtime-3.5_2.12:shadowJar`) and point this at it:
+#   ICEBERG_RUNTIME_JAR=/workspace/iceberg/spark/v3.5/spark-runtime/build/libs/<jar> ./run-openhouse.sh
+# That single shaded jar carries all of iceberg api+core+spark, so swapping it makes the whole harness
+# JVM (Spark side + embedded server) run the branch. Unset → back to the published release. Reversible.
+if [[ -n "${ICEBERG_RUNTIME_JAR:-}" ]]; then
+  [[ -f "$ICEBERG_RUNTIME_JAR" ]] || { echo "!! ICEBERG_RUNTIME_JAR not found: $ICEBERG_RUNTIME_JAR" >&2; exit 1; }
+  # How many spark-runtime-3.5 entries does the resolved cp actually have? If zero, the pattern no longer
+  # matches (module/version rename, jar absent) and swapping would SILENTLY leave the published jar in place
+  # — so fail loudly instead of pretending we tested the branch.
+  matches="$(printf '%s' "$OHCP" | tr ':' '\n' | grep -cE '/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar' || true)"
+  if [[ "$matches" -eq 0 ]]; then
+    echo "!! ICEBERG_RUNTIME_JAR set but no iceberg-spark-runtime-3.5_2.12 jar found on the resolved classpath" >&2
+    echo "!! (pattern changed, or cp cache is stale — re-run with FORCE_CP=1). Refusing to run the PUBLISHED jar." >&2
+    exit 1
+  fi
+  # Replace the resolved spark-runtime-3.5 jar path (any version) with the override. Use a `|` sed delimiter
+  # and a literal-ized replacement so `&`/`#`/`/` in the path are not interpreted.
+  repl="$(printf '%s' "$ICEBERG_RUNTIME_JAR" | sed -e 's/[&|\\]/\\&/g')"
+  OHCP="$(printf '%s' "$OHCP" | tr ':' '\n' \
+           | sed -E "s|.*/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar|$repl|" \
+           | paste -sd ':' -)"
+  inserted="$(printf '%s' "$OHCP" | tr ':' '\n' | grep -Fc "$ICEBERG_RUNTIME_JAR" || true)"
+  [[ "$inserted" -ge 1 ]] || { echo "!! branch-mode swap produced 0 override entries — aborting" >&2; exit 1; }
+  echo ">> [BRANCH MODE] iceberg-spark-runtime swapped ($matches slot(s)) -> $ICEBERG_RUNTIME_JAR"
+  echo ">> [BRANCH MODE] override entries on cp: $inserted"
+fi
 
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
 mkdir -p "$WORK/classes"

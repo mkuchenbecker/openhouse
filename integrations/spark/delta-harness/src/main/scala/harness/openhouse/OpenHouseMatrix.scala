@@ -59,6 +59,44 @@ object Rest {
   }
 }
 
+// Drives the soft-delete / list / restore lifecycle for the UNDROP preparation axis (Phase 4).
+// The customer DROP hard-codes purge=true (a hard delete), so soft-delete is unreachable via the
+// Tables API — we trigger it directly on the EMBEDDED real HTS (only available under HARNESS_REAL_HTS=1),
+// then restore via the customer-facing Tables API. Endpoints are process-global (one HTS, one tables
+// server for the whole run) so they are held here and set once at startup; TableTest steps see only
+// (spark, table) and reach the endpoints through this holder.
+object HtsAdmin {
+  import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+  import java.net.URI
+  @volatile var htsUri: String = ""      // embedded HTS base (soft-delete + querySoftDeleted)
+  @volatile var tablesUri: String = ""   // tables server base (restore, customer-facing)
+  @volatile var token: String = ""       // Bearer token for the tables server
+  def enabled: Boolean = htsUri.nonEmpty
+
+  private lazy val client = HttpClient.newHttpClient()
+  private def send(b: HttpRequest.Builder): (Int, String) = {
+    val r = client.send(b.header("Content-Type", "application/json").build(), HttpResponse.BodyHandlers.ofString())
+    (r.statusCode(), r.body())
+  }
+
+  /** Soft-delete on the embedded HTS (V1 endpoint carries the isSoftDelete flag). No auth (HTS security excluded). */
+  def softDelete(db: String, tbl: String): (Int, String) =
+    send(HttpRequest.newBuilder(URI.create(s"$htsUri/v1/hts/tables?databaseId=$db&tableId=$tbl&isSoftDelete=true")).DELETE())
+
+  /** Recover the deletedAtMs of a soft-deleted table (needed to restore) from the HTS querySoftDeleted view. */
+  def softDeletedAtMs(db: String, tbl: String): Option[Long] = {
+    val (code, body) = send(HttpRequest.newBuilder(URI.create(s"$htsUri/hts/tables/querySoftDeleted?databaseId=$db&tableId=$tbl")).GET())
+    if (code < 200 || code >= 300) None
+    else "\"deletedAtMs\"\\s*:\\s*(\\d+)".r.findFirstMatchIn(body).map(_.group(1).toLong)
+  }
+
+  /** Restore via the customer-facing Tables API (PUT .../restore?deletedAtMs=). Requires the Bearer token. */
+  def restore(db: String, tbl: String, deletedAtMs: Long): (Int, String) =
+    send(HttpRequest.newBuilder(URI.create(s"$tablesUri/v1/databases/$db/tables/$tbl/restore?deletedAtMs=$deletedAtMs"))
+      .header("Authorization", s"Bearer $token")
+      .PUT(HttpRequest.BodyPublishers.ofString("")))
+}
+
 sealed trait Outcome { def label: String }
 object Outcome {
   case object Passed extends Outcome { val label = "PASS" }
@@ -402,10 +440,10 @@ object Scenarios {
   // RTAS prep prefix (the P axis, replace-lineage leg — SURFACE-APPRAISAL step 2): create + seed,
   // then CREATE OR REPLACE ... AS SELECT * re-specifying the SAME shape, so the table is
   // functionally identical but reached via the replace path (the path G9/G10 showed misbehaves).
-  // Every downstream DML op then runs on a replace-lineage table. Format is vacuous for the
-  // replace-lineage question (replace rebuilds metadata, not file encoding) → parquet shapes only.
-  val rtasPrepShapes: List[(String, String)] =
-    partitionVariants.map { case (pl, pc) => (s"$pl/parquet", pc) }   // (label, partitionClause)
+  // Every downstream DML op then runs on a replace-lineage table. Crossed with ORC + Parquet (format
+  // policy: test both, no single-format pruning). (label, partitionClause, format).
+  val rtasPrepShapes: List[(String, String, String)] =
+    for { (pl, pc) <- partitionVariants; fmt <- List("parquet", "orc") } yield (s"$pl/$fmt", pc, fmt)
 
   // MoR-read prep (closes the review's "reads on MoR with deletes is a distinct scan path" gap —
   // SURFACE-APPRAISAL step 1). The current MoR bucket runs mutation ops (each reads back once), but
@@ -423,27 +461,49 @@ object Scenarios {
         assert(deleteFiles == 1, s"MoR prep must leave a live position-delete file, got $deleteFiles")
       }
 
-  def createAndSeedRtas(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+  // Undrop prep (the P axis, drop→undrop leg — SURFACE-APPRAISAL, requires embedded real HTS). Seed a
+  // plain table, then take it through the FULL soft-delete → restore round-trip on the real HTS, and
+  // hand the RESTORED table to the downstream op. The point is a modality audit: every feature's state
+  // (rows, snapshot lineage, refs, spec, sort order, properties, MoR delete files, schema) must survive
+  // the round-trip, so the whole DML/DDL catalog is crossed onto the restored table. Soft-delete is
+  // driven directly on HTS (customer DROP hard-deletes); restore uses the customer Tables API.
+  def createAndSeedUndropped(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
+    createAndSeed(layout, numberOfRows)
+      .step("prep.undrop") { (spark, table) =>
+        val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+        val (sdCode, sdBody) = HtsAdmin.softDelete(db, tbl)
+        assert(sdCode >= 200 && sdCode < 300, s"HTS soft-delete failed ($sdCode): $sdBody")
+        val deletedAtMs = HtsAdmin.softDeletedAtMs(db, tbl)
+          .getOrElse(throw new AssertionError(s"soft-deleted table $db.$tbl not found in querySoftDeleted"))
+        val (rCode, rBody) = HtsAdmin.restore(db, tbl, deletedAtMs)
+        assert(rCode >= 200 && rCode < 300, s"restore failed ($rCode): $rBody")
+      } { view =>
+        assert(view.after.size == numberOfRows,
+          s"restored table must keep its $numberOfRows rows, got ${view.after.size}")
+      }
+
+  def createAndSeedRtas(partitionClause: String, numberOfRows: Int, format: String = "parquet"): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ('write.format.default'='parquet', 'replace.enabled'='true')")()
+        s"TBLPROPERTIES ('write.format.default'='$format', 'replace.enabled'='true')")()
       .insert(numberOfRows)()
       .sql("prep.rtas")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ('write.format.default'='parquet') AS SELECT * FROM $t")()
+        s"TBLPROPERTIES ('write.format.default'='$format') AS SELECT * FROM $t")()
 
   // RTAS prep on a MERGE-ON-READ table (over-prune miss #1): the replace re-specifies the MoR delete/
   // update/merge modes, so downstream mutation ops exercise the MoR write path on a replace-lineage
   // table. Non-vacuous per the appraisal — replace + MoR is a distinct combination.
-  private val morProps = "'write.format.default'='parquet', 'format-version'='2', " +
+  private def morPropsFmt(format: String) = s"'write.format.default'='$format', 'format-version'='2', " +
     "'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read'"
+  private val morProps = morPropsFmt("parquet")
 
-  def createAndSeedRtasMor(partitionClause: String, numberOfRows: Int): TableTest[CoreTable.type] =
+  def createAndSeedRtasMor(partitionClause: String, numberOfRows: Int, format: String = "parquet"): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ($morProps, 'replace.enabled'='true')")()
+        s"TBLPROPERTIES (${morPropsFmt(format)}, 'replace.enabled'='true')")()
       .insert(numberOfRows)()
       .sql("prep.rtasMor")(t => s"CREATE OR REPLACE TABLE $t USING iceberg $partitionClause " +
-        s"TBLPROPERTIES ($morProps) AS SELECT * FROM $t")()
+        s"TBLPROPERTIES (${morPropsFmt(format)}) AS SELECT * FROM $t")()
 
   // ── MoR delete-file coexistence battery (BUILD-STATUS task #5, the NON-vacuous core) ─────────
   // The appraisal's "core DML → L×M=12" is ~90% vacuous: a read/insert on a DELETE-FREE MoR table
@@ -490,6 +550,164 @@ object Scenarios {
       assert(spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 3").collect()(0).getString(0) == "mg", "merge over live delete failed")
     }()
   )
+
+  // ── Maintenance × MoR-with-live-delete (BUILD-STATUS block 8 deepening) ──────────────────────
+  // The maintenance.* block runs on plain CoW; the genuinely-distinct surface is maintenance over a
+  // table that carries a LIVE position-delete file. `createAndSeedMorDeleted` leaves keys 2,3 live
+  // with a live delete for key 1. The hunt: does each maintenance procedure handle the delete file
+  // correctly (fold / preserve / not resurrect the deleted row)?
+
+  // rewrite_data_files over a live position delete: it applies the delete to the rewritten data
+  // (key 1 physically gone, row set correct) — but it does NOT remove the now-dangling position
+  // delete from the CURRENT snapshot. FINDING G14 (characterization): the compacted table still
+  // carries a live delete-file reference that points at data already removed; it lingers until
+  // rewrite_position_delete_files or expire_snapshots. Reads stay correct throughout. Crossed × 3 MoR
+  // formats to confirm the behavior is format-consistent (the delete decode differs per format).
+  val maintenanceMorFoldOps: List[(String, TableTest[CoreTable.type])] = List(
+    "maint.mor.rewriteDataFilesDanglingDelete" -> TableTest(Core).step("maint.mor.rewriteDataFilesDanglingDelete") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      // the delete IS applied logically — row set is correct
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_data_files changed the live row set over a MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "rewrite_data_files RESURRECTED the deleted row")
+      // G14 PIN: the position delete is NOT removed from the current snapshot — it dangles.
+      val delFiles = spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+      assert(delFiles == 1, s"characterized: rewrite_data_files leaves the position delete dangling in the current snapshot (expected 1), got $delFiles — if this is 0, the build now folds deletes and the pin should flip")
+      // despite the dangling delete, reads remain correct (the removed row never reappears)
+      val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(keys == Seq(2L), s"read after rewrite_data_files must stay correct despite the dangling delete: $keys")
+    }()
+  )
+
+  // Metadata-only maintenance over a live delete — format is vacuous (these never decode the delete
+  // file), so × 1 MoR layout. Each must PRESERVE the delete (2 live rows, key 1 still gone).
+  val maintenanceMorMetaOps: List[(String, TableTest[CoreTable.type])] = List(
+    "maint.mor.expireSnapshots" -> TableTest(Core).step("maint.mor.expireSnapshots") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "expire_snapshots changed the live row set over a MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "expire_snapshots resurrected the deleted row")
+    }(),
+    "maint.mor.rewriteManifests" -> TableTest(Core).step("maint.mor.rewriteManifests") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_manifests(table => '${catalogRelative(table)}', use_caching => false)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_manifests changed the live row set over a MoR delete")
+    }(),
+    "maint.mor.removeOrphanFiles" -> TableTest(Core).step("maint.mor.removeOrphanFiles") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "remove_orphan_files changed the live row set over a MoR delete")
+    }(),
+    // Modality: compact the position deletes, THEN expire the pre-compact snapshot — the folded
+    // state must survive (the deleted row must not reappear via the retained/expired lineage).
+    "maint.mor.compactThenExpire" -> TableTest(Core).step("maint.mor.compactThenExpire") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.rewrite_position_delete_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "compact-then-expire changed the live row set")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "compact-then-expire resurrected the deleted row")
+    }()
+  )
+
+  // ── MoR delete-file modality hazards (BUILD-STATUS block 10 deepening) ───────────────────────
+  // A live position delete is snapshot-scoped state. These hunt for it being mis-resolved across the
+  // history/restore axes: a delete must NOT be retroactive (pre-delete snapshots still see the row),
+  // rollback must UNDO it, and it must SURVIVE expiration of older snapshots. Time-travel/rollback
+  // logic is format-vacuous (it resolves snapshots, not file bytes) → × 1 MoR layout.
+  val morHazardOps: List[(String, TableTest[CoreTable.type])] = List(
+    // The delete is snapshot-scoped: time-travel to the pre-delete snapshot still sees key 1.
+    "hazard.mor.timeTravelBeforeDelete" -> TableTest(Core).step("hazard.mor.timeTravelBeforeDelete") { (spark, table) =>
+      val seedSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "current MoR state should have the delete applied")
+      assert(spark.sql(s"SELECT count(*) FROM $table VERSION AS OF $seedSnap").collect()(0).getLong(0) == 3,
+        "pre-delete snapshot must still see the deleted row (delete must not be retroactive)")
+    }(),
+    // Rollback to the pre-delete snapshot UNDOES the delete — the row returns and no delete is live.
+    "hazard.mor.rollbackUndoesDelete" -> TableTest(Core).step("hazard.mor.rollbackUndoesDelete") { (spark, table) =>
+      val seedSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+      spark.sql(s"CALL openhouse.system.rollback_to_snapshot(table => '${catalogRelative(table)}', snapshot_id => ${seedSnap}L)")
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "rollback did not undo the MoR delete")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 1, "rolled-back row not restored")
+    }(),
+    // The delete must SURVIVE expiration of the older (pre-delete) snapshot — a filtered read still
+    // excludes key 1 after expire.
+    "hazard.mor.expireThenDeleteHolds" -> TableTest(Core).step("hazard.mor.expireThenDeleteHolds") { (spark, table) =>
+      spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+      val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
+      assert(keys == Seq(2L), s"delete must survive expiration of the pre-delete snapshot (key 1 gone): $keys")
+    }()
+  )
+
+  // ── MoR × branch MERGE (position deletes carried across fast_forward / cherry_pick / REPLACE BRANCH) ──
+  // A DELETE/UPDATE on a branch of a MoR table writes position-delete files ON THE BRANCH; merging the
+  // branch back to main must carry those deletes correctly. This is the known-fragile neighborhood of
+  // G11 (branch × merge) and the "cherry-pick rejects row-delete snapshots" note — the merge is where
+  // MoR-branch breakage hides. Base is a single-file MoR seed (COALESCE(1)) so a strict-subset DELETE
+  // is a real position delete, not a file elimination. Merge is a ref/snapshot carry → format-vacuous
+  // (× 1 MoR layout). Each hunts for: deletes lost/not-carried, deleted rows resurrecting on main,
+  // cherry-pick rejecting row-delete snapshots.
+  val morBranchMergeOps: List[(String, TableTest[CoreTable.type])] = List(
+    // fast_forward must carry a branch position-delete into main: after merge the deleted row is gone.
+    "mbranch.fastForwardDelete" -> TableTest(Core).step("mbranch.fastForwardDelete") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mfb")
+      spark.sql(s"DELETE FROM $table.branch_mfb WHERE ${Core.long0.columnName} = 1")   // position delete on branch
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "3", "main advanced before merge")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mfb'") == "2", "branch delete not applied on the branch")
+      spark.sql(s"CALL openhouse.system.fast_forward('${catalogRelative(table)}', 'main', 'mfb')")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "2", "fast_forward did not carry the branch position-delete to main")
+      assert(countOf(spark, s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1") == "0", "deleted row resurrected on main after fast_forward")
+    }(),
+    // fast_forward must carry a branch UPDATE (MoR update = position delete + new data file).
+    "mbranch.fastForwardUpdate" -> TableTest(Core).step("mbranch.fastForwardUpdate") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mub")
+      spark.sql(s"UPDATE $table.branch_mub SET ${Core.string0.columnName} = 'br-upd' WHERE ${Core.long0.columnName} = 2")
+      spark.sql(s"CALL openhouse.system.fast_forward('${catalogRelative(table)}', 'main', 'mub')")
+      assert(countOf(spark, s"SELECT count(*) FROM $table") == "3", "fast_forward of a MoR update changed the row count on main")
+      assert(spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 2").collect()(0).getString(0) == "br-upd",
+        "MoR update not carried to main by fast_forward")
+    }(),
+    // Cherry-pick a branch ROW-DELETE snapshot onto main — CHARACTERIZE (the fragile path): it either
+    // applies the delete (main → 2) or is rejected; pin the outcome and assert the row set matches it.
+    "mbranch.cherrypickDelete" -> TableTest(Core).step("mbranch.cherrypickDelete") { (spark, table) =>
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mcb")
+      spark.sql(s"DELETE FROM $table.branch_mcb WHERE ${Core.long0.columnName} = 1")
+      val delSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1").collect()(0).getLong(0)
+      val outcome =
+        try { spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', ${delSnap}L)"); "ok" }
+        catch { case NonFatal(e) => s"rejected:${Exceptions.root(e).getClass.getSimpleName}" }
+      val mainCount = countOf(spark, s"SELECT count(*) FROM $table")
+      println(s"DIAG mbranch.cherrypickDelete: $outcome, mainCount=$mainCount")
+      if (outcome == "ok")
+        assert(mainCount == "2", s"cherrypick reported ok but did not apply the branch delete to main (got $mainCount)")
+      else
+        assert(mainCount == "3", s"cherrypick was rejected but main changed anyway (got $mainCount)")
+    }(),
+    // REPLACE BRANCH retargets a MoR branch to a pre-delete snapshot — the delete must follow the target.
+    "mbranch.replaceBranchDelete" -> TableTest(Core).step("mbranch.replaceBranchDelete") { (spark, table) =>
+      val preSnap = spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at DESC LIMIT 1").collect()(0).getLong(0) // seed (3 rows)
+      spark.sql(s"ALTER TABLE $table CREATE BRANCH mrb")
+      spark.sql(s"DELETE FROM $table.branch_mrb WHERE ${Core.long0.columnName} = 1")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mrb'") == "2", "branch delete not applied")
+      spark.sql(s"ALTER TABLE $table REPLACE BRANCH mrb AS OF VERSION $preSnap")
+      assert(countOf(spark, s"SELECT count(*) FROM $table VERSION AS OF 'mrb'") == "3",
+        "REPLACE BRANCH to the pre-delete snapshot did not undo the branch position-delete")
+    }()
+  )
+
+  // Encryption capability PIN (characterization). OpenHouse delegates table-data encryption to an
+  // external KMS plugin (private repo); in OSS the catalog never wires a KeyManagementClient, so
+  // customer tables use the default PlaintextEncryptionManager and data is written UNENCRYPTED.
+  // Discriminator: a Parquet file's FOOTER magic is "PAR1" when unencrypted and "PARE" under modular
+  // encryption — robust regardless of compression. This pins that OSS writes plaintext; it FLIPS to
+  // "PARE" the moment table-data encryption is wired (then update BUGS.md and this pin). An off-the-
+  // shelf KMS does NOT change this — nothing in the OpenHouse write path invokes the encryption hook.
+  val encryptionPlaintextPin: TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .step("surface.pin.dataPlaintext") { (spark, table) =>
+        val path = spark.sql(s"SELECT file_path FROM $table.data_files LIMIT 1").collect()(0).getString(0)
+        val local = path.stripPrefix("file:")
+        val bytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(local))
+        assert(bytes.length >= 8, s"data file too small to inspect: ${bytes.length} bytes")
+        val footerMagic = new String(bytes.takeRight(4), "US-ASCII")
+        assert(footerMagic == "PAR1",
+          s"expected UNENCRYPTED parquet footer magic PAR1 (OSS encryption is un-wired — capability gap, BUGS.md); " +
+          s"got '$footerMagic' — if 'PARE', table-data encryption is now active and this pin should flip to assert ciphertext")
+      }()
 
   // ── DDL × consumer battery (BUILD-STATUS task #3) ────────────────────────────────────────────
   // A DDL op is a STATE CHANGE; the battery asserts every consumer still works after it (the
@@ -1029,15 +1247,27 @@ object Scenarios {
     }
 
   // INSERT INTO with an explicit column list; the unlisted columns are null-filled.
+  // NEGATIVE PIN (was SKIP-as-bug; reclassified after code-verified investigation). A partial/named-
+  // column INSERT that omits other columns is REJECTED with INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA.
+  // This is an ENGINE limitation, not an OpenHouse policy: OpenHouse creates columns nullable-by-default
+  // and the server round-trips the schema verbatim (verified) — but Iceberg 1.5's SparkTable does not
+  // advertise column defaults (no SupportsColumnDefaultValue), so Spark's byName output resolution never
+  // inserts the NULL-fill projection for the omitted (nullable) columns. Pin the rejection; it flips
+  // only when the read+write APPLICATION of column defaults is wired (SparkTable implements
+  // SupportsColumnDefaultValue + the reader injects initial-default for missing columns). NOTE (fork
+  // audit): the com.linkedin.iceberg 1.5.2 fork #251 backported the NestedField initial/write-default
+  // APIs + SchemaParser serialization ONLY — no SparkTable, no reader wiring — so the fork does NOT
+  // satisfy the flip condition (and persists v3-style defaults on a v2 table with no gate). See
+  // ICEBERG-FORK-AUDIT.md.
   val insertExplicitColumns: TableTest[CoreTable.type] =
-    TableTest(Core).sql("insert.explicitColumns")(table =>
-      s"INSERT INTO $table (${Core.long0.columnName}, ${Core.string0.columnName}) " +
-        s"VALUES (CAST(4 AS BIGINT), 'd'), (CAST(5 AS BIGINT), 'e')") { view =>
-      assert(keyed(view.after) == (view.before.map(_.get(Core.long0)) ++ Seq(4L, 5L)).sorted)
-      val row4 = view.after.find(_.get(Core.long0) == 4L)
-      assert(row4.map(_.get(Core.string0)).contains("d"))
-      assert(row4.exists(_.isNullAt(1))) // col_int (position 1) was not supplied
-    }
+    TableTest(Core).step("insert.explicitColumns") { (spark, table) =>
+      val e = Check.intercept[Exception](
+        spark.sql(s"INSERT INTO $table (${Core.long0.columnName}, ${Core.string0.columnName}) " +
+          s"VALUES (CAST(4 AS BIGINT), 'd'), (CAST(5 AS BIGINT), 'e')"))
+      val msg = Option(e.getMessage).getOrElse("").toUpperCase
+      assert(msg.contains("CANNOT_FIND_DATA") || msg.contains("CANNOT FIND DATA") || msg.contains("INCOMPATIBLE_DATA"),
+        s"expected a partial-INSERT rejection naming the omitted column (engine limitation), got: ${Option(e.getMessage).getOrElse("").take(200)}")
+    }()
 
   // INSERT INTO … SELECT appends the selected rows.
   val insertIntoSelect: TableTest[CoreTable.type] =
@@ -1443,12 +1673,15 @@ object Scenarios {
 
   // ── time travel + restore/rollback ──────────────────────────────────────────────────────
   // A two-snapshot base: seed 3 rows (snapshot A), then insert 2 more (snapshot B).
-  private def coreTwoSnapshots: TableTest[CoreTable.type] =
+  // Format is a PARAMETER, not baked in — so any block built on this base can multiplex across formats.
+  private def coreTwoSnapshots(fmt: String): TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$fmt')")()
       .insert(3)()
       .sql("insertMore")(table => s"INSERT INTO $table VALUES " +
         s"(CAST(4 AS BIGINT), 4, 'row-4', 4.5, true, '2024-01-04-03'), (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")()
+  // No-arg overload (parquet) keeps the many existing single-format call sites unchanged.
+  private def coreTwoSnapshots: TableTest[CoreTable.type] = coreTwoSnapshots("parquet")
 
   // Snapshots in ancestry order (root first), following the parent_id chain — deterministic even
   // if two commits happen to share a committed_at millisecond (which `ORDER BY committed_at` is not).
@@ -1463,29 +1696,29 @@ object Scenarios {
     order.toList
   }
 
-  val timeTravelVersionAsOf: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.versionAsOf") { view =>
+  def timeTravelVersionAsOf(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.versionAsOf") { view =>
       val snaps = snapshotIds(view.spark, view.table)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(0)}").collect()(0).getLong(0) == 3)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(1)}").collect()(0).getLong(0) == 5)
     }
 
-  val timeTravelTimestampAsOf: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.timestampAsOf") { view =>
+  def timeTravelTimestampAsOf(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.timestampAsOf") { view =>
       val ts0 = view.spark.sql(s"SELECT committed_at FROM ${view.table}.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getTimestamp(0)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} TIMESTAMP AS OF '$ts0'").collect()(0).getLong(0) == 3)
     }
 
-  val timeTravelMetadataTables: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.metadataTables") { view =>
+  def timeTravelMetadataTables(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.metadataTables") { view =>
       def count(meta: String): Long = view.spark.sql(s"SELECT count(*) FROM ${view.table}.$meta").collect()(0).getLong(0)
       assert(count("snapshots") == 2)
       assert(count("history") == 2)
       assert(count("files") >= 1 && count("manifests") >= 1)
     }
 
-  val timeTravelIncrementalRead: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.incrementalRead") { view =>
+  def timeTravelIncrementalRead(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.incrementalRead") { view =>
       val snaps = snapshotIds(view.spark, view.table)
       val added = view.spark.read.format("iceberg")
         .option("start-snapshot-id", snaps(0)).option("end-snapshot-id", snaps(1))
@@ -1493,57 +1726,57 @@ object Scenarios {
       assert(added == 2) // only the rows added between snapshot A and B
     }
 
-  val timeTravel: List[(String, TableTest[CoreTable.type])] = List(
-    "timeTravel.versionAsOf"     -> timeTravelVersionAsOf,
-    "timeTravel.timestampAsOf"   -> timeTravelTimestampAsOf,
-    "timeTravel.metadataTables"  -> timeTravelMetadataTables,
-    "timeTravel.incrementalRead" -> timeTravelIncrementalRead
+  def timeTravelOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "timeTravel.versionAsOf"     -> timeTravelVersionAsOf(fmt),
+    "timeTravel.timestampAsOf"   -> timeTravelTimestampAsOf(fmt),
+    "timeTravel.metadataTables"  -> timeTravelMetadataTables(fmt),
+    "timeTravel.incrementalRead" -> timeTravelIncrementalRead(fmt)
   )
 
   // Restore/rollback via stored procedures (gated: OpenHouse may not expose CALL procedures).
   private def catalogRelative(table: String): String = table.stripPrefix("openhouse.")
 
-  val restoreRollbackToSnapshot: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("restore.rollbackToSnapshot") { (spark, table) =>
+  def restoreRollbackToSnapshot(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("restore.rollbackToSnapshot") { (spark, table) =>
       val first = snapshotIds(spark, table).head
       spark.sql(s"CALL openhouse.system.rollback_to_snapshot('${catalogRelative(table)}', $first)")
     } { view =>
       assert(view.after.size == 3) // rolled back to the 3-row snapshot
     }
 
-  val restoreSetCurrentSnapshot: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("restore.setCurrentSnapshot") { (spark, table) =>
+  def restoreSetCurrentSnapshot(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("restore.setCurrentSnapshot") { (spark, table) =>
       val first = snapshotIds(spark, table).head
       spark.sql(s"CALL openhouse.system.set_current_snapshot('${catalogRelative(table)}', $first)")
     } { view =>
       assert(view.after.size == 3)
     }
 
-  val restoreRollback: List[(String, TableTest[CoreTable.type])] = List(
-    "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot,
-    "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot
+  def restoreRollbackOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot(fmt),
+    "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot(fmt)
   )
 
   // ── Maintenance OPERATIONS (Iceberg CALL procedures; jobs merely orchestrate these) ──────────
   // SE / OFD / compaction are stored procedures, reachable from Spark SQL like rollback/set_current.
   // Each mutates physical state; we assert the current DATA is preserved and observe the metadata delta.
-  val maintenanceExpireSnapshots: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.expireSnapshots") { (spark, table) =>
+  def maintenanceExpireSnapshots(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.expireSnapshots") { (spark, table) =>
       spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
     } { view =>
       assert(view.after.size == 5, "expire_snapshots changed the current data")
       assert(view.snapshotsAfter < view.snapshotsBefore, s"expire did not drop a snapshot: ${view.snapshotsBefore} -> ${view.snapshotsAfter}")
     }
 
-  val maintenanceRewriteDataFiles: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.rewriteDataFiles") { (spark, table) =>
+  def maintenanceRewriteDataFiles(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.rewriteDataFiles") { (spark, table) =>
       spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}')")
     } { view =>
       assert(view.after.size == 5, "compaction changed rows")                          // rows preserved
     }
 
-  val maintenanceRemoveOrphanFiles: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.removeOrphanFiles") { (spark, table) =>
+  def maintenanceRemoveOrphanFiles(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.removeOrphanFiles") { (spark, table) =>
       // older_than must be ≥24h in the past (a safety guard); a far-past ts is a valid no-op that
       // still exercises the procedure end-to-end without corrupting live files.
       spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
@@ -1551,10 +1784,10 @@ object Scenarios {
       assert(view.after.size == 5, "orphan removal changed rows")
     }
 
-  val maintenance: List[(String, TableTest[CoreTable.type])] = List(
-    "maintenance.expireSnapshots"  -> maintenanceExpireSnapshots,
-    "maintenance.rewriteDataFiles" -> maintenanceRewriteDataFiles,
-    "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles
+  def maintenanceOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "maintenance.expireSnapshots"  -> maintenanceExpireSnapshots(fmt),
+    "maintenance.rewriteDataFiles" -> maintenanceRewriteDataFiles(fmt),
+    "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles(fmt)
   )
 
   // ── Control-plane (REST) ops with no SQL surface — driven via the embedded server's HTTP API ──
@@ -1609,6 +1842,341 @@ object Scenarios {
   val controlPlane: List[(String, Ctx => Unit)] = List(
     "control.lock.enforcement"  -> controlLockEnforcement,
     "control.undrop.lifecycle"  -> controlUndropLifecycle
+  )
+
+  // ── Undrop admin-lifecycle block (Phase 5 — REAL HTS only, HtsAdmin.enabled) ─────────────────
+  // With an embedded real HTS the full soft-delete → list → restore / purge lifecycle is exercisable
+  // (the customer DROP still hard-deletes — soft-delete is driven directly on HTS). These are the
+  // HTS-admin lifecycle cases that sit ALONGSIDE the surface-doubling undrop battery.
+  private def undropSeed(ctx: Ctx, name: String): (String, String, String) = {
+    val table = s"${ctx.namespace}.$name"
+    val Array(db, tbl) = table.stripPrefix("openhouse.").split("\\.", 2)
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+    ctx.spark.sql(coreCreateParquet(table))
+    ctx.spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 3)}")
+    (table, db, tbl)
+  }
+
+  // Soft-delete → the customer softDeletedTables listing shows it → restore → rows intact.
+  def undropAdminRestoreRoundTrip(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_undrop_rt")
+    val (sd, sdb) = HtsAdmin.softDelete(db, tbl); assert(sd >= 200 && sd < 300, s"soft-delete failed ($sd): $sdb")
+    val (ls, lb) = Rest.get(ctx, s"/v1/databases/$db/softDeletedTables")
+    assert(ls == 200 && lb.contains(tbl), s"soft-deleted table not listed via Tables API ($ls): $lb")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
+    val (rs, rb) = HtsAdmin.restore(db, tbl, ms); assert(rs >= 200 && rs < 300, s"restore failed ($rs): $rb")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "restored table lost rows")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Two soft-deleted tables both appear in the listing (paging/enumeration works).
+  def undropAdminListSoftDeleted(ctx: Ctx): Unit = {
+    val (_, db, t1) = undropSeed(ctx, "t_undrop_l1")
+    val (_, _,  t2) = undropSeed(ctx, "t_undrop_l2")
+    assert(HtsAdmin.softDelete(db, t1)._1 / 100 == 2, "soft-delete t1 failed")
+    assert(HtsAdmin.softDelete(db, t2)._1 / 100 == 2, "soft-delete t2 failed")
+    val (ls, lb) = Rest.get(ctx, s"/v1/databases/$db/softDeletedTables")
+    assert(ls == 200 && lb.contains(t1) && lb.contains(t2), s"both soft-deleted tables should list ($ls): $lb")
+  }
+
+  // Restore AFTER purge must be rejected — purge is permanent. Pin whatever the real HTS returns
+  // (a 4xx; the point is that restore no longer succeeds once the row is purged).
+  def undropAdminRestoreAfterPurgeRejected(ctx: Ctx): Unit = {
+    val (_, db, tbl) = undropSeed(ctx, "t_undrop_purge")
+    assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, "soft-delete failed")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError("no deletedAtMs"))
+    // purge everything deleted before a far-future instant → removes this row permanently
+    val (ps, _) = Rest.delete(ctx, s"/v1/databases/$db/tables/$tbl/purge?purgeAfterMs=${Long.MaxValue}")
+    assert(ps / 100 == 2, s"purge should succeed ($ps)")
+    val (rs, _) = HtsAdmin.restore(db, tbl, ms)
+    assert(rs >= 400, s"restore after purge must be rejected, got $rs")
+  }
+
+  val undropAdminOps: List[(String, Ctx => Unit)] = List(
+    "undropAdmin.restoreRoundTrip"        -> undropAdminRestoreRoundTrip,
+    "undropAdmin.listSoftDeleted"         -> undropAdminListSoftDeleted,
+    "undropAdmin.restoreAfterPurgeRejected" -> undropAdminRestoreAfterPurgeRejected
+  )
+
+  // ── Column-default (fork #251) — OSS Spark DDL path ──────────────────────────────────────────
+  // Column defaults are TABLED (see ICEBERG-FORK-AUDIT.md). This test characterizes what the OSS Spark 3.5
+  // DDL path does with `ALTER TABLE t ADD COLUMN c int DEFAULT 5`; the behavior is identical on the
+  // published 1.5.2.15 and the branch build (#251 is api/core only, with no Spark write wiring). Measured:
+  //   • accepted at Spark parse time (Spark 3.5 owns the DEFAULT grammar);
+  //   • the default is not written into the Iceberg schema (DESCRIBE shows `c|int|null`, no default);
+  //   • pre-existing rows read NULL;
+  //   • an INSERT that omits the column is rejected INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA
+  //     (same root as bug1 — no column-default write wiring in the connector).
+  // These are behavior pins: if a future build changes any of the above, the asserts flip and it is re-audited.
+  private def forkColDefaultAddColumn(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_coldef_$fmt"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg TBLPROPERTIES ('write.format.default'='$fmt')")
+    spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
+
+    // (1) The customer path is ACCEPTED at parse time (Spark owns the grammar) — pin no-throw.
+    spark.sql(s"ALTER TABLE $table ADD COLUMN c int DEFAULT 5")
+
+    // (2) The default is not written into the persisted schema — column c has no default metadata.
+    val cDesc = spark.sql(s"DESCRIBE TABLE EXTENDED $table").collect()
+                  .map(_.mkString("|")).filter(_.matches("(?i)^c\\|.*")).mkString(" ;; ")
+    assert(!cDesc.toLowerCase.contains("default") && !cDesc.contains("5"),
+      s"[$fmt] expected no default persisted for c, but DESCRIBE shows: $cDesc — a #251-containing build may now be wired; re-audit")
+
+    // (3) The default is NOT backfilled on read — pre-existing rows read NULL, not 5.
+    val nulls = spark.sql(s"SELECT count(*) FROM $table WHERE c IS NULL").collect()(0).getLong(0)
+    assert(nulls == 2,
+      s"[$fmt] expected the default NOT applied on read (2 NULLs), got $nulls — a #251-containing build may now apply defaults; re-audit")
+
+    // (4) The default is NOT applied on write — an insert that omits c is rejected (no write wiring).
+    val omit = Check.intercept[org.apache.spark.sql.AnalysisException] {
+      spark.sql(s"INSERT INTO $table (id, s) VALUES (3, 'c')")
+    }
+    val omitMsg = Exceptions.causeChain(omit).flatMap(e => Option(e.getMessage)).mkString(" | ")
+    assert(omitMsg.contains("CANNOT_FIND_DATA"),
+      s"[$fmt] expected omit-insert rejected with CANNOT_FIND_DATA (no column-default write wiring), got: $omitMsg")
+
+    println(s"DIAG fork.colDefault[$fmt]: accepted=yes persistedDefault=no readBackfill=no writeApply=no(CANNOT_FIND_DATA)")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // ── Column-default (fork #251) — SchemaParser serialization ──────────────────────────────────────
+  // Characterizes the api/core surface of #251: NestedField carries `initial-default`/`write-default` and
+  // SchemaParser serializes them into the schema JSON. `toJson` takes no format-version parameter, so the
+  // key serializes regardless of the table's format version. Exercised directly via reflection so the SAME
+  // source compiles and runs in BOTH artifacts:
+  //   • published 1.5.2.15  → NestedField.builder() is absent → records "API unsupported";
+  //   • branch HEAD (#251)  → builds a defaulted field, checks SchemaParser emits `initial-default` and
+  //                           that it round-trips (fromJson→toJson).
+  // Reflection (not direct calls) is required because the builder API does not exist in the release jar;
+  // a direct reference would not COMPILE in default (release) mode.
+  private def forkColDefaultApiSerialization(ctx: Ctx): Unit = {
+    val nestedFieldCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val builderM = scala.util.Try(nestedFieldCls.getMethod("builder"))
+    if (builderM.isFailure) {
+      // Published release: the #251 column-default API is absent. Pin that absence (feature not present).
+      println("DIAG fork.colDefault.api: NestedField.builder ABSENT — #251 column-default API unsupported (published release artifact)")
+      val ms = nestedFieldCls.getMethods.map(_.getName).toSet
+      assert(!ms.contains("initialDefault") && !ms.contains("writeDefault"),
+        "NestedField exposes initial/write-default accessors but no builder() — unexpected partial #251; re-audit")
+      return
+    }
+    // Branch HEAD: #251 present. Build `optional int c` carrying initial-default=5 via the builder.
+    val builder0 = builderM.get.invoke(null)
+    def chain(b: AnyRef, m: String, argT: Class[_], arg: AnyRef): AnyRef =
+      b.getClass.getMethod(m, argT).invoke(b, arg)
+    def chain0(b: AnyRef, m: String): AnyRef = b.getClass.getMethod(m).invoke(b)
+    val intType = Class.forName("org.apache.iceberg.types.Types$IntegerType")
+      .getMethod("get").invoke(null)
+    var b = chain(builder0, "withId", java.lang.Integer.TYPE, java.lang.Integer.valueOf(3))
+    b = chain(b, "withName", classOf[String], "c")
+    b = chain(b, "ofType", Class.forName("org.apache.iceberg.types.Type"), intType)
+    b = chain0(b, "asOptional")
+    b = chain(b, "withInitialDefault", classOf[Object], java.lang.Integer.valueOf(5))
+    val field = b.getClass.getMethod("build").invoke(b)
+      .asInstanceOf[org.apache.iceberg.types.Types.NestedField]
+
+    // Assemble a schema [id, c(default=5)] and serialize it — no format version is even passed.
+    val idField = org.apache.iceberg.types.Types.NestedField.required(
+      1, "id", org.apache.iceberg.types.Types.LongType.get())
+    val schema = new org.apache.iceberg.Schema(java.util.Arrays.asList(idField, field))
+    val json = org.apache.iceberg.SchemaParser.toJson(schema)
+    println(s"DIAG fork.colDefault.api: #251 PRESENT; serialized schema JSON = $json")
+
+    // (a) The default is serialized into the schema JSON.
+    assert(json.contains("initial-default"),
+      s"expected #251 SchemaParser to serialize 'initial-default' into the schema JSON, got: $json")
+    // (b) toJson takes no format-version argument — the key serializes the same regardless of format version.
+    // (c) Round-trips through fromJson→toJson.
+    val reparsed = org.apache.iceberg.SchemaParser.fromJson(json)
+    val json2 = org.apache.iceberg.SchemaParser.toJson(reparsed)
+    assert(json2.contains("initial-default"),
+      s"expected 'initial-default' to survive fromJson->toJson round-trip, got: $json2")
+    println("DIAG fork.colDefault.api: initial-default serialized (no format-version argument) + round-trips")
+  }
+
+  // Reflectively build an `optional int` NestedField carrying initial-default=`dflt` (the #251 builder).
+  // Returns None when the API is absent (published release) so callers can pin that cleanly.
+  private def buildDefaultedIntField(id: Int, name: String, dflt: Int): Option[org.apache.iceberg.types.Types.NestedField] = {
+    val nfCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val bm = scala.util.Try(nfCls.getMethod("builder"))
+    if (bm.isFailure) return None
+    def chain(b: AnyRef, m: String, at: Class[_], a: AnyRef): AnyRef = b.getClass.getMethod(m, at).invoke(b, a)
+    def chain0(b: AnyRef, m: String): AnyRef = b.getClass.getMethod(m).invoke(b)
+    val intType = Class.forName("org.apache.iceberg.types.Types$IntegerType").getMethod("get").invoke(null)
+    var b = chain(bm.get.invoke(null), "withId", java.lang.Integer.TYPE, java.lang.Integer.valueOf(id))
+    b = chain(b, "withName", classOf[String], name)
+    b = chain(b, "ofType", Class.forName("org.apache.iceberg.types.Type"), intType)
+    b = chain0(b, "asOptional")
+    b = chain(b, "withInitialDefault", classOf[Object], java.lang.Integer.valueOf(dflt))
+    Some(b.getClass.getMethod("build").invoke(b).asInstanceOf[org.apache.iceberg.types.Types.NestedField])
+  }
+
+  // ── Column-default (fork #251) — READ-APPLY characterization PROBE (TABLED / not a bug claim) ─────
+  // TABLED per repo owner: "it is not fundamentally broken … if there is a gap, it's implemented somewhere."
+  // This probe records, but does NOT assert a verdict on, what THIS harness config does — i.e. the OSS
+  // Spark 3.5 read path over branch iceberg-core. It does NOT exercise LinkedIn's PRIVATE Spark fork, which
+  // is the likely home of the missing-column read-application. So a NULL here is a property of this harness,
+  // NOT proof the feature is broken. Left as a DIAG-only probe (asserts only the undisputed half: the
+  // default persists into the committed schema). Revisit when default values are un-tabled AND the private
+  // Spark reader is available to test against.
+  private def forkColDefaultReadApplyProbe(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val nfCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val apiPresent = scala.util.Try(nfCls.getMethod("builder")).isSuccess
+    if (!apiPresent) {
+      // Published release: no way to set a default, so there is nothing to read back. Assert the API is
+      // genuinely absent (so this is not a silent green) and return.
+      println("DIAG fork.colDefault.readApplyProbe: #251 API absent (published release) — nothing to probe")
+      assert(!nfCls.getMethods.map(_.getName).toSet.contains("initialDefault"),
+        "NestedField exposes initialDefault but builder() is absent — unexpected partial #251; re-audit")
+      return
+    }
+    val cat = "coldefroapply"
+    val wh  = s"/tmp/coldef-readapply-${System.nanoTime()}"
+    spark.conf.set(s"spark.sql.catalog.$cat", "org.apache.iceberg.spark.SparkCatalog")
+    spark.conf.set(s"spark.sql.catalog.$cat.type", "hadoop")
+    spark.conf.set(s"spark.sql.catalog.$cat.warehouse", wh)
+    val t = s"$cat.d.t_readapply"
+    spark.sql(s"DROP TABLE IF EXISTS $t")
+    spark.sql(s"CREATE TABLE $t (id bigint) USING iceberg")
+    spark.sql(s"INSERT INTO $t VALUES (1),(2)") // data files physically contain ONLY `id`
+
+    // Set a column default the way a private engine would: evolve the schema to [id, c int DEFAULT 5] via
+    // the low-level TableMetadata API (public UpdateSchema has no set-default op on the branch).
+    val table = org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, t)
+    val cur   = table.schema()
+    val nextId = cur.highestFieldId() + 1
+    val cField = buildDefaultedIntField(nextId, "c", 5).getOrElse(
+      throw new AssertionError("#251 builder present but field build failed"))
+    val cols = new java.util.ArrayList[org.apache.iceberg.types.Types.NestedField](cur.columns())
+    cols.add(cField)
+    val s2 = new org.apache.iceberg.Schema(cols)
+    val ops = table.asInstanceOf[org.apache.iceberg.HasTableOperations].operations()
+    val base = ops.current()
+    val updated = org.apache.iceberg.TableMetadata.buildFrom(base).setCurrentSchema(s2, s2.highestFieldId()).build()
+    ops.commit(base, updated)
+
+    // ASSERT only the undisputed half: the default persists into the committed schema (ungated).
+    val persisted = org.apache.iceberg.SchemaParser.toJson(
+      org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, t).schema())
+    assert(persisted.contains("initial-default"),
+      s"expected initial-default to persist into the committed schema, got: $persisted")
+
+    // DIAG only — record what the OSS-Spark read path returns here; NO verdict (read-apply may live in the
+    // private Spark reader not exercised by this harness).
+    spark.sql(s"REFRESH TABLE $t")
+    val vals = spark.sql(s"SELECT c FROM $t ORDER BY id").collect()
+                 .map(r => if (r.isNullAt(0)) "NULL" else r.getInt(0).toString)
+    println(s"DIAG fork.colDefault.readApplyProbe: OSS-Spark read of defaulted col over old files = " +
+            s"[${vals.mkString(",")}] (harness-config observation only; private Spark reader NOT tested; TABLED)")
+    spark.sql(s"DROP TABLE IF EXISTS $t")
+  }
+
+  val forkColDefaultOps: List[(String, Ctx => Unit)] = List(
+    "fork.colDefault.addColumnInert @ parquet"   -> forkColDefaultAddColumn("parquet"),
+    "fork.colDefault.addColumnInert @ orc"       -> forkColDefaultAddColumn("orc"),
+    "fork.colDefault.apiSerialization @ core"    -> forkColDefaultApiSerialization,
+    "fork.colDefault.readApplyProbe @ core"      -> forkColDefaultReadApplyProbe
+  )
+
+  // ── #249 (d69c1fd91) — partitioned write distribution default ─────────────────────────────────────
+  // The fork changes the DEFAULT write.distribution-mode for PARTITIONED writes from Apache's HASH to
+  // NONE (Spark 3.5). With HASH, the writer shuffles rows so each partition is written by one task ->
+  // ~(#partitions) data files. With NONE, no shuffle -> each input task writes every partition it holds
+  // -> up to (#tasks × #partitions) files. This test appends the SAME multi-task DataFrame into a
+  // 4-partition table twice — once with the default, once with an explicit HASH — and compares the data-
+  // file counts. It pins that (a) explicit HASH clusters to ~#partitions, and (b) the default does not
+  // cluster more than HASH. Run under both runtimes via ICEBERG_RUNTIME_JAR: the DIAG file counts show
+  // the branch-vs-release difference (fork NONE default -> more files than a HASH-default build).
+  private def forkPartitionDistDefault(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val nParts = 4
+    val nTasks = 8
+    def buildAndCountFiles(tbl: String, extraProps: String): Long = {
+      spark.sql(s"DROP TABLE IF EXISTS $tbl")
+      spark.sql(s"CREATE TABLE $tbl (id bigint, p int) USING iceberg PARTITIONED BY (p) " +
+        s"TBLPROPERTIES ('format-version'='2', 'write.format.default'='$fmt'$extraProps)")
+      // nTasks input partitions, each holding rows for all nParts table partitions.
+      val df = spark.range(0, 400)
+        .selectExpr("id", s"cast(id % $nParts as int) as p")
+        .repartition(nTasks)
+      df.writeTo(tbl).append()
+      val n = spark.sql(s"SELECT count(*) FROM $tbl.data_files").collect()(0).getLong(0)
+      spark.sql(s"DROP TABLE IF EXISTS $tbl")
+      n
+    }
+    val nDefault = buildAndCountFiles(s"${ctx.namespace}.t_dist_def_$fmt", "")
+    val nHash    = buildAndCountFiles(s"${ctx.namespace}.t_dist_hash_$fmt", ", 'write.distribution-mode'='hash'")
+    println(s"DIAG fork.partitionDist[$fmt]: defaultFiles=$nDefault hashFiles=$nHash " +
+            s"(parts=$nParts tasks=$nTasks; default==hash => HASH-default build, default>hash => NONE-default #249)")
+    // (a) Explicit HASH clusters by partition -> roughly one file per partition (allow slack for spill).
+    assert(nHash <= nParts * 2,
+      s"[$fmt] write.distribution-mode=hash should cluster to ~$nParts files, got $nHash")
+    // (b) The default never clusters MORE than HASH (fork default is NONE => >=; never <).
+    assert(nDefault >= nHash,
+      s"[$fmt] default partitioned distribution produced FEWER files than HASH (default=$nDefault hash=$nHash) — unexpected; re-audit #249")
+  }
+
+  val forkPartitionDistOps: List[(String, Ctx => Unit)] = List(
+    "fork.partitionDist.default @ parquet" -> forkPartitionDistDefault("parquet"),
+    "fork.partitionDist.default @ orc"     -> forkPartitionDistDefault("orc")
+  )
+
+  private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
+    assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, s"soft-delete $db.$tbl failed")
+    val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
+    assert(HtsAdmin.restore(db, tbl, ms)._1 / 100 == 2, s"restore $db.$tbl failed")
+  }
+
+  // ── Undrop 3-way compositions (Block 9, real HTS only) — restore's state-preservation, per feature ──
+  // The undrop:* battery proves the whole op catalog works post-restore. These are pointed 3-way
+  // chains that set up a SPECIFIC feature's state (branch / snapshot history / evolved schema),
+  // destroy via soft-delete→restore, then consume that exact feature — the direct modality check that
+  // restore's destruction set does not intersect refs / lineage / schema.
+
+  // A pre-existing branch must survive the drop→undrop round-trip.
+  def interactUndropBranchSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_branch")
+    ctx.spark.sql(s"ALTER TABLE $table CREATE BRANCH b")
+    ctx.spark.sql(s"INSERT INTO $table.branch_b ${RowGenerator.valuesClause(Core, 2)}")   // branch diverges: 3+2=5
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "main row set changed across undrop")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF 'b'").collect()(0).getLong(0) == 5, "branch 'b' did not survive undrop")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Snapshot history (time travel) must survive restore.
+  def interactUndropTimeTravelSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_tt")
+    val firstSnap = ctx.spark.sql(s"SELECT snapshot_id FROM $table.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getLong(0)
+    ctx.spark.sql(s"INSERT INTO $table ${RowGenerator.valuesClause(Core, 2)}")            // 2nd snapshot: 5 rows
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 5, "current state changed across undrop")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table VERSION AS OF $firstSnap").collect()(0).getLong(0) == 3,
+      "pre-restore snapshot not time-travellable after undrop (lineage lost)")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  // Evolved schema must survive restore, and the restored table must still accept the evolved shape.
+  def interactUndropSchemaSurvives(ctx: Ctx): Unit = {
+    val (table, db, tbl) = undropSeed(ctx, "t_ud_schema")
+    ctx.spark.sql(s"ALTER TABLE $table ADD COLUMN extra int")
+    ctx.spark.sql(s"INSERT INTO $table VALUES (CAST(9 AS BIGINT), 9, 'row-9', 9.5, false, '2024-01-09-08', 99)")
+    softDeleteRestore(ctx, db, tbl)
+    assert(ctx.spark.sql(s"SELECT extra FROM $table WHERE ${Core.long0.columnName} = 9").collect()(0).getInt(0) == 99,
+      "evolved column value lost across undrop")
+    ctx.spark.sql(s"INSERT INTO $table VALUES (CAST(10 AS BIGINT), 10, 'row-10', 10.5, true, '2024-01-10-09', 100)")
+    assert(ctx.spark.sql(s"SELECT count(*) FROM $table WHERE extra IS NOT NULL").collect()(0).getLong(0) == 2,
+      "restored table did not accept the evolved schema for new writes")
+    ctx.spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val undropInteractOps: List[(String, Ctx => Unit)] = List(
+    "interact.undrop.branchSurvives"    -> interactUndropBranchSurvives,
+    "interact.undrop.timeTravelSurvives" -> interactUndropTimeTravelSurvives,
+    "interact.undrop.schemaSurvives"    -> interactUndropSchemaSurvives
   )
 
   // ── Branching / WAP (format-agnostic → parquet only; behavior-focused, not matrixed) ─────────
@@ -3487,16 +4055,16 @@ object Plan {
   // of failing the suite, and is tracked in BUGS.md. This is how we "tag a failing test and filter
   // it": a genuine bug is tagged here, deferred for follow-up, and never plowed past silently.
   val knownBugs: List[(String, String)] = List(
-    "insert.explicitColumns" ->
-      "partial-column INSERT rejected (CANNOT_FIND_DATA for omitted column); vanilla Iceberg null-fills optional columns — see BUGS.md",
+    // insert.explicitColumns is NO LONGER a bug tag — reclassified to a negative PIN (engine limitation,
+    // not OpenHouse; code-verified). See insertExplicitColumns above and BUGS.md.
     "nested.deleteByNestedField" ->
-      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work) — see BUGS.md",
+      "DELETE WHERE <nested struct field> crashes with an internal optimizer NPE (SELECT/UPDATE on the same field work). Code-verified UPSTREAM: OpenHouse contributes no code to the row-level DELETE rewrite (owned by IcebergSparkSessionExtensions + Spark optimizer); the NPE is in the nested-field DELETE-rewrite plan. Needs a full stack capture before filing — see BUGS.md",
     "ddl.renameColumn" ->
-      "RENAME COLUMN is a silent no-op — neither errors nor renames (the client drops the change before the server validates it); a silent failure worse than a clean rejection — see BUGS.md",
+      "RENAME COLUMN is a silent no-op. Code-verified GENUINE OpenHouse regression from #558 (commit 0ad4914): server-side normalizeSchemaCasingToTable rewrites every field's name to the table's spelling BY FIELD ID (BaseIcebergSchemaValidator:60-73), reverting the rename, and it runs BEFORE the sameSchema gate so validateWriteSchema (which would reject loudly) never fires. Fix: guard the normalizer with equalsIgnoreCase. Silent failure worse than the pre-#558 clean rejection — see BUGS.md",
     "ddl.encryption" ->
       "encryption KMS plugin is external/private (no impl/interface/mock in-repo); OSS leaves the encryption() hook un-wired and writes plaintext, so the intended-behavior assertion is deferred until the plugin is present — see DDL-TEST-PLAN.md / AUDIT-FINDINGS.md",
     "control.undrop" ->
-      "undrop not runnable at fidelity in the embedded harness: the HouseTableRepository is a @Primary in-memory STUB, and the public Tables DELETE hard-codes purge=true so drop→soft-delete is unreachable via the customer API in any environment (HTS-admin-only). Real fidelity needs an embedded HTS (SpringH2HtsApplication) — see REST-FIDELITY-EVAL.md / AUDIT-FINDINGS.md"
+      "undrop is SKIP under the DEFAULT stub path (HouseTableRepository is a @Primary in-memory stub; the public Tables DELETE hard-codes purge=true). Under HARNESS_REAL_HTS=1 the real embedded HTS is booted and undrop runs for real as the undrop:* battery + undropAdmin.* lifecycle (NOT SKIP) — see HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md / REST-FIDELITY-EVAL.md"
   )
 
   def bugReason(id: String): Option[String] =
@@ -3542,10 +4110,14 @@ object Plan {
     val partitionEvolution  = Scenarios.partitionEvolution.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     // Time travel + restore/rollback (self-contained pipelines, parquet).
-    val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    // Format-sensitive blocks multiplex across parquet+orc (the seed format is a parameter, not baked in).
+    val dataFormats     = List("parquet", "orc")
+    val timeTravel      = for { f <- dataFormats; (name, t) <- Scenarios.timeTravelOps(f) }     yield Case(s"$name @ $f", t.run)
+    val restoreRollback = for { f <- dataFormats; (name, t) <- Scenarios.restoreRollbackOps(f) } yield Case(s"$name @ $f", t.run)
+    val maintenance     = for { f <- dataFormats; (name, t) <- Scenarios.maintenanceOps(f) }     yield Case(s"$name @ $f", t.run)
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
+    val forkColDefault  = Scenarios.forkColDefaultOps.map { case (name, f) => Case(name, f) }
+    val forkPartitionDist = Scenarios.forkPartitionDistOps.map { case (name, f) => Case(name, f) }
     val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
@@ -3582,7 +4154,10 @@ object Plan {
     // both partitionings kept (partitioning changes overwrite/dynamic-overwrite semantics on the
     // branch). Every op asserts its normal delta — now proving the op works branch-routed AND that
     // main is untouched (isolation). ~106 cases.
-    val branchParquetLayouts = Scenarios.layouts.filter(_.label.endsWith("/parquet"))
+    // Format policy: ORC + Parquet (both), not parquet-only. Avro is intentionally NOT added to these
+    // ref/metadata-routed blocks (branch/undrop/DDL-consumer) — the additive ask was ORC, and the
+    // 3-format blocks keep Avro separately.
+    val branchParquetLayouts = Scenarios.layouts.filter(l => l.label.endsWith("/parquet") || l.label.endsWith("/orc"))
     val branchWap = for {
       layout     <- branchParquetLayouts
       (name, op) <- Scenarios.operations
@@ -3591,7 +4166,7 @@ object Plan {
 
     // Over-prune miss #2: branch × MoR. The mutation ops routed onto a branch of a MoR table —
     // NOT vacuous (the MoR-branch merge story differs; cherry-pick rejects row-delete snapshots).
-    val branchMorLayout = Scenarios.morLayouts.filter(_.label == "mor-unpartitioned/parquet")
+    val branchMorLayout = Scenarios.morLayouts.filter(l => l.label == "mor-unpartitioned/parquet" || l.label == "mor-unpartitioned/orc")
     val branchWapMor = for {
       layout     <- branchMorLayout
       (name, op) <- Scenarios.mutationOperations
@@ -3602,15 +4177,40 @@ object Plan {
     // step 2). ~106 cases. (The undrop leg is gated on the embedded-HTS restructure — see
     // REST-FIDELITY-EVAL.md — so only the RTAS leg is runnable now.)
     val prepRtas = for {
-      (label, partitionClause) <- Scenarios.rtasPrepShapes
-      (name, op)               <- Scenarios.operations
-    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3).andThen(op).run)
+      (label, partitionClause, fmt) <- Scenarios.rtasPrepShapes
+      (name, op)                    <- Scenarios.operations
+    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3, fmt).andThen(op).run)
 
-    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table.
+    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table. ORC + Parquet.
     val prepRtasMor = for {
+      fmt        <- List("parquet", "orc")
       (name, op) <- Scenarios.mutationOperations
-    } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/parquet",
-      Scenarios.createAndSeedRtasMor("", 3).andThen(op).run)
+    } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/$fmt",
+      Scenarios.createAndSeedRtasMor("", 3, fmt).andThen(op).run)
+
+    // P axis (drop→undrop leg) — the whole DML catalog on a table taken through a real HTS soft-delete
+    // → restore round-trip (SURFACE-APPRAISAL). Requires the embedded real HTS (HARNESS_REAL_HTS=1);
+    // empty otherwise. This is the surface-DOUBLING leg: every op re-verifies that the restored table
+    // still behaves identically, i.e. that restore's destruction set does not intersect the feature's
+    // state-dependency set. Undrop is metadata/ref reconstruction — file encoding is vacuous → parquet
+    // layouts only (as with RTAS/branch).
+    val undrop =
+      if (HtsAdmin.enabled) for {
+        layout     <- branchParquetLayouts
+        (name, op) <- Scenarios.operations
+      } yield Case(s"undrop:$name @ ${layout.label}",
+        Scenarios.createAndSeedUndropped(layout, 3).andThen(op).run)
+      else Nil
+
+    // Undrop admin-lifecycle block (Phase 5) — soft-delete/list/restore/purge, real HTS only.
+    val undropAdmin =
+      if (HtsAdmin.enabled) Scenarios.undropAdminOps.map { case (name, run) => Case(name, run) }
+      else Nil
+
+    // Block 9 deepening: undrop 3-way compositions (branch/time-travel/schema survival), real HTS only.
+    val undropInteract =
+      if (HtsAdmin.enabled) Scenarios.undropInteractOps.map { case (name, run) => Case(name, run) }
+      else Nil
 
     // DDL × consumer battery (task #3): each state-changing DDL, then each consumer must still work.
     // 4 DDL × 6 consumers × {unpartitioned, partitioned}/parquet = 48.
@@ -3635,6 +4235,35 @@ object Plan {
       (name, op) <- Scenarios.morCoexistOps
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
 
+    // Block 8 deepening: maintenance × MoR-with-live-delete. The delete-DECODE op (rewrite_data_files
+    // fold) is format-relevant → × 3 MoR formats; metadata-only maintenance is format-vacuous → × 1.
+    val maintenanceMorFold = for {
+      layout     <- Scenarios.morVerifyLayouts
+      (name, op) <- Scenarios.maintenanceMorFoldOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+    val morParquetVerify = Scenarios.morVerifyLayouts.filter(l => l.label == "mor-verify/parquet" || l.label == "mor-verify/orc")
+    val maintenanceMorMeta = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.maintenanceMorMetaOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
+    // Block 10 deepening: MoR delete-file modality hazards (time-travel / rollback / expire). Snapshot
+    // logic is format-vacuous → × 1 MoR layout.
+    val morHazard = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.morHazardOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedMorDeleted(layout, 3).andThen(op).run)
+
+    // MoR × branch MERGE: position deletes carried across fast_forward / cherry_pick / REPLACE BRANCH.
+    // Single-file MoR seed so a branch DELETE is a real position delete; merge is format-vacuous → ×1.
+    val morBranchMerge = for {
+      layout     <- morParquetVerify
+      (name, op) <- Scenarios.morBranchMergeOps
+    } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedSingleFile(layout, 3).andThen(op).run)
+
+    // Encryption capability pin (characterization): OSS writes plaintext parquet (encryption un-wired).
+    val encryptionPin = List(Case("surface.pin.dataPlaintext @ parquet", Scenarios.encryptionPlaintextPin.run))
+
     val creates = Scenarios.layouts.map { layout =>
       Case(s"create.schema @ ${layout.label}", Scenarios.createSchema(layout).run)
     }
@@ -3650,7 +4279,9 @@ object Plan {
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
-      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved
+      readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
+      maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
+      encryptionPin ++ forkColDefault ++ forkPartitionDist
   }
 }
 
@@ -3672,9 +4303,56 @@ object Runner {
   }
 }
 
+// Boot app for the REAL House Table Service as a 2nd Spring context in-JVM (HTS-embed, Option A).
+// Mirrors services/.../e2e/SpringH2HtsApplication's annotation set (test-scope, so replicated here).
+// Security auto-config is excluded (spring-security-web is only partially present on the harness
+// classpath, and the harness runs unauthenticated) — exactly as the tables boot does.
+// internal.catalog.mapper is intentionally NOT scanned (a client-side concern needing FileIOManager;
+// the HTS server does not use it). Proven by HtsBootProbe.
+@org.springframework.boot.autoconfigure.SpringBootApplication(
+  exclude = Array(
+    classOf[org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration],
+    classOf[org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration]))
+@org.springframework.context.annotation.ComponentScan(basePackages = Array(
+  "com.linkedin.openhouse.housetables.api",
+  "com.linkedin.openhouse.housetables.dto.mapper",
+  "com.linkedin.openhouse.housetables.controller",
+  "com.linkedin.openhouse.housetables.services",
+  "com.linkedin.openhouse.common.exception.handler",
+  "com.linkedin.openhouse.common.audit",
+  "com.linkedin.openhouse.housetables.repository",
+  "com.linkedin.openhouse.housetables.properties",
+  "com.linkedin.openhouse.housetables.config",
+  "com.linkedin.openhouse.cluster.configs",
+  "com.linkedin.openhouse.cluster.storage"))
+@org.springframework.boot.autoconfigure.domain.EntityScan(
+  basePackages = Array("com.linkedin.openhouse.housetables.model"))
+class HtsBootApp
+
+/** Boots the embedded real House Table Service (H2, MySQL-mode) as its own Spring context. */
+object HtsEnv {
+  import org.springframework.boot.builder.SpringApplicationBuilder
+  import org.springframework.boot.web.context.WebServerApplicationContext
+  import org.springframework.context.ConfigurableApplicationContext
+
+  /** @return (context, base-uri) for the embedded HTS. */
+  def start(): (ConfigurableApplicationContext, String) = {
+    val root = System.getProperty("java.io.tmpdir") + "/hts-embed"
+    val ctx = new SpringApplicationBuilder(classOf[HtsBootApp])
+      .properties(
+        "server.port=0",
+        "cluster.storage.root-path=" + root,
+        "cluster.tables.allowed-client-name-values=trino,spark")
+      .run()
+    val port = ctx.asInstanceOf[WebServerApplicationContext].getWebServer.getPort
+    (ctx, s"http://localhost:$port")
+  }
+}
+
 /** Boots the embedded OpenHouse server and wires a SparkSession to the OpenHouse catalog. */
 object OpenHouseEnv {
   import com.linkedin.openhouse.tablestest.OpenHouseLocalServer
+  import org.springframework.context.ConfigurableApplicationContext
 
   private def authToken(): String =
     Option(getClass.getClassLoader.getResourceAsStream("dummy.token"))
@@ -3689,7 +4367,38 @@ object OpenHouseEnv {
       .config(s"spark.sql.catalog.$name.cluster", "local-cluster")
       .config(s"spark.sql.catalog.$name.auth-token", token)
 
-  def start(): (OpenHouseLocalServer, SparkSession, String, String) = {
+  def start(): (OpenHouseLocalServer, SparkSession, String, String, Option[ConfigurableApplicationContext]) = {
+    // HTS-embed (Option A): when HARNESS_REAL_HTS=1, boot the real House Table Service as a 2nd
+    // Spring context, point the embedded tables server's HouseTableRepositoryImpl at it via
+    // cluster.housetables.base-uri, and disable the @Primary in-memory stub (openhouse.htsStub.enabled
+    // =false) so the real HTTP client is the sole HouseTableRepository. Default (flag unset) keeps the
+    // stub — the existing green baseline is always reproducible.
+    val realHts = sys.env.get("HARNESS_REAL_HTS").contains("1")
+    val htsCtxOpt: Option[ConfigurableApplicationContext] =
+      if (realHts) {
+        // Boot the HTS context FIRST, while no spring.sql.init.mode System property is set, so it
+        // uses its own application.properties (spring.sql.init.mode=always) and runs schema.sql +
+        // data.sql on its MySQL-mode H2. The tables-context suppression props below are set AFTER
+        // this returns (the HTS context is already fully refreshed), so they don't affect HTS.
+        val (ctx, htsUri) = HtsEnv.start()
+        HtsAdmin.htsUri = htsUri   // enables the undrop preparation axis (Phase 4)
+        System.setProperty("cluster.housetables.base-uri", htsUri)
+        System.setProperty("openhouse.htsStub.enabled", "false")
+        println(s">> REAL HTS mode: embedded HTS at $htsUri (stub disabled)")
+        Some(ctx)
+      } else None
+
+    // ALWAYS (both stub and real-HTS modes): housetables-lib.jar is on the harness classpath
+    // unconditionally (print-cp.init.gradle pulls it in for the real-HTS path). Its root
+    // data.sql/schema.sql are MySQL-dialect and would be auto-run by the TABLES context's H2
+    // (non-MySQL mode) → INSERT IGNORE syntax error. The tables side ships no SQL scripts and relies
+    // on Hibernate auto-DDL, so (i) never run classpath SQL init for it, and (ii) make auto-DDL
+    // explicit (the stray schema.sql otherwise flips Spring Boot's embedded-H2 ddl-auto default to
+    // `none`, leaving the tables server's own H2 tables — feature-toggle status/rules — missing).
+    // In real-HTS mode this runs AFTER HtsEnv.start(), so the HTS schema (which needs init) is safe.
+    System.setProperty("spring.sql.init.mode", "never")
+    System.setProperty("spring.jpa.hibernate.ddl-auto", "create-drop")
+
     val server = new OpenHouseLocalServer()
     server.start()
     val uri = s"http://localhost:${server.getPort}"
@@ -3708,14 +4417,15 @@ object OpenHouseEnv {
       .config("spark.ui.enabled", "false")
 
     val wired = Seq("openhouse", "default_iceberg").foldLeft(base)(wireCatalog(_, _, uri, token))
-    (server, wired.getOrCreate(), uri, token)
+    (server, wired.getOrCreate(), uri, token, htsCtxOpt)
   }
 }
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val (server, spark, restUri, restToken) = OpenHouseEnv.start()
+    val (server, spark, restUri, restToken, htsCtxOpt) = OpenHouseEnv.start()
     spark.sparkContext.setLogLevel("ERROR")
+    HtsAdmin.tablesUri = restUri; HtsAdmin.token = restToken   // undrop restore path (Phase 4)
     val ctx = Ctx(spark, "openhouse.dbMatrix", restUri, restToken)
 
     // Each command-line arg is an include-substring; a case runs only if its id contains ALL of
@@ -3775,6 +4485,7 @@ object Main {
 
     try spark.stop() catch { case _: Throwable => () }
     try server.stop() catch { case _: Throwable => () }
+    htsCtxOpt.foreach(ctx => try ctx.close() catch { case _: Throwable => () })
     // A run that validated nothing (0 cases, or everything skipped) is NOT success.
     System.exit(if (failed == 0 && passed > 0) 0 else 1)
   }

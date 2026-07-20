@@ -1,3 +1,5 @@
+> **HISTORICAL snapshot** (early case counts, old branch name — accurate when written). Current truth: `index.md` + `VERIFIED-RUN-openhouse.txt`.
+
 # delta-harness — session checkpoint (state, findings, decisions)
 
 Context-retention snapshot. Pairs with `DDL-TEST-PLAN.md` (plan + phase checkoffs), `BUGS.md`
