@@ -65,7 +65,13 @@ RUN git clone https://github.com/apache/incubator-livy \
     && rm -rf "/incubator-livy"
 
 
-FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+# Runtime base must be Java 11+: the Iceberg 1.10 fork is compiled to class-file
+# version 55 (Java 11) and fails on the Java-8 bde2020 base with
+# UnsupportedClassVersionError. Spark 3.5 supports Java 11, and Spark ships its own
+# Hadoop 3.3.4 client, so the bde2020 Hadoop base is not required here (HDFS is
+# reached via fully-qualified hdfs:// URIs). temurin:11-jdk-jammy matches the builder
+# stage (consistent glibc), unlike Debian-9/glibc-2.24 which cannot install JDK 11.
+FROM eclipse-temurin:11-jdk-jammy
 
 ENV LIVY_HOME=/opt/livy \
 SPARK_HOME=/opt/spark

@@ -78,3 +78,61 @@ Technical facts only. Format: `Dn — symptom -> root cause -> fix/disposition`.
 ## Findings (HDFS behavior)
 
 (appended as evidence is gathered — see 20-progress.md)
+
+- **D9 — Spark image ran Java 8; Iceberg 1.10 fork needs Java 11.**
+  First `spark-sql` attempt threw `UnsupportedClassVersionError: org/apache/iceberg/spark/ExtendedParser
+  ... class file version 55.0, this version of the Java Runtime only recognizes up to 52.0`.
+  The Spark image's final stage was `FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8`
+  (Java 8 = class 52), but the fork jars are compiled to class 55 (Java 11). Debian-9/stretch
+  (glibc 2.24) in that base cannot install JDK 11 (EOL apt repos; and a modern temurin JDK's
+  glibc is too new to copy in). **Fix (committed):** rebase the final stage on
+  `eclipse-temurin:11-jdk-jammy` (Spark 3.5 supports Java 11; Spark bundles its own Hadoop 3.3.4
+  client, so the bde2020 Hadoop base is not needed — HDFS is reached via fully-qualified
+  `hdfs://` URIs). HDFS namenode/datanode services still use the bde2020 hadoop-3.2.1 images.
+
+## Findings (HDFS behavior)
+
+- **F-DEFAULTFS — Spark needs `fs.defaultFS=hdfs://namenode:9000` or data writes go to local disk.**
+  The OpenHouse catalog returns table locations as **scheme-less** paths (`/data/openhouse/...`).
+  With Spark's default `fs.defaultFS=file:///`, the first INSERT failed:
+  `Mkdirs failed to create /data/openhouse/.../data (exists=false, cwd=file:/opt/spark)` —
+  Spark tried to write ORC data files to the container's LOCAL fs. Setting
+  `--conf spark.hadoop.fs.defaultFS=hdfs://namenode:9000` routes the scheme-less path to HDFS.
+  (The server-side metadata write is unaffected because the tables service's Hadoop conf points
+  at HDFS.) This is exactly the leg the LocalFileSystem harness could not exercise
+  (F-VACUITY-HADOOP): with `fs.defaultFS=file:///` in the harness the same scheme-less path
+  silently resolves to local disk and "works", masking the need for HDFS defaultFS.
+
+- **F-REPL — the delete-file replication custom behavior does NOT take effect through the
+  OpenHouse Spark 3.5 + fork 1.10.0-openhouse stack on HDFS.**
+  Evidence (Claim 2 table in 20-progress.md): MoR position-delete files always take the standard
+  `dfs.replication`, regardless of `spark.sql.iceberg.delete-file-replication` (session conf via
+  `SET`), the `delete-file-replication` write option, or the `write.delete-file-replication`
+  table property (which round-trips through the catalog). Generic HDFS replication control works
+  (data files honored `dfs.replication=2`), so the gap is specific to the delete-file knob.
+  Jar-level analysis of `iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar` (the fork artifact
+  under test) shows the plumbing classes are all PRESENT and individually correct:
+  `SparkWriteConf.deleteFileReplication()` resolves session-conf/table-prop/write-option with
+  default 3; `SparkPositionDeltaWrite$PositionDeltaWriteFactory` builds a delete-file
+  `OutputFileFactory` with `.suffix(...).replicationFactor(...)`; `OutputFileFactory.newOutputFile()`
+  passes `FILE_REPLICATION_FACTOR` via `FileIO.newOutputFile(String, Map)` when a factor is present;
+  the default catalog `FileIO` is `HadoopFileIO`, whose `newOutputFile(String, Map)` overload calls
+  `HadoopOutputFile.fromPath(path, conf, properties)` (which reads `FILE_REPLICATION_FACTOR` and
+  passes it to `fs.create(..., replication, ...)`). Yet at runtime the delete file is created via
+  the **no-map** path (`newOutputFile(String)` -> replication `-1` -> FS default), i.e. the
+  `OutputFileFactory` actually used for the delete write has an EMPTY `replicationFactor`. The
+  precise break between `PositionDeltaWriteFactory` (which sets it) and the writer instance
+  actually used is not pinned down at bytecode level, but the end-to-end behavior is unambiguous
+  and reproducible: **the replication-factor override is silently lost on the delete-file write
+  path.** This is a genuine gap that ONLY real-HDFS validation can surface — the LocalFileSystem
+  harness cannot: `RawLocalFileSystem` ignores replication entirely (always reports 1, `setReplication`
+  is a no-op) and the harness never asserts replication. Disposition: re-port/verify the #219/#229
+  delete-file-replication plumbing against the fork's 1.10 Spark write path; add an HDFS-level
+  replication assertion to the validation suite so this cannot regress silently.
+
+## Claim summary
+1. Write + read Iceberg table on real HDFS via Spark 3.5 — **YES** (Claim 1).
+2. Replication-factor custom behavior applies on HDFS — **NO** (F-REPL); plumbing present in the
+   fork jar but the override never reaches the delete-file write; delete files follow `dfs.replication`.
+3. Server metadata.json direct-write to HDFS with 3.3.4 client vs 3.2 HDFS — **YES** (Claim 3),
+   and additionally proven on a Java 23 server JVM with no wire errors.
