@@ -2078,6 +2078,49 @@ object Scenarios {
     "fork.colDefault.readApplyProbe @ core"      -> forkColDefaultReadApplyProbe
   )
 
+  // ── #249 (d69c1fd91) — partitioned write distribution default ─────────────────────────────────────
+  // The fork changes the DEFAULT write.distribution-mode for PARTITIONED writes from Apache's HASH to
+  // NONE (Spark 3.5). With HASH, the writer shuffles rows so each partition is written by one task ->
+  // ~(#partitions) data files. With NONE, no shuffle -> each input task writes every partition it holds
+  // -> up to (#tasks × #partitions) files. This test appends the SAME multi-task DataFrame into a
+  // 4-partition table twice — once with the default, once with an explicit HASH — and compares the data-
+  // file counts. It pins that (a) explicit HASH clusters to ~#partitions, and (b) the default does not
+  // cluster more than HASH. Run under both runtimes via ICEBERG_RUNTIME_JAR: the DIAG file counts show
+  // the branch-vs-release difference (fork NONE default -> more files than a HASH-default build).
+  private def forkPartitionDistDefault(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val nParts = 4
+    val nTasks = 8
+    def buildAndCountFiles(tbl: String, extraProps: String): Long = {
+      spark.sql(s"DROP TABLE IF EXISTS $tbl")
+      spark.sql(s"CREATE TABLE $tbl (id bigint, p int) USING iceberg PARTITIONED BY (p) " +
+        s"TBLPROPERTIES ('format-version'='2', 'write.format.default'='$fmt'$extraProps)")
+      // nTasks input partitions, each holding rows for all nParts table partitions.
+      val df = spark.range(0, 400)
+        .selectExpr("id", s"cast(id % $nParts as int) as p")
+        .repartition(nTasks)
+      df.writeTo(tbl).append()
+      val n = spark.sql(s"SELECT count(*) FROM $tbl.data_files").collect()(0).getLong(0)
+      spark.sql(s"DROP TABLE IF EXISTS $tbl")
+      n
+    }
+    val nDefault = buildAndCountFiles(s"${ctx.namespace}.t_dist_def_$fmt", "")
+    val nHash    = buildAndCountFiles(s"${ctx.namespace}.t_dist_hash_$fmt", ", 'write.distribution-mode'='hash'")
+    println(s"DIAG fork.partitionDist[$fmt]: defaultFiles=$nDefault hashFiles=$nHash " +
+            s"(parts=$nParts tasks=$nTasks; default==hash => HASH-default build, default>hash => NONE-default #249)")
+    // (a) Explicit HASH clusters by partition -> roughly one file per partition (allow slack for spill).
+    assert(nHash <= nParts * 2,
+      s"[$fmt] write.distribution-mode=hash should cluster to ~$nParts files, got $nHash")
+    // (b) The default never clusters MORE than HASH (fork default is NONE => >=; never <).
+    assert(nDefault >= nHash,
+      s"[$fmt] default partitioned distribution produced FEWER files than HASH (default=$nDefault hash=$nHash) — unexpected; re-audit #249")
+  }
+
+  val forkPartitionDistOps: List[(String, Ctx => Unit)] = List(
+    "fork.partitionDist.default @ parquet" -> forkPartitionDistDefault("parquet"),
+    "fork.partitionDist.default @ orc"     -> forkPartitionDistDefault("orc")
+  )
+
   private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
     assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, s"soft-delete $db.$tbl failed")
     val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
@@ -4069,6 +4112,7 @@ object Plan {
     val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
     val forkColDefault  = Scenarios.forkColDefaultOps.map { case (name, f) => Case(name, f) }
+    val forkPartitionDist = Scenarios.forkPartitionDistOps.map { case (name, f) => Case(name, f) }
     val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
@@ -4232,7 +4276,7 @@ object Plan {
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
-      encryptionPin ++ forkColDefault
+      encryptionPin ++ forkColDefault ++ forkPartitionDist
   }
 }
 
