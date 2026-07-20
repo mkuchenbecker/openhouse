@@ -50,7 +50,17 @@ diff from main + user directives (2026-07-20).
 - [x] Self-review code fixes (branch-swap guard, readApplyProbe assert). Committed 95f4fef.
 - [x] #249 partitioned write-distribution test (item 2a) — green both runtimes. Committed 2f32358.
 - [x] Doc protocol codified in CLAUDE.md + `index.md` master map created; checklists bannered.
-- [x] D6 format REFACTOR (item 1, user: "don't bake a format into a test"): format is now a PARAMETER,
+- [x] D6 CORRECTED to BLANKET-DOUBLE (owner: "difference between should-be-vacuous and is-vacuous").
+      My earlier "multiplex format-sensitive only" was the exact error the harness catches — assuming an
+      axis-independence rather than verifying it (cf. G8/G10; the fork has patched ORC paths). Rule now:
+      ONLY structural vacuity (no table = no format axis) is pruned; predicted vacuity is TESTED. Mechanism:
+      per-case `seedFmt` thread-local + `crossFmt` wrapper (low-churn; coreCreateParquet + 22 inline creates
+      read $seedFmt). 13 table-creating blocks doubled (partitionTransforms/Evolution, branching, surface,
+      hazards, interactions, negatives, ddlNegatives/Props/Misc/Policy/CtasRtas/TagAcl). STUB 2382/11/0, 0
+      divergence — the "format-inert" hypothesis held (now verified). Commit dacfc81. Kept single: table-LESS
+      control-plane @embedded/@core ops (lock/undrop-admin test server/REST layer, format not in that code
+      path — defensible; overridable) + encryption plaintext pin (asserts Parquet PAR1, format-locked).
+- [x] (superseded) earlier D6 stage note: format is now a PARAMETER,
       not a baked constant. Stage 1 = coreTwoSnapshots(fmt) + timeTravel/restore/maintenance multiplex
       parquet+orc (77ce4da). Stage 2 = cowCreate/morCreate(fmt) + readerWriter (CDC/incremental/streaming)
       multiplex (67f2ef6). DECISION (flagged in chat): multiplex the FORMAT-SENSITIVE blocks only. The
