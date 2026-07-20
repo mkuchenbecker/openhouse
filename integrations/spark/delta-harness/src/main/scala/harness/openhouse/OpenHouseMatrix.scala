@@ -1615,7 +1615,7 @@ object Scenarios {
     TableTest(TypesTable)
       .sql("create")(table =>
         s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg PARTITIONED BY ($transform) " +
-          s"TBLPROPERTIES ('write.format.default'='parquet')")()
+          s"TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .insert(3)()
       .check("verify") { view =>
         assert(view.after.size == 3)
@@ -1626,11 +1626,11 @@ object Scenarios {
   // pipeline's managed (valid) table still exists for snapshotting.
   private def partitionTransformRejected(label: String, transform: String, expectMessage: String): TableTest[TypesTable.type] =
     TableTest(TypesTable)
-      .sql("create")(table => s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table (${TypesTable.columnDefinitions}) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .step(label) { (spark, table) =>
         val scratch = table + "_x"
         val error = Check.intercept[RuntimeException](spark.sql(
-          s"CREATE TABLE $scratch (${TypesTable.columnDefinitions}) USING iceberg PARTITIONED BY ($transform) TBLPROPERTIES ('write.format.default'='parquet')"))
+          s"CREATE TABLE $scratch (${TypesTable.columnDefinitions}) USING iceberg PARTITIONED BY ($transform) TBLPROPERTIES ('write.format.default'='$seedFmt')"))
         spark.sql(s"DROP TABLE IF EXISTS $scratch")
         assert(error.getMessage.contains(expectMessage))
       }()
@@ -1652,7 +1652,7 @@ object Scenarios {
   // rejected with a 400 telling you to recreate the table. Captured as negative tests.
   val partitionEvolutionAddRejected: TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .insert(3)()
       .step("partition.evolutionAdd.rejected") { (spark, table) =>
         val error = Check.intercept[Exception](spark.sql(s"ALTER TABLE $table ADD PARTITION FIELD datepartition"))
@@ -1661,7 +1661,7 @@ object Scenarios {
 
   val partitionEvolutionDropRejected: TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .insert(3)()
       .step("partition.evolutionDrop.rejected") { (spark, table) =>
         val error = Check.intercept[Exception](spark.sql(s"ALTER TABLE $table DROP PARTITION FIELD datepartition"))
@@ -2362,7 +2362,7 @@ object Scenarios {
     val table = s"${ctx.namespace}.t_compord"
     spark.sql(s"DROP TABLE IF EXISTS $table")
     spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg " +
-      s"TBLPROPERTIES ('write.format.default'='parquet', 'write.distribution-mode'='none')")
+      s"TBLPROPERTIES ('write.format.default'='$seedFmt', 'write.distribution-mode'='none')")
     // Several commits => several data files with DISTINCT, increasing file-sequence-numbers (the ordering key).
     val nCommits = 4
     for (i <- 0 until nCommits) spark.sql(s"INSERT INTO $table VALUES (${i}L, 'c$i')")
@@ -2584,7 +2584,7 @@ object Scenarios {
   // Create + seed a valid CoreTable, then assert the bad operation is rejected.
   private def coreNegative(label: String)(bad: (SparkSession, String) => Unit): TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .insert(3)()
       .step(label)(bad)()
 
@@ -2647,7 +2647,7 @@ object Scenarios {
     coreNegative("negative.partitionByNonExistent") { (spark, table) =>
       val scratch = table + "_x"
       val e = Check.intercept[AnalysisException](spark.sql(
-        s"CREATE TABLE $scratch ($columnDefinitions) USING iceberg PARTITIONED BY (no_such_column) TBLPROPERTIES ('write.format.default'='parquet')"))
+        s"CREATE TABLE $scratch ($columnDefinitions) USING iceberg PARTITIONED BY (no_such_column) TBLPROPERTIES ('write.format.default'='$seedFmt')"))
       spark.sql(s"DROP TABLE IF EXISTS $scratch")
       assert(e.getMessage.contains("no_such_column"))
     }
@@ -2708,7 +2708,7 @@ object Scenarios {
   // user key round-trips: SET then read back, UNSET removes it
   val ddlPropsUserRoundTrip: TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("ddl.props.userRoundTrip.create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("ddl.props.userRoundTrip.create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .sql("ddl.props.userRoundTrip.set")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('my_key'='my_val')") { view =>
         assert(tableProps(view.spark, view.table).get("my_key").contains("my_val"), "user prop not set")
       }
@@ -2727,7 +2727,7 @@ object Scenarios {
 
   // finding: format-version is forced to the cluster default (2) — a create with '1' still reads 2
   val ddlPropsFormatVersionForced: TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet', 'format-version'='1')")()
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt', 'format-version'='1')")()
       .insert(3)()
       .check("ddl.props.formatVersionForced") { view =>
         val fv = tableProps(view.spark, view.table).get("format-version")
@@ -2737,7 +2737,7 @@ object Scenarios {
 
   // honored-if-set: previous-versions-max the user provides survives
   val ddlPropsPreviousVersionsHonored: TableTest[CoreTable.type] =
-    propsCreate("ddl.props.previousVersionsHonored", "'write.format.default'='parquet', 'write.metadata.previous-versions-max'='7'") { view =>
+    propsCreate("ddl.props.previousVersionsHonored", "'write.format.default'='$seedFmt', 'write.metadata.previous-versions-max'='7'") { view =>
       val v = tableProps(view.spark, view.table).get("write.metadata.previous-versions-max")
       assert(v.contains("7"), s"expected previous-versions-max=7, got $v")
     }
@@ -2749,8 +2749,19 @@ object Scenarios {
     "ddl.props.previousVersionsHonored"-> ddlPropsPreviousVersionsHonored
   )
 
+  // Per-case "current seed format" (default parquet). The assembly's `crossFmt` sets it around each case
+  // so a block multiplexes across formats WITHOUT every builder taking an explicit fmt param. Safe because
+  // each case runs sequentially on its own worker thread (session-per-worker, parallel runner). This is
+  // how format-INERT-by-hypothesis blocks (DDL/props/policy/branch/surface/negatives) get run on ORC too —
+  // "should be format-independent" is a hypothesis this harness must verify, not assume (see G8/G10, and
+  // the fork carries patched ORC paths). Only table-LESS ops (no CREATE) have no format axis.
+  private val seedFmtTL = new ThreadLocal[String]()
+  def seedFmt: String = Option(seedFmtTL.get).getOrElse("parquet")
+  def withSeedFmt[A](fmt: String)(body: => A): A = {
+    seedFmtTL.set(fmt); try body finally seedFmtTL.remove()
+  }
   private def coreCreateParquet(table: String): String =
-    s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')"
+    s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt')"
 
   // ── DDL Phase 16: sort order / write distribution ───────────────────────────────────────
   // WRITE ORDERED BY sets the sort order; the observable side effect is write.distribution-mode=range
@@ -2860,7 +2871,7 @@ object Scenarios {
 
   // Retention on a (string) time-partitioned column requires a column pattern (a valid DateTimeFormatter).
   val ddlPolicyRetention: TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='parquet')")().insert(3)()
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES ('write.format.default'='$seedFmt')")().insert(3)()
       .sql("ddl.policy.retention")(t => s"ALTER TABLE $t SET POLICY (RETENTION = 30d ON COLUMN datepartition WHERE pattern = 'yyyy-MM-dd-HH')") { view =>
         assert(policiesBlob(view).toLowerCase.contains("retention") || policiesBlob(view).contains("30"),
           s"retention policy not stored: ${policiesBlob(view)}")
@@ -2943,7 +2954,7 @@ object Scenarios {
 
   // ── DDL Phase 15: feature-flag property (write.distribution-mode governs the write path) ─
   val ddlFeatureDistributionMode: TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet', 'write.distribution-mode'='none')")()
+    TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$seedFmt', 'write.distribution-mode'='none')")()
       .insert(3)()
       .check("ddl.featureFlag.distributionMode") { view =>
         assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("none"),
@@ -3124,7 +3135,7 @@ object Scenarios {
   // ── RTAS × table-property merge semantics (the THIRD property path beside CREATE and ALTER) ──
   val interactRtasPropsUserSurvival: TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'replace.enabled'='true', 'user.key'='v1')")()
+        s"'write.format.default'='$seedFmt', 'replace.enabled'='true', 'user.key'='v1')")()
       .insert(3)()
       .step("interact.rtas.props.userSurvival") { (spark, table) =>
         spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table WHERE ${Core.long0.columnName} <= 2")
@@ -3135,7 +3146,7 @@ object Scenarios {
 
   val interactRtasPropsStatementWins: TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'replace.enabled'='true', 'user.key'='v1')")()
+        s"'write.format.default'='$seedFmt', 'replace.enabled'='true', 'user.key'='v1')")()
       .insert(3)()
       .step("interact.rtas.props.statementWins") { (spark, table) =>
         spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg TBLPROPERTIES ('user.key'='v2') " +
@@ -3160,7 +3171,7 @@ object Scenarios {
 
   val interactRtasPropsReservedPlane: TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (datepartition) TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'replace.enabled'='true')")()
+        s"'write.format.default'='$seedFmt', 'replace.enabled'='true')")()
       .insert(3)()
       .sql("setRetention")(t => s"ALTER TABLE $t SET POLICY (RETENTION = 30d ON COLUMN datepartition WHERE pattern = 'yyyy-MM-dd-HH')")()
       .step("interact.rtas.props.reservedPlane") { (spark, table) =>
@@ -3352,7 +3363,7 @@ object Scenarios {
   val interactFlagsWapReplaceAtCreate: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'write.wap.enabled'='true', 'replace.enabled'='true')")()
+        s"'write.format.default'='$seedFmt', 'write.wap.enabled'='true', 'replace.enabled'='true')")()
       .insert(3)()
       .step("interact.flags.wapReplaceAtCreate") { (spark, table) =>
         val p = tableProps(spark, table)
@@ -3644,7 +3655,7 @@ object Scenarios {
   val surfaceProcRewritePositionDeletes: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'write.delete.mode'='merge-on-read')")()
+        s"'write.format.default'='$seedFmt', 'write.delete.mode'='merge-on-read')")()
       .sql("seed(3, one-file)")(t =>
         s"INSERT INTO $t SELECT /*+ COALESCE(1) */ * FROM (${RowGenerator.valuesClause(Core, 3)}) AS seed")()
       .step("surface.proc.rewritePositionDeletes") { (spark, table) =>
@@ -3710,7 +3721,7 @@ object Scenarios {
   val surfaceMetaPositionDeletes: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'write.delete.mode'='merge-on-read')")()
+        s"'write.format.default'='$seedFmt', 'write.delete.mode'='merge-on-read')")()
       .sql("seed(3, one-file)")(t =>
         s"INSERT INTO $t SELECT /*+ COALESCE(1) */ * FROM (${RowGenerator.valuesClause(Core, 3)}) AS seed")()
       .step("surface.meta.positionDeletes") { (spark, table) =>
@@ -3860,7 +3871,7 @@ object Scenarios {
   val surfaceWriteDistributionHash: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (${Core.datePartition.columnName}) " +
-        s"TBLPROPERTIES ('write.format.default'='parquet', 'write.distribution-mode'='hash')")()
+        s"TBLPROPERTIES ('write.format.default'='$seedFmt', 'write.distribution-mode'='hash')")()
       .insert(3)()
       .check("surface.write.distributionHash") { view =>
         assert(tableProps(view.spark, view.table).get("write.distribution-mode").contains("hash"), "hash mode not honored")
@@ -3870,7 +3881,7 @@ object Scenarios {
   val surfaceWriteTargetFileSize: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='parquet', 'write.target-file-size-bytes'='1048576')")()
+        s"'write.format.default'='$seedFmt', 'write.target-file-size-bytes'='1048576')")()
       .insert(3)()
       .check("surface.write.targetFileSize") { view =>
         assert(tableProps(view.spark, view.table).get("write.target-file-size-bytes").contains("1048576"), "target size not honored")
@@ -4084,7 +4095,7 @@ object Scenarios {
   // expiration + orphan removal leave a live branch fully readable.
   val hazardRetentionBranchDefended: TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (${Core.datePartition.columnName}) TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg PARTITIONED BY (${Core.datePartition.columnName}) TBLPROPERTIES ('write.format.default'='$seedFmt')")()
       .insert(3)()
       .step("hazard.retentionBranch.defended") { (spark, table) =>
         spark.sql(s"ALTER TABLE $table CREATE BRANCH rbb")
@@ -4377,13 +4388,18 @@ object Plan {
       (name, op)    <- Scenarios.typesOperations
     } yield Case(s"$name @ ${layout.label}", Scenarios.createAndSeedTypes(layout, 3).andThen(op).run)
 
-    // Partition transforms + evolution (self-contained pipelines, parquet).
-    val partitionTransforms = Scenarios.partitionTransforms.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val partitionEvolution  = Scenarios.partitionEvolution.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-
-    // Time travel + restore/rollback (self-contained pipelines, parquet).
-    // Format-sensitive blocks multiplex across parquet+orc (the seed format is a parameter, not baked in).
+    // Format multiplex. Blocks whose tables are seeded via the format-aware create helpers (coreCreateParquet
+    // / coreCreate / propsCreate / the ddl inline creates now reading $seedFmt) run on parquet AND orc: any
+    // table-creating op has a real format axis, and "format-inert" is a HYPOTHESIS this harness verifies, not
+    // assumes. `crossFmt` sets the per-case seed format around each case (safe — cases are sequential per worker).
     val dataFormats     = List("parquet", "orc")
+    def crossFmt[S <: Schema](block: List[(String, TableTest[S])]): List[Plan.Case] =
+      for { f <- dataFormats; (name, t) <- block } yield Case(s"$name @ $f", ctx => Scenarios.withSeedFmt(f)(t.run(ctx)))
+
+    // Partition transforms + evolution — multiplex (format is a hypothesis to verify, not assume).
+    val partitionTransforms = crossFmt(Scenarios.partitionTransforms)
+    val partitionEvolution  = crossFmt(Scenarios.partitionEvolution)
+
     val timeTravel      = for { f <- dataFormats; (name, t) <- Scenarios.timeTravelOps(f) }     yield Case(s"$name @ $f", t.run)
     val restoreRollback = for { f <- dataFormats; (name, t) <- Scenarios.restoreRollbackOps(f) } yield Case(s"$name @ $f", t.run)
     val maintenance     = for { f <- dataFormats; (name, t) <- Scenarios.maintenanceOps(f) }     yield Case(s"$name @ $f", t.run)
@@ -4395,20 +4411,20 @@ object Plan {
     val forkSplitSize   = Scenarios.forkSplitSizeOps.map { case (name, f) => Case(name, f) }
     val forkBinPackByLength = Scenarios.forkBinPackByLengthOps.map { case (name, f) => Case(name, f) }
     val forkCompactionOrder = Scenarios.forkCompactionOrderOps.map { case (name, f) => Case(name, f) }
-    val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
+    val branching       = crossFmt(Scenarios.branching)
+    val interactions    = crossFmt(Scenarios.interactions) ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
-    val surface         = Scenarios.surfaceOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val hazards         = Scenarios.hazardOps.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
+    val surface         = crossFmt(Scenarios.surfaceOps)
+    val hazards         = crossFmt(Scenarios.hazardOps) ++
       Scenarios.hazardCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
     val readerWriter    = for { f <- dataFormats; (name, t) <- Scenarios.readerWriterOps(f) } yield Case(s"$name @ $f", t.run)
-    val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlMisc         = Scenarios.ddlMiscOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlPolicy       = Scenarios.ddlPolicyOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlCtasRtas     = Scenarios.ddlCtasRtasOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val ddlTagAcl       = Scenarios.ddlTagAclFeatureOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val negatives       = crossFmt(Scenarios.negatives)
+    val ddlNegatives    = crossFmt(Scenarios.ddlNegatives)
+    val ddlProps        = crossFmt(Scenarios.ddlPropsOperations)
+    val ddlMisc         = crossFmt(Scenarios.ddlMiscOperations)
+    val ddlPolicy       = crossFmt(Scenarios.ddlPolicyOperations)
+    val ddlCtasRtas     = crossFmt(Scenarios.ddlCtasRtasOperations)
+    val ddlTagAcl       = crossFmt(Scenarios.ddlTagAclFeatureOperations)
     val ddlEncryption   = Scenarios.ddlEncryptionOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     // Phase 24 prep multipliers (full DML cross). Ordered prep × all operations; evolved prep ×
