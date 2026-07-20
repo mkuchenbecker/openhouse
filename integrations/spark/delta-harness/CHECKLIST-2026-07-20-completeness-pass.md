@@ -50,9 +50,17 @@ diff from main + user directives (2026-07-20).
 - [x] Self-review code fixes (branch-swap guard, readApplyProbe assert). Committed 95f4fef.
 - [x] #249 partitioned write-distribution test (item 2a) — green both runtimes. Committed 2f32358.
 - [x] Doc protocol codified in CLAUDE.md + `index.md` master map created; checklists bannered.
-- [~] D6 blanket-format REFACTOR (item 1, user: "don't bake a format into a test"): parameterize the
-      parquet-only TableTest blocks by seed format so they multiplex parquet+orc (control-plane @embedded
-      stays single — no table). IN PROGRESS.
+- [x] D6 format REFACTOR (item 1, user: "don't bake a format into a test"): format is now a PARAMETER,
+      not a baked constant. Stage 1 = coreTwoSnapshots(fmt) + timeTravel/restore/maintenance multiplex
+      parquet+orc (77ce4da). Stage 2 = cowCreate/morCreate(fmt) + readerWriter (CDC/incremental/streaming)
+      multiplex (67f2ef6). DECISION (flagged in chat): multiplex the FORMAT-SENSITIVE blocks only. The
+      remaining parquet-only blocks (branching, surface metadata, partitionTransforms/evolution, negatives,
+      ddl schema/props/policy/acl/rejection) are format-INERT — their format-sensitive data behaviors are
+      already covered by the 3-format DML/MoR/CoW layout matrix + maintenance(compaction)×orc +
+      readerWriter(decode)×orc, so doubling them = vacuous cells (violates "no vacuous tests"). They remain
+      un-bakeable (coreTwoSnapshots/cowCreate now take fmt) but single-format by design. Un-baking is the
+      architectural fix; multiplex is applied where it is not vacuous. If owner wants literal doubling of
+      the inert blocks too, that is a one-line-per-block change to iterate dataFormats.
 - [ ] Remaining fork tests 2b–2f (low-observability pins OK per user).
 - [ ] Mega phases (RTAS full-cross, WAP mega-axis) — budget approved.
 - [x] G2–G14 documentation: already complete in AUDIT-FINDINGS.md (LIVING doc). Fixed the material
