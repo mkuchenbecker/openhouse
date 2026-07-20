@@ -1,6 +1,16 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
---- BOTH MODES, latest (PR #9; + fork tests 2b-2f + RTAS full-cross + D6 stage 2) ---
+--- BOTH MODES, latest (PR #9; + D6 BLANKET-DOUBLE — format multiplexed across all table-creating blocks) ---
+STUB (default):        2393 cases: 2382 passed, 11 skipped, 0 failed.  4 workers.
+REAL HTS (HARNESS_REAL_HTS=1): 2611 cases: 2600 passed, 11 skipped, 0 failed.  4 workers.
+D6 corrected to blanket-double (owner: "should-be-vacuous" is a hypothesis to VERIFY, not assume). 13
+table-creating blocks now run parquet+orc via a per-case seedFmt (partitionTransforms/Evolution, branching,
+surface, hazards, interactions, negatives, ddlNegatives/Props/Misc/Policy/CtasRtas/TagAcl). 0 ORC<->Parquet
+divergence — every previously-pruned "format-inert" cell now runs and passes (verified, not assumed). Kept
+single: table-LESS control-plane @embedded/@core (no format axis) + encryption plaintext pin (Parquet PAR1).
++120 stub / +120 real-HTS over the 2273/2491 run below.
+
+--- BOTH MODES (PR #9; + fork tests 2b-2f + RTAS full-cross + D6 stage 2) ---
 STUB (default):        2273 cases: 2262 passed, 11 skipped, 0 failed.  4 workers.
 REAL HTS (HARNESS_REAL_HTS=1): 2491 cases: 2480 passed, 11 skipped, 0 failed.  4 workers.
 Since the 2094/2312 run below: + fork property tests #229/#219/#228/#233/#189 (8 cases, fork.deleteFileReplication
