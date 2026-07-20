@@ -40,21 +40,20 @@ files, +2742/-739** (spark 46, core 21, api 5). ~6 are pure CI/release/version; 
 >   post-release branch commits (#251, #249, #248, …) introduce **no correctness regression** on any of the
 >   ~2000 tested behaviours. (See VERIFIED-RUN-openhouse.txt.)
 >
-> **CORRECTION (2026-07-20) — "customer-unreachable" was WRONG. The READ-APPLY correctness bug IS live.**
-> I initially reasoned the hazard needs a Spark DDL wiring OSS lacks. But LinkedIn's production Spark is a
-> **private fork** that CAN set a column default (that is the whole reason #251 backports the api/core
-> surface). So the customer path is reachable in prod, and the real bug is on the READ side:
-> - #251 wires **NO read-application** — `PartitionUtil.constantsMap` does not inject `initial-default`, and
->   NOTHING in `core/data`, `iceberg-data`, or `spark/v3.5` references it (grep-verified on the branch).
-> - `fork.colDefault.readsNullNotDefault @ core` PROVES it end-to-end: it simulates the private-Spark
->   `ADD COLUMN c int DEFAULT 5` by committing that exact schema (with `initial-default=5`) via the
->   low-level `TableMetadata` API (public `UpdateSchema` has no set-default op on the branch), then READS
->   back via Spark over the pre-existing data files → **`c = [NULL, NULL]`, not `[5, 5]`**. The default is
->   durably persisted but silently ignored on read.
-> - The read path is **engine-shared** iceberg-core/spark: the same private Spark that WROTE the default
->   reads through this unchanged path, so it too sees NULL. **Silent data-correctness bug** — the operator
->   sets a default, existing rows come back NULL. This is precisely the "sneaky v3 backport that doesn't
->   alter the spec but risks correctness issues." The pin flips the day read-apply is wired.
+> **TABLED (2026-07-20) — read-application is an OPEN question, NOT a confirmed bug. Retract prior claim.**
+> I earlier called this a "silent data-correctness bug" (defaulted column reads NULL). The repo owner
+> disputes that: *"it is not fundamentally broken … if there is a gap, it's implemented somewhere."* That
+> is very likely correct — the missing-column read-application for defaults most plausibly lives in
+> LinkedIn's **private Spark fork**, which this harness does NOT exercise (it runs OSS Spark 3.5 over the
+> branch iceberg-core). So:
+> - The `[NULL, NULL]` result observed by `fork.colDefault.readApplyProbe @ core` is a property of THIS
+>   harness config (OSS Spark reader), **not** proof the feature is broken end-to-end in production.
+> - `git grep initialDefault|writeDefault` on the branch finds consumers only in `SchemaParser` (the
+>   serialization half). The READ-apply, if present, is elsewhere — a private Spark reader, or a code path
+>   not in this open fork. Confirming it requires the private Spark, which is out of scope here.
+> - The probe is now DIAG-only: it asserts ONLY the undisputed half (the default persists into the schema,
+>   ungated) and records — without a verdict — what the OSS read path returns. **Column defaults are TABLED**
+>   pending the private Spark reader; do not treat the NULL observation as a defect.
 
 Commit `d1603c807` (#251) "Add NestedField column-default APIs and Expressions.lit() (~upstream #9502)"
 backports the **format-v3** column-default feature into a **v2** fork, **api/core only**:
