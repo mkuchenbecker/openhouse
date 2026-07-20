@@ -2124,6 +2124,273 @@ object Scenarios {
     "fork.partitionDist.default @ orc"     -> forkPartitionDistDefault("orc")
   )
 
+  // (count, sumBytes) of the CURRENT data files — used by the compaction fork probes below.
+  private def dataFileStats(spark: SparkSession, table: String): (Long, Long) = {
+    val r = spark.sql(s"SELECT count(*), coalesce(sum(file_size_in_bytes), 0) FROM $table.data_files").collect()(0)
+    (r.getLong(0), r.getLong(1))
+  }
+
+  private def showProps(spark: SparkSession, table: String): Map[String, String] =
+    spark.sql(s"SHOW TBLPROPERTIES $table").collect().toSeq.map(r => r.getString(0) -> r.getString(1)).toMap
+
+  // ── #229 (write.delete-file-replication) — MoR delete-file HDFS replication factor ───────────────────
+  // TableProperties.DELETE_FILE_REPLICATION = "write.delete-file-replication". SparkWriteConf resolves it
+  // (sessionConf spark.sql.iceberg.delete-file-replication > tableProperty write.delete-file-replication >
+  // option > default 3) into a `short` that SparkPositionDeltaWrite / SparkPositionDeletesRewrite feed to
+  // OutputFileFactory.replicationFactor(short); the factory stamps it onto the delete file's FileIO output
+  // properties so HDFS sets that block-replication on the position-delete file. The HDFS replication itself
+  // is NOT observable on the local FS this harness runs on — so this is an accepted LOW-observability pin:
+  //   • the property round-trips through the OpenHouse catalog metadata (SHOW TBLPROPERTIES);
+  //   • a MoR DELETE physically writes a position-delete file (the path that consumes the factor);
+  //   • the DML result is correct and the property survives the mutation.
+  private def forkDeleteFileReplication(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_delrepl"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    // MoR + unpartitioned + distribution=none so one seed INSERT lands ONE data file; a partial DELETE is
+    // then necessarily a position delete (not whole-file elimination) — the delete-file write path.
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg TBLPROPERTIES (" +
+      s"'format-version'='2', 'write.distribution-mode'='none', 'write.delete.mode'='merge-on-read', " +
+      s"'write.update.mode'='merge-on-read', 'write.delete-file-replication'='2')")
+    // COALESCE(1) => a single data file, so deleting a strict subset is a PARTIAL-file match that MoR
+    // must satisfy with a position-delete file (not whole-file elimination).
+    spark.sql(s"INSERT INTO $table SELECT /*+ COALESCE(1) */ * FROM (VALUES (1L,'a'),(2L,'b'),(3L,'c')) AS s(id, s)")
+
+    // (1) The property round-trips through the OpenHouse catalog metadata.
+    val p1 = showProps(spark, table)
+    assert(p1.get("write.delete-file-replication").contains("2"),
+      s"expected write.delete-file-replication=2 to round-trip, got ${p1.get("write.delete-file-replication")}")
+
+    // (2) A MoR DELETE writes a position-delete file (the write path that consumes the replication factor).
+    spark.sql(s"DELETE FROM $table WHERE id = 1")
+    val delFiles = spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+    assert(delFiles >= 1, s"MoR DELETE should write a position-delete file, got $delFiles")
+
+    // (3) DML result is correct (the replication factor never alters the logical row set).
+    val rows = spark.sql(s"SELECT id FROM $table ORDER BY id").collect().toSeq.map(_.getLong(0))
+    assert(rows == Seq(2L, 3L), s"expected [2,3] after MoR delete, got $rows")
+
+    // (4) The property survives the mutation (still honored in metadata after the delete-file write).
+    val p2 = showProps(spark, table)
+    assert(p2.get("write.delete-file-replication").contains("2"), "write.delete-file-replication lost after DELETE")
+
+    println(s"DIAG fork.deleteFileReplication: prop=2 roundtrips=yes deleteFiles=$delFiles rows=${rows.mkString(",")} " +
+      s"(HDFS block-replication not observable on local FS; property honored in metadata + MoR DML unaffected)")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val forkDeleteFileReplicationOps: List[(String, Ctx => Unit)] = List(
+    "fork.deleteFileReplication @ mor" -> forkDeleteFileReplication
+  )
+
+  // ── #219 (OutputFileFactory.FILE_REPLICATION_FACTOR) — output-file replication factor ─────────────────
+  // KEY CORRECTION: the constant is FILE_REPLICATION_FACTOR = "file-replication-factor" — NOT the guessed
+  // "write.file-replication-factor", and it is NOT a settable table property at all. It is the per-output-
+  // file property KEY that OutputFileFactory stamps into the FileIO property map when a replicationFactor
+  // is present (getProperties()), consumed by HDFS to set the file's block replication. The ONLY caller
+  // that feeds a replicationFactor is the DELETE-file path (SparkPositionDeltaWrite/SparkPositionDeletesRewrite,
+  // via SparkWriteConf.deleteFileReplication()) — data-file factories never set it. So #219 is the low-level
+  // OutputFileFactory API manifestation of the same mechanism as #229, pinned at the API surface where it IS
+  // observable: build the factory with a factor and assert it stamps FILE_REPLICATION_FACTOR into the output-
+  // file property map. Reflection is used for the fork-only builder method + the private getProperties() so
+  // this source compiles against a stock artifact too.
+  private def forkFileReplicationFactor(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val offCls = Class.forName("org.apache.iceberg.io.OutputFileFactory")
+
+    // (1) Pin the EXACT key string (corrects the common mis-guess "write.file-replication-factor").
+    val keyFieldT = scala.util.Try(offCls.getField("FILE_REPLICATION_FACTOR"))
+    assert(keyFieldT.isSuccess, "OutputFileFactory.FILE_REPLICATION_FACTOR absent — replication-factor fork feature missing")
+    val key = keyFieldT.get.get(null).asInstanceOf[String]
+    assert(key == "file-replication-factor",
+      s"""expected FILE_REPLICATION_FACTOR == "file-replication-factor" (an output-file property key, NOT a "write." table prop), got "$key"""")
+
+    // Need a real Iceberg Table to build a factory.
+    val table = s"${ctx.namespace}.t_filerepl"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg TBLPROPERTIES ('format-version'='2')")
+    spark.sql(s"INSERT INTO $table VALUES (1,'a'),(2,'b')")
+    val icebergTable = org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, table)
+
+    // (2) Build an OutputFileFactory carrying replicationFactor=2 via the fork builder (reflected — the
+    //     .replicationFactor(short) method is a fork addition).
+    val builder = offCls.getMethod("builderFor", classOf[org.apache.iceberg.Table], java.lang.Integer.TYPE, java.lang.Long.TYPE)
+      .invoke(null, icebergTable, java.lang.Integer.valueOf(1), java.lang.Long.valueOf(1L))
+    val replMT = scala.util.Try(builder.getClass.getMethod("replicationFactor", java.lang.Short.TYPE))
+    assert(replMT.isSuccess, "OutputFileFactory.Builder.replicationFactor(short) absent — replication fork missing")
+    replMT.get.invoke(builder, java.lang.Short.valueOf(2.toShort))
+    val factory = builder.getClass.getMethod("build").invoke(builder)
+    assert(factory != null, "OutputFileFactory build returned null")
+
+    // (3) OBSERVABLE: the factory stamps FILE_REPLICATION_FACTOR -> "2" into the per-output-file property
+    //     map it hands the FileIO. getProperties() is private -> reflect it.
+    val gp = offCls.getDeclaredMethod("getProperties"); gp.setAccessible(true)
+    val props = gp.invoke(factory).asInstanceOf[java.util.Map[String, String]]
+    assert(props.get(key) == "2",
+      s"expected output-file property $key=2 stamped by the factory, got ${props.get(key)}")
+
+    // (4) Writes still succeed and rows are correct (the factor never corrupts the data path).
+    spark.sql(s"INSERT INTO $table VALUES (3,'c')")
+    val rows = spark.sql(s"SELECT id FROM $table ORDER BY id").collect().toSeq.map(_.getLong(0))
+    assert(rows == Seq(1L, 2L, 3L), s"rows wrong after write: $rows")
+
+    println(s"DIAG fork.fileReplicationFactor: key='$key' (corrected from guessed 'write.file-replication-factor'); " +
+      s"factory stamps $key=${props.get(key)} into output-file props; writes ok rows=${rows.mkString(",")}")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val forkFileReplicationFactorOps: List[(String, Ctx => Unit)] = List(
+    "fork.fileReplicationFactor @ core" -> forkFileReplicationFactor
+  )
+
+  // ── #228 (spark.sql.iceberg.split-size) — Spark read split size ───────────────────────────────────────
+  // SparkSQLProperties.SPLIT_SIZE = "spark.sql.iceberg.split-size". Set via spark.conf.set; SparkReadConf
+  // uses it to combine/split data files into read tasks. This one IS observable: with several small files,
+  // a large split-size combines them into FEWER read tasks and a tiny split-size splits into MORE — visible
+  // via rdd.getNumPartitions — while the row set is invariant. × parquet+orc (planning is over both).
+  private def forkSplitSize(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_splitsize_$fmt"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    // distribution=none + several separate INSERTs => several distinct data files. open-file-cost=1 so
+    // per-file planning weight is the file's byte LENGTH (not the 4MB default that would swamp small
+    // files) — that makes split-size the governing knob, so the task-count effect is actually visible.
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg " +
+      s"TBLPROPERTIES ('write.format.default'='$fmt', 'write.distribution-mode'='none', 'read.split.open-file-cost'='1')")
+    val nFiles = 6
+    for (i <- 0 until nFiles) spark.sql(s"INSERT INTO $table SELECT ${i}L, repeat('r$i', 4000)")
+    val fileCount = spark.sql(s"SELECT count(*) FROM $table.data_files").collect()(0).getLong(0)
+    assert(fileCount >= 2, s"[$fmt] expected multiple data files for a split test, got $fileCount")
+
+    val key = org.apache.iceberg.spark.SparkSQLProperties.SPLIT_SIZE // "spark.sql.iceberg.split-size"
+    val saved = spark.conf.getOption(key)
+    def keys(): Seq[Long] = spark.sql(s"SELECT id FROM $table ORDER BY id").collect().toSeq.map(_.getLong(0))
+    def rddParts(): Int = spark.sql(s"SELECT * FROM $table").rdd.getNumPartitions
+    val expected = (0 until nFiles).map(_.toLong)
+    try {
+      // (a) The prompt's core path: set spark.sql.iceberg.split-size via spark.conf.set and read the
+      //     multi-file table under a large and a tiny split-size — the row set must be invariant.
+      spark.conf.set(key, (512L * 1024 * 1024).toString)
+      val bigRows = keys(); val bigRdd = rddParts()
+      spark.conf.set(key, "1")
+      val smallRows = keys(); val smallRdd = rddParts()
+      assert(bigRows == expected && smallRows == expected,
+        s"[$fmt] split-size must not change the row set: big=$bigRows small=$smallRows expected=$expected")
+      assert(smallRdd >= bigRdd,
+        s"[$fmt] a smaller split-size must not DECREASE the read RDD partition count: small=$smallRdd big=$bigRdd")
+
+      // (b) DETERMINISTIC observability of the same knob at the planner: with open-file-cost=1 the per-
+      //     file planning weight is its byte length, so a split-size below one file combines nothing
+      //     (nFiles task groups) while a split-size above the whole table combines everything (1 group).
+      val ice = org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, table)
+      val szKey = org.apache.iceberg.TableProperties.SPLIT_SIZE // "read.split.target-size"
+      def planGroups(splitBytes: Long): Int = {
+        val it = ice.newScan().option(szKey, splitBytes.toString).planTasks().iterator()
+        var n = 0; while (it.hasNext) { it.next(); n += 1 }
+        n
+      }
+      val bigGroups   = planGroups(512L * 1024 * 1024) // one combined group
+      val smallGroups = planGroups(1L)                 // one group per file
+      assert(bigGroups == 1, s"[$fmt] a split-size above the whole table should plan 1 task group, got $bigGroups")
+      assert(smallGroups == fileCount,
+        s"[$fmt] a split-size below one file should plan one task group per file ($fileCount), got $smallGroups")
+
+      println(s"DIAG fork.splitSize[$fmt]: key='$key' files=$fileCount rows-correct(big+small)=yes " +
+        s"rddParts(big=$bigRdd,small=$smallRdd) plannedTaskGroups(bigSplit=$bigGroups,smallSplit=$smallGroups) " +
+        s"(split-size governs read task-group count: 1 vs $fileCount)")
+    } finally {
+      saved match { case Some(v) => spark.conf.set(key, v); case None => spark.conf.unset(key) }
+      spark.sql(s"DROP TABLE IF EXISTS $table")
+    }
+  }
+
+  val forkSplitSizeOps: List[(String, Ctx => Unit)] = List(
+    "fork.splitSize @ parquet" -> forkSplitSize("parquet"),
+    "fork.splitSize @ orc"     -> forkSplitSize("orc")
+  )
+
+  // ── #233 (bin-pack by data-file length) — rewrite_data_files compaction ──────────────────────────────
+  // The fork's bin-pack rewrite weights data files by their LENGTH (file_size_in_bytes) when packing them
+  // into rewrite groups. That weighting is an internal planner detail — not locally observable via SQL — so
+  // this is a CHARACTERIZATION: create several UNEVENLY-sized data files, run rewrite_data_files(rewrite-all),
+  // assert the row set is preserved, and DIAG the before/after file count + total bytes. × parquet+orc (the
+  // compaction decodes + re-encodes file bytes, so the format is not vacuous).
+  private def forkBinPackByLength(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_binpack_$fmt"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg " +
+      s"TBLPROPERTIES ('write.format.default'='$fmt', 'write.distribution-mode'='none')")
+    // Unevenly-sized data files: a tiny one, a small one, and a big one.
+    spark.sql(s"INSERT INTO $table VALUES (1,'a')")
+    spark.sql(s"INSERT INTO $table VALUES (2,'b'),(3,'c')")
+    spark.sql(s"INSERT INTO $table SELECT id, repeat('x', 200) FROM range(100, 400)")
+    val before = dataFileStats(spark, table)
+    assert(before._1 >= 3, s"[$fmt] expected >=3 uneven data files, got ${before._1}")
+    val totalRows = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+
+    spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+
+    val after = dataFileStats(spark, table)
+    val totalRows2 = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+    assert(totalRows2 == totalRows, s"[$fmt] rewrite_data_files changed the row count: $totalRows -> $totalRows2")
+    val probe = spark.sql(s"SELECT s FROM $table WHERE id = 1").collect()(0).getString(0)
+    assert(probe == "a", s"[$fmt] rewrite altered a row: id=1 s=$probe")
+
+    println(s"DIAG fork.binPackByLength[$fmt]: beforeFiles=${before._1} beforeBytes=${before._2} " +
+      s"afterFiles=${after._1} afterBytes=${after._2} rows=$totalRows " +
+      s"(bin-pack weights by data-file length; characterization only — rows preserved)")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val forkBinPackByLengthOps: List[(String, Ctx => Unit)] = List(
+    "fork.binPackByLength @ parquet" -> forkBinPackByLength("parquet"),
+    "fork.binPackByLength @ orc"     -> forkBinPackByLength("orc")
+  )
+
+  // ── #189 (budgeted rewrite ordering by file-sequence-number) — rewrite_data_files ─────────────────────
+  // The fork's budgeted rewrite ORDERS candidate files by their file-sequence-number when spending a rewrite
+  // budget. The ordering decision is metadata-level and NOT locally observable via SQL, and it shares the
+  // rewrite_data_files execution path with #233 (fork.binPackByLength) — so rather than duplicate that, this
+  // pins the DISTINCT, observable half: the ordering KEY (file_sequence_number, on the .entries metadata
+  // table) is exposed and monotonic across commits, and rewrite-all preserves the row set. Ordering is over
+  // sequence numbers (not file bytes) => format-vacuous => single format (parquet).
+  private def forkCompactionOrder(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_compord"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg " +
+      s"TBLPROPERTIES ('write.format.default'='parquet', 'write.distribution-mode'='none')")
+    // Several commits => several data files with DISTINCT, increasing file-sequence-numbers (the ordering key).
+    val nCommits = 4
+    for (i <- 0 until nCommits) spark.sql(s"INSERT INTO $table VALUES (${i}L, 'c$i')")
+    val seqs = spark.sql(
+      s"SELECT file_sequence_number FROM $table.entries WHERE status != 2 AND data_file.content = 0 " +
+      s"ORDER BY file_sequence_number").collect().toSeq.map(_.getLong(0))
+    assert(seqs.size >= nCommits, s"expected >= $nCommits live data-file entries with sequence numbers, got ${seqs.size}: $seqs")
+    assert(seqs == seqs.sorted, s"file sequence numbers not monotonic: $seqs")
+    assert(seqs.distinct.size >= 2, s"expected multiple distinct file sequence numbers (the ordering key), got ${seqs.distinct}")
+    val totalRows = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+
+    spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+
+    val totalRows2 = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+    assert(totalRows2 == totalRows, s"rewrite changed the row count: $totalRows -> $totalRows2")
+    val filesAfter = spark.sql(s"SELECT count(*) FROM $table.data_files").collect()(0).getLong(0)
+    val keys = spark.sql(s"SELECT id FROM $table ORDER BY id").collect().toSeq.map(_.getLong(0))
+    assert(keys == (0 until nCommits).map(_.toLong), s"rewrite altered the row set: $keys")
+
+    println(s"DIAG fork.compactionOrder: fileSeqNumbers=${seqs.mkString(",")} (ordering key for budgeted rewrite) " +
+      s"filesBefore=${seqs.size} filesAfter=$filesAfter rows=$totalRows " +
+      s"(ordering is metadata-level/not locally observable; pin: seq-numbers exposed+monotonic, rewrite preserves rows; " +
+      s"shares the rewrite path with fork.binPackByLength #233)")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val forkCompactionOrderOps: List[(String, Ctx => Unit)] = List(
+    "fork.compactionOrder @ parquet" -> forkCompactionOrder
+  )
+
   private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
     assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, s"soft-delete $db.$tbl failed")
     val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
@@ -4121,6 +4388,11 @@ object Plan {
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
     val forkColDefault  = Scenarios.forkColDefaultOps.map { case (name, f) => Case(name, f) }
     val forkPartitionDist = Scenarios.forkPartitionDistOps.map { case (name, f) => Case(name, f) }
+    val forkDeleteFileReplication = Scenarios.forkDeleteFileReplicationOps.map { case (name, f) => Case(name, f) }
+    val forkFileReplicationFactor = Scenarios.forkFileReplicationFactorOps.map { case (name, f) => Case(name, f) }
+    val forkSplitSize   = Scenarios.forkSplitSizeOps.map { case (name, f) => Case(name, f) }
+    val forkBinPackByLength = Scenarios.forkBinPackByLengthOps.map { case (name, f) => Case(name, f) }
+    val forkCompactionOrder = Scenarios.forkCompactionOrderOps.map { case (name, f) => Case(name, f) }
     val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
@@ -4284,7 +4556,9 @@ object Plan {
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
-      encryptionPin ++ forkColDefault ++ forkPartitionDist
+      encryptionPin ++ forkColDefault ++ forkPartitionDist ++
+      forkDeleteFileReplication ++ forkFileReplicationFactor ++ forkSplitSize ++
+      forkBinPackByLength ++ forkCompactionOrder
   }
 }
 
