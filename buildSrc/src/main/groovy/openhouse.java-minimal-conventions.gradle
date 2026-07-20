@@ -17,9 +17,13 @@ targetCompatibility = JavaVersion.VERSION_1_8
 // is compatible with a Java-11 consumer, so nothing downstream breaks). v52 bytecode runs fine on
 // the Java 11+ runtime beside Java-11 Iceberg — bytecode target is a JVM floor, not an inter-jar
 // contract. Harmless for coexistence modules that still consume Java-8 fork Iceberg (8 <= 11).
+// spark4-upgrade rung-3: raised 11 -> 17 (Iceberg 1.11 module metadata declares jvm.version=17).
+// A 17 request still accepts jvm-8 and jvm-11 libs, so modules on the 1.10 lane (spark-runtime-3.5,
+// com.linkedin.iceberg 1.2) keep resolving; it only additionally admits the jvm-17 1.11 jars that
+// coexist on the merged itest runtime classpath.
 configurations.configureEach {
   if (canBeResolved && !canBeConsumed) {
-    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11) }
+    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17) }
   }
 }
 

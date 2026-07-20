@@ -42,13 +42,14 @@ configurations.configureEach {
     force 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.2'
     force 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2'
     force 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2'
-    // Avro: Iceberg 1.10 needs 1.12.0 (org.apache.avro.LogicalTypes.timestampNanos, used by
-    // iceberg-avro TypeToSchema). Spark 4.0.0 bundles avro 1.11.4, which lacks it -> NoSuchMethodError
-    // in GenericDataFile static init. Pin the whole avro stack to 1.12.0 (unshaded lane only —
-    // the shaded runtime would have isolated iceberg's avro, but this lane shares one avro).
-    force 'org.apache.avro:avro:1.12.0'
-    force 'org.apache.avro:avro-mapred:1.12.0'
-    force 'org.apache.avro:avro-ipc:1.12.0'
+    // Avro: Iceberg 1.11 needs 1.12.1 (org.apache.avro.LogicalTypes.timestampNanos, used by
+    // iceberg-avro TypeToSchema; 1.11's declared avro is 1.12.1). Spark 4.0.0 bundles avro 1.11.4,
+    // which lacks it -> NoSuchMethodError in GenericDataFile static init. Pin the whole avro stack
+    // to 1.12.1 (unshaded lane only — the shaded runtime would have isolated iceberg's avro, but
+    // this lane shares one avro). Was 1.12.0 for the Iceberg-1.10 lane (rung-2).
+    force 'org.apache.avro:avro:1.12.1'
+    force 'org.apache.avro:avro-mapred:1.12.1'
+    force 'org.apache.avro:avro-ipc:1.12.1'
   }
   // Stale transitive: some server modules still drag the OLD LinkedIn fork
   // com.linkedin.iceberg:*:1.2.0.6. Its CORE modules carry org.apache.iceberg.* v1.2 classes that
@@ -65,7 +66,7 @@ configurations.configureEach {
 
 ext {
   sparkVersion = '4.0.0'
-  icebergVersion = '1.10.0-openhouse'
+  icebergVersion = '1.11.0-openhouse'
 }
 
 dependencies {

@@ -35,8 +35,16 @@ ext {
   // spark4-upgrade: the LinkedIn custom Iceberg patches ported onto Apache Iceberg 1.10.
   // Source of truth: mkuchenbecker/iceberg branch 1.10.x. To build OpenHouse against it,
   // build that fork and `publishToMavenLocal` (produces org.apache.iceberg:*:1.10.0-openhouse),
-  // which is resolved via the mavenLocal() repository declared below.
+  // which is resolved via the mavenLocal() repository declared below. Still used by the spark-3.5
+  // lane and the iceberg-1.5 java runtime (spark-runtime-3.5_2.12), which are NOT part of rung-3.
   iceberg_1_10_version = "1.10.0-openhouse"
+  // spark4-upgrade rung-3: LinkedIn core+api patches replayed onto Apache Iceberg 1.11.0
+  // (apache-iceberg branch openhouse-1.11-port). 1.11 matures v3 deletion vectors; its Java floor
+  // rose to 17 (module metadata declares jvm.version=17). Feeds the server (services/tables) via
+  // the 1.5.2 iceberg conventions and the spark-4.0 itest lane. Published with
+  // -DforceVersion=1.11.0-openhouse -DsparkVersions=4.0 (core + spark-4.0 only), resolved via
+  // mavenLocal() below.
+  iceberg_1_11_version = "1.11.0-openhouse"
   otel_agent_version = "2.12.0" // Bundles OTel SDK 1.47.0
   otel_annotations_version = "2.12.0" // Match agent version
 }

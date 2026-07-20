@@ -3,19 +3,23 @@
 import org.gradle.api.attributes.java.TargetJvmVersion
 
 ext {
-  icebergVersion = rootProject.ext.iceberg_1_10_version
+  // spark4-upgrade rung-3: server core moved from 1.10.0-openhouse to 1.11.0-openhouse (matures v3
+  // deletion vectors). This feeds services/tables (the embedded OpenHouse server) + iceberg/* +
+  // tables-test-fixtures, i.e. the metadata-authoring path the DV battery exercises.
+  icebergVersion = rootProject.ext.iceberg_1_11_version
 }
 
-// Iceberg 1.10 publishes Gradle Module Metadata declaring jvm.version=11, so Gradle's variant
+// Iceberg 1.11 publishes Gradle Module Metadata declaring jvm.version=17, so Gradle's variant
 // resolver refuses to place it on a targetCompatibility=8 module's classpath. That guard is
-// metadata-conservative: -target 8 (v52) bytecode loads and runs fine on the Java 11+ runtime this
-// rung uses, next to the Java-11 Iceberg classes (bytecode target is a JVM floor, not an inter-jar
+// metadata-conservative: -target 8 (v52) bytecode loads and runs fine on the Java 17 runtime this
+// rung uses, next to the Java-17 Iceberg classes (bytecode target is a JVM floor, not an inter-jar
 // contract). So we raise ONLY the *resolution* attribute of the consuming (resolvable) configs to
-// 11, keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement.
+// 17, keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement.
+// (Was 11 for the Iceberg-1.10 lane; 17 also accepts jvm-11 libs, so mixed lanes still resolve.)
 configurations.configureEach {
   if (canBeResolved && !canBeConsumed) {
     attributes {
-      attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 11)
+      attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
     }
   }
 }

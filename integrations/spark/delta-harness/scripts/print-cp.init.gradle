@@ -19,6 +19,12 @@ def harnessItestPath = System.getProperty('harnessItestPath') ?: ':integrations:
 // jackson serializers), so a single unshaded Iceberg spans server+client — no exclusion there.
 def shadedRuntimeLane = harnessItestPath == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest'
 
+// rung-3 note: Iceberg 1.11's module metadata declares jvm.version=17. The target-JVM resolution
+// relaxation that lets the Java-8/11-target server modules consume it is centralized in the
+// OpenHouse build's iceberg conventions (openhouse.iceberg-conventions-1.5.2 + java-minimal-
+// conventions), which rung-3 raised from 11 to 17 — so no init-script attribute override is needed
+// here (the rung-2 spark-4.0 lane needed none either, since 1.10 declared jvm.version=11).
+
 allprojects {
   if (path == harnessItestPath) {
     if (shadedRuntimeLane) {
