@@ -1895,6 +1895,65 @@ object Scenarios {
     "undropAdmin.restoreAfterPurgeRejected" -> undropAdminRestoreAfterPurgeRejected
   )
 
+  // ── Column-default (fork #251) — CURRENT-BEHAVIOUR pins ──────────────────────────────────────
+  // IMPORTANT (compiler- + runtime-verified): the #251 column-default backport (NestedField initial/
+  // write-default + SchemaParser serialization) is NOT in the artifact we test against
+  // (com.linkedin.iceberg 1.5.2.15) — the NestedField builder/initialDefault APIs are absent. #251 is
+  // on the openhouse-1.5.2 branch HEAD (d1603c807), POST-dating the 1.5.2.15 release. So against the
+  // DEPLOYED artifact there is no Iceberg column-default support at all.
+  //
+  // What the customer path actually does on 1.5.2.15 (measured — see DIAG below):
+  //   `ALTER TABLE t ADD COLUMN c int DEFAULT 5`
+  //     • is ACCEPTED at Spark parse time (no error) — Spark 3.5 owns the DEFAULT grammar;
+  //     • the DEFAULT is SILENTLY DROPPED from the persisted Iceberg schema (DESCRIBE shows `c|int|null`
+  //       with no default metadata) — nothing round-trips to a reader, so there is no cross-engine
+  //       divergence hazard *yet* (the #251 "v2 persists a v3 default with no gate" risk is not live);
+  //     • is NOT backfilled on read — pre-existing rows read NULL, not 5;
+  //     • is NOT applied on write — an INSERT that omits the column is REJECTED with
+  //       INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA (same root as bug1 — the v2 connector has no
+  //       column-default write wiring).
+  // Net: the DEFAULT clause is inert-but-silent — arguably worse than an outright rejection, since the
+  // operator believes they set a default and did not. These are CURRENT-behaviour PINS. When OpenHouse
+  // bumps to a #251-containing artifact (and/or wires it into SparkTable), every one of these flips and
+  // the ICEBERG-FORK-AUDIT.md hazard must be re-tested against that build. See ICEBERG-FORK-AUDIT.md.
+  private def forkColDefaultAddColumn(fmt: String)(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val table = s"${ctx.namespace}.t_coldef_$fmt"
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+    spark.sql(s"CREATE TABLE $table (id bigint, s string) USING iceberg TBLPROPERTIES ('write.format.default'='$fmt')")
+    spark.sql(s"INSERT INTO $table VALUES (1, 'a'), (2, 'b')")
+
+    // (1) The customer path is ACCEPTED at parse time (Spark owns the grammar) — pin no-throw.
+    spark.sql(s"ALTER TABLE $table ADD COLUMN c int DEFAULT 5")
+
+    // (2) The DEFAULT is silently dropped from the persisted schema — column c has no default metadata.
+    val cDesc = spark.sql(s"DESCRIBE TABLE EXTENDED $table").collect()
+                  .map(_.mkString("|")).filter(_.matches("(?i)^c\\|.*")).mkString(" ;; ")
+    assert(!cDesc.toLowerCase.contains("default") && !cDesc.contains("5"),
+      s"[$fmt] expected the ADD COLUMN DEFAULT to be silently dropped (no default persisted for c), but DESCRIBE shows: $cDesc — a #251-containing build may now be wired; re-audit")
+
+    // (3) The default is NOT backfilled on read — pre-existing rows read NULL, not 5.
+    val nulls = spark.sql(s"SELECT count(*) FROM $table WHERE c IS NULL").collect()(0).getLong(0)
+    assert(nulls == 2,
+      s"[$fmt] expected the default NOT applied on read (2 NULLs), got $nulls — a #251-containing build may now apply defaults; re-audit")
+
+    // (4) The default is NOT applied on write — an insert that omits c is rejected (no write wiring).
+    val omit = Check.intercept[org.apache.spark.sql.AnalysisException] {
+      spark.sql(s"INSERT INTO $table (id, s) VALUES (3, 'c')")
+    }
+    val omitMsg = Exceptions.causeChain(omit).flatMap(e => Option(e.getMessage)).mkString(" | ")
+    assert(omitMsg.contains("CANNOT_FIND_DATA"),
+      s"[$fmt] expected omit-insert rejected with CANNOT_FIND_DATA (no column-default write wiring), got: $omitMsg")
+
+    println(s"DIAG fork.colDefault[$fmt]: accepted=yes persistedDefault=no readBackfill=no writeApply=no(CANNOT_FIND_DATA)")
+    spark.sql(s"DROP TABLE IF EXISTS $table")
+  }
+
+  val forkColDefaultOps: List[(String, Ctx => Unit)] = List(
+    "fork.colDefault.addColumnInert @ parquet" -> forkColDefaultAddColumn("parquet"),
+    "fork.colDefault.addColumnInert @ orc"     -> forkColDefaultAddColumn("orc")
+  )
+
   private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
     assert(HtsAdmin.softDelete(db, tbl)._1 / 100 == 2, s"soft-delete $db.$tbl failed")
     val ms = HtsAdmin.softDeletedAtMs(db, tbl).getOrElse(throw new AssertionError(s"no deletedAtMs for $db.$tbl"))
@@ -3885,6 +3944,7 @@ object Plan {
     val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
+    val forkColDefault  = Scenarios.forkColDefaultOps.map { case (name, f) => Case(name, f) }
     val branching       = Scenarios.branching.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val interactions    = Scenarios.interactions.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
@@ -4048,7 +4108,7 @@ object Plan {
       branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
-      encryptionPin
+      encryptionPin ++ forkColDefault
   }
 }
 

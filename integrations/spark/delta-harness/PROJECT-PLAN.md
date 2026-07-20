@@ -12,10 +12,14 @@ SILO — NOT master agent yet (user will say when). Master plan is undisclosed +
 testing; sequence = bootstrap tests → fix → modify. Work only on PR #11 (stacked on #9); never touch #9.
 
 ## CURRENTLY EXECUTING
-IDLE — awaiting user direction. Sub-goals C (format/ORC) + F (Avro repair) are DONE (commit 2436fc5,
-pushed; remote repaired). Both modes green: STUB 2079 (2068/11/0), REAL HTS 2297 (2286/11/0), 0 fail,
-0 ORC↔Parquet divergence. Highest-value remaining = the #251 column-default correctness tests (sub-goal
-B follow-ups) — BLOCKED on user +1 (dormant-feature tests).
+#251 column-default tests (user +1: "add in the column default tests") — BUILT + GREEN. Slice green
+(parquet+orc); full STUB gate running. KEY FINDING surfaced to user: **#251 is NOT in the deployed
+1.5.2.15 artifact** (it's on branch HEAD d1603c807, post-release), so the cross-engine persistence hazard
+is latent-in-source not live. Deployed reality is INERT-BUT-SILENT: ADD COLUMN DEFAULT is accepted →
+silently dropped from schema → not read-backfilled → omit-insert rejected CANNOT_FIND_DATA. Pinned as a
+tripwire (`fork.colDefault.addColumnInert @ parquet|orc`). See CHECKLIST-2026-07-16-column-default-tests.md
+(appended finding) + ICEBERG-FORK-AUDIT.md (CORRECTION block). OPEN for user: test #251 against a newer
+fork build too? (default no). Then commit + push.
 
 ## SUB-GOALS (index → sub-checklists / artifacts)
 - A. OpenHouse harness surface testing — ✅ DONE. HTS-embed, undrop axis+admin+3-way, blocks 8/9/10,

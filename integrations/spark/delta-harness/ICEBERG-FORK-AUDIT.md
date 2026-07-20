@@ -9,6 +9,24 @@ files, +2742/-739** (spark 46, core 21, api 5). ~6 are pure CI/release/version; 
 
 ## Headline: the "sneaky v3 backport" is COLUMN DEFAULTS (#251), and it is inert-but-latent
 
+> **CORRECTION (2026-07-20, compiler- + runtime-verified) — #251 is NOT in the DEPLOYED artifact.**
+> The source analysis below is correct about the `openhouse-1.5.2` **branch HEAD** (`d1603c807`), but that
+> commit **POST-dates** the `com.linkedin.iceberg` **1.5.2.15** release that the harness actually loads.
+> In 1.5.2.15 the column-default APIs are simply **absent** (`Types.NestedField.builder()/initialDefault()
+> /writeDefault()` don't compile; `SchemaParser` has no `INITIAL_DEFAULT`/`WRITE_DEFAULT`). Therefore:
+> - The **cross-engine persistence hazard** (v2 table serializes a v3 default with no gate) is **latent in
+>   source, NOT live** in what OpenHouse runs today — there is no serialization path to exercise.
+> - What the customer path (`ALTER TABLE t ADD COLUMN c int DEFAULT 5`) does on 1.5.2.15, **measured**:
+>   **accepted** at Spark parse time → **silently dropped** from the persisted schema (`DESCRIBE` = `c|int
+>   |null`, no default) → **not backfilled on read** (old rows NULL) → **not applied on write** (omit-insert
+>   rejected `INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA`). Inert-but-**silent** — arguably worse than a
+>   rejection (operator believes a default was set; it was not).
+> - **Tests built** (`fork.colDefault.addColumnInert @ parquet|orc`, green) hard-pin all four behaviours.
+>   They are a **tripwire**: when OpenHouse bumps to a #251-containing artifact (and/or wires SparkTable),
+>   every assert flips → suite fails → someone re-audits the now-live hazard against that build.
+> - **Open question for the user:** whether to also test #251 against a newer fork build containing
+>   `d1603c807` (needs a version bump, off the fast inner loop). Default: no — pin current reality only.
+
 Commit `d1603c807` (#251) "Add NestedField column-default APIs and Expressions.lit() (~upstream #9502)"
 backports the **format-v3** column-default feature into a **v2** fork, **api/core only**:
 - **Serialization: durable.** `SchemaParser` writes/reads `initial-default` + `write-default` into the
@@ -32,7 +50,7 @@ description exactly ("doesn't alter the spec but risks correctness").
 
 | Commit | Subsystem | Change | Risk | Tested? |
 |---|---|---|---|---|
-| **#251 d1603c807** | api/core schema | initial/write-default APIs + SchemaParser round-trip; no read-apply, no v3 gate, no Spark wiring | **HIGH** | partial (`insert.explicitColumns` pins the *absence* of wiring; no test for defaulted-read→NULL or v2 persistence) |
+| **#251 d1603c807** | api/core schema | initial/write-default APIs + SchemaParser round-trip; no read-apply, no v3 gate, no Spark wiring. **NOTE: on branch HEAD only — NOT in the deployed 1.5.2.15 artifact.** | **HIGH (latent)** | **yes** — `fork.colDefault.addColumnInert @ parquet\|orc` pins the deployed reality (accept→silent-drop→NULL→CANNOT_FIND_DATA); tripwire flips on a #251-containing bump. v2-persistence hazard not testable until then. |
 | #249 d69c1fd91 | spark write | partitioned default distribution → NONE (Apache = HASH); DML still HASH | **med** (behavior divergence: more small files) | no |
 | #189 04d2cd2af | core/spark compaction | budgeted rewrite + order-by-file-sequence-number (task selection/order only; not delete resolution) | low | partial |
 | #233 a6aef6788 | core/spark compaction | bin-pack weight by data-file length, ignore delete size | low | no |

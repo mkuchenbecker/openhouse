@@ -39,6 +39,24 @@ else
 fi
 OHCP="$(cat "$WORK/oh-cp.txt")"
 
+# ── Test-the-BRANCH override ────────────────────────────────────────────────────────────────────
+# The harness normally resolves the PUBLISHED com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12
+# (e.g. 1.5.2.15) — a Maven-Central snapshot that can LAG the openhouse-1.5.2 branch HEAD (it predates
+# #251 column-defaults, etc.). To test the actual BRANCH, build the shaded runtime jar from branch HEAD
+# (`gradle :iceberg-spark:iceberg-spark-runtime-3.5_2.12:shadowJar`) and point this at it:
+#   ICEBERG_RUNTIME_JAR=/workspace/iceberg/spark/v3.5/spark-runtime/build/libs/<jar> ./run-openhouse.sh
+# That single shaded jar carries all of iceberg api+core+spark, so swapping it makes the whole harness
+# JVM (Spark side + embedded server) run the branch. Unset → back to the published release. Reversible.
+if [[ -n "${ICEBERG_RUNTIME_JAR:-}" ]]; then
+  [[ -f "$ICEBERG_RUNTIME_JAR" ]] || { echo "!! ICEBERG_RUNTIME_JAR not found: $ICEBERG_RUNTIME_JAR" >&2; exit 1; }
+  # Replace the resolved spark-runtime-3.5 jar path (any version) with the override.
+  OHCP="$(printf '%s' "$OHCP" | tr ':' '\n' \
+           | sed -E "s#.*/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar#$ICEBERG_RUNTIME_JAR#" \
+           | paste -sd ':' -)"
+  echo ">> [BRANCH MODE] iceberg-spark-runtime swapped -> $ICEBERG_RUNTIME_JAR"
+  printf '%s' "$OHCP" | tr ':' '\n' | grep -c "$ICEBERG_RUNTIME_JAR" | xargs -I{} echo ">> [BRANCH MODE] override entries on cp: {}"
+fi
+
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
 mkdir -p "$WORK/classes"
 "$JDK17/bin/java" -cp "$SCALAC_CP" scala.tools.nsc.Main \
