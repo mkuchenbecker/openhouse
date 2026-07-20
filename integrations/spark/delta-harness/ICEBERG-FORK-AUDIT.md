@@ -52,12 +52,12 @@ schema). See ICEBERG fork checkout to rebuild the branch runtime; see run-openho
 | Commit | Subsystem | Change | Risk | Tested? |
 |---|---|---|---|---|
 | **#251 d1603c807** | api/core schema | initial/write-default APIs + SchemaParser serialization; no read-apply and no Spark wiring in the open fork. On branch HEAD only — not in the 1.5.2.15 artifact. | n/a (tabled) | yes — `fork.colDefault.*` (addColumnInert, apiSerialization, readApplyProbe). See #251 section. |
-| #249 d69c1fd91 | spark write | partitioned default distribution → NONE (Apache = HASH); DML still HASH | **med** (behavior divergence: more small files) | no |
-| #189 04d2cd2af | core/spark compaction | budgeted rewrite + order-by-file-sequence-number (task selection/order only; not delete resolution) | low | partial |
-| #233 a6aef6788 | core/spark compaction | bin-pack weight by data-file length, ignore delete size | low | no |
-| #229 809534da0 | table/spark props | delete-file replication toggle | low | no |
-| #219 25f1e5c9b | core io | delete-file HDFS replication factor | low | no |
-| #228 efb092202 | spark read | split-size SparkSQLProperty | low | no |
+| #249 d69c1fd91 | spark write | partitioned default distribution → NONE (Apache = HASH); DML still HASH | **med** (behavior divergence: more small files) | **yes** — `fork.partitionDist.default @ parquet\|orc` (default=32 files vs hash=4; active in BOTH release + branch). |
+| #189 04d2cd2af | core/spark compaction | budgeted rewrite + order-by-file-sequence-number (task selection/order only; not delete resolution) | low | **yes** — `fork.compactionOrder @ parquet` (file_sequence_number monotonic across commits; shares rewrite path w/ #233). |
+| #233 a6aef6788 | core/spark compaction | bin-pack weight by data-file length, ignore delete size | low | **yes** — `fork.binPackByLength @ parquet\|orc` (rows preserved through rewrite). |
+| #229 809534da0 | table/spark props | delete-file replication toggle (`write.delete-file-replication`) | low | **yes** — `fork.deleteFileReplication @ mor` (prop round-trips; MoR delete correct). HDFS repl not observable on local FS. |
+| #219 25f1e5c9b | core io | per-output-file replication factor: `OutputFileFactory.FILE_REPLICATION_FACTOR = "file-replication-factor"` — stamped by the DELETE-file write path only (NOT a settable table prop; corrects an earlier key guess). Same mechanism as #229. | low | **yes** — `fork.fileReplicationFactor @ core` (factory stamps the key into the FileIO property map). |
+| #228 efb092202 | spark read | split-size SparkSQLProperty (`spark.sql.iceberg.split-size`) | low | **yes** — `fork.splitSize @ parquet\|orc` (planner task-group count 1 vs 6 via planTasks() with open-file-cost=1; rows correct). |
 | #234 c9c41c46f | spark action | stream-results for remove_orphan_files (OOM avoidance) | low (+) | no |
 | #236 e1103d86c / #214 0b10d8734 | catalog / spark write | app-name into EnvironmentContext / snapshot summary | none | no |
 | #224 b7851bb63 | spark parser | skip rewriting Spark views (LI Spark 3.5) | low | no |
@@ -71,9 +71,9 @@ schema). See ICEBERG fork checkout to rebuild the branch runtime; see run-openho
 - **#251 column defaults** — TABLED (see #251 section above). `fork.colDefault.*` cover the OSS Spark DDL
   path + SchemaParser serialization; read-application is out of scope for this harness (no such code in
   the open fork).
-- **#249 partitioned write distribution = NONE** — INSERT into a partitioned table without setting
-  `write.distribution-mode` writes with distribution NONE (Apache default = HASH); DELETE/UPDATE still
-  HASH. Not yet tested.
+- **#234 stream-results for remove_orphan_files** (OOM avoidance), **#236/#214** app-name into
+  EnvironmentContext/snapshot summary, **#224** skip rewriting Spark views — not yet tested (low value:
+  OOM-avoidance / audit-metadata / view paths, not locally observable). #241/#245/#246 are upstream fixes.
 
 ## Cross-reference to harness findings
 - **bug `insert.explicitColumns`** — ROOT is #251's non-wiring (SparkTable lacks SupportsColumnDefaultValue). Reclassified to a pin (correct).

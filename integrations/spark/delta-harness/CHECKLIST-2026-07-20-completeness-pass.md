@@ -61,7 +61,8 @@ diff from main + user directives (2026-07-20).
       un-bakeable (coreTwoSnapshots/cowCreate now take fmt) but single-format by design. Un-baking is the
       architectural fix; multiplex is applied where it is not vacuous. If owner wants literal doubling of
       the inert blocks too, that is a one-line-per-block change to iterate dataFormats.
-- [ ] Remaining fork tests 2b–2f (low-observability pins OK per user).
+- [x] Remaining fork tests 2b-2f (sub-agent, worktree; 8 cases green). Denormalized to ICEBERG-FORK-AUDIT
+      (tested column). Commit 19e00e4.
 - [ ] Mega phases (RTAS full-cross, WAP mega-axis) — budget approved.
 - [x] G2–G14 documentation: already complete in AUDIT-FINDINGS.md (LIVING doc). Fixed the material
       AUDIT-FINDINGS:88 wording (code-verified: bad-count->500, bad-suffix->silent daily; not a contradiction).
