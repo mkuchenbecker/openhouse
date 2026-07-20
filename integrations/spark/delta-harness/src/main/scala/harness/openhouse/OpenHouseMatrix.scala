@@ -1673,12 +1673,15 @@ object Scenarios {
 
   // ── time travel + restore/rollback ──────────────────────────────────────────────────────
   // A two-snapshot base: seed 3 rows (snapshot A), then insert 2 more (snapshot B).
-  private def coreTwoSnapshots: TableTest[CoreTable.type] =
+  // Format is a PARAMETER, not baked in — so any block built on this base can multiplex across formats.
+  private def coreTwoSnapshots(fmt: String): TableTest[CoreTable.type] =
     TableTest(Core)
-      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')")()
+      .sql("create")(table => s"CREATE TABLE $table ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$fmt')")()
       .insert(3)()
       .sql("insertMore")(table => s"INSERT INTO $table VALUES " +
         s"(CAST(4 AS BIGINT), 4, 'row-4', 4.5, true, '2024-01-04-03'), (CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")()
+  // No-arg overload (parquet) keeps the many existing single-format call sites unchanged.
+  private def coreTwoSnapshots: TableTest[CoreTable.type] = coreTwoSnapshots("parquet")
 
   // Snapshots in ancestry order (root first), following the parent_id chain — deterministic even
   // if two commits happen to share a committed_at millisecond (which `ORDER BY committed_at` is not).
@@ -1693,29 +1696,29 @@ object Scenarios {
     order.toList
   }
 
-  val timeTravelVersionAsOf: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.versionAsOf") { view =>
+  def timeTravelVersionAsOf(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.versionAsOf") { view =>
       val snaps = snapshotIds(view.spark, view.table)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(0)}").collect()(0).getLong(0) == 3)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} VERSION AS OF ${snaps(1)}").collect()(0).getLong(0) == 5)
     }
 
-  val timeTravelTimestampAsOf: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.timestampAsOf") { view =>
+  def timeTravelTimestampAsOf(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.timestampAsOf") { view =>
       val ts0 = view.spark.sql(s"SELECT committed_at FROM ${view.table}.snapshots ORDER BY committed_at LIMIT 1").collect()(0).getTimestamp(0)
       assert(view.spark.sql(s"SELECT count(*) FROM ${view.table} TIMESTAMP AS OF '$ts0'").collect()(0).getLong(0) == 3)
     }
 
-  val timeTravelMetadataTables: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.metadataTables") { view =>
+  def timeTravelMetadataTables(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.metadataTables") { view =>
       def count(meta: String): Long = view.spark.sql(s"SELECT count(*) FROM ${view.table}.$meta").collect()(0).getLong(0)
       assert(count("snapshots") == 2)
       assert(count("history") == 2)
       assert(count("files") >= 1 && count("manifests") >= 1)
     }
 
-  val timeTravelIncrementalRead: TableTest[CoreTable.type] =
-    coreTwoSnapshots.check("timeTravel.incrementalRead") { view =>
+  def timeTravelIncrementalRead(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).check("timeTravel.incrementalRead") { view =>
       val snaps = snapshotIds(view.spark, view.table)
       val added = view.spark.read.format("iceberg")
         .option("start-snapshot-id", snaps(0)).option("end-snapshot-id", snaps(1))
@@ -1723,57 +1726,57 @@ object Scenarios {
       assert(added == 2) // only the rows added between snapshot A and B
     }
 
-  val timeTravel: List[(String, TableTest[CoreTable.type])] = List(
-    "timeTravel.versionAsOf"     -> timeTravelVersionAsOf,
-    "timeTravel.timestampAsOf"   -> timeTravelTimestampAsOf,
-    "timeTravel.metadataTables"  -> timeTravelMetadataTables,
-    "timeTravel.incrementalRead" -> timeTravelIncrementalRead
+  def timeTravelOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "timeTravel.versionAsOf"     -> timeTravelVersionAsOf(fmt),
+    "timeTravel.timestampAsOf"   -> timeTravelTimestampAsOf(fmt),
+    "timeTravel.metadataTables"  -> timeTravelMetadataTables(fmt),
+    "timeTravel.incrementalRead" -> timeTravelIncrementalRead(fmt)
   )
 
   // Restore/rollback via stored procedures (gated: OpenHouse may not expose CALL procedures).
   private def catalogRelative(table: String): String = table.stripPrefix("openhouse.")
 
-  val restoreRollbackToSnapshot: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("restore.rollbackToSnapshot") { (spark, table) =>
+  def restoreRollbackToSnapshot(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("restore.rollbackToSnapshot") { (spark, table) =>
       val first = snapshotIds(spark, table).head
       spark.sql(s"CALL openhouse.system.rollback_to_snapshot('${catalogRelative(table)}', $first)")
     } { view =>
       assert(view.after.size == 3) // rolled back to the 3-row snapshot
     }
 
-  val restoreSetCurrentSnapshot: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("restore.setCurrentSnapshot") { (spark, table) =>
+  def restoreSetCurrentSnapshot(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("restore.setCurrentSnapshot") { (spark, table) =>
       val first = snapshotIds(spark, table).head
       spark.sql(s"CALL openhouse.system.set_current_snapshot('${catalogRelative(table)}', $first)")
     } { view =>
       assert(view.after.size == 3)
     }
 
-  val restoreRollback: List[(String, TableTest[CoreTable.type])] = List(
-    "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot,
-    "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot
+  def restoreRollbackOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "restore.rollbackToSnapshot"  -> restoreRollbackToSnapshot(fmt),
+    "restore.setCurrentSnapshot"  -> restoreSetCurrentSnapshot(fmt)
   )
 
   // ── Maintenance OPERATIONS (Iceberg CALL procedures; jobs merely orchestrate these) ──────────
   // SE / OFD / compaction are stored procedures, reachable from Spark SQL like rollback/set_current.
   // Each mutates physical state; we assert the current DATA is preserved and observe the metadata delta.
-  val maintenanceExpireSnapshots: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.expireSnapshots") { (spark, table) =>
+  def maintenanceExpireSnapshots(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.expireSnapshots") { (spark, table) =>
       spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
     } { view =>
       assert(view.after.size == 5, "expire_snapshots changed the current data")
       assert(view.snapshotsAfter < view.snapshotsBefore, s"expire did not drop a snapshot: ${view.snapshotsBefore} -> ${view.snapshotsAfter}")
     }
 
-  val maintenanceRewriteDataFiles: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.rewriteDataFiles") { (spark, table) =>
+  def maintenanceRewriteDataFiles(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.rewriteDataFiles") { (spark, table) =>
       spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}')")
     } { view =>
       assert(view.after.size == 5, "compaction changed rows")                          // rows preserved
     }
 
-  val maintenanceRemoveOrphanFiles: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("maintenance.removeOrphanFiles") { (spark, table) =>
+  def maintenanceRemoveOrphanFiles(fmt: String): TableTest[CoreTable.type] =
+    coreTwoSnapshots(fmt).step("maintenance.removeOrphanFiles") { (spark, table) =>
       // older_than must be ≥24h in the past (a safety guard); a far-past ts is a valid no-op that
       // still exercises the procedure end-to-end without corrupting live files.
       spark.sql(s"CALL openhouse.system.remove_orphan_files(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2020-01-01 00:00:00')")
@@ -1781,10 +1784,10 @@ object Scenarios {
       assert(view.after.size == 5, "orphan removal changed rows")
     }
 
-  val maintenance: List[(String, TableTest[CoreTable.type])] = List(
-    "maintenance.expireSnapshots"  -> maintenanceExpireSnapshots,
-    "maintenance.rewriteDataFiles" -> maintenanceRewriteDataFiles,
-    "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles
+  def maintenanceOps(fmt: String): List[(String, TableTest[CoreTable.type])] = List(
+    "maintenance.expireSnapshots"  -> maintenanceExpireSnapshots(fmt),
+    "maintenance.rewriteDataFiles" -> maintenanceRewriteDataFiles(fmt),
+    "maintenance.removeOrphanFiles" -> maintenanceRemoveOrphanFiles(fmt)
   )
 
   // ── Control-plane (REST) ops with no SQL surface — driven via the embedded server's HTTP API ──
@@ -4107,9 +4110,11 @@ object Plan {
     val partitionEvolution  = Scenarios.partitionEvolution.map { case (name, t) => Case(s"$name @ parquet", t.run) }
 
     // Time travel + restore/rollback (self-contained pipelines, parquet).
-    val timeTravel      = Scenarios.timeTravel.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val restoreRollback = Scenarios.restoreRollback.map { case (name, t) => Case(s"$name @ parquet", t.run) }
-    val maintenance     = Scenarios.maintenance.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    // Format-sensitive blocks multiplex across parquet+orc (the seed format is a parameter, not baked in).
+    val dataFormats     = List("parquet", "orc")
+    val timeTravel      = for { f <- dataFormats; (name, t) <- Scenarios.timeTravelOps(f) }     yield Case(s"$name @ $f", t.run)
+    val restoreRollback = for { f <- dataFormats; (name, t) <- Scenarios.restoreRollbackOps(f) } yield Case(s"$name @ $f", t.run)
+    val maintenance     = for { f <- dataFormats; (name, t) <- Scenarios.maintenanceOps(f) }     yield Case(s"$name @ $f", t.run)
     val control         = Scenarios.controlPlane.map { case (name, f) => Case(s"$name @ embedded", f) }
     val forkColDefault  = Scenarios.forkColDefaultOps.map { case (name, f) => Case(name, f) }
     val forkPartitionDist = Scenarios.forkPartitionDistOps.map { case (name, f) => Case(name, f) }
