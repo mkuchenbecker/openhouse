@@ -1895,27 +1895,16 @@ object Scenarios {
     "undropAdmin.restoreAfterPurgeRejected" -> undropAdminRestoreAfterPurgeRejected
   )
 
-  // ── Column-default (fork #251) — CURRENT-BEHAVIOUR pins ──────────────────────────────────────
-  // IMPORTANT (compiler- + runtime-verified): the #251 column-default backport (NestedField initial/
-  // write-default + SchemaParser serialization) is NOT in the artifact we test against
-  // (com.linkedin.iceberg 1.5.2.15) — the NestedField builder/initialDefault APIs are absent. #251 is
-  // on the openhouse-1.5.2 branch HEAD (d1603c807), POST-dating the 1.5.2.15 release. So against the
-  // DEPLOYED artifact there is no Iceberg column-default support at all.
-  //
-  // What the customer path actually does on 1.5.2.15 (measured — see DIAG below):
-  //   `ALTER TABLE t ADD COLUMN c int DEFAULT 5`
-  //     • is ACCEPTED at Spark parse time (no error) — Spark 3.5 owns the DEFAULT grammar;
-  //     • the DEFAULT is SILENTLY DROPPED from the persisted Iceberg schema (DESCRIBE shows `c|int|null`
-  //       with no default metadata) — nothing round-trips to a reader, so there is no cross-engine
-  //       divergence hazard *yet* (the #251 "v2 persists a v3 default with no gate" risk is not live);
-  //     • is NOT backfilled on read — pre-existing rows read NULL, not 5;
-  //     • is NOT applied on write — an INSERT that omits the column is REJECTED with
-  //       INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA (same root as bug1 — the v2 connector has no
-  //       column-default write wiring).
-  // Net: the DEFAULT clause is inert-but-silent — arguably worse than an outright rejection, since the
-  // operator believes they set a default and did not. These are CURRENT-behaviour PINS. When OpenHouse
-  // bumps to a #251-containing artifact (and/or wires it into SparkTable), every one of these flips and
-  // the ICEBERG-FORK-AUDIT.md hazard must be re-tested against that build. See ICEBERG-FORK-AUDIT.md.
+  // ── Column-default (fork #251) — OSS Spark DDL path ──────────────────────────────────────────
+  // Column defaults are TABLED (see ICEBERG-FORK-AUDIT.md). This test characterizes what the OSS Spark 3.5
+  // DDL path does with `ALTER TABLE t ADD COLUMN c int DEFAULT 5`; the behavior is identical on the
+  // published 1.5.2.15 and the branch build (#251 is api/core only, with no Spark write wiring). Measured:
+  //   • accepted at Spark parse time (Spark 3.5 owns the DEFAULT grammar);
+  //   • the default is not written into the Iceberg schema (DESCRIBE shows `c|int|null`, no default);
+  //   • pre-existing rows read NULL;
+  //   • an INSERT that omits the column is rejected INCOMPATIBLE_DATA_FOR_TABLE.CANNOT_FIND_DATA
+  //     (same root as bug1 — no column-default write wiring in the connector).
+  // These are behavior pins: if a future build changes any of the above, the asserts flip and it is re-audited.
   private def forkColDefaultAddColumn(fmt: String)(ctx: Ctx): Unit = {
     val spark = ctx.spark
     val table = s"${ctx.namespace}.t_coldef_$fmt"
@@ -1926,11 +1915,11 @@ object Scenarios {
     // (1) The customer path is ACCEPTED at parse time (Spark owns the grammar) — pin no-throw.
     spark.sql(s"ALTER TABLE $table ADD COLUMN c int DEFAULT 5")
 
-    // (2) The DEFAULT is silently dropped from the persisted schema — column c has no default metadata.
+    // (2) The default is not written into the persisted schema — column c has no default metadata.
     val cDesc = spark.sql(s"DESCRIBE TABLE EXTENDED $table").collect()
                   .map(_.mkString("|")).filter(_.matches("(?i)^c\\|.*")).mkString(" ;; ")
     assert(!cDesc.toLowerCase.contains("default") && !cDesc.contains("5"),
-      s"[$fmt] expected the ADD COLUMN DEFAULT to be silently dropped (no default persisted for c), but DESCRIBE shows: $cDesc — a #251-containing build may now be wired; re-audit")
+      s"[$fmt] expected no default persisted for c, but DESCRIBE shows: $cDesc — a #251-containing build may now be wired; re-audit")
 
     // (3) The default is NOT backfilled on read — pre-existing rows read NULL, not 5.
     val nulls = spark.sql(s"SELECT count(*) FROM $table WHERE c IS NULL").collect()(0).getLong(0)
@@ -1949,19 +1938,16 @@ object Scenarios {
     spark.sql(s"DROP TABLE IF EXISTS $table")
   }
 
-  // ── Column-default (fork #251) — API-LEVEL serialization / no-gate hazard ────────────────────────
-  // The Spark-SQL path (above) never persists a default, so the #251 cross-engine hazard is unreachable
-  // through the customer path. But the hazard the audit flagged lives in api/core: NestedField carries an
-  // `initial-default`/`write-default` and SchemaParser serializes them into the schema JSON with NO
-  // format-version gate — so a v2 table CAN carry v3-only default metadata, and a stock Apache 1.5.2
-  // reader (which lacks these keys) drops them on the next metadata rewrite (round-trip loss → silent
-  // divergence). This test exercises that api/core surface DIRECTLY via reflection, so the SAME source
-  // compiles + runs in BOTH artifacts:
-  //   • published 1.5.2.15  → NestedField.builder() is ABSENT → pin "API unsupported" (feature not there);
-  //   • branch HEAD (#251)  → build a defaulted field, assert SchemaParser emits `initial-default` with no
-  //                           version gate, and that it round-trips (fromJson→toJson) — the live hazard.
+  // ── Column-default (fork #251) — SchemaParser serialization ──────────────────────────────────────
+  // Characterizes the api/core surface of #251: NestedField carries `initial-default`/`write-default` and
+  // SchemaParser serializes them into the schema JSON. `toJson` takes no format-version parameter, so the
+  // key serializes regardless of the table's format version. Exercised directly via reflection so the SAME
+  // source compiles and runs in BOTH artifacts:
+  //   • published 1.5.2.15  → NestedField.builder() is absent → records "API unsupported";
+  //   • branch HEAD (#251)  → builds a defaulted field, checks SchemaParser emits `initial-default` and
+  //                           that it round-trips (fromJson→toJson).
   // Reflection (not direct calls) is required because the builder API does not exist in the release jar;
-  // a direct reference would fail to COMPILE in default (release) mode.
+  // a direct reference would not COMPILE in default (release) mode.
   private def forkColDefaultApiSerialization(ctx: Ctx): Unit = {
     val nestedFieldCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
     val builderM = scala.util.Try(nestedFieldCls.getMethod("builder"))
@@ -1995,17 +1981,16 @@ object Scenarios {
     val json = org.apache.iceberg.SchemaParser.toJson(schema)
     println(s"DIAG fork.colDefault.api: #251 PRESENT; serialized schema JSON = $json")
 
-    // (a) The default is serialized durably — the cross-engine persistence hazard is LIVE on the branch.
+    // (a) The default is serialized into the schema JSON.
     assert(json.contains("initial-default"),
       s"expected #251 SchemaParser to serialize 'initial-default' into the schema JSON, got: $json")
-    // (b) No format-version gate: toJson takes no version arg — a v2/v1 schema serializes it just the same.
-    //     (Documented hazard: stock Apache 1.5.2 fromJson ignores these keys → round-trip loss.)
-    // (c) Round-trips through fromJson→toJson without loss.
+    // (b) toJson takes no format-version argument — the key serializes the same regardless of format version.
+    // (c) Round-trips through fromJson→toJson.
     val reparsed = org.apache.iceberg.SchemaParser.fromJson(json)
     val json2 = org.apache.iceberg.SchemaParser.toJson(reparsed)
     assert(json2.contains("initial-default"),
       s"expected 'initial-default' to survive fromJson->toJson round-trip, got: $json2")
-    println("DIAG fork.colDefault.api: initial-default serialized with NO version gate + round-trips — cross-engine hazard is LIVE on the branch")
+    println("DIAG fork.colDefault.api: initial-default serialized (no format-version argument) + round-trips")
   }
 
   // Reflectively build an `optional int` NestedField carrying initial-default=`dflt` (the #251 builder).

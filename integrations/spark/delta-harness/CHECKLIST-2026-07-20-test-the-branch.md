@@ -24,7 +24,7 @@ built everything and may need a rebuild, that's an implementation detail."
        + bump `iceberg_1_5_version` + add mavenLocal() repo — NOT a silent 1.5.2.15 override.
 4. [ ] Re-resolve OpenHouse classpath (FORCE_CP=1) against the branch build; confirm the branch jars
        (with #251 APIs) are on oh-cp.txt.
-5. [ ] Recompile harness; smoke fork.colDefault → characterize #251 LIVE behaviour (should now differ:
+5. [ ] Recompile harness; smoke fork.colDefault → characterize #251 behaviour on the branch (may differ:
        default may persist / read-apply). REWRITE the colDefault pins to the branch reality.
 6. [ ] Full regression both modes against the branch build; triage any cases that shift vs the
        1.5.2.15 baseline (those shifts are THE findings — branch-vs-release behavioural deltas).
@@ -45,11 +45,11 @@ built everything and may need a rebuild, that's an implementation detail."
       jar path directly.)
 - [x] 4 SWAP: run-openhouse.sh `ICEBERG_RUNTIME_JAR` hook sed-replaces the runtime jar on the resolved cp.
       Reversible (unset → release). Confirmed "[BRANCH MODE] override entries on cp: 1".
-- [x] 5 #251 LIVE characterization (branch mode):
-      • Spark-SQL path UNCHANGED vs release — still inert-but-silent (no DDL wiring on the branch either).
+- [x] 5 #251 characterization (branch mode):
+      • OSS Spark DDL path unchanged vs release — accepted at parse, default not persisted (no write wiring on the branch).
       • NEW api/core test `fork.colDefault.apiSerialization @ core` (reflection, runs both modes):
         release → builder ABSENT (pin API unsupported); branch → serializes `"initial-default":5` on an
-        UNGATED struct `{"type":"struct",...,"type":"int","initial-default":5}`, round-trips. LIVE hazard.
+        struct `{"type":"struct",...,"type":"int","initial-default":5}` (no format-version field), round-trips.
 - [x] 6 FULL REGRESSION both modes vs release baseline (STUB 2070/11/0, REAL-HTS 2286/11/0):
       • branch STUB     = **2071 passed / 11 skip / 0 fail** (2082).
       • branch REAL-HTS = **2289 passed / 11 skip / 0 fail** (2300). ZERO correctness deltas either mode.
@@ -59,11 +59,10 @@ built everything and may need a rebuild, that's an implementation detail."
 Running the WHOLE harness against branch HEAD shifts NOTHING vs the published 1.5.2.15 — 0 failures, 0
 ORC↔Parquet divergence, every correctness assertion identical. The post-release branch commits (#251
 col-defaults, #249 partitioned-dist=NONE, #248 avro bump, …) introduce no correctness regression on any
-of the ~2000 tested behaviours. The ONLY new live surface is #251 at api/core, now pinned. #251 remains
-customer-unreachable (no Spark wiring) — hazard is latent-but-serializable, not customer-triggerable.
+of the ~2000 tested behaviours. The only new api/core surface is #251, now characterized; TABLED per owner.
 
 ## NOTES
-- Existing colDefault pins (inert-but-silent) characterize the RELEASE 1.5.2.15. Keep the finding as a
+- Existing colDefault pins characterize the RELEASE 1.5.2.15. Keep the finding as a
   documented release-vs-branch delta, but the PINS must move to branch reality once we build HEAD.
 - Watch: building HEAD may change behaviour across MANY cases (not just #251) if the branch is well
   ahead of .15 — each shift is a finding, not a regression to hide.
