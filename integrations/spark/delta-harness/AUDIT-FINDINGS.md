@@ -83,9 +83,14 @@ Grade for a non-expert SQL user: **GOOD** = names the table + the fix · **MEH**
 ### Worst offenders (file first)
 1. **DELETE on a nested struct field → `[INTERNAL_ERROR] … NullPointerException`** (optimizer NPE;
    already in `BUGS.md`). OpenHouse should pre-reject nested-field row-level DELETE with a typed message.
-2. **Malformed replication interval → uncaught `NumberFormatException` → 500** (`IntervalToCronConverter:37`);
-   `"3X"` is silently accepted as daily. Should be a typed 400 listing valid intervals. *(Corrects the
-   plan's Phase-23 assumption of a clean "parse N" — it's actually a raw 500.)*
+2. **Malformed replication interval is mishandled two different ways, by which part is malformed**
+   (`IntervalToCronConverter.generateCronExpressionInstance`, code-verified): it strips the LAST char as
+   the granularity and `Integer.parseInt`s the rest as the count, then routes `"H"`→hourly / **anything
+   else→daily**. So (a) a **bad count** (non-numeric prefix, e.g. `"XH"`, or the bare `"H"` → `substring(0,0)`
+   = `""`) throws an uncaught **`NumberFormatException` → HTTP 500**; (b) a **bad granularity suffix** with a
+   numeric prefix, e.g. `"3X"`, parses `count=3` and — since `"X"` ≠ `"H"` — is **silently coerced to a
+   DAILY schedule** (no error). Should be a typed 400 listing the valid intervals (`3H,6H,12H,1D,2D,3D`).
+   *(Corrects the plan's Phase-23 assumption of a clean "parse N": some inputs 500, others silently coerce.)*
 3. **Server 5xx on commit → `CommitStateUnknownException(rawBody)`** — scary wording + raw body.
 4. **DROP/RENAME COLUMN dump full Iceberg `Schema.toString()` twice** inside
    `InvalidSchemaEvolutionException`'s template (`BaseIcebergSchemaValidator:125-160`) — the one-line
