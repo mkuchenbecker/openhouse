@@ -71,3 +71,9 @@ update PROJECT-PLAN + ICEBERG-FORK-AUDIT.
 Whether to ALSO build #251 tests against a NEWER fork artifact that contains d1603c807 (would require a
 build/version bump — out of the "test what's deployed" fast inner loop). Default if no opinion: NO — pin
 current reality only; the tripwire catches the bump.
+
+---
+## TABLED 2026-07-20 (owner)
+Column defaults tabled. Owner: not fundamentally broken; read-apply gap (if any) implemented elsewhere
+(likely the private Spark reader, not exercised by this OSS-Spark harness). Retracted the read-apply
+"bug" claim; readApplyProbe is DIAG-only now. Un-table only with the private Spark reader available.

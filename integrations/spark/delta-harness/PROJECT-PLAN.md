@@ -12,7 +12,13 @@ SILO — NOT master agent yet (user will say when). Master plan is undisclosed +
 testing; sequence = bootstrap tests → fix → modify. Work only on PR #11 (stacked on #9); never touch #9.
 
 ## CURRENTLY EXECUTING
-IDLE — awaiting user direction. Last task: TEST THE BRANCH (user reframe: "test the branch, not a
+IDLE — awaiting user direction. COLUMN DEFAULTS (#251) are TABLED per owner ("not fundamentally broken;
+if there is a gap it's implemented somewhere" — likely the private Spark reader, not exercised here). The
+read-apply "bug" claim was RETRACTED; `fork.colDefault.readApplyProbe @ core` is now DIAG-only (asserts
+only that the default persists into the schema). Do NOT treat the OSS-Spark NULL read as a defect.
+Kept factual pins: addColumnInert (OSS Spark DDL inert), apiSerialization (default serialized ungated).
+
+Prior task: TEST THE BRANCH (user reframe: "test the branch, not a
 specific version; a rebuild is an implementation detail"). DONE + pushed. Built the openhouse-1.5.2 HEAD
 shaded iceberg-spark-runtime, swapped it in via run-openhouse.sh's reversible ICEBERG_RUNTIME_JAR hook,
 ran the whole harness against the BRANCH. Both modes green: branch STUB 2071/11/0 (2082), branch REAL-HTS
