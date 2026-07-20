@@ -42,7 +42,8 @@ file format (or other axis) — they multiplex/compose across formats, layouts, 
 ## CHECKLISTS — point-in-time (status authoritative here)
 | Checklist | Status | One line |
 |---|---|---|
-| `CHECKLIST-2026-07-20-completeness-pass.md` | **ACTIVE** | Post-self-review: fork tests, D6 blanket-format refactor, mega phases, G-docs, doc consolidation. |
+| `CHECKLIST-2026-07-20-rtas-full-cross.md` | **ACTIVE** | Phase 28: extend `prep.rtas:*` to full DML coverage over replace-lineage (add avro shapes + partitionedOperations). |
+| `CHECKLIST-2026-07-20-completeness-pass.md` | **ACTIVE** | Post-self-review: fork tests (sub-agent), D6 format refactor (done), G-docs (done), doc consolidation. |
 | `CHECKLIST-2026-07-20-test-the-branch.md` | COMPLETED (2026-07-20) | Built branch-HEAD iceberg runtime, swapped it in, re-ran; branch-vs-release = no correctness delta. Lessons → ICEBERG-FORK-AUDIT + VERIFIED-RUN. |
 | `CHECKLIST-2026-07-16-column-default-tests.md` | COMPLETED — TABLED (2026-07-20) | #251 column defaults characterized (api/core only). Lessons → ICEBERG-FORK-AUDIT #251 section. |
 | `CHECKLIST-2026-07-16-orc-coverage.md` | SUPERSEDED (2026-07-20) | D6 resolved = blanket-double; the refactor is executed under the completeness-pass checklist. |
