@@ -2008,10 +2008,92 @@ object Scenarios {
     println("DIAG fork.colDefault.api: initial-default serialized with NO version gate + round-trips — cross-engine hazard is LIVE on the branch")
   }
 
+  // Reflectively build an `optional int` NestedField carrying initial-default=`dflt` (the #251 builder).
+  // Returns None when the API is absent (published release) so callers can pin that cleanly.
+  private def buildDefaultedIntField(id: Int, name: String, dflt: Int): Option[org.apache.iceberg.types.Types.NestedField] = {
+    val nfCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val bm = scala.util.Try(nfCls.getMethod("builder"))
+    if (bm.isFailure) return None
+    def chain(b: AnyRef, m: String, at: Class[_], a: AnyRef): AnyRef = b.getClass.getMethod(m, at).invoke(b, a)
+    def chain0(b: AnyRef, m: String): AnyRef = b.getClass.getMethod(m).invoke(b)
+    val intType = Class.forName("org.apache.iceberg.types.Types$IntegerType").getMethod("get").invoke(null)
+    var b = chain(bm.get.invoke(null), "withId", java.lang.Integer.TYPE, java.lang.Integer.valueOf(id))
+    b = chain(b, "withName", classOf[String], name)
+    b = chain(b, "ofType", Class.forName("org.apache.iceberg.types.Type"), intType)
+    b = chain0(b, "asOptional")
+    b = chain(b, "withInitialDefault", classOf[Object], java.lang.Integer.valueOf(dflt))
+    Some(b.getClass.getMethod("build").invoke(b).asInstanceOf[org.apache.iceberg.types.Types.NestedField])
+  }
+
+  // ── Column-default (fork #251) — READ-APPLY correctness (the real hazard) ────────────────────────
+  // OSS Spark 3.5 cannot SET a column default, but LinkedIn's production Spark is a PRIVATE fork that can
+  // (that is WHY #251 backports the api/core surface). So the customer path IS reachable in prod. The
+  // correctness question is then the READ side: #251 wires NO read-application — PartitionUtil.constantsMap
+  // does not inject initial-default and NOTHING in core/data/spark references it — so a column added WITH a
+  // default, read over pre-existing data files that physically lack it, comes back NULL instead of the
+  // default. And crucially the READ path is engine-shared iceberg-core/spark: the private Spark that WROTE
+  // the default reads through this same unchanged path, so it too sees NULL. Silent correctness bug.
+  //
+  // This test simulates the private-Spark "ALTER TABLE ADD COLUMN c int DEFAULT 5" by committing that exact
+  // schema change out-of-band via the low-level TableMetadata API (the public UpdateSchema has no set-default
+  // op on the branch), on an isolated hadoop catalog, then READS back via Spark. Pins the audited reality:
+  // old rows read NULL, not 5. If a future build wires read-apply, this flips and forces a re-audit.
+  private def forkColDefaultReadApply(ctx: Ctx): Unit = {
+    val spark = ctx.spark
+    val apiPresent = scala.util.Try(
+      Class.forName("org.apache.iceberg.types.Types$NestedField").getMethod("builder")).isSuccess
+    if (!apiPresent) {
+      println("DIAG fork.colDefault.readApply: #251 API absent (published release) — no default can be set; release reality already pinned by addColumnInert")
+      return
+    }
+    val cat = "coldefroapply"
+    val wh  = s"/tmp/coldef-readapply-${System.nanoTime()}"
+    spark.conf.set(s"spark.sql.catalog.$cat", "org.apache.iceberg.spark.SparkCatalog")
+    spark.conf.set(s"spark.sql.catalog.$cat.type", "hadoop")
+    spark.conf.set(s"spark.sql.catalog.$cat.warehouse", wh)
+    val t = s"$cat.d.t_readapply"
+    spark.sql(s"DROP TABLE IF EXISTS $t")
+    spark.sql(s"CREATE TABLE $t (id bigint) USING iceberg")
+    spark.sql(s"INSERT INTO $t VALUES (1),(2)") // data files physically contain ONLY `id`
+
+    // Simulate the private-Spark write: evolve current schema to [id, c int DEFAULT 5] via a low-level commit.
+    val table = org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, t)
+    val cur   = table.schema()
+    val nextId = cur.highestFieldId() + 1
+    val cField = buildDefaultedIntField(nextId, "c", 5).getOrElse(
+      throw new AssertionError("#251 builder present but field build failed"))
+    val cols = new java.util.ArrayList[org.apache.iceberg.types.Types.NestedField](cur.columns())
+    cols.add(cField)
+    val s2 = new org.apache.iceberg.Schema(cols)
+    val ops = table.asInstanceOf[org.apache.iceberg.HasTableOperations].operations()
+    val base = ops.current()
+    val updated = org.apache.iceberg.TableMetadata.buildFrom(base).setCurrentSchema(s2, s2.highestFieldId()).build()
+    ops.commit(base, updated)
+
+    // Sanity: the default DID persist (the write half of the hazard took, with no version gate).
+    val persisted = org.apache.iceberg.SchemaParser.toJson(
+      org.apache.iceberg.spark.Spark3Util.loadIcebergTable(spark, t).schema())
+    assert(persisted.contains("initial-default"),
+      s"expected initial-default to persist into the committed schema, got: $persisted")
+
+    spark.sql(s"REFRESH TABLE $t")
+    val vals = spark.sql(s"SELECT c FROM $t ORDER BY id").collect()
+                 .map(r => if (r.isNullAt(0)) "NULL" else r.getInt(0).toString)
+    println(s"DIAG fork.colDefault.readApply: c over old files = [${vals.mkString(",")}] " +
+            s"(5,5 => read-apply works; NULL,NULL => incomplete-backport correctness BUG)")
+
+    // PIN: the initial-default is NOT applied on read — pre-existing rows read NULL, silently.
+    assert(vals.length == 2 && vals.forall(_ == "NULL"),
+      s"expected the defaulted column to read NULL (read-apply missing in the #251 backport), got " +
+      s"[${vals.mkString(",")}] — read-apply may now be wired; re-audit")
+    spark.sql(s"DROP TABLE IF EXISTS $t")
+  }
+
   val forkColDefaultOps: List[(String, Ctx => Unit)] = List(
-    "fork.colDefault.addColumnInert @ parquet" -> forkColDefaultAddColumn("parquet"),
-    "fork.colDefault.addColumnInert @ orc"     -> forkColDefaultAddColumn("orc"),
-    "fork.colDefault.apiSerialization @ core"  -> forkColDefaultApiSerialization
+    "fork.colDefault.addColumnInert @ parquet"    -> forkColDefaultAddColumn("parquet"),
+    "fork.colDefault.addColumnInert @ orc"        -> forkColDefaultAddColumn("orc"),
+    "fork.colDefault.apiSerialization @ core"     -> forkColDefaultApiSerialization,
+    "fork.colDefault.readsNullNotDefault @ core"  -> forkColDefaultReadApply
   )
 
   private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
