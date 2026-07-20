@@ -440,10 +440,12 @@ object Scenarios {
   // RTAS prep prefix (the P axis, replace-lineage leg — SURFACE-APPRAISAL step 2): create + seed,
   // then CREATE OR REPLACE ... AS SELECT * re-specifying the SAME shape, so the table is
   // functionally identical but reached via the replace path (the path G9/G10 showed misbehaves).
-  // Every downstream DML op then runs on a replace-lineage table. Crossed with ORC + Parquet (format
-  // policy: test both, no single-format pruning). (label, partitionClause, format).
+  // Every downstream DML op then runs on a replace-lineage table. FULL CROSS (Phase 28): all 6 layouts
+  // ({unpartitioned,partitioned} × {parquet,orc,avro}) — mirrors the core `dml` block's layout coverage so
+  // the RTAS/replace-lineage substrate carries the same DML surface as the plain CREATE substrate.
+  // (label, partitionClause, format).
   val rtasPrepShapes: List[(String, String, String)] =
-    for { (pl, pc) <- partitionVariants; fmt <- List("parquet", "orc") } yield (s"$pl/$fmt", pc, fmt)
+    for { (pl, pc) <- partitionVariants; fmt <- List("parquet", "orc", "avro") } yield (s"$pl/$fmt", pc, fmt)
 
   // MoR-read prep (closes the review's "reads on MoR with deletes is a distinct scan path" gap —
   // SURFACE-APPRAISAL step 1). The current MoR bucket runs mutation ops (each reads back once), but
@@ -4456,9 +4458,17 @@ object Plan {
       (name, op)                    <- Scenarios.operations
     } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3, fmt).andThen(op).run)
 
-    // Over-prune miss #1: RTAS × MoR — mutation ops on a replace-lineage MoR table. ORC + Parquet.
+    // RTAS full cross (Phase 28): partition-only ops on the partitioned RTAS shapes — mirrors the core
+    // `partitioned` block (partitionedOperations × partitioned layouts) but on a replace-lineage base.
+    val prepRtasPartitioned = for {
+      (label, partitionClause, fmt) <- Scenarios.rtasPrepShapes.filter(_._1.startsWith("partitioned/"))
+      (name, op)                    <- Scenarios.partitionedOperations
+    } yield Case(s"prep.rtas:$name @ $label", Scenarios.createAndSeedRtas(partitionClause, 3, fmt).andThen(op).run)
+
+    // RTAS × MoR — mutation ops on a replace-lineage MoR table. 3-format for parity with the core MoR
+    // block (morLayouts = parquet/orc/avro), per the Phase-28 full cross.
     val prepRtasMor = for {
-      fmt        <- List("parquet", "orc")
+      fmt        <- List("parquet", "orc", "avro")
       (name, op) <- Scenarios.mutationOperations
     } yield Case(s"prep.rtasMor:$name @ mor-unpartitioned/$fmt",
       Scenarios.createAndSeedRtasMor("", 3, fmt).andThen(op).run)
@@ -4553,7 +4563,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapMor ++ prepRtas ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
+      branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
       encryptionPin ++ forkColDefault ++ forkPartitionDist ++
