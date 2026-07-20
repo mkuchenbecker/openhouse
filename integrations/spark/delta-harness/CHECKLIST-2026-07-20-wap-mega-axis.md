@@ -76,4 +76,27 @@ standing rule and surface the pruning here).
 - Is the ~+2,400 raw 3× expected literally, or is vacuity-pruned ~+300–380 acceptable (matches "no vacuous
   tests")? Default: pruned, with the pruning documented here. FLAG in chat before the full build.
 
-## STATUS: PLANNED. Not started (awaiting go / the RTAS verification gate to finish first).
+## STATUS: Stages A/B/C BUILT + green (slice-verified); full both-mode gate running.
+
+---
+## EXECUTION LOG 2026-07-20 (owner: "do the wap testing")
+Scope decision: with the blanket-double lens (owner: predicted-vacuity is tested, not assumed), the WAP
+legs are FORMAT-MULTIPLEXED via crossFmt (not the earlier single-format sketch). Staged assertion shape:
+the fuller "main-unchanged-pre-publish → cherrypick → main-reflects".
+- [x] Stage A — branch DML parity: branchWap → all 6 layouts (incl avro); +branchWapPartitioned
+      (partitionedOps × partitioned branch shapes); branchWapMor → 3-format. branchWap 456/456 green (9d7de71).
+- [x] Stage B — systematic branch-DDL leak (G8): `branchDdl` block, table-global DDL run under
+      spark.wap.branch, asserting the effect on MAIN. Pins ADD COLUMN / SET TBLPROPERTIES / ALTER COLUMN
+      COMMENT all LEAK to main; DROP COLUMN stays rejected. parquet+orc, 8/8 green (9fb29f8).
+- [x] Stage C — staged-WAP write surface (`wapStaged`): stage via spark.wap.id → assert main unchanged →
+      cherrypick → main reflects. 14/14 green (parquet+orc). **Two FINDINGS surfaced (5c57558):**
+      • **WAP1** — a staged DELETE is NOT honored by WAP (commits to main immediately, no staged snapshot),
+        unlike staged insert/overwrite/update/merge. Pinned `wapStaged.delete.bypassesWap`; documented in
+        AUDIT-FINDINGS. Root cause (stock vs OH) not determined here.
+      • **G11(d) confirmed** — an unreferenced staged snapshot is expired by expire_snapshots then stranded
+        (un-cherrypickable). Pinned `wapStaged.expireVsStaged`.
+- [~] Stage D — reconcile + findings: WAP1 + G11(d) documented. Full both-mode gate + record + freeze: in progress.
+
+Estimate reconciliation: net add ≈ +236 stub (branchWap 220→456 = +236; branchDdl +8; wapStaged +14; the
+earlier "pruned ~+300-380" is close, but the branch legs are format-multiplexed per blanket-double). Final
+counts land in VERIFIED-RUN.
