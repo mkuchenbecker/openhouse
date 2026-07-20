@@ -1,3 +1,5 @@
+> **COMPLETED 2026-07-20.** Stages A/B/C green; STUB 2560/11/0, REAL-HTS 2778/11/0. Findings WAP1 + G11(d) -> AUDIT-FINDINGS. Frozen. See index.md.
+
 # CHECKLIST — 2026-07-20 — WAP / branching mega-axis (DDL-TEST-PLAN Phase 29)
 
 New file per task. Re-read first each turn. Parent: `index.md` (master map). Registered ACTIVE in index.
@@ -76,7 +78,7 @@ standing rule and surface the pruning here).
 - Is the ~+2,400 raw 3× expected literally, or is vacuity-pruned ~+300–380 acceptable (matches "no vacuous
   tests")? Default: pruned, with the pruning documented here. FLAG in chat before the full build.
 
-## STATUS: Stages A/B/C BUILT + green (slice-verified); full both-mode gate running.
+## STATUS: COMPLETED — stages A/B/C green; both-mode gate STUB 2571 / REAL-HTS 2789, 0 failed. Frozen.
 
 ---
 ## EXECUTION LOG 2026-07-20 (owner: "do the wap testing")

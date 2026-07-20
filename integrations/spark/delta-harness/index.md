@@ -10,10 +10,10 @@ and then frozen. Current truth is the LIVING docs, never a checklist.
 ---
 
 ## CURRENT STATE (pointer)
-- **Verified run (latest):** STUB **2393** (2382/11/0), REAL-HTS **2611** (2600/11/0), 0 failed — see
+- **Verified run (latest):** STUB **2571** (2560/11/0), REAL-HTS **2789** (2778/11/0), 0 failed — see
   `VERIFIED-RUN-openhouse.txt` for authoritative dated counts. On PR #9 branch (`claude/spark-scala-test-
-  env-k7drzg`); includes fork tests 2b-2f + RTAS full-cross (Phase 28) + D6 blanket-double (format across
-  all table-creating blocks). Remaining big item: WAP mega-axis (Phase 29, planned).
+  env-k7drzg`); includes fork tests 2b-2f + RTAS full-cross (Phase 28) + D6 blanket-double + WAP mega-axis
+  (Phase 29, stages A/B/C). New finding WAP1 (staged DELETE bypasses WAP). All major planned blocks built.
 - **Active checklist:** `CHECKLIST-2026-07-20-completeness-pass.md` (fork-commit tests, D6 blanket-format
   refactor, mega phases, G2–G14 docs, doc consolidation).
 - **Role:** testing + understanding silo for OpenHouse + the `com.linkedin.iceberg` 1.5.2 fork. Not the
@@ -43,7 +43,7 @@ file format (or other axis) — they multiplex/compose across formats, layouts, 
 ## CHECKLISTS — point-in-time (status authoritative here)
 | Checklist | Status | One line |
 |---|---|---|
-| `CHECKLIST-2026-07-20-wap-mega-axis.md` | **PLANNED** | Phase 29: op surface × {main, branch, staged-WAP} — branch parity + systematic branch-DDL leak (G8) + staged/WAP publish-visibility. Not started. |
+| `CHECKLIST-2026-07-20-wap-mega-axis.md` | **COMPLETED (2026-07-20)** | Phase 29: stages A/B/C built + green. branchWap 456, branchDdl (G8 leak), wapStaged. Findings WAP1 + G11(d). |
 | `CHECKLIST-2026-07-20-rtas-full-cross.md` | **COMPLETED (2026-07-20)** | Phase 28: `prep.rtas:*` extended to full 6-layout + partitionedOperations + 3-format RTAS×MoR over replace-lineage. Green. |
 | `CHECKLIST-2026-07-20-completeness-pass.md` | **ACTIVE** | Post-self-review: fork tests (sub-agent), D6 format refactor (done), G-docs (done), doc consolidation. |
 | `CHECKLIST-2026-07-20-test-the-branch.md` | COMPLETED (2026-07-20) | Built branch-HEAD iceberg runtime, swapped it in, re-ran; branch-vs-release = no correctness delta. Lessons → ICEBERG-FORK-AUDIT + VERIFIED-RUN. |
