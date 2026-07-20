@@ -2497,6 +2497,107 @@ object Scenarios {
         assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "publish did not advance main")
       }()
 
+  // ── WAP mega-axis Stage C — staged-WAP write surface (stage → publish visibility) ────────────
+  // The op is written as a STAGED snapshot (spark.wap.id): it must NOT advance main; assert main is
+  // unchanged pre-publish, then cherrypick_snapshot PUBLISHES it and main reflects it. This is the
+  // Phase-29 "T2 staged" target. Format-multiplexed by crossFmt (seedFmt-aware create).
+  private def wapStagedWrite(label: String)(write: String => String)(preRows: Long, postRows: Long): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+      .sql(s"$label.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+      .step(label) { (spark, table) =>
+        spark.conf.set("spark.wap.id", "wS")
+        try spark.sql(write(table)) finally spark.conf.unset("spark.wap.id")
+        val mainPre = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+        val stagedCount = spark.sql(s"SELECT count(*) FROM $table.snapshots WHERE summary['wap.id'] = 'wS'").collect()(0).getLong(0)
+        println(s"DIAG $label: mainPreCount=$mainPre (expected $preRows) stagedSnapshots=$stagedCount")
+        assert(mainPre == preRows,
+          s"$label: staged write LEAKED to main pre-publish (main=$mainPre, expected $preRows)")
+        val stagedId = spark.sql(s"SELECT snapshot_id FROM $table.snapshots WHERE summary['wap.id'] = 'wS'").collect()(0).getLong(0)
+        spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', $stagedId)")
+        assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == postRows,
+          s"$label: publish did not reflect the staged write (expected $postRows)")
+      }()
+
+  val wapStagedOps: List[(String, TableTest[CoreTable.type])] = List(
+    "wapStaged.insert"    -> wapStagedWrite("wapStaged.insert")(t => s"INSERT INTO $t VALUES ${coreRow(99, "staged")}")(3, 4),
+    "wapStaged.overwrite" -> wapStagedWrite("wapStaged.overwrite")(t => s"INSERT OVERWRITE $t VALUES ${coreRow(7, "ow")}")(3, 1),
+    // FINDING (WAP1): a staged DELETE is NOT honored by WAP — it commits to MAIN immediately and creates
+    // NO staged snapshot (main 3→2, zero snapshots tagged wap.id), unlike staged INSERT/OVERWRITE/UPDATE/
+    // MERGE which all stage. Observed on parquet+orc; whether this is stock Iceberg or OpenHouse-specific is
+    // not determined here. A "staged" DELETE therefore silently publishes to main. Pins the observed behavior.
+    "wapStaged.delete.bypassesWap" -> {
+      TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+        .sql("wapStaged.delete.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+        .step("wapStaged.delete.bypassesWap") { (spark, table) =>
+          spark.conf.set("spark.wap.id", "wD")
+          try spark.sql(s"DELETE FROM $table WHERE ${Core.long0.columnName} = 1") finally spark.conf.unset("spark.wap.id")
+          val mainPre = spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0)
+          val staged  = spark.sql(s"SELECT count(*) FROM $table.snapshots WHERE summary['wap.id'] = 'wD'").collect()(0).getLong(0)
+          println(s"DIAG wapStaged.delete.bypassesWap: mainAfterStagedDelete=$mainPre stagedSnapshots=$staged")
+          assert(mainPre == 2 && staged == 0,
+            s"FINDING WAP1: expected staged DELETE to BYPASS WAP (commit to main=2, no staged snapshot); got main=$mainPre staged=$staged — behavior changed, re-audit AUDIT-FINDINGS WAP1")
+        }()
+    },
+    "wapStaged.merge"     -> wapStagedWrite("wapStaged.merge")(t =>
+      s"MERGE INTO $t USING (SELECT CAST(99 AS BIGINT) AS k) s ON $t.${Core.long0.columnName} = s.k " +
+      s"WHEN NOT MATCHED THEN INSERT (${Core.columnNames.mkString(", ")}) VALUES (s.k, 9, 'm', 9.5, true, '2024-01-09-01')")(3, 4),
+    // Staged UPDATE: main's value is unchanged pre-publish, changed after publish (count stays 3).
+    "wapStaged.update.valueVisibleOnlyAfterPublish" -> {
+      TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+        .sql("wapStaged.update.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+        .step("wapStaged.update.valueVisibleOnlyAfterPublish") { (spark, table) =>
+          spark.conf.set("spark.wap.id", "wU")
+          try spark.sql(s"UPDATE $table SET ${Core.string0.columnName} = 'staged-upd' WHERE ${Core.long0.columnName} = 1")
+          finally spark.conf.unset("spark.wap.id")
+          val pre = spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getString(0)
+          assert(pre != "staged-upd", s"staged UPDATE leaked to main pre-publish: $pre")
+          val stagedId = spark.sql(s"SELECT snapshot_id FROM $table.snapshots WHERE summary['wap.id'] = 'wU'").collect()(0).getLong(0)
+          spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', $stagedId)")
+          val post = spark.sql(s"SELECT ${Core.string0.columnName} FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getString(0)
+          assert(post == "staged-upd", s"publish did not reflect the staged UPDATE: $post")
+        }()
+    },
+    // C3(a): two concurrent staged ids publish INDEPENDENTLY and in the chosen order.
+    "wapStaged.twoIdsIndependent" -> {
+      TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+        .sql("wapStaged.two.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+        .step("wapStaged.twoIdsIndependent") { (spark, table) =>
+          def staged(id: String, k: Int): Unit = {
+            spark.conf.set("spark.wap.id", id)
+            try spark.sql(s"INSERT INTO $table VALUES ${coreRow(k, s"s-$id")}") finally spark.conf.unset("spark.wap.id")
+          }
+          staged("wa", 101); staged("wb", 102)
+          assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 3, "either staged id leaked to main")
+          def idOf(w: String): Long = spark.sql(s"SELECT snapshot_id FROM $table.snapshots WHERE summary['wap.id'] = '$w'").collect()(0).getLong(0)
+          spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', ${idOf("wa")})")
+          assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 4, "publishing wa did not advance main by 1")
+          assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 102").collect()(0).getLong(0) == 0, "wb published without being cherrypicked")
+          spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', ${idOf("wb")})")
+          assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 5, "publishing wb did not advance main to 5")
+        }()
+    },
+    // C3(b): a staged (unpublished) snapshot is UNREFERENCED — assert expire_snapshots behaviour toward it
+    // (G11(d): age-based expiration can delete staged WAP snapshots pre-publish). Characterize: after a
+    // far-future expire, can the staged id still be cherrypicked, or is it stranded?
+    "wapStaged.expireVsStaged" -> {
+      TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
+        .sql("wapStaged.exp.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+        .step("wapStaged.expireVsStaged") { (spark, table) =>
+          spark.conf.set("spark.wap.id", "wE")
+          try spark.sql(s"INSERT INTO $table VALUES ${coreRow(200, "stg")}") finally spark.conf.unset("spark.wap.id")
+          val stagedId = spark.sql(s"SELECT snapshot_id FROM $table.snapshots WHERE summary['wap.id'] = 'wE'").collect()(0).getLong(0)
+          spark.sql(s"CALL openhouse.system.expire_snapshots(table => '${catalogRelative(table)}', older_than => TIMESTAMP '2999-01-01 00:00:00', retain_last => 1)")
+          val survived = spark.sql(s"SELECT count(*) FROM $table.snapshots WHERE snapshot_id = $stagedId").collect()(0).getLong(0)
+          val pub = try { spark.sql(s"CALL openhouse.system.cherrypick_snapshot('${catalogRelative(table)}', $stagedId)"); "published" }
+            catch { case NonFatal(e) => s"stranded:${Exceptions.root(e).getClass.getSimpleName}" }
+          println(s"DIAG wapStaged.expireVsStaged: stagedSurvivedExpire=$survived cherrypickAfterExpire=$pub")
+          // Pin the audited hazard (G11 d): unreferenced staged snapshot is expirable -> stranded pre-publish.
+          assert(survived == 0 && pub.startsWith("stranded"),
+            s"G11(d): expected the unreferenced staged snapshot to be expired then un-cherrypickable; survived=$survived pub=$pub — re-audit")
+        }()
+    }
+  )
+
   // B3 DDL-on-branch is NOT isolated — characterizes the leak (finding): schema/props/sortOrder are
   // table-global; ADD COLUMN while "on branch" mutates MAIN's schema, with no guard.
   val branchDdlLeakAddColumn: TableTest[CoreTable.type] =
@@ -4464,6 +4565,7 @@ object Plan {
     val forkCompactionOrder = Scenarios.forkCompactionOrderOps.map { case (name, f) => Case(name, f) }
     val branching       = crossFmt(Scenarios.branching)
     val branchDdl       = crossFmt(Scenarios.branchDdlOps)   // WAP mega-axis Stage B (G8 leak, systematic)
+    val wapStaged       = crossFmt(Scenarios.wapStagedOps)   // WAP mega-axis Stage C (staged → publish)
     val interactions    = crossFmt(Scenarios.interactions) ++
       Scenarios.interactionCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
     val surface         = crossFmt(Scenarios.surfaceOps)
@@ -4640,7 +4742,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchDdl ++ branchWapPartitioned ++ branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
+      branchDdl ++ wapStaged ++ branchWapPartitioned ++ branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
       encryptionPin ++ forkColDefault ++ forkPartitionDist ++
