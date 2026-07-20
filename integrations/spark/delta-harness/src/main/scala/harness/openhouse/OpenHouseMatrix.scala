@@ -2020,10 +2020,14 @@ object Scenarios {
   // Spark reader is available to test against.
   private def forkColDefaultReadApplyProbe(ctx: Ctx): Unit = {
     val spark = ctx.spark
-    val apiPresent = scala.util.Try(
-      Class.forName("org.apache.iceberg.types.Types$NestedField").getMethod("builder")).isSuccess
+    val nfCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val apiPresent = scala.util.Try(nfCls.getMethod("builder")).isSuccess
     if (!apiPresent) {
+      // Published release: no way to set a default, so there is nothing to read back. Assert the API is
+      // genuinely absent (so this is not a silent green) and return.
       println("DIAG fork.colDefault.readApplyProbe: #251 API absent (published release) — nothing to probe")
+      assert(!nfCls.getMethods.map(_.getName).toSet.contains("initialDefault"),
+        "NestedField exposes initialDefault but builder() is absent — unexpected partial #251; re-audit")
       return
     }
     val cat = "coldefroapply"

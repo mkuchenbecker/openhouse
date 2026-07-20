@@ -49,12 +49,25 @@ OHCP="$(cat "$WORK/oh-cp.txt")"
 # JVM (Spark side + embedded server) run the branch. Unset → back to the published release. Reversible.
 if [[ -n "${ICEBERG_RUNTIME_JAR:-}" ]]; then
   [[ -f "$ICEBERG_RUNTIME_JAR" ]] || { echo "!! ICEBERG_RUNTIME_JAR not found: $ICEBERG_RUNTIME_JAR" >&2; exit 1; }
-  # Replace the resolved spark-runtime-3.5 jar path (any version) with the override.
+  # How many spark-runtime-3.5 entries does the resolved cp actually have? If zero, the pattern no longer
+  # matches (module/version rename, jar absent) and swapping would SILENTLY leave the published jar in place
+  # — so fail loudly instead of pretending we tested the branch.
+  matches="$(printf '%s' "$OHCP" | tr ':' '\n' | grep -cE '/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar' || true)"
+  if [[ "$matches" -eq 0 ]]; then
+    echo "!! ICEBERG_RUNTIME_JAR set but no iceberg-spark-runtime-3.5_2.12 jar found on the resolved classpath" >&2
+    echo "!! (pattern changed, or cp cache is stale — re-run with FORCE_CP=1). Refusing to run the PUBLISHED jar." >&2
+    exit 1
+  fi
+  # Replace the resolved spark-runtime-3.5 jar path (any version) with the override. Use a `|` sed delimiter
+  # and a literal-ized replacement so `&`/`#`/`/` in the path are not interpreted.
+  repl="$(printf '%s' "$ICEBERG_RUNTIME_JAR" | sed -e 's/[&|\\]/\\&/g')"
   OHCP="$(printf '%s' "$OHCP" | tr ':' '\n' \
-           | sed -E "s#.*/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar#$ICEBERG_RUNTIME_JAR#" \
+           | sed -E "s|.*/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar|$repl|" \
            | paste -sd ':' -)"
-  echo ">> [BRANCH MODE] iceberg-spark-runtime swapped -> $ICEBERG_RUNTIME_JAR"
-  printf '%s' "$OHCP" | tr ':' '\n' | grep -c "$ICEBERG_RUNTIME_JAR" | xargs -I{} echo ">> [BRANCH MODE] override entries on cp: {}"
+  inserted="$(printf '%s' "$OHCP" | tr ':' '\n' | grep -Fc "$ICEBERG_RUNTIME_JAR" || true)"
+  [[ "$inserted" -ge 1 ]] || { echo "!! branch-mode swap produced 0 override entries — aborting" >&2; exit 1; }
+  echo ">> [BRANCH MODE] iceberg-spark-runtime swapped ($matches slot(s)) -> $ICEBERG_RUNTIME_JAR"
+  echo ">> [BRANCH MODE] override entries on cp: $inserted"
 fi
 
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
