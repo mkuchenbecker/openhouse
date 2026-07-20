@@ -10,9 +10,9 @@ and then frozen. Current truth is the LIVING docs, never a checklist.
 ---
 
 ## CURRENT STATE (pointer)
-- **Verified run (latest):** STUB **2094** (2083/11/0), REAL-HTS **2312** (2301/11/0), 0 failed — see
+- **Verified run (latest):** STUB **2273** (2262/11/0), REAL-HTS **2491** (2480/11/0), 0 failed — see
   `VERIFIED-RUN-openhouse.txt` for authoritative dated counts. On PR #9 branch (`claude/spark-scala-test-
-  env-k7drzg`) after the #11 merge; includes #249 + D6 format-refactor stage 1.
+  env-k7drzg`); includes fork tests 2b-2f + RTAS full-cross (Phase 28) + D6 format-refactor stages 1-2.
 - **Active checklist:** `CHECKLIST-2026-07-20-completeness-pass.md` (fork-commit tests, D6 blanket-format
   refactor, mega phases, G2–G14 docs, doc consolidation).
 - **Role:** testing + understanding silo for OpenHouse + the `com.linkedin.iceberg` 1.5.2 fork. Not the
