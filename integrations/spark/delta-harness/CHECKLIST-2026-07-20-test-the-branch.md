@@ -31,7 +31,36 @@ built everything and may need a rebuild, that's an implementation detail."
 7. [ ] Record run; update PROJECT-PLAN + ICEBERG-FORK-AUDIT (now testing the branch, not the release);
        commit + push.
 
-## STATUS: step 1 (build feasibility probe).
+## STATUS: step 6 (branch-mode full regression) — STUB done, REAL-HTS running.
+
+---
+## APPENDED 2026-07-20 — EXECUTION LOG (do not rewrite above)
+- [x] 1 FEASIBILITY: fork builds here. gradle 8.14.3 + JDK17 (`-Dorg.gradle.java.home`), online via proxy
+      (offline fails: shipkit/nexus/openapi plugins uncached). Version via `-PciVersion=`.
+- [x] 2 MINIMAL SET: harness runtime cp carries only the SHADED `iceberg-spark-runtime-3.5_2.12` (+bundled-
+      guava,+aws-1.2). That one shaded jar = all iceberg api+core+spark. So rebuild THAT only.
+- [x] 3 BUILD: `:iceberg-spark:iceberg-spark-runtime-3.5_2.12:shadowJar -PciVersion=1.5.2.15-branchHEAD`
+      → 42MB jar at /workspace/iceberg/spark/v3.5/spark-runtime/build/libs/. javap-verified to contain
+      NestedField.builder/initialDefault/writeDefault (#251). (mavenLocal publish NOT needed — swap the
+      jar path directly.)
+- [x] 4 SWAP: run-openhouse.sh `ICEBERG_RUNTIME_JAR` hook sed-replaces the runtime jar on the resolved cp.
+      Reversible (unset → release). Confirmed "[BRANCH MODE] override entries on cp: 1".
+- [x] 5 #251 LIVE characterization (branch mode):
+      • Spark-SQL path UNCHANGED vs release — still inert-but-silent (no DDL wiring on the branch either).
+      • NEW api/core test `fork.colDefault.apiSerialization @ core` (reflection, runs both modes):
+        release → builder ABSENT (pin API unsupported); branch → serializes `"initial-default":5` on an
+        UNGATED struct `{"type":"struct",...,"type":"int","initial-default":5}`, round-trips. LIVE hazard.
+- [~] 6 FULL REGRESSION both modes vs release baseline (STUB 2070/11/0, REAL-HTS 2286/11/0):
+      • branch STUB = **2071 passed / 11 skip / 0 fail** (2082; +1 = new api test). ZERO deltas otherwise.
+      • branch REAL-HTS = running.
+- [ ] 7 record + docs + commit + push.
+
+### FINDING (branch-vs-release)
+Running the WHOLE harness against branch HEAD shifts NOTHING vs the published 1.5.2.15 — 0 failures, 0
+ORC↔Parquet divergence, every correctness assertion identical. The post-release branch commits (#251
+col-defaults, #249 partitioned-dist=NONE, #248 avro bump, …) introduce no correctness regression on any
+of the ~2000 tested behaviours. The ONLY new live surface is #251 at api/core, now pinned. #251 remains
+customer-unreachable (no Spark wiring) — hazard is latent-but-serializable, not customer-triggerable.
 
 ## NOTES
 - Existing colDefault pins (inert-but-silent) characterize the RELEASE 1.5.2.15. Keep the finding as a

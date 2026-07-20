@@ -24,8 +24,22 @@ files, +2742/-739** (spark 46, core 21, api 5). ~6 are pure CI/release/version; 
 > - **Tests built** (`fork.colDefault.addColumnInert @ parquet|orc`, green) hard-pin all four behaviours.
 >   They are a **tripwire**: when OpenHouse bumps to a #251-containing artifact (and/or wires SparkTable),
 >   every assert flips → suite fails → someone re-audits the now-live hazard against that build.
-> - **Open question for the user:** whether to also test #251 against a newer fork build containing
->   `d1603c807` (needs a version bump, off the fast inner loop). Default: no — pin current reality only.
+>
+> **UPDATE 2026-07-20 — the branch WAS built and tested (we test the BRANCH, not the release).** Built the
+> `openhouse-1.5.2` HEAD shaded `iceberg-spark-runtime-3.5_2.12` (`-PciVersion=1.5.2.15-branchHEAD`,
+> javap-verified to carry the #251 APIs) and ran the whole harness against it via the reversible
+> `ICEBERG_RUNTIME_JAR` swap hook in `run-openhouse.sh`. Results:
+> - **Spark-SQL customer path is byte-for-byte identical on the branch** — `ADD COLUMN … DEFAULT` is still
+>   accepted→silently-dropped→NULL→`CANNOT_FIND_DATA`. #251 ships **no** Spark DDL wiring, so the hazard is
+>   **customer-unreachable** even on the branch.
+> - **api/core hazard is LIVE and now pinned** — `fork.colDefault.apiSerialization @ core` (reflection,
+>   runs in both artifacts) builds `optional int c` with `initial-default=5` and shows `SchemaParser` emits
+>   `{"type":"struct",…,"type":"int","initial-default":5}` — an **ungated** struct (no format-version arg),
+>   round-tripping. Confirms the v2-persists-v3-default-no-gate risk empirically.
+> - **Whole-suite regression branch-vs-release: ZERO deltas.** branch STUB 2071/11/0 (2082; +1 = the api
+>   test), every other correctness assertion identical to release; 0 ORC↔Parquet divergence. The
+>   post-release branch commits (#251, #249, #248, …) introduce **no correctness regression** on any of the
+>   ~2000 tested behaviours. (REAL-HTS branch run: see VERIFIED-RUN-openhouse.txt.)
 
 Commit `d1603c807` (#251) "Add NestedField column-default APIs and Expressions.lit() (~upstream #9502)"
 backports the **format-v3** column-default feature into a **v2** fork, **api/core only**:
