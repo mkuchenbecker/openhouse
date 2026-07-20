@@ -12,14 +12,18 @@ SILO — NOT master agent yet (user will say when). Master plan is undisclosed +
 testing; sequence = bootstrap tests → fix → modify. Work only on PR #11 (stacked on #9); never touch #9.
 
 ## CURRENTLY EXECUTING
-#251 column-default tests (user +1: "add in the column default tests") — BUILT + GREEN. Slice green
-(parquet+orc); full STUB gate running. KEY FINDING surfaced to user: **#251 is NOT in the deployed
-1.5.2.15 artifact** (it's on branch HEAD d1603c807, post-release), so the cross-engine persistence hazard
-is latent-in-source not live. Deployed reality is INERT-BUT-SILENT: ADD COLUMN DEFAULT is accepted →
-silently dropped from schema → not read-backfilled → omit-insert rejected CANNOT_FIND_DATA. Pinned as a
-tripwire (`fork.colDefault.addColumnInert @ parquet|orc`). See CHECKLIST-2026-07-16-column-default-tests.md
-(appended finding) + ICEBERG-FORK-AUDIT.md (CORRECTION block). OPEN for user: test #251 against a newer
-fork build too? (default no). Then commit + push.
+IDLE — awaiting user direction. Last task: TEST THE BRANCH (user reframe: "test the branch, not a
+specific version; a rebuild is an implementation detail"). DONE + pushed. Built the openhouse-1.5.2 HEAD
+shaded iceberg-spark-runtime, swapped it in via run-openhouse.sh's reversible ICEBERG_RUNTIME_JAR hook,
+ran the whole harness against the BRANCH. Both modes green: branch STUB 2071/11/0 (2082), branch REAL-HTS
+2289/11/0 (2300), 0 fail, 0 ORC↔Parquet divergence. Branch-vs-release = ZERO correctness deltas (+3 cases
+= the new fork.colDefault.* block). #251 fully characterized: Spark-SQL path inert (no DDL wiring even on
+branch), api/core serialization hazard LIVE + pinned (ungated `initial-default`). See
+CHECKLIST-2026-07-20-test-the-branch.md, VERIFIED-RUN top block, ICEBERG-FORK-AUDIT correction+update.
+To re-run against the branch: `ICEBERG_RUNTIME_JAR=<branch shaded jar> ./run-openhouse.sh` (unset →
+release). The branch jar is a local build artifact (not committed): rebuild via
+`gradle :iceberg-spark:iceberg-spark-runtime-3.5_2.12:shadowJar -PciVersion=1.5.2.15-branchHEAD` in the
+iceberg fork checkout.
 
 ## SUB-GOALS (index → sub-checklists / artifacts)
 - A. OpenHouse harness surface testing — ✅ DONE. HTS-embed, undrop axis+admin+3-way, blocks 8/9/10,

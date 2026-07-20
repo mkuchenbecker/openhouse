@@ -31,7 +31,7 @@ built everything and may need a rebuild, that's an implementation detail."
 7. [ ] Record run; update PROJECT-PLAN + ICEBERG-FORK-AUDIT (now testing the branch, not the release);
        commit + push.
 
-## STATUS: step 6 (branch-mode full regression) — STUB done, REAL-HTS running.
+## STATUS: DONE. Branch STUB 2071/11/0 + branch REAL-HTS 2289/11/0, 0 fail. Recorded + committed + pushed.
 
 ---
 ## APPENDED 2026-07-20 — EXECUTION LOG (do not rewrite above)
@@ -50,10 +50,10 @@ built everything and may need a rebuild, that's an implementation detail."
       • NEW api/core test `fork.colDefault.apiSerialization @ core` (reflection, runs both modes):
         release → builder ABSENT (pin API unsupported); branch → serializes `"initial-default":5` on an
         UNGATED struct `{"type":"struct",...,"type":"int","initial-default":5}`, round-trips. LIVE hazard.
-- [~] 6 FULL REGRESSION both modes vs release baseline (STUB 2070/11/0, REAL-HTS 2286/11/0):
-      • branch STUB = **2071 passed / 11 skip / 0 fail** (2082; +1 = new api test). ZERO deltas otherwise.
-      • branch REAL-HTS = running.
-- [ ] 7 record + docs + commit + push.
+- [x] 6 FULL REGRESSION both modes vs release baseline (STUB 2070/11/0, REAL-HTS 2286/11/0):
+      • branch STUB     = **2071 passed / 11 skip / 0 fail** (2082).
+      • branch REAL-HTS = **2289 passed / 11 skip / 0 fail** (2300). ZERO correctness deltas either mode.
+- [x] 7 record (VERIFIED-RUN-openhouse.txt top block) + docs (ICEBERG-FORK-AUDIT) + commit + push.
 
 ### FINDING (branch-vs-release)
 Running the WHOLE harness against branch HEAD shifts NOTHING vs the published 1.5.2.15 — 0 failures, 0

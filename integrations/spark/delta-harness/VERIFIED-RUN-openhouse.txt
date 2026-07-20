@@ -1,6 +1,26 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
---- BOTH MODES, latest (CORRECTED D6: Avro RESTORED + broad ORC added; Avro-drop was a mistake) ---
+--- BOTH MODES, latest: TESTING THE BRANCH (openhouse-1.5.2 HEAD d1603c807 = #251), not the release ---
+Ran the WHOLE harness against a locally-built branch-HEAD shaded iceberg-spark-runtime-3.5_2.12
+(gradle :iceberg-spark:...:shadowJar -PciVersion=1.5.2.15-branchHEAD; javap-verified to carry the #251
+NestedField.builder/initialDefault/writeDefault APIs), swapped in via run-openhouse.sh's reversible
+ICEBERG_RUNTIME_JAR hook. WHY: the harness normally resolves the PUBLISHED com.linkedin.iceberg:1.5.2.15
+from Maven Central, which PRE-dates #251 (and other post-release branch commits) — so we were testing a
+stale snapshot, not the branch.
+BRANCH STUB (default):        2082 cases: 2071 passed, 11 skipped, 0 failed.  4 workers.
+BRANCH REAL HTS (HARNESS_REAL_HTS=1): 2300 cases: 2289 passed, 11 skipped, 0 failed.  4 workers.
+Delta vs the release baseline below: +3 cases = the new fork.colDefault.* block (addColumnInert @
+parquet|orc + apiSerialization @ core). EVERY other correctness assertion is IDENTICAL branch-vs-release
+— 0 failures, 0 ORC<->Parquet divergence. The post-release branch commits (#251 col-defaults, #249
+partitioned-dist=NONE, #248 avro bump, ...) introduce NO correctness regression on any tested behaviour.
+#251 findings (see ICEBERG-FORK-AUDIT.md): (a) Spark-SQL customer path is inert on the branch too — ADD
+COLUMN DEFAULT accepted, silently dropped, not read-applied, omit-insert CANNOT_FIND_DATA (no DDL wiring);
+(b) api/core hazard is LIVE — SchemaParser serializes `"initial-default":5` on an UNGATED struct
+(no format-version arg) and round-trips -> the v2-persists-v3-default cross-engine risk is real but
+customer-unreachable. The apiSerialization test runs in BOTH artifacts (reflection): pins API-absent on
+the release, serialize-no-gate on the branch.
+
+--- BOTH MODES (release 1.5.2.15 baseline, CORRECTED D6: Avro RESTORED + broad ORC added; Avro-drop was a mistake) ---
 STUB (default):        2079 cases: 2068 passed, 11 skipped, 0 failed.  10m41s, 4 workers.
 REAL HTS (HARNESS_REAL_HTS=1): 2297 cases: 2286 passed, 11 skipped, 0 failed.  11m56s, 4 workers.
 Format policy (final): Parquet everywhere (primary); ORC broad — added to the previously-parquet-only
