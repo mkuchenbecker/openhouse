@@ -1949,9 +1949,69 @@ object Scenarios {
     spark.sql(s"DROP TABLE IF EXISTS $table")
   }
 
+  // ── Column-default (fork #251) — API-LEVEL serialization / no-gate hazard ────────────────────────
+  // The Spark-SQL path (above) never persists a default, so the #251 cross-engine hazard is unreachable
+  // through the customer path. But the hazard the audit flagged lives in api/core: NestedField carries an
+  // `initial-default`/`write-default` and SchemaParser serializes them into the schema JSON with NO
+  // format-version gate — so a v2 table CAN carry v3-only default metadata, and a stock Apache 1.5.2
+  // reader (which lacks these keys) drops them on the next metadata rewrite (round-trip loss → silent
+  // divergence). This test exercises that api/core surface DIRECTLY via reflection, so the SAME source
+  // compiles + runs in BOTH artifacts:
+  //   • published 1.5.2.15  → NestedField.builder() is ABSENT → pin "API unsupported" (feature not there);
+  //   • branch HEAD (#251)  → build a defaulted field, assert SchemaParser emits `initial-default` with no
+  //                           version gate, and that it round-trips (fromJson→toJson) — the live hazard.
+  // Reflection (not direct calls) is required because the builder API does not exist in the release jar;
+  // a direct reference would fail to COMPILE in default (release) mode.
+  private def forkColDefaultApiSerialization(ctx: Ctx): Unit = {
+    val nestedFieldCls = Class.forName("org.apache.iceberg.types.Types$NestedField")
+    val builderM = scala.util.Try(nestedFieldCls.getMethod("builder"))
+    if (builderM.isFailure) {
+      // Published release: the #251 column-default API is absent. Pin that absence (feature not present).
+      println("DIAG fork.colDefault.api: NestedField.builder ABSENT — #251 column-default API unsupported (published release artifact)")
+      val ms = nestedFieldCls.getMethods.map(_.getName).toSet
+      assert(!ms.contains("initialDefault") && !ms.contains("writeDefault"),
+        "NestedField exposes initial/write-default accessors but no builder() — unexpected partial #251; re-audit")
+      return
+    }
+    // Branch HEAD: #251 present. Build `optional int c` carrying initial-default=5 via the builder.
+    val builder0 = builderM.get.invoke(null)
+    def chain(b: AnyRef, m: String, argT: Class[_], arg: AnyRef): AnyRef =
+      b.getClass.getMethod(m, argT).invoke(b, arg)
+    def chain0(b: AnyRef, m: String): AnyRef = b.getClass.getMethod(m).invoke(b)
+    val intType = Class.forName("org.apache.iceberg.types.Types$IntegerType")
+      .getMethod("get").invoke(null)
+    var b = chain(builder0, "withId", java.lang.Integer.TYPE, java.lang.Integer.valueOf(3))
+    b = chain(b, "withName", classOf[String], "c")
+    b = chain(b, "ofType", Class.forName("org.apache.iceberg.types.Type"), intType)
+    b = chain0(b, "asOptional")
+    b = chain(b, "withInitialDefault", classOf[Object], java.lang.Integer.valueOf(5))
+    val field = b.getClass.getMethod("build").invoke(b)
+      .asInstanceOf[org.apache.iceberg.types.Types.NestedField]
+
+    // Assemble a schema [id, c(default=5)] and serialize it — no format version is even passed.
+    val idField = org.apache.iceberg.types.Types.NestedField.required(
+      1, "id", org.apache.iceberg.types.Types.LongType.get())
+    val schema = new org.apache.iceberg.Schema(java.util.Arrays.asList(idField, field))
+    val json = org.apache.iceberg.SchemaParser.toJson(schema)
+    println(s"DIAG fork.colDefault.api: #251 PRESENT; serialized schema JSON = $json")
+
+    // (a) The default is serialized durably — the cross-engine persistence hazard is LIVE on the branch.
+    assert(json.contains("initial-default"),
+      s"expected #251 SchemaParser to serialize 'initial-default' into the schema JSON, got: $json")
+    // (b) No format-version gate: toJson takes no version arg — a v2/v1 schema serializes it just the same.
+    //     (Documented hazard: stock Apache 1.5.2 fromJson ignores these keys → round-trip loss.)
+    // (c) Round-trips through fromJson→toJson without loss.
+    val reparsed = org.apache.iceberg.SchemaParser.fromJson(json)
+    val json2 = org.apache.iceberg.SchemaParser.toJson(reparsed)
+    assert(json2.contains("initial-default"),
+      s"expected 'initial-default' to survive fromJson->toJson round-trip, got: $json2")
+    println("DIAG fork.colDefault.api: initial-default serialized with NO version gate + round-trips — cross-engine hazard is LIVE on the branch")
+  }
+
   val forkColDefaultOps: List[(String, Ctx => Unit)] = List(
     "fork.colDefault.addColumnInert @ parquet" -> forkColDefaultAddColumn("parquet"),
-    "fork.colDefault.addColumnInert @ orc"     -> forkColDefaultAddColumn("orc")
+    "fork.colDefault.addColumnInert @ orc"     -> forkColDefaultAddColumn("orc"),
+    "fork.colDefault.apiSerialization @ core"  -> forkColDefaultApiSerialization
   )
 
   private def softDeleteRestore(ctx: Ctx, db: String, tbl: String): Unit = {
