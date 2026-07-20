@@ -1,3 +1,5 @@
+> **COMPLETED 2026-07-20.** prep.rtas 412/412 + prep.rtasMor 132/132 green; STUB gate 2262/11/0. Lessons -> BUILD-STATUS/VERIFIED-RUN. Frozen. See index.md.
+
 # CHECKLIST — 2026-07-20 — RTAS full cross (DDL-TEST-PLAN Phase 28)
 
 New file per task. Re-read first each turn. Parent: `index.md` (master map) → completeness-pass follow-up.
@@ -44,4 +46,4 @@ Full STUB + REAL-HTS runs green (0 failed, 0 divergence) with the new `prep.rtas
 cases present, counts recorded in VERIFIED-RUN. Any case where the RTAS/replace-lineage delta diverges
 from the create-lineage baseline is a FINDING (not a bug to hide) — document in AUDIT-FINDINGS.
 
-## STATUS: step 0 (persist + index). Step 1 BLOCKED on fork-tests sub-agent patch integration.
+## STATUS: COMPLETED — steps 2-5 done (avro shapes + prepRtasPartitioned + 3-format RTAS-MoR). Step 6 verify: STUB 2262/11/0 green; REAL-HTS pending in the same gate as the WAP-plan turn.

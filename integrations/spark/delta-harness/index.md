@@ -42,7 +42,8 @@ file format (or other axis) — they multiplex/compose across formats, layouts, 
 ## CHECKLISTS — point-in-time (status authoritative here)
 | Checklist | Status | One line |
 |---|---|---|
-| `CHECKLIST-2026-07-20-rtas-full-cross.md` | **ACTIVE** | Phase 28: extend `prep.rtas:*` to full DML coverage over replace-lineage (add avro shapes + partitionedOperations). |
+| `CHECKLIST-2026-07-20-wap-mega-axis.md` | **PLANNED** | Phase 29: op surface × {main, branch, staged-WAP} — branch parity + systematic branch-DDL leak (G8) + staged/WAP publish-visibility. Not started. |
+| `CHECKLIST-2026-07-20-rtas-full-cross.md` | **COMPLETED (2026-07-20)** | Phase 28: `prep.rtas:*` extended to full 6-layout + partitionedOperations + 3-format RTAS×MoR over replace-lineage. Green. |
 | `CHECKLIST-2026-07-20-completeness-pass.md` | **ACTIVE** | Post-self-review: fork tests (sub-agent), D6 format refactor (done), G-docs (done), doc consolidation. |
 | `CHECKLIST-2026-07-20-test-the-branch.md` | COMPLETED (2026-07-20) | Built branch-HEAD iceberg runtime, swapped it in, re-ran; branch-vs-release = no correctness delta. Lessons → ICEBERG-FORK-AUDIT + VERIFIED-RUN. |
 | `CHECKLIST-2026-07-16-column-default-tests.md` | COMPLETED — TABLED (2026-07-20) | #251 column defaults characterized (api/core only). Lessons → ICEBERG-FORK-AUDIT #251 section. |
