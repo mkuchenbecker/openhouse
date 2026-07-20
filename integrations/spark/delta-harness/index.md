@@ -18,8 +18,8 @@ and then frozen. Current truth is the LIVING docs, never a checklist.
   refactor, mega phases, G2–G14 docs, doc consolidation).
 - **Role:** testing + understanding silo for OpenHouse + the `com.linkedin.iceberg` 1.5.2 fork. Not the
   master agent. Sequence: bootstrap tests → fix → modify. Document findings; don't fix production code yet.
-- **PR:** work only on the current stacked PR (branch `claude/hts-embed-plan-k7drzg`); never touch the
-  parent PR #9.
+- **PR:** work on **PR #9** (branch `claude/spark-scala-test-env-k7drzg`) — the owner merged the earlier
+  stacked #11 into #9 and directed all further work onto #9's branch (2026-07-20).
 
 ## OVERARCHING GOAL
 Comprehensively TEST + UNDERSTAND OpenHouse's Iceberg surface AND the `com.linkedin.iceberg` 1.5.2 fork,
