@@ -3882,10 +3882,13 @@ object Scenarios {
   // not change what the reader reports. Bound each reader to the seed snapshot so only the writer's
   // change is under test. Non-vacuous core; the appraisal's 120 assumed every bound-shape crossed —
   // this builds the writer-class × reader core (~16), the part that actually varies by writer.
-  private def cowCreate(t: String): String =
-    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='parquet')"
-  private def morCreate(t: String): String =
-    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ($morProps)"
+  // Format is a parameter (default parquet) so reader×writer blocks can multiplex across formats.
+  private def cowCreate(t: String, fmt: String): String =
+    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES ('write.format.default'='$fmt')"
+  private def cowCreate(t: String): String = cowCreate(t, "parquet")
+  private def morCreate(t: String, fmt: String): String =
+    s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (${morPropsFmt(fmt)})"
+  private def morCreate(t: String): String = morCreate(t, "parquet")
 
   private val writerClasses: List[(String, String => String)] = List(
     "append"    -> (t => s"INSERT INTO $t VALUES (CAST(6 AS BIGINT), 6, 'row-6', 6.5, true, '2024-01-06-05')"),
@@ -3900,8 +3903,8 @@ object Scenarios {
   )
 
   // CDC changelog must represent each writer class; assert the defining change-type + print the map.
-  private def changelogWriterTest(cls: String, mor: Boolean): TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(t => if (mor) morCreate(t) else cowCreate(t))().insert(3)()
+  private def changelogWriterTest(cls: String, mor: Boolean, fmt: String): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => if (mor) morCreate(t, fmt) else cowCreate(t, fmt))().insert(3)()
       .step(s"readerWriter.changelog.$cls${if (mor) ".mor" else ""}") { (spark, table) =>
         val s0 = snapshotIds(spark, table).head
         spark.sql(writerClasses.toMap.apply(cls)(table))
@@ -3936,8 +3939,8 @@ object Scenarios {
 
   // Incremental read (append scan) must reflect the writer: appends add rows; a delete/overwrite
   // changes the incremental row set. Bound start=seed.
-  private def incrementalWriterTest(cls: String): TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+  private def incrementalWriterTest(cls: String, fmt: String): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => cowCreate(t, fmt))().insert(3)()
       .step(s"readerWriter.incremental.$cls") { (spark, table) =>
         val s0 = snapshotIds(spark, table).head
         spark.sql(writerClasses.toMap.apply(cls)(table))
@@ -3953,10 +3956,10 @@ object Scenarios {
 
   // Streaming read must represent the writer: an append is delivered; a delete/overwrite snapshot is
   // rejected by the stream unless streaming-skip-* is set (characterize the two paths).
-  val readerWriterStreamAppend: TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+  def readerWriterStreamAppend(fmt: String): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => cowCreate(t, fmt))().insert(3)()
       .step("readerWriter.stream.append") { (spark, table) =>
-        val dst = s"${table}_s"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst))
+        val dst = s"${table}_s"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst, fmt))
         val ckpt = java.nio.file.Files.createTempDirectory("ck-rw").toString
         def run(): Unit = { val q = spark.readStream.table(table).writeStream.format("iceberg")
           .outputMode("append").trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
@@ -3968,10 +3971,10 @@ object Scenarios {
         } finally spark.sql(s"DROP TABLE IF EXISTS $dst")
       }()
 
-  val readerWriterStreamDelete: TableTest[CoreTable.type] =
-    TableTest(Core).sql("create")(cowCreate)().insert(3)()
+  def readerWriterStreamDelete(fmt: String): TableTest[CoreTable.type] =
+    TableTest(Core).sql("create")(t => cowCreate(t, fmt))().insert(3)()
       .step("readerWriter.stream.deleteRejected") { (spark, table) =>
-        val dst = s"${table}_sd"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst))
+        val dst = s"${table}_sd"; spark.sql(s"DROP TABLE IF EXISTS $dst"); spark.sql(cowCreate(dst, fmt))
         val ckpt = java.nio.file.Files.createTempDirectory("ck-rwd").toString
         def run(): Unit = { val q = spark.readStream.table(table).writeStream.format("iceberg")
           .outputMode("append").trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
@@ -3987,16 +3990,16 @@ object Scenarios {
         } finally spark.sql(s"DROP TABLE IF EXISTS $dst")
       }()
 
-  val readerWriterOps: List[(String, TableTest[CoreTable.type])] = {
+  def readerWriterOps(fmt: String): List[(String, TableTest[CoreTable.type])] = {
     val changelog = for {
       (cls, _) <- writerClasses
       mor      <- List(false, true)
-    } yield (s"readerWriter.changelog.$cls${if (mor) ".mor" else ""}", changelogWriterTest(cls, mor))
+    } yield (s"readerWriter.changelog.$cls${if (mor) ".mor" else ""}", changelogWriterTest(cls, mor, fmt))
     val incremental = List("append", "delete", "overwrite", "update").map(c =>
-      (s"readerWriter.incremental.$c", incrementalWriterTest(c)))
+      (s"readerWriter.incremental.$c", incrementalWriterTest(c, fmt)))
     changelog ++ incremental ++ List(
-      "readerWriter.stream.append"         -> readerWriterStreamAppend,
-      "readerWriter.stream.deleteRejected" -> readerWriterStreamDelete)
+      "readerWriter.stream.append"         -> readerWriterStreamAppend(fmt),
+      "readerWriter.stream.deleteRejected" -> readerWriterStreamDelete(fmt))
   }
 
   val hazardOps: List[(String, TableTest[CoreTable.type])] = List(
@@ -4124,7 +4127,7 @@ object Plan {
     val surface         = Scenarios.surfaceOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val hazards         = Scenarios.hazardOps.map { case (name, t) => Case(s"$name @ parquet", t.run) } ++
       Scenarios.hazardCtxOps.map { case (name, f) => Case(s"$name @ embedded", f) }
-    val readerWriter    = Scenarios.readerWriterOps.map { case (name, t) => Case(s"$name @ parquet", t.run) }
+    val readerWriter    = for { f <- dataFormats; (name, t) <- Scenarios.readerWriterOps(f) } yield Case(s"$name @ $f", t.run)
     val negatives       = Scenarios.negatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlNegatives    = Scenarios.ddlNegatives.map { case (name, t) => Case(s"$name @ parquet", t.run) }
     val ddlProps        = Scenarios.ddlPropsOperations.map { case (name, t) => Case(s"$name @ parquet", t.run) }
