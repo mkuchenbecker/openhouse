@@ -1,3 +1,5 @@
+> **HISTORICAL — superseded by `index.md` (the master map).** Kept for history; current truth lives in the LIVING docs indexed there.
+
 # PROJECT PLAN (ROOT) — re-read FIRST every turn (esp. after compaction)
 
 This is the ROOT of a FRACTAL plan. Overarching goal → sub-goals → sub-checklists (own files) →

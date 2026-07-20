@@ -1,3 +1,5 @@
+> **SUPERSEDED** by `CHECKLIST-2026-07-16-audit-and-restore.md` and `index.md`. Historical; do not action.
+
 # SESSION CHECKLIST — persistent anchor (re-read FIRST every turn, esp. after compaction)
 
 RULE: no edits without a live checklist. Step 0 of every task is to persist the checklist here.

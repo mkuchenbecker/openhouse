@@ -1,3 +1,5 @@
+> **COMPLETED** (commit 2436fc5) — Avro regression repaired + broad ORC added. Lessons denormalized to `CLAUDE.md` (format policy) + `VERIFIED-RUN`. Frozen.
+
 # CHECKLIST — 2026-07-16 — forensic audit + Avro-restore/ORC-add, consistent commit
 
 New file per checklist (never rewrite a checklist file). Supersedes the stray SESSION-CHECKLIST.md

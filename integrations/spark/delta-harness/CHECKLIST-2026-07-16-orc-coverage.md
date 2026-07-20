@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-07-20.** D6 resolved = **blanket-double** (un-bake format so tests multiplex); the refactor is executed under `CHECKLIST-2026-07-20-completeness-pass.md`. See `index.md`.
+
 # CHECKLIST — 2026-07-16 — ORC coverage (D6)
 
 New file per workstream. Re-read first each turn. Never rewrite a checklist file.

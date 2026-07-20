@@ -1,3 +1,5 @@
+> **COMPLETED 2026-07-20.** Branch-vs-release = no correctness delta. Lessons → `ICEBERG-FORK-AUDIT.md` + `VERIFIED-RUN`. Frozen. See `index.md`.
+
 # CHECKLIST — 2026-07-20 — TEST THE BRANCH (not a published snapshot)
 
 New file per task. Re-read first each turn. Parent: PROJECT-PLAN.md overarching goal (test the

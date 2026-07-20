@@ -46,4 +46,16 @@ diff from main + user directives (2026-07-20).
 - D5 G14 classification — pin kept; awaiting context.
 - D7 encryption/KMS — plaintext pin kept; awaiting context.
 
-## STATUS: step 1 (D6 blanket ORC audit).
+## PROGRESS
+- [x] Self-review code fixes (branch-swap guard, readApplyProbe assert). Committed 95f4fef.
+- [x] #249 partitioned write-distribution test (item 2a) — green both runtimes. Committed 2f32358.
+- [x] Doc protocol codified in CLAUDE.md + `index.md` master map created; checklists bannered.
+- [~] D6 blanket-format REFACTOR (item 1, user: "don't bake a format into a test"): parameterize the
+      parquet-only TableTest blocks by seed format so they multiplex parquet+orc (control-plane @embedded
+      stays single — no table). IN PROGRESS.
+- [ ] Remaining fork tests 2b–2f (low-observability pins OK per user).
+- [ ] Mega phases (RTAS full-cross, WAP mega-axis) — budget approved.
+- [ ] G2–G14 documentation completeness + AUDIT-FINDINGS:88 contradiction.
+- [ ] Doc consolidation per the new protocol (index-driven).
+
+## STATUS: D6 blanket-format refactor (un-bake format from the parquet-only blocks).

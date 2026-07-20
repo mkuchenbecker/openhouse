@@ -18,6 +18,24 @@ repo owner and must persist across sessions.
 - **No build/task work without a live checklist** (TaskCreate), full stop — even a single-item list.
 - **Every status reply LEADS with built-vs-estimate**, not the latest slice's green count.
 - **Never stop without a global status update** covering the full scope (done / in-flight / remaining).
+- **Every checklist has: GOAL, STEPS, VERIFICATION.** No checklist is "done" without a verification step
+  that was actually run.
+
+## Documentation protocol (standing — not a one-off)
+- **`index.md` is the master map.** It indexes every checklist and every living doc with a STATUS
+  (ACTIVE / COMPLETED / HISTORICAL) and a one-line purpose, plus the current-state pointer. Anyone
+  bootstrapping reads `index.md` first and follows only the relevant entries.
+- **Checklists are point-in-time artifacts.** When a checklist completes:
+  1. mark it COMPLETED in BOTH `index.md` AND the checklist's own header (with the date + verified result);
+  2. DENORMALIZE any durable lessons / findings / state into the LIVING docs (README, ICEBERG-FORK-AUDIT,
+     AUDIT-FINDINGS, VERIFIED-RUN, BUGS) — the checklist is not a place anyone re-reads for current truth;
+  3. FREEZE the checklist as-is (do not keep editing a completed checklist; it is history).
+- This gives full history (the frozen checklists) while letting readers skip what's irrelevant (the index
+  says what's COMPLETED vs ACTIVE, and current truth lives in the denormalized living docs).
+- **Never delete** — a superseded doc gets a HISTORICAL banner pointing to its replacement, not a `rm`.
+- **Fix only MATERIAL inaccuracies** in living docs. A smaller case-count in an old frozen doc that was
+  correct when written is NOT a defect — do not chase it. A statement that is wrong NOW and would mislead
+  (a "blocked" that shipped, a contradiction) IS material — fix it in the living doc / index.
 
 ## Test quality
 - **Format policy is ADDITIVE: every test covers at least ORC + Parquet.** Blocks that were
