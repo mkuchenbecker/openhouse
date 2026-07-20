@@ -4451,15 +4451,24 @@ object Plan {
     // ref/metadata-routed blocks (branch/undrop/DDL-consumer) — the additive ask was ORC, and the
     // 3-format blocks keep Avro separately.
     val branchParquetLayouts = Scenarios.layouts.filter(l => l.label.endsWith("/parquet") || l.label.endsWith("/orc"))
+    // WAP mega-axis Stage A — branch DML parity with the core CREATE path: all 6 layouts (incl avro) ×
+    // operations, routed onto a branch, asserting branch delta + main isolation.
     val branchWap = for {
-      layout     <- branchParquetLayouts
+      layout     <- Scenarios.layouts
       (name, op) <- Scenarios.operations
     } yield Case(s"branchWap:$name @ ${layout.label}",
       Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
 
-    // Over-prune miss #2: branch × MoR. The mutation ops routed onto a branch of a MoR table —
-    // NOT vacuous (the MoR-branch merge story differs; cherry-pick rejects row-delete snapshots).
-    val branchMorLayout = Scenarios.morLayouts.filter(l => l.label == "mor-unpartitioned/parquet" || l.label == "mor-unpartitioned/orc")
+    // Stage A — partition-only ops routed onto a branch (mirrors the core `partitioned` block).
+    val branchWapPartitioned = for {
+      layout     <- Scenarios.layouts.filter(_.label.startsWith("partitioned/"))
+      (name, op) <- Scenarios.partitionedOperations
+    } yield Case(s"branchWap:$name @ ${layout.label}",
+      Scenarios.createAndSeedOnBranch(layout, 3).andThen(op).andThen(Scenarios.branchMainIsolation).run)
+
+    // Branch × MoR — mutation ops routed onto a branch of a MoR table (cherry-pick rejects row-delete
+    // snapshots). 3-format for parity with morLayouts (Stage A).
+    val branchMorLayout = Scenarios.morLayouts.filter(_.label.startsWith("mor-unpartitioned/"))
     val branchWapMor = for {
       layout     <- branchMorLayout
       (name, op) <- Scenarios.mutationOperations
@@ -4579,7 +4588,7 @@ object Plan {
       partitionEvolution ++ timeTravel ++ restoreRollback ++ negatives ++ creates ++ ddlSchema ++
       ddlNegatives ++ ddlProps ++ ddlMisc ++ ddlPolicy ++ ddlCtasRtas ++ ddlTagAcl ++ ddlEncryption ++
       maintenance ++ control ++ branching ++ interactions ++ surface ++ hazards ++ branchWap ++
-      branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
+      branchWapPartitioned ++ branchWapMor ++ prepRtas ++ prepRtasPartitioned ++ prepRtasMor ++ prepMorRead ++ morCoexist ++ ddlConsumerBattery ++
       readerWriter ++ ddlPrepOrdered ++ ddlPrepEvolved ++ undrop ++ undropAdmin ++
       maintenanceMorFold ++ maintenanceMorMeta ++ undropInteract ++ morHazard ++ morBranchMerge ++
       encryptionPin ++ forkColDefault ++ forkPartitionDist ++
