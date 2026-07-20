@@ -48,6 +48,19 @@ expiration job (`TableSnapshotsExpirationTask:44-58` → ref-aware Iceberg `expi
 `apps/spark/.../Operations.java:268-287`) deletes them on its next run — the rollback becomes
 permanent with no signal. Pinning with a tag prevents it. (Probed context in INTERACTION-AUDIT.md §4.)
 
+**WAP1 — a staged (`spark.wap.id`) DELETE is NOT honored by WAP; it commits to MAIN immediately.**
+Surfaced by the Phase-29 WAP mega-axis (`wapStaged.*`). With `write.wap.enabled=true` and `spark.wap.id`
+set, a `DELETE` advances MAIN (3→2 rows) and creates **no** snapshot tagged with the wap id — i.e. the
+"staged" delete silently publishes. In the SAME block, staged `INSERT` / `INSERT OVERWRITE` / `UPDATE` /
+`MERGE` all stage correctly (main unchanged pre-publish; visible only after `cherrypick_snapshot`). So the
+gap is specific to DELETE. **Demonstrated live** on parquet+orc by `wapStaged.delete.bypassesWap` (pins
+main=2, staged=0) vs the passing `wapStaged.{insert,overwrite,update,merge}`. Impact: an operator relying
+on WAP to stage-and-review a deletion gets an immediate, un-reviewed publish. Root cause (stock Iceberg
+row-level DELETE path vs an OpenHouse divergence) is **not determined here** — needs a stock-Iceberg
+comparison; the pin flips if a build starts staging DELETE. Related: `wapStaged.expireVsStaged` confirms
+**G11(d)** live — an unreferenced staged snapshot is deleted by `expire_snapshots` and then un-cherry-
+pickable (stranded pre-publish).
+
 ---
 
 ## Audit C — Reachability / product gaps (surfaced building the REST shim)
