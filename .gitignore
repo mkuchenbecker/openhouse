@@ -108,3 +108,6 @@ terraform.rc
 
 # Ignore the spark shell bash file because it contains secrets
 start-spark-shell.sh
+
+# Claude Code local session state / agent worktrees (never commit)
+.claude/
