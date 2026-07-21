@@ -50,15 +50,17 @@ OpenHouse models partitioning as **at most one time transform on one timestamp c
 This subset matches exactly what OpenHouse's own create path (`PartitionSpecMapper.toPartitionSpec`)
 can round-trip, so a REST-created table loads back with the same spec.
 
-### CTAS / stage-create -- still gapped
+### CTAS / stage-create -- CLOSED
 
-`CreateTableRequest.stageCreate() == true` (Spark **CTAS/RTAS**) is **rejected with HTTP 501**. Iceberg
-staged create returns metadata for an as-yet-uncommitted table and relies on a follow-up
-commit-transaction to publish it atomically; OpenHouse's create path commits the table to the HTS
-immediately and does not expose those staged-transaction semantics through this single call. Plain
-`CREATE TABLE` followed by `INSERT` works; `CREATE TABLE ... AS SELECT` does not. Closing this would
-require wiring the Iceberg transaction/commit-requirement flow (or an OpenHouse `stageReplace` /
-`replaceCommit` equivalent) through the REST update path and is the next follow-up.
+`CreateTableRequest.stageCreate() == true` (Spark **CTAS**) and RTAS are now supported. See
+`docs/spark4-iceberg-upgrade/rest-ctas/`. In brief: `stage-create` is treated as a plain
+create-then-commit; the follow-up CTAS data commit (`POST .../tables/{t}` carrying a stock
+`assert-create` requirement) lands only its snapshot updates onto the just-created table via
+`CatalogHandlers`; and RTAS (the `forReplaceTable` requirement fingerprint) is routed through
+OpenHouse's replace pipeline (`IcebergSnapshotsApiHandler` -> `save` `isReplaceCommit` branch), so
+the `replace.enabled` gate and reserved-plane preservation apply to REST clients too. The **accepted
+compromise**: CTAS is create-then-commit (two HTS commits), not an atomic staged transaction --
+matching OpenHouse's long-standing commit-on-create model. RTAS is a single, atomic replace commit.
 
 ## 2. Namespace existence is optimistic
 

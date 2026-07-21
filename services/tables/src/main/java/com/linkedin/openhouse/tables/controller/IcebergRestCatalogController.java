@@ -12,13 +12,17 @@ import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.tables.api.handler.IcebergSnapshotsApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
+import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.services.DatabasesService;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -26,8 +30,14 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.SnapshotParser;
+import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.SortOrderParser;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -84,9 +94,9 @@ import org.springframework.web.bind.annotation.RestController;
  * docs/spark4-iceberg-upgrade/rest-endpoint} for the full design, decisions, and pitfalls.
  *
  * <p>Serialization is done manually with an {@link ObjectMapper} configured exactly like Iceberg's
- * internal {@code RESTObjectMapper} (kebab-case, field visibility, {@link RESTSerializers}). We read
- * the raw request body as a String and write the raw response as a String to avoid depending on the
- * Spring MVC {@code ObjectMapper} having Iceberg's REST (de)serializers registered.
+ * internal {@code RESTObjectMapper} (kebab-case, field visibility, {@link RESTSerializers}). We
+ * read the raw request body as a String and write the raw response as a String to avoid depending
+ * on the Spring MVC {@code ObjectMapper} having Iceberg's REST (de)serializers registered.
  *
  * <p>Errors are mapped to the Iceberg {@link ErrorResponse} envelope by local {@link
  * ExceptionHandler} methods, which take precedence over the global {@code
@@ -102,15 +112,29 @@ public class IcebergRestCatalogController {
   @Autowired private DatabasesService databasesService;
 
   /**
-   * The same service bean the native {@code TablesController} PUT create path uses. Reusing it means
-   * REST-driven creates go through OpenHouse's own create pipeline (location allocation via {@code
-   * StorageSelector}, reserved {@code openhouse.*} property population, policy management, and
-   * eligibility checks) instead of a parallel path.
+   * The same service bean the native {@code TablesController} PUT create path uses. Reusing it
+   * means REST-driven creates go through OpenHouse's own create pipeline (location allocation via
+   * {@code StorageSelector}, reserved {@code openhouse.*} property population, policy management,
+   * and eligibility checks) instead of a parallel path.
    */
   @Autowired private TablesApiHandler tablesApiHandler;
 
-  /** Used to build the OpenHouse {@code TimePartitionSpec}/{@code ClusteringColumn}s from a spec. */
+  /**
+   * The snapshot service bean the native {@code IcebergSnapshotsController} PUT-snapshots path
+   * uses. Reusing it means REST-driven RTAS (REPLACE TABLE AS SELECT) commits go through
+   * OpenHouse's own replace pipeline ({@code OpenHouseInternalRepositoryImpl.save} replace branch:
+   * RTAS-enabled gating via {@code validateReplaceTable}, policy re-management, reserved-prop
+   * recomputation, {@code isReplaceCommit} semantics) instead of a parallel path.
+   */
+  @Autowired private IcebergSnapshotsApiHandler icebergSnapshotsApiHandler;
+
+  /**
+   * Used to build the OpenHouse {@code TimePartitionSpec}/{@code ClusteringColumn}s from a spec.
+   */
   @Autowired private PartitionSpecMapper partitionSpecMapper;
+
+  /** Used to parse the serialized {@code policies} table property on the RTAS replace path. */
+  @Autowired private PoliciesSpecMapper policiesSpecMapper;
 
   /** Supplies the server cluster name that the create request body must carry and match. */
   @Autowired private ClusterProperties clusterProperties;
@@ -167,9 +191,9 @@ public class IcebergRestCatalogController {
   }
 
   /**
-   * Create namespace. OpenHouse databases are created implicitly on first table creation, so this is
-   * a no-op that echoes the requested namespace with empty properties (properties are NOT persisted;
-   * OpenHouse has no namespace property store).
+   * Create namespace. OpenHouse databases are created implicitly on first table creation, so this
+   * is a no-op that echoes the requested namespace with empty properties (properties are NOT
+   * persisted; OpenHouse has no namespace property store).
    */
   @PostMapping("/namespaces")
   public ResponseEntity<String> createNamespace(@RequestBody(required = false) String body) {
@@ -217,8 +241,8 @@ public class IcebergRestCatalogController {
   }
 
   /**
-   * Drop namespace. Not supported: OpenHouse databases have no independent lifecycle (they disappear
-   * when the last table is dropped), so there is nothing to drop. Returns 501.
+   * Drop namespace. Not supported: OpenHouse databases have no independent lifecycle (they
+   * disappear when the last table is dropped), so there is nothing to drop. Returns 501.
    */
   @DeleteMapping("/namespaces/{namespace}")
   public ResponseEntity<String> dropNamespace(@PathVariable("namespace") String namespace) {
@@ -244,7 +268,8 @@ public class IcebergRestCatalogController {
   }
 
   /**
-   * Creates a brand-new OpenHouse table from a stock {@code RESTCatalog} {@code CreateTableRequest}.
+   * Creates a brand-new OpenHouse table from a stock {@code RESTCatalog} {@code
+   * CreateTableRequest}.
    *
    * <p>Rather than delegating to {@code CatalogHandlers.createTable} (which calls {@code
    * catalog.buildTable(...).create()} and fails because {@code
@@ -258,8 +283,18 @@ public class IcebergRestCatalogController {
    * created table through the same {@code CatalogHandlers.loadTable} path the load handler uses, so
    * the client immediately sees the new table's metadata and per-table config.
    *
-   * <p>Staged create ({@code stageCreate == true}, used by Spark CTAS/RTAS) is not supported: see
-   * {@code docs/spark4-iceberg-upgrade/rest-endpoint/pitfalls.md}.
+   * <p><b>Staged create (CTAS).</b> Spark's CREATE TABLE AS SELECT drives a stock {@code
+   * RESTCatalog} to POST this request with {@code stageCreate == true}, then writes the data and
+   * publishes it with a follow-up {@code POST .../tables/{table}} (see {@link #updateTable}).
+   * Iceberg staged create returns metadata for an as-yet-uncommitted table and relies on that
+   * follow-up commit-transaction to publish it atomically. OpenHouse has no true staged
+   * transaction: its create path commits the (empty) table to the HTS immediately. We therefore
+   * treat {@code stageCreate} the same as a plain create -- create-then-commit, NOT an atomic
+   * staged transaction. The window between the create here and the data commit in {@code
+   * updateTable} is the accepted atomicity compromise (documented in {@code
+   * docs/spark4-iceberg-upgrade/rest-ctas}). The follow-up commit carries a stock {@code
+   * assert-create} requirement that cannot hold against the already-created table; {@link
+   * #updateTable} handles that gracefully.
    */
   @PostMapping("/namespaces/{namespace}/tables")
   public ResponseEntity<String> createTable(
@@ -269,16 +304,8 @@ public class IcebergRestCatalogController {
     CreateTableRequest request = readRequest(body, CreateTableRequest.class);
     request.validate(); // Iceberg-side: name + schema required.
 
-    if (request.stageCreate()) {
-      // Iceberg staged create returns metadata for an as-yet-uncommitted table and expects a later
-      // commit-transaction to atomically publish it. OpenHouse's create path commits the table to
-      // the HTS immediately, so it cannot honor those staged-transaction semantics through this
-      // single call. Reject clearly instead of silently creating a non-atomic table (CTAS/RTAS gap).
-      throw new UnsupportedOperationException(
-          "Staged create (Spark CTAS/RTAS, stageCreate=true) is not supported by the OpenHouse "
-              + "Iceberg REST endpoint; use a plain CREATE TABLE followed by INSERT.");
-    }
-
+    // stageCreate is intentionally treated identically to a plain create (create-then-commit); see
+    // the method javadoc and updateTable() for how the follow-up CTAS data commit is landed.
     String databaseId = ns.level(0);
     String tableId = request.name();
     CreateUpdateTableRequestBody requestBody = toCreateUpdateTableRequestBody(databaseId, request);
@@ -296,8 +323,8 @@ public class IcebergRestCatalogController {
    * one.
    *
    * <ul>
-   *   <li><b>Schema</b>: the Iceberg schema serialized with {@code SchemaParser.toJson} (the inverse
-   *       of {@code IcebergSchemaHelper.getSchemaFromSchemaJson}).
+   *   <li><b>Schema</b>: the Iceberg schema serialized with {@code SchemaParser.toJson} (the
+   *       inverse of {@code IcebergSchemaHelper.getSchemaFromSchemaJson}).
    *   <li><b>Partitioning</b>: the Iceberg {@code PartitionSpec} is reduced to OpenHouse's single
    *       {@code TimePartitionSpec} plus {@code List<ClusteringColumn>} via {@link
    *       PartitionSpecMapper}; specs OpenHouse cannot model are rejected (HTTP 400).
@@ -347,14 +374,187 @@ public class IcebergRestCatalogController {
     return ResponseEntity.noContent().build();
   }
 
+  /**
+   * Applies a stock {@code RESTCatalog} {@code UpdateTableRequest} (the {@code POST .../tables/{t}}
+   * commit endpoint). A single client endpoint carries three different OpenHouse operations,
+   * distinguished by the Iceberg {@code UpdateRequirement} fingerprint the client stamps:
+   *
+   * <ul>
+   *   <li><b>CTAS data commit</b> ({@code AssertTableDoesNotExist} present -- {@code
+   *       UpdateRequirements.forCreateTable}). Spark's CREATE TABLE AS SELECT stage-creates the
+   *       table (see {@link #createTable}) and then publishes the data with this create-transaction
+   *       commit. Because OpenHouse already committed the (empty) table at stage-create time, the
+   *       stock {@code assert-create} can never hold and the create-shaped metadata updates (re-add
+   *       of the identical schema/spec, {@code SetCurrentSchema(-1)}) would fail against the
+   *       existing table. We instead land only the snapshot updates onto the just-created table --
+   *       exactly like an INSERT -- via {@link CatalogHandlers}. This is the create-then-commit
+   *       compromise noted in {@link #createTable}.
+   *   <li><b>RTAS commit</b> ({@code AssertLastAssignedFieldId} present, {@code
+   *       AssertCurrentSchemaID} absent -- the {@code UpdateRequirements.forReplaceTable}
+   *       fingerprint, which skips the schema/ref/spec/order "not changed" assertions). Spark's
+   *       REPLACE TABLE AS SELECT loads the table and commits a wholesale replacement. This is
+   *       routed through OpenHouse's own replace pipeline ({@code isReplaceCommit}) so RTAS-enable
+   *       gating and replace semantics apply.
+   *   <li><b>Everything else</b> (INSERT, ALTER, ref/branch ops) -- a plain {@code
+   *       UpdateRequirements.forUpdateTable} commit delegated straight to {@link CatalogHandlers},
+   *       which routes through {@code OpenHouseInternalTableOperations.commit} (reserved-key
+   *       interception, {@code COMMIT_KEY} CAS) unchanged.
+   * </ul>
+   */
   @PostMapping("/namespaces/{namespace}/tables/{table}")
   public ResponseEntity<String> updateTable(
       @PathVariable("namespace") String namespace,
       @PathVariable("table") String table,
       @RequestBody(required = false) String body) {
-    TableIdentifier ident = TableIdentifier.of(RESTUtil.decodeNamespace(namespace), table);
+    Namespace ns = RESTUtil.decodeNamespace(namespace);
+    TableIdentifier ident = TableIdentifier.of(ns, table);
     UpdateTableRequest request = readRequest(body, UpdateTableRequest.class);
+
+    if (hasRequirement(request, UpdateRequirement.AssertTableDoesNotExist.class)) {
+      return commitStagedCreate(ident, request);
+    }
+    if (isReplacePayload(request)) {
+      return replaceTable(ns, ident, request);
+    }
     return json(HttpStatus.OK, CatalogHandlers.updateTable(catalog, ident, request));
+  }
+
+  private static boolean hasRequirement(
+      UpdateTableRequest request, Class<? extends UpdateRequirement> type) {
+    return request.requirements().stream().anyMatch(type::isInstance);
+  }
+
+  /**
+   * Detects a Spark RTAS (REPLACE TABLE AS SELECT) commit -- a wholesale table redefinition -- as
+   * opposed to an INSERT/ALTER/ref-op. A stock replace transaction (Iceberg {@code
+   * RESTSessionCatalog.replaceTransaction}) always re-establishes the table identity by emitting
+   * {@code SetCurrentSchema} + {@code SetDefaultPartitionSpec} + {@code SetDefaultSortOrder}
+   * together: {@code TableMetadata.buildReplacement} emits them when the schema/spec/order changes,
+   * and {@code replaceTransaction} explicitly adds any of the three that {@code buildReplacement}
+   * left out (so a same-schema {@code CREATE OR REPLACE ... AS SELECT *} still carries all three).
+   * No INSERT or single-facet ALTER ever emits all three at once, so the trio is a precise replace
+   * marker -- and, unlike a requirement fingerprint, it fires for schema-preserving replaces too
+   * (whose requirements collapse to just {@code AssertTableUUID}, indistinguishable from a
+   * property-only ALTER). {@code AssertTableDoesNotExist} (CTAS create-commit) is ruled out before
+   * this check.
+   */
+  private static boolean isReplacePayload(UpdateTableRequest request) {
+    boolean setsCurrentSchema = false;
+    boolean setsDefaultSpec = false;
+    boolean setsDefaultSortOrder = false;
+    for (MetadataUpdate update : request.updates()) {
+      if (update instanceof MetadataUpdate.SetCurrentSchema) {
+        setsCurrentSchema = true;
+      } else if (update instanceof MetadataUpdate.SetDefaultPartitionSpec) {
+        setsDefaultSpec = true;
+      } else if (update instanceof MetadataUpdate.SetDefaultSortOrder) {
+        setsDefaultSortOrder = true;
+      }
+    }
+    return setsCurrentSchema && setsDefaultSpec && setsDefaultSortOrder;
+  }
+
+  /**
+   * Lands a Spark CTAS create-transaction commit onto the table OpenHouse already created at
+   * stage-create time. The client sends a full "create" payload (all metadata updates that rebuild
+   * the table, plus the data snapshot) guarded by a single {@code AssertTableDoesNotExist}. That
+   * assertion cannot hold (the table exists) and the create-shaped metadata updates -- which re-add
+   * the identical schema/spec and reference them with {@code SetCurrentSchema(-1)} / {@code
+   * SetDefaultPartitionSpec(-1)} -- would throw when applied on top of the existing metadata. The
+   * only genuinely new content is the snapshot(s), which we apply on their own, exactly as a plain
+   * INSERT does. The schema/spec/properties were already materialized from the same
+   * CreateTableRequest at stage-create, so nothing is lost.
+   */
+  private ResponseEntity<String> commitStagedCreate(
+      TableIdentifier ident, UpdateTableRequest request) {
+    if (!catalog.tableExists(ident)) {
+      // Should not happen: Spark stage-creates the table before this commit. Delegate unchanged so
+      // the standard error surfaces rather than masking an unexpected state.
+      return json(HttpStatus.OK, CatalogHandlers.updateTable(catalog, ident, request));
+    }
+    List<MetadataUpdate> snapshotUpdates =
+        request.updates().stream()
+            .filter(
+                u ->
+                    u instanceof MetadataUpdate.AddSnapshot
+                        || u instanceof MetadataUpdate.SetSnapshotRef
+                        || u instanceof MetadataUpdate.RemoveSnapshotRef
+                        || u instanceof MetadataUpdate.RemoveSnapshots)
+            .collect(Collectors.toList());
+    // Empty requirements + snapshot-only updates => CatalogHandlers routes to the plain commit
+    // branch (not the create branch) and applies the snapshot onto the existing table.
+    UpdateTableRequest snapshotOnly =
+        new UpdateTableRequest(Collections.emptyList(), snapshotUpdates);
+    return json(HttpStatus.OK, CatalogHandlers.updateTable(catalog, ident, snapshotOnly));
+  }
+
+  /**
+   * Routes a Spark RTAS (REPLACE TABLE AS SELECT) commit through OpenHouse's replace pipeline. The
+   * stock replace transaction sends the wholesale replacement metadata updates plus the data
+   * snapshot. We reconstruct the final {@link TableMetadata} by applying those updates onto the
+   * current base (the replace payload is delta-shaped, so this is safe), then translate it into the
+   * same {@link IcebergSnapshotsRequestBody} the native client's replace-commit builds and hand it
+   * to the {@code IcebergSnapshotsApiHandler} with {@code replaceCommit == true}. The
+   * service/repository layer then enforces RTAS-enable gating ({@code validateReplaceTable}),
+   * re-manages policies, and runs the replace via {@code OpenHouseInternalRepositoryImpl.save}'s
+   * {@code isReplaceCommit} branch. The response is a fresh {@code LoadTableResponse} for the
+   * replaced table.
+   */
+  private ResponseEntity<String> replaceTable(
+      Namespace ns, TableIdentifier ident, UpdateTableRequest request) {
+    BaseTable table = (BaseTable) catalog.loadTable(ident);
+    TableMetadata base = table.operations().current();
+
+    TableMetadata.Builder builder = TableMetadata.buildFrom(base);
+    request.updates().forEach(update -> update.applyTo(builder));
+    TableMetadata finalMetadata = builder.build();
+
+    String databaseId = ns.level(0);
+    String tableId = ident.name();
+    String policiesJson = finalMetadata.properties().get("policies");
+
+    CreateUpdateTableRequestBody requestBody =
+        CreateUpdateTableRequestBody.builder()
+            .tableId(tableId)
+            .databaseId(databaseId)
+            .clusterId(clusterProperties.getClusterName())
+            .schema(SchemaParser.toJson(finalMetadata.schema()))
+            .timePartitioning(
+                partitionSpecMapper.toTimePartitionSpec(
+                    finalMetadata.schema(), finalMetadata.spec()))
+            .clustering(
+                partitionSpecMapper.toClusteringColumns(
+                    finalMetadata.schema(), finalMetadata.spec()))
+            .tableProperties(new HashMap<>(finalMetadata.properties()))
+            .policies(
+                policiesJson == null ? null : policiesSpecMapper.toPoliciesObject(policiesJson))
+            .sortOrder(
+                finalMetadata.sortOrder().isSorted()
+                    ? SortOrderParser.toJson(finalMetadata.sortOrder())
+                    : null)
+            .baseTableVersion(base.metadataFileLocation())
+            .replaceCommit(true)
+            .build();
+
+    IcebergSnapshotsRequestBody snapshotsRequestBody =
+        IcebergSnapshotsRequestBody.builder()
+            .baseTableVersion(base.metadataFileLocation())
+            .jsonSnapshots(
+                finalMetadata.snapshots().stream()
+                    .map(SnapshotParser::toJson)
+                    .collect(Collectors.toList()))
+            .snapshotRefs(
+                finalMetadata.refs().entrySet().stream()
+                    .collect(
+                        Collectors.toMap(
+                            Map.Entry::getKey, e -> SnapshotRefParser.toJson(e.getValue()))))
+            .createUpdateTableRequestBody(requestBody)
+            .build();
+
+    icebergSnapshotsApiHandler.putIcebergSnapshots(
+        databaseId, tableId, snapshotsRequestBody, extractAuthenticatedUserPrincipal());
+
+    return json(HttpStatus.OK, CatalogHandlers.loadTable(catalog, ident));
   }
 
   @DeleteMapping("/namespaces/{namespace}/tables/{table}")
