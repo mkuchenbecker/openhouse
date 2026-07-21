@@ -5,12 +5,20 @@ runs customer-facing DML **operations** as **typed pipelines** against the **rea
 catalog** (an embedded `OpenHouseLocalServer` wired to `OpenHouseCatalog`), and reports
 pass / skip / fail per case.
 
-Verified: **660 cases — 651 passed, 9 skipped (2 tagged bugs), 0 failed** — see
-`VERIFIED-RUN-openhouse.txt`. The full DML surface (`TEST-PLAN.md`, phases 1–11) is covered:
-delete/update/merge/insert/overwrite, copy-on-write vs merge-on-read (incl. a physical
-position-delete-file discriminator), nested/complex types, type edges, partition transforms, time
-travel, restore/rollback, and negative/contract tests (each asserting the actual typed exception).
-Genuine OpenHouse bugs surfaced by the harness are tagged and tracked in `BUGS.md`.
+**Read `index.md` first — it is the master map** (living docs, checklist status, current-state pointer).
+`VERIFIED-RUN-openhouse.txt` is the authoritative, dated source of truth for run counts.
+
+Verified (latest): **STUB ~2574 · REAL-HTS ~2792, 0 failed** (`HARNESS_REAL_HTS=1` adds the real-HTS undrop
+leg). The harness covers, as **substrates × operations × consumers**: the full DML surface (delete/update/
+merge/insert/overwrite, CoW vs MoR incl. a physical position-delete discriminator, nested/complex types,
+type edges, partition transforms, time travel, restore/rollback, typed negatives); DDL × consumer battery;
+reader × writer-class (CDC/incremental/streaming); branching/WAP (incl. the **WAP mega-axis** — branch DML
+parity, systematic branch-DDL leak, staged-WAP publish visibility); RTAS full-cross over replace-lineage;
+the **undrop** battery (real embedded HTS); and iceberg-**fork** behavior tests (#249/#229/#219/#228/#233/
+#189/#251). **Format is a per-case parameter** — every table-creating block runs on parquet AND orc. A
+reversible **branch-testing mode** (`ICEBERG_RUNTIME_JAR`) runs the whole suite against a locally-built
+fork-branch-HEAD iceberg runtime. Product findings are tracked in `AUDIT-FINDINGS.md` (G2–G14, H1–H8, WAP1)
+and `BUGS.md`. (Exact current counts: `VERIFIED-RUN-openhouse.txt`.)
 
 ## Model
 A test is a **typed pipeline** — `TableTest[S <: Schema]`. The type parameter declares which
@@ -33,10 +41,10 @@ or naming a column the schema doesn't declare.
   row snapshots and `snapshotsBefore`/`snapshotsAfter` commit counts, so every operation asserts
   a **delta** (never an absolute row set) and holds under any layout.
 
-Operations covered (19): read (projection, filter, format-materialization), delete (×4),
-update (×3), merge (×5), insert/append, overwrite (×2); plus `create.schema` per layout.
-Operation sources are written as **explicit literals**. The full run is
-`19 operations × 6 layouts + 6 creates = 120 cases`.
+The core DML operation set (~55 ops: read/delete/update/merge/insert/append/overwrite + partition ops)
+is authored once as **explicit literals** and composed after each preparation prefix, so the case set is
+`prep-substrates × operations`. That core DML cross was the harness's first block; the suite has since grown
+far beyond it (DDL, branch/WAP, RTAS, undrop, fork tests, ...) to ~2,574 — see `VERIFIED-RUN-openhouse.txt`.
 
 The OpenHouse wiring is **copied** from `OpenHouseLocalServer` + `TestSparkSessionUtil` (read,
 not extended): no OpenHouse test class is subclassed and no existing test is altered;
@@ -48,7 +56,7 @@ Requires **JDK 17** (the repo pins Lombok 1.18.20, which does not compile on JDK
 `scalac`, and runs on the embedded OpenHouse server.
 
 ```bash
-./run-openhouse.sh                          # full matrix (120 cases)
+./run-openhouse.sh                          # full matrix (see VERIFIED-RUN for the current count)
 ./run-openhouse.sh delete parquet           # a fast slice (~25s): delete tests on parquet
 ./run-openhouse.sh merge partitioned/avro   # merge tests on one layout
 ./run-openhouse.sh delete.byPredicate       # one test across layouts

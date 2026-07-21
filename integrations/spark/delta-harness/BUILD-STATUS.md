@@ -1,17 +1,20 @@
 # delta-harness — BUILD STATUS (built vs. the SURFACE-APPRAISAL estimate)
 
-**Lead with this.** `SURFACE-APPRAISAL.md` priced the runnable surface at **~4,200 cases** — but that
-estimate double-counted vacuous crosses (see the "estimate correction" column). After the checklist
-build-out the suite is at **1,697** verified green (8m40s parallel), and the honest **non-vacuous** target is
-**~2,600–3,000**, not 4,200. This tracks every block so the gap is never buried. The live task list
-mirrors it.
+**Lead with this.** `VERIFIED-RUN-openhouse.txt` is the authoritative dated count; `index.md` is the master
+map. Current: **STUB ~2,574 · REAL-HTS ~2,792, 0 failed, 0 ORC↔Parquet divergence**. This doc tracks the
+block ledger; the numbers below the headline are historical snapshots (accurate when written).
 
-**Headline: ~1,806 built (1,697 stub-baseline + 109 undrop under real HTS); the undrop leg is no
-longer gated.** The 4,200 figure included ~1,400 vacuous cases (reads/inserts on delete-free MoR ==
-CoW; RTAS/branch × format; DDL×consumer over rejected/one-shot DDLs). The undrop leg — once the only
-genuinely-gated real block — is now BUILT via an embedded real House Table Service
-(HTS-EMBED-PLAN.md/HTS-EMBED-IMPL.md): 106 surface-doubling cases + 3 admin-lifecycle, all green, with
-**restore preserving every feature's state**. The full suite runs identically stub-vs-real-HTS.
+**Headline (2026-07-20): all major planned blocks BUILT + green.** Since the ~1,697/1,806 snapshot below,
+the suite grew through: embedded real HTS + undrop (no longer gated); iceberg-**fork** tests
+(#249 partition-dist, #229/#219 delete-file replication, #228 split-size, #233/#189 compaction, #251 column
+defaults TABLED); **RTAS full-cross** (Phase 28 — `prep.rtas:*` to full 6-layout + partitionedOps + 3-fmt
+RTAS×MoR over replace-lineage); **D6 blanket-double** (format is a per-case parameter — every table-creating
+block runs parquet+orc; "format-inert" is verified, not assumed); the **WAP/branching mega-axis** (Phase 29
+— branch DML parity, systematic branch-DDL leak G8, staged-WAP publish visibility); a reversible
+**branch-testing mode** (`ICEBERG_RUNTIME_JAR`). New findings this round: **WAP1** (staged DELETE bypasses
+WAP) and **D5-resolved** (G14 dangling MoR delete is a PIN — `rewrite_position_delete_files` verified to fold
+it out; MoR/1.5 requires that additional maintenance). The historical ~1,806 detail below is retained as a
+point-in-time snapshot; do not chase its counts.
 
 ## Block ledger
 
