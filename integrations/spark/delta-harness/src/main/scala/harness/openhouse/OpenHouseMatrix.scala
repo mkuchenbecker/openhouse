@@ -3818,11 +3818,20 @@ object Scenarios {
     }()
 
   // ── Procedures not yet exercised ─────────────────────────────────────────────────────────────
+  // Manifest compaction must actually DO ITS JOB — reduce the manifest count — not merely preserve data.
+  // Five separate appends produce ~5 manifests (one per commit); rewrite_manifests must coalesce them.
   val surfaceProcRewriteManifests: TableTest[CoreTable.type] =
-    coreTwoSnapshots.step("surface.proc.rewriteManifests") { (spark, table) =>
-      spark.sql(s"CALL openhouse.system.rewrite_manifests(table => '${catalogRelative(table)}', use_caching => false)")
-      assert(countOf(spark, s"SELECT count(*) FROM $table") == "5", "rewrite_manifests changed data")
-    }()
+    TableTest(Core).sql("create")(coreCreateParquet)()
+      .step("surface.proc.rewriteManifests") { (spark, table) =>
+        (1 to 5).foreach(i => spark.sql(s"INSERT INTO $table VALUES ${coreRow(i, s"r$i")}"))
+        val before = spark.sql(s"SELECT count(*) FROM $table.manifests").collect()(0).getLong(0)
+        spark.sql(s"CALL openhouse.system.rewrite_manifests(table => '${catalogRelative(table)}', use_caching => false)")
+        val after = spark.sql(s"SELECT count(*) FROM $table.manifests").collect()(0).getLong(0)
+        println(s"DIAG surface.proc.rewriteManifests: manifests before=$before after=$after")
+        assert(countOf(spark, s"SELECT count(*) FROM $table") == "5", "rewrite_manifests changed the live row set")
+        assert(before >= 2 && after < before,
+          s"rewrite_manifests did not COMPACT the manifests (before=$before after=$after) — it should coalesce them")
+      }()
 
   val surfaceProcRewritePositionDeletes: TableTest[CoreTable.type] =
     TableTest(Core)
