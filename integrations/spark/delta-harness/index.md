@@ -10,10 +10,15 @@ and then frozen. Current truth is the LIVING docs, never a checklist.
 ---
 
 ## CURRENT STATE (pointer)
-- **Verified run (latest):** STUB **2571** (2560/11/0), REAL-HTS **2789** (2778/11/0), 0 failed — see
+- **Verified run (latest):** STUB **2574** (2563/11/0), REAL-HTS **2792** (2781/11/0), 0 failed — see
   `VERIFIED-RUN-openhouse.txt` for authoritative dated counts. On PR #9 branch (`claude/spark-scala-test-
   env-k7drzg`); includes fork tests 2b-2f + RTAS full-cross (Phase 28) + D6 blanket-double + WAP mega-axis
   (Phase 29, stages A/B/C). New finding WAP1 (staged DELETE bypasses WAP). All major planned blocks built.
+- **Refactor (2026-07-21):** the monolithic `OpenHouseMatrix.scala` (4,987 lines) was split into **15
+  per-domain files** (Framework / ScenarioKit / 10 `*Scenarios` traits / Plan / Env / thin object). Traits
+  mix in source order over ScenarioKit → val-init order preserved; count-neutral, both modes green.
+  **`HARNESS-GUIDE.md`** is the new human-facing entry point. A curated PR (code + guide only, off `main`)
+  carries the harness without the working-doc pile.
 - **Active checklist:** `CHECKLIST-2026-07-20-completeness-pass.md` (fork-commit tests, D6 blanket-format
   refactor, mega phases, G2–G14 docs, doc consolidation).
 - **Role:** testing + understanding silo for OpenHouse + the `com.linkedin.iceberg` 1.5.2 fork. Not the
@@ -31,6 +36,7 @@ file format (or other axis) — they multiplex/compose across formats, layouts, 
 ## LIVING DOCS — current truth (read these for the real state)
 | Doc | Purpose |
 |---|---|
+| `HARNESS-GUIDE.md` | **The human guide to grokking the tests** — model, file map (the 15-file split), axes/vacuity, design decisions, pitfalls, findings, how to add a test. Start here. |
 | `README.md` | How the harness works + how to run it (incl. branch mode via `ICEBERG_RUNTIME_JAR`). |
 | `VERIFIED-RUN-openhouse.txt` | **Source of truth for run counts** (dated, both modes, release + branch). |
 | `ICEBERG-FORK-AUDIT.md` | The fork's custom commits vs Apache 1.5.2 + which are tested; fork behaviors. |

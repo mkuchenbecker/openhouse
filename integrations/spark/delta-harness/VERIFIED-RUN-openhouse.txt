@@ -1,6 +1,16 @@
 === delta-harness :: typed pipelines @ OpenHouse catalog (all cases) ===
 
---- BOTH MODES, latest (PR #9; + WAP/branching mega-axis Phase 29, stages A/B/C) ---
+--- BOTH MODES, latest (PR #9; harness SPLIT into per-domain files + D5-decider + manifest strengthening) ---
+STUB (default):        2574 cases: 2563 passed, 11 skipped, 0 failed.  4 workers.
+REAL HTS (HARNESS_REAL_HTS=1): 2792 cases: 2781 passed, 11 skipped, 0 failed.  4 workers.
+Refactor gate: OpenHouseMatrix.scala (4,987 lines) split into 15 files — Framework, ScenarioKit, 10
+per-domain *Scenarios traits, Plan, Env, + the thin object. Traits mix in source order over ScenarioKit,
+so val-init order is identical to the original object (compiler-verified, 12 helpers hoisted to the kit).
+COUNT-NEUTRAL vs the pre-refactor 2574/2792 (the D5-decider maint.mor.rewritePositionDeleteFolds ×3 and the
+strengthened surface.maint.rewriteManifests landed since the 2571/2789 block below). 0 ORC<->Parquet
+divergence. New reader entry point: HARNESS-GUIDE.md (the human guide to grokking the tests).
+
+--- BOTH MODES (PR #9; + WAP/branching mega-axis Phase 29, stages A/B/C) ---
 STUB (default):        2571 cases: 2560 passed, 11 skipped, 0 failed.  4 workers.
 REAL HTS (HARNESS_REAL_HTS=1): 2789 cases: 2778 passed, 11 skipped, 0 failed.  4 workers.
 WAP mega-axis (op surface × {main, branch, staged}): Stage A branch DML parity (branchWap 220→456: all 6
