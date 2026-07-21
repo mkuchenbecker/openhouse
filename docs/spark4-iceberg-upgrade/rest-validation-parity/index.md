@@ -66,7 +66,32 @@ replace and skip the update guards entirely.
   — `enforceUpdateGuards` + helpers; injected `SchemaValidator`; added
   `InvalidSchemaEvolutionException` to the 400 handler.
 
-## Cases recovered (10)
+## Actual harness results (Spark-4.0 delta-harness, iceberg 1.11.0-openhouse, Scala 2.13.16)
+
+Full matrix: **1650 passed / 28 skipped / 19 failed (1697 cases)** vs the 1637 / 28 / 32 baseline —
+`FAIL` dropped by 13 (32 → 19) with pass rising by exactly 13 (no happy-path regression). Sorted run
+in `fullmatrix-results.txt`.
+
+**13 of the 18 target cases now correctly reject:**
+
+```
+PASS ddl.neg.dropColumn                 PASS partition.evolutionAdd.rejected
+PASS ddl.props.reservedOpenhouse        PASS partition.evolutionDrop.rejected
+PASS ddl.rtas.disabled                  PASS surface.schema.nestedDropField
+PASS ddl.repl.tableTypeImmutable        PASS surface.msg.readabilityGuard
+PASS interact.ddl.dropColAfterData      PASS control.lock.enforcement
+PASS interact.flags.wapReplaceAtCreate  PASS interact.rtas.onLockedTable
+                                        PASS hazard.lock.starvesMaintenance
+```
+
+**5 not recovered** (`partition.dateDay.rejected`, `ddl.ns.createRejected`,
+`ddl.renameTable.conflict`, `hazard.rename.consumers`, `surface.conc.appendAppend`) — none is an
+update/replace-validation bypass; see `pitfalls.md`.
+
+The remaining 19 failures are exactly: 12 custom-SQL `ParseException` + 2 CTAS staged-create
+(the ~14 structurally-expected, owned by other agents) + these 5.
+
+## Cases recovered (13)
 
 | Case | Guard |
 |---|---|
