@@ -15,8 +15,9 @@ test of OpenHouse internals — it is a behavioral matrix over the surface a dat
 time-travel, restore, maintenance procedures, streaming/CDC readers, the drop→undrop lifecycle, and the
 behaviors specific to LinkedIn's **`com.linkedin.iceberg` 1.5.2 fork**.
 
-- **Current result:** **STUB ~2,574** cases · **REAL-HTS ~2,792** cases · **0 failed** ·
-  **0 ORC↔Parquet divergence.** (`VERIFIED-RUN-openhouse.txt` is the dated source of truth.)
+- **Scale:** a few thousand cases per mode (stub vs real-HTS), **0 failed**, **0 ORC↔Parquet
+  divergence**. The exact count is whatever the final line of a full run prints — this guide does not
+  quote a number that would rot every time a case is added.
 - **How a "test" is written:** a **typed pipeline** (`TableTest[S <: Schema]`) — a preparation prefix
   (create+seed, or RTAS, or drop+undrop) composed with an operation suffix (the thing under test),
   where every step asserts a **delta** against the observed pre-state, never an absolute row set.
@@ -24,41 +25,43 @@ behaviors specific to LinkedIn's **`com.linkedin.iceberg` 1.5.2 fork**.
   partitioning × CoW/MoR × replace-lineage × branch × restored-from-undrop). Format is a *per-case
   parameter*, so most blocks run on parquet **and** orc automatically.
 - **What it's for:** finding **broken feature interactions**, not racking up green cases. The findings
-  (14 product-behavior notes `G2–G14`, `WAP1`, the fork behaviors, an error-message readability audit)
-  are the real output; the green count just says the tripwires are still where we left them.
+  (the `G`-series product-behavior notes, `WAP1`, the fork behaviors, an error-message readability
+  audit) are the real output; the green count just says the tripwires are still where we left them.
 
 ---
 
 ## 2. How to run it
 
-Requires **JDK 17** (the repo pins Lombok 1.18.20, which does not compile on JDK 21+):
+Requires **JDK 17** (the repo pins Lombok 1.18.20, which does not compile on JDK 21+). Point the script
+at a 17 via `JAVA17_HOME` (it also accepts `JAVA_HOME` if that already points at a 17):
 
 ```bash
 export JAVA17_HOME=/usr/lib/jvm/java-17-openjdk-amd64   # or wherever your 17 lives
 
-./run-openhouse.sh                       # full matrix (see VERIFIED-RUN for the current count)
-./run-openhouse.sh delete parquet        # a fast slice (~25s): delete tests, parquet only
-./run-openhouse.sh merge partitioned/avro
-./run-openhouse.sh delete.byPredicate     # one operation across its layouts
+./run-openhouse.sh                   # the full matrix; the last printed line is the case count
+./run-openhouse.sh delete parquet    # a fast slice (~25s): delete tests, parquet only
+./run-openhouse.sh merge parquet      # merge tests on parquet
+./run-openhouse.sh delete.byPredicate  # one operation across its layouts
 ```
 
-Positional args are **AND-substring filters** on the case id. A narrow slice is ~25s end-to-end
-(embedded-server + Spark startup dominates; the assertions themselves are milliseconds). Iterate on a
-slice; run the whole matrix only as the final gate.
+Positional args are **AND-substring filters** on the case id — a case runs only if its id contains all
+of them. (Substring, not exact: `partitioned` also matches `unpartitioned`.) A narrow slice is ~25s
+end-to-end (embedded-server + Spark startup dominates; the assertions themselves are milliseconds).
+Iterate on a slice; run the whole matrix only as the final gate.
 
 Two switches change *what* is exercised:
 
 | Env var | Effect |
 |---|---|
-| `HARNESS_REAL_HTS=1` | Boots the **real** House Table Service as a second in-JVM Spring context and runs the drop→undrop battery (`undrop:*`, `undropAdmin.*`) for real. Default (unset) uses an in-memory stub and skips that leg. This is the difference between the ~2,574 and ~2,792 counts. |
+| `HARNESS_REAL_HTS=1` | Boots the **real** House Table Service as a second in-JVM Spring context and runs the drop→undrop blocks (`undrop:*`, `undropAdmin.*`, and the `undropInteract` 3-way compositions) for real. Default (unset) uses an in-memory stub and skips those blocks — which is why the real-HTS run has more cases than the default. |
 | `ICEBERG_RUNTIME_JAR=<path>` | **Branch-testing mode.** Swaps the shaded Iceberg runtime jar on the classpath for a locally-built fork-branch-HEAD jar, so the whole suite runs against un-released fork bytecode. Reversible; hard-fails if the jar it's asked to replace isn't found (so a typo can't silently no-op). |
 
 `HARNESS_PARALLELISM=N` overrides the worker count (default = CPU count; `<=1` = sequential).
 
 ### What the script does
 
-`run-openhouse.sh` (1) resolves the OpenHouse classpath via a **system Gradle 8.x** (the Gradle wrapper
-can't download behind the proxy — see pitfalls), (2) compiles **every** `.scala` file under
+`run-openhouse.sh` (1) resolves the OpenHouse classpath via a system Gradle — the Gradle wrapper can't
+download behind the proxy (see pitfalls) — and caches it, (2) compiles **every** `.scala` file under
 `src/main/scala/harness/openhouse/` with `scalac`, and (3) runs `harness.Main` on JDK 17 with the
 `--add-opens` flags Spark 3.5 needs. Gradle is used *only* to produce the classpath and OpenHouse's own
 jars; it does not build the harness.
@@ -84,14 +87,14 @@ Four ideas do all the work:
    test — a `DELETE`, a `MERGE`, an `ADD COLUMN`) is authored **headless**: it assumes a seeded table
    and does not create one. The run composes a preparation *before* it. Because prep and op are the same
    kind of object, you can swap the prep without touching the op — which is the entire trick that lets
-   "the whole DML catalog" be re-run on an RTAS'd table, a branch-routed table, or a table that has been
+   the whole DML catalog be re-run on an RTAS'd table, a branch-routed table, or a table that has been
    through a real drop→undrop round-trip. **The op set is authored once; the substrate set multiplies it.**
 
 3. **The layout axis.** `Layout` = file format × partitioning, expressed as a literal `CREATE`
    statement. Six base layouts (`{unpartitioned, partitioned} × {parquet, orc, avro}`), plus merge-on-read
-   variants, plus dedicated single-data-file layouts used as a **physical CoW/MoR discriminator** (a
+   variants, plus dedicated single-data-file layouts used as a **physical CoW/MoR discriminator**: a
    strict-subset delete on one data file *must* produce a position-delete file under MoR and *must not*
-   under CoW — that is asserted directly against `.all_delete_files`).
+   under CoW — asserted directly against the `.delete_files` metadata table.
 
 4. **Delta assertions, never absolutes.** Each step's validation thunk receives a `StepView` with
    `before`/`after` row snapshots and `snapshotsBefore`/`snapshotsAfter` commit counts. Every operation
@@ -106,46 +109,42 @@ original order, so output is identical to a sequential run. Each case owns its o
 counter, so cases are independent.
 
 **Known product bugs are tagged, not skipped-into-silence.** `Plan.knownBugs` maps a case-id substring
-to a reason; a matching case is reported `SKIP (bug: …)` and tracked in `BUGS.md`. This is how a genuine
-defect is deferred without either failing the suite or silently pretending it passed.
+to a reason; a matching case is reported `SKIP (bug: …)`. This is how a genuine defect is deferred
+without either failing the suite or silently pretending it passed.
 
 ---
 
 ## 4. Where things live (the file map)
 
-The harness used to be one 5,000-line file. It is now split by concern; every file is `package harness`
-(the directory name is irrelevant to the package). Start at the top of this list and stop when you've
-found what you need.
+The harness is split by concern; every file is `package harness` (the directory name is irrelevant to
+the package). Open the file whose concern matches what you're after.
 
-| File | What's in it |
+| File | Concern |
 |---|---|
-| `Framework.scala` | The DSL and plumbing: `Ctx`, the REST/`HtsAdmin` clients, `Outcome`/`Check`, `Column`/`Schema`/`Rows`, the three tables (`CoreTable`/`NestedTable`/`TypesTable`), `RowGenerator`, `StepView`/`Step`, and `TableTest` itself. Read this first to understand the vocabulary. |
-| `ScenarioKit.scala` | The shared **kit** every test group builds on: `Layout` + the layout lists, all the `createAndSeed*` preparations (plain / single-file / ordered / evolved / on-branch / RTAS / RTAS-MoR / mor-deleted / undropped), the format-multiplex hooks (`seedFmt`/`withSeedFmt`/`coreCreateParquet`), and cross-cutting helpers (`snapshotIds`, `coreTwoSnapshots`, `catalogRelative`, `countOf`, …). Every `*Scenarios` trait extends this. |
-| `DmlScenarios.scala` | The core DML surface: the read / delete / update / merge / insert-append-overwrite operation catalog, the `operations` / `partitionedOperations` / `mutationOperations` lists, the DDL×consumer battery, the ADD COLUMN family, and the physical MoR discriminator. |
+| `Framework.scala` | The DSL and plumbing: `Ctx`, the REST/`HtsAdmin` clients, `Outcome`/`Check`, the `Column`/`Schema`/`Rows` vocabulary, the three tables, `RowGenerator`, `StepView`/`Step`, and `TableTest` itself. Read this first to learn the vocabulary. |
+| `ScenarioKit.scala` | The shared **kit** every test group builds on: `Layout` + the layout lists, all the `createAndSeed*` preparations, the format-multiplex hooks (`seedFmt`/`withSeedFmt`), and the cross-cutting helpers. Every `*Scenarios` trait extends this; a helper used by more than one trait belongs here. |
+| `DmlScenarios.scala` | The core DML surface: the read / delete / update / merge / insert-append-overwrite operation catalog, the `operations` / `partitionedOperations` / `mutationOperations` lists, the DDL×consumer battery, the ADD COLUMN family, and the physical CoW/MoR discriminator. |
 | `NestedTypesScenarios.scala` | Nested/complex-type coverage, type-edge coverage, and partition transforms + partition-evolution rejections. |
 | `MorMaintScenarios.scala` | MoR delete-file **coexistence** (ops on a table already carrying a live position delete), MoR maintenance folds, MoR modality hazards, and MoR × branch merge. |
 | `MaintControlScenarios.scala` | Time-travel, restore/rollback, maintenance procedures (`expire_snapshots`, `rewrite_data_files`, …), the REST control-plane ops (lock/unlock), and the undrop admin lifecycle. |
-| `ForkScenarios.scala` | The `com.linkedin.iceberg` fork-behavior tests: `#251` column defaults, `#249` partition distribution, `#229`/`#219` delete-file / output-file replication, `#228` split-size, `#233`/`#189` compaction ordering. |
-| `BranchWapScenarios.scala` | Branching and Write-Audit-Publish: the undrop 3-way compositions, direct-branch ops, the **WAP mega-axis** (staged-write publish visibility, systematic branch-DDL leak `G8`). |
+| `ForkScenarios.scala` | The `com.linkedin.iceberg` fork-behavior pins (the fork commits are tabulated in §8). |
+| `BranchWapScenarios.scala` | Branching and Write-Audit-Publish: the undrop 3-way compositions, direct-branch ops, and the branch/WAP battery (staged-write publish visibility, the systematic branch-DDL leak). |
 | `NegativeDdlScenarios.scala` | Typed negatives / contract pins and the DDL phases (properties, sort order, rename, namespace, policy, CTAS/RTAS, column-tag/ACL, encryption). |
-| `InteractionScenarios.scala` | 3-way compositions where the interesting behavior lives: DDL×history, RTAS×history/lineage/property-merge, branch×history/maintenance, and **the composite defect** (branch × expiration × merge, `G11`). |
+| `InteractionScenarios.scala` | 3-way compositions where the interesting behavior lives: DDL×history, RTAS×history/lineage/property-merge, branch×history/maintenance, and the composite branch × expiration × merge defect. |
 | `SurfaceScenarios.scala` | Surface completion: error-message readability guard, branch leaks, WAP negatives, streaming/CDC, procedures, metadata tables, concurrency invariants, schema-evolution edges, write-path configs, expected-unsupported pins. |
 | `HazardReaderWriterScenarios.scala` | Hazard/modality interactions (expired checkpoints, RTAS wiping tags, rename breaking consumers) and the reader×writer-class battery (changelog / incremental / streaming over CoW and MoR). |
 | `Plan.scala` | `object Plan` — **the assembly**. This is where substrates × operations become the actual `Case` list, where `crossFmt` doubles a block across parquet/orc, and where `knownBugs` lives. If you want to know *what actually runs*, read `Plan.cases`. |
-| `OpenHouseMatrix.scala` | Now just the one line that mixes the trait ingredients into `object Scenarios`. Kept as the historical entry-point name. |
+| `OpenHouseMatrix.scala` | Mixes the domain traits into `object Scenarios`. The `extends` clause here is the **authoritative order** in which the traits' `val`s initialize (see §6). |
 | `Env.scala` | Boot + run: the embedded OpenHouse server wiring (`OpenHouseEnv`), the embedded real HTS (`HtsEnv`/`HtsBootApp`), the retrying `Runner`, and `Main`. |
-
-The traits are mixed into `object Scenarios` **in source order**, so `val` initialization order is
-identical to the original single object — see §6 (pitfall: trait init order).
 
 ---
 
-## 5. The axes, and why the honest target is < 4,200 (vacuity)
+## 5. The axes, and why the honest target is well below the naive product (vacuity)
 
 Think of the suite as **substrates × operations × consumers**:
 
-- **Operations** — the ~55 DML ops + the DDL ops + the procedures, each authored once as explicit
-  literals.
+- **Operations** — the DML op catalog (authored once as explicit literals in `DmlScenarios.operations`),
+  plus the DDL ops and the procedures.
 - **Substrates (preparations)** — plain create+seed, RTAS'd (replace-lineage), branch-routed (via
   `spark.wap.branch`), restored-from-drop (real HTS), schema-evolved, sort-ordered, and merge-on-read —
   each of which multiplies the op catalog.
@@ -153,8 +152,8 @@ Think of the suite as **substrates × operations × consumers**:
   incremental, streaming) still work?
 - **Format** — a per-case parameter (see below), so blocks double across parquet/orc for free.
 
-The naive product is ~4,200+ cases, but a large fraction would be **vacuous**, and the harness refuses
-to inflate its count with them. The load-bearing vacuity arguments:
+The naive product is much larger than what actually runs, because a large fraction of the cells would be
+**vacuous**, and the harness refuses to inflate its count with them. The load-bearing vacuity arguments:
 
 - A read or insert on a **delete-free MoR** table is byte-identical to CoW (no delete files to apply;
   append is mode-independent). So the real MoR surface is *mutation-ops × MoR* + *delete-file
@@ -164,9 +163,9 @@ to inflate its count with them. The load-bearing vacuity arguments:
 - A DDL×consumer cross over a **rejected or one-shot** DDL has no post-state to consume, so only
   *state-changing DDL × real consumers* is non-vacuous.
 
-When an estimate turns out inflated by vacuous cells, the honest move (documented in `BUILD-STATUS.md`)
-is to correct the estimate in the open, not to chase the vacuous number. **Format, however, is NOT a
-vacuity axis** — see the next section.
+When an estimate turns out inflated by vacuous cells, the honest move is to correct the estimate in the
+open rather than chase the vacuous number. **Format, however, is NOT a vacuity axis** — see the next
+section.
 
 ### Format multiplex: "format-inert" is a hypothesis, not an assumption
 
@@ -174,60 +173,58 @@ Every table-creating block reads a per-case thread-local seed format (`seedFmt`)
 wraps a block so it runs once per format in `dataFormats` (parquet, orc), setting `seedFmt` around each
 case. The mechanism is safe because cases are sequential per worker. The point is philosophical: **you
 do not bake a file format into a test.** Whether a behavior is format-independent is something this
-harness *verifies* (the fork carries patched ORC paths; `G8`/`G10` showed metadata surprises), it does
-not assume. Only table-**less** operations (no `CREATE`) have no format axis. This is why the headline
-includes "**0 ORC↔Parquet divergence**" — it's a checked result, not a design assumption.
+harness *verifies* (the fork carries patched ORC paths; the replace-path findings showed metadata
+surprises), it does not assume. Only table-**less** operations (no `CREATE`) have no format axis. This is
+why the headline includes "0 ORC↔Parquet divergence" — a checked result, not a design assumption.
 
 ---
 
-## 6. Design decisions & pitfalls (the hard-won part)
+## 6. Design decisions & pitfalls
 
 **Catalog wiring is copied, not extended.** `OpenHouseEnv` composes an embedded `OpenHouseLocalServer`
 + Spark-catalog config lifted from `OpenHouseLocalServer` / `TestSparkSessionUtil` as *components* — no
-OpenHouse test class is subclassed and no existing test is altered. The harness is a bolt-on observer,
-not a fork of the test tree.
+OpenHouse test class is subclassed and no existing test is altered. The harness is a bolt-on observer.
 
-**The undrop leg needed a real HTS, and got one with a single backward-compatible production edit.**
-Customer `DROP` hard-codes `purge=true`, so a customer can never populate the soft-deleted store; and
-the embedded server's default `HouseTableRepository` is an in-memory **stub**, so an undrop test against
-it would test the stub, not production. The fix (Option A) boots the genuine House Table Service as a
-second in-JVM Spring context and points the tables server at it. The **only** production-code change in
-the entire effort is one `@ConditionalOnProperty` on `HouseTablesH2Repository` (`havingValue="true",
-matchIfMissing=true`) so the stub can be switched off — fully backward compatible (absent property ⇒
-stub, exactly as before). Everything else is harness-side.
+**The undrop leg drives a real HTS via a single backward-compatible production change.** Customer `DROP`
+hard-codes `purge=true`, so a customer can never populate the soft-deleted store; and the embedded
+server's default `HouseTableRepository` is an in-memory **stub**, so an undrop test against it would test
+the stub, not production. So `HARNESS_REAL_HTS=1` boots the genuine House Table Service as a second
+in-JVM Spring context and points the tables server at it. The **only** production-code change is one
+`@ConditionalOnProperty` on `HouseTablesH2Repository` (`havingValue="true", matchIfMissing=true`) so the
+stub can be switched off — fully backward compatible (absent property ⇒ stub, exactly as before).
+Everything else is harness-side.
 
 **Assertions are deltas, rejections are pins.** A negative test asserts a *rejection message substring*
-and (per the readability audit) that the message is not a raw stacktrace / `[INTERNAL_ERROR]` / NPE.
+and (per the readability audit, §7) that the message is not a raw stacktrace / `[INTERNAL_ERROR]` / NPE.
 These rejections are **tripwires, not contracts**: if OpenHouse later supports X, the pinned test is
 meant to *flip* and be updated, not silently keep passing. The goal is catching a behavior change, in
 either direction.
 
-Pitfalls that will bite you (all learned the hard way):
+**Trait layout & initialization order.** `object Scenarios` (in `OpenHouseMatrix.scala`) is assembled by
+mixing the domain traits on top of `ScenarioKit` via an explicit `extends … with …` clause. That clause
+is the authoritative order: `ScenarioKit` linearizes first, so its shared `val`s initialize before any
+domain trait references them, and the domain traits initialize in the order written. **A helper used by
+more than one trait must live in `ScenarioKit`** — a reference to a sibling trait's member won't resolve,
+and the compiler will tell you. Keep the `extends` clause and the intra-trait member order stable and
+initialization stays deterministic.
 
-- **JDK 17 only.** Lombok 1.18.20 in the repo does not compile on 21+. Set `JAVA17_HOME`.
-- **Gradle wrapper can't download** behind the proxy (403). Use a system Gradle 8.x (`GRADLE_BIN`).
+Pitfalls specific to this harness:
+
+- **JDK 17 only.** Lombok 1.18.20 in the repo does not compile on 21+.
+- **The Gradle wrapper can't download** behind the proxy (403). Use a system Gradle (`GRADLE_BIN`); the
+  script caches the resolved classpath after the first run.
 - **Avro needed a classpath fix** — a duplicate shaded/unshaded Iceberg on the classpath broke Avro
   until a dependency exclusion was added in `scripts/print-cp.init.gradle`.
-- **Format is a hypothesis.** Do not "optimize" a block down to parquet-only because it "should" be
-  format-inert — that is precisely the assumption the harness exists to check. Additively: every block
-  covers at least ORC + Parquet; the 3-format blocks keep Avro. Never turn an additive format request
-  into a destructive one (a prior mistake deleted Avro coverage — don't).
-- **Trait init order (relevant to how this file is split).** `object Scenarios` is assembled by mixing
-  the domain traits **in source order** on top of `ScenarioKit`, which linearizes the kit first — so
-  `val` initialization order matches the original single object exactly. When you add a helper used by
-  more than one trait, put it in `ScenarioKit` (a reference to a sibling trait's member won't resolve).
-  The compiler catches the visibility mistakes; keeping mixin order = source order keeps the runtime
-  order safe.
-- **`cd` before you run.** Several wrappers reset the working directory; always
-  `cd …/integrations/spark/delta-harness` before `./run-openhouse.sh`.
-- **Git hooks are broken in this environment** — commit/push with `--no-verify`.
+- **Format is a hypothesis, and the format policy is additive.** Don't "optimize" a block down to
+  parquet-only because it "should" be format-inert — that is precisely the assumption the harness exists
+  to check. Every table-creating block covers at least parquet + orc; the 3-format blocks keep avro.
+  Adding coverage is additive — it never removes an existing format.
 
 ---
 
 ## 7. What the harness found
 
-These are **product-behavior findings**, demonstrated live by named cases. Severity and evidence live in
-`AUDIT-FINDINGS.md`; this is the map.
+These are **product-behavior findings**, each demonstrated live by named cases. The one-line map:
 
 **Guard gaps (an op that can corrupt/mislead isn't blocked):**
 
@@ -236,7 +233,7 @@ These are **product-behavior findings**, demonstrated live by named cases. Sever
   class; cleanest one-line fix.* (`interact.rtas.onLockedTable`.)
 - **G8 — table-global DDL "on a branch" silently mutates MAIN.** With `spark.wap.branch` set, `ADD
   COLUMN` / `SET TBLPROPERTIES` / `WRITE ORDERED BY` change main's schema/props/sort order — there is no
-  branch dimension anywhere in the metadata commit path. (`branch.ddlLeak.*`, the WAP mega-axis Stage B.)
+  branch dimension anywhere in the metadata commit path. (`branch.ddlLeak.*`.)
 - **G9 / G10 — the replace path dodges update-path guards.** RTAS can change partition spec and drop
   columns that `ALTER` rejects (`G9`), and **RTAS silently wipes the `policies` plane** — retention,
   sharing, and PII column tags are gone after a replace while user props survive (`G10`). Highest-severity
@@ -252,45 +249,46 @@ These are **product-behavior findings**, demonstrated live by named cases. Sever
   G2): scheduled expire/compaction hit the lock gate and fail every cycle, so snapshots/files accrete
   unboundedly. (`hazard.lock.starvesMaintenance`.)
 - **G3 / G4 / G5 / G6 / G7** — replica-path spec divergence, free WAP/replace toggling, ref-preservation,
-  format-version on update, and the all-or-nothing `skipEligibilityCheck` on the replica path. (Details
-  in `AUDIT-FINDINGS.md`; `G1` was investigated and **withdrawn** — the replication snapshot-walk is
-  sound.)
+  format-version on update, and the all-or-nothing `skipEligibilityCheck` on the replica path. (`G1` was
+  investigated and **withdrawn** — the replication snapshot-walk is sound.)
 
 **Behavior/limitation findings:**
 
 - **G13 — CDC changelog is unsupported over a MoR table after an UPDATE/MERGE** ("Delete files are
   currently not supported in changelog scans"). MoR delete-only and all CoW work; MoR update/merge — the
-  shapes MoR exists to optimize — break CDC silently. Stock Iceberg 1.5 limitation. (`readerWriter.changelog.{update,merge}.mor`.)
+  shapes MoR exists to optimize — break CDC silently. Stock Iceberg 1.5 limitation.
+  (`readerWriter.changelog.{update,merge}.mor`.)
 - **G14 — `rewrite_data_files` leaves a DANGLING position delete on MoR.** Compaction applies the delete
   (row set correct) but doesn't fold out the now-dangling delete file until `rewrite_position_delete_files`.
   Stock Iceberg 1.5 (no `remove-dangling-deletes` yet). Classified a **PIN, not a bug**, because the
-  recovery path is verified to work (`maint.mor.rewritePositionDeleteFolds`, `delete_files` 1→0 × 3 MoR
-  formats). **Operational takeaway: on MoR/1.5, pair `rewrite_data_files` with
-  `rewrite_position_delete_files`.**
+  recovery path is verified to work (`maint.mor.rewritePositionDeleteFolds`, across the MoR formats).
+  **Operational takeaway: on MoR/1.5, pair `rewrite_data_files` with `rewrite_position_delete_files`.**
 - **WAP1 — a staged (`spark.wap.id`) DELETE is not honored by WAP; it publishes to MAIN immediately.**
   In the same block, staged `INSERT`/`OVERWRITE`/`UPDATE`/`MERGE` all stage correctly. So an operator
   relying on WAP to stage-and-review a *deletion* gets an immediate, un-reviewed publish.
-  (`wapStaged.delete.bypassesWap`, from the WAP mega-axis.)
+  (`wapStaged.delete.bypassesWap`.)
 
-**Error-message readability (Audit B).** A separate sweep grades rejection messages GOOD/MEH/BAD for a
-non-expert SQL user. The systemic finding: the client drags the entire error body (including a
-stacktrace) into the message, so even a GOOD server sentence reaches the user as `400 , {json + java
-frames}` — surfacing only `ErrorResponseBody.message` would upgrade nearly every 4xx path at once.
-Worst offenders (nested-field DELETE NPE, malformed replication interval 500-or-silent-coerce, DROP
-COLUMN burying "you can't drop columns" in a double schema dump, CREATE/DROP NAMESPACE reporting the
-wrong operation) are enumerated in `AUDIT-FINDINGS.md`.
+**Error-message readability.** A separate sweep grades rejection messages GOOD/MEH/BAD for a non-expert
+SQL user. The systemic finding: the client drags the entire error body (including a stacktrace) into the
+message, so even a GOOD server sentence reaches the user as `400 , {json + java frames}` — surfacing only
+`ErrorResponseBody.message` would upgrade nearly every 4xx path at once.
 
-The `BUGS.md` ledger holds the tagged, deferred defects (nested-DELETE optimizer NPE; **RENAME COLUMN is
-a silent no-op** — a genuine OpenHouse regression code-traced to `#558`; encryption writes plaintext
-because the KMS plugin is out-of-repo).
+The tagged, deferred defects (nested-field DELETE optimizer NPE; **RENAME COLUMN is a silent no-op**, a
+genuine OpenHouse regression traced to server commit #558; encryption writes plaintext because the KMS
+plugin is out-of-repo) are the ones in `Plan.knownBugs`, reported as `SKIP (bug: …)`.
+
+> The exhaustive ledgers behind this section — the findings with code citations, the fork-commit audit,
+> the tagged-defect ledger, and the dated run log — live alongside the harness in the PR that developed
+> it, not necessarily in this tree. You do not need them to grok the tests; reach for them when you want
+> the evidence behind a specific claim here.
 
 ---
 
 ## 8. The `com.linkedin.iceberg` fork
 
-The harness runs against **fork bytecode** (`com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2.15`),
-not Apache 1.5.2. `ICEBERG-FORK-AUDIT.md` enumerates the fork's ~21 custom commits vs Apache; the tested
-ones (each pinned by a `fork.*` case) are:
+The harness runs against **fork bytecode** (`com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12`), not
+Apache. The tested behaviors — each pinned by a `fork.*` case, and each keyed to the fork's own commit /
+upstream-Iceberg issue number — are:
 
 | Commit | Behavior the fork changes | Pinned by |
 |---|---|---|
@@ -300,7 +298,7 @@ ones (each pinned by a `fork.*` case) are:
 | `#228` | `spark.sql.iceberg.split-size` read split-size property | `fork.splitSize` |
 | `#233` | Compaction bin-pack weight by data-file length (ignore delete size) | `fork.binPackByLength` |
 | `#189` | Budgeted rewrite ordered by file-sequence-number | `fork.compactionOrder` |
-| `#251` | Column-default APIs + `SchemaParser` serialization (branch HEAD only; **TABLED**) | `fork.colDefault.*` |
+| `#251` | Column-default APIs + `SchemaParser` serialization (branch HEAD only; **tabled**) | `fork.colDefault.*` |
 
 **The `#251` story is worth understanding** because it's a good example of the harness resisting an
 overclaim. `#251` backports column defaults to api/core, but there is **no read-application code and no
@@ -310,7 +308,7 @@ rows read NULL, and an INSERT omitting the column is rejected. The serialization
 branch build. The harness pins exactly that — the observable OSS-Spark DDL behavior and the serialization
 — and explicitly does **not** claim the feature is "broken"; read-application may exist in LinkedIn's
 private Spark, which this harness cannot see. A whole-suite **branch-vs-release** run (via
-`ICEBERG_RUNTIME_JAR`) showed **0 correctness deltas**.
+`ICEBERG_RUNTIME_JAR`) showed no correctness deltas.
 
 ---
 
@@ -319,31 +317,23 @@ private Spark, which this harness cannot see. A whole-suite **branch-vs-release*
 1. Pick the schema (`CoreTable` unless you need nesting or type edges).
 2. Author the operation **headless** — a `TableTest` step that assumes a seeded table and asserts a
    **delta** via its `StepView` (`view.before`/`view.after`, `snapshotsBefore`/`snapshotsAfter`, and the
-   metadata tables like `.all_delete_files` / `.snapshots`).
-3. Put it in the trait that matches its domain (§4). If it needs a helper used by another trait, add the
+   metadata tables like `.delete_files` / `.snapshots`).
+3. Put it in the trait whose concern matches (§4). If it needs a helper used by another trait, add the
    helper to `ScenarioKit`.
 4. Wire it into `Plan`: add it to the relevant list, and use `crossFmt(...)` if it creates a table (so
    it runs parquet **and** orc). Don't bake a single format into it.
-5. If it exercises a real product bug you're deferring, tag it in `Plan.knownBugs` with a reason and file
-   it in `BUGS.md` — never let it silently pass or silently skip.
-6. Run the slice, then the full gate; update `VERIFIED-RUN-openhouse.txt`.
+5. If it exercises a real product bug you're deferring, tag it in `Plan.knownBugs` with a reason — never
+   let it silently pass or silently skip.
+6. Run the slice, then the full gate, and confirm the count moved by what you expect and nothing else
+   regressed.
 
 ---
 
-## 10. Decisions settled along the way
+## 10. Decisions worth knowing
 
-- **D6 — format is a per-case parameter (blanket-double), not a baked-in constant.** Un-baking the
-  format is what lets a test multiplex and compose; "format-inert" is verified, not assumed.
-- **D5 — the dangling MoR delete (`G14`) is a PIN, not a bug**, because
-  `rewrite_position_delete_files` is verified to recover it. MoR on 1.5 simply requires that extra
-  maintenance step.
-- **D7 — encryption/KMS is deferred** (owner): the plugin is out-of-repo, so the plaintext behavior is
-  pinned and the intended-behavior assertion waits for the plugin.
-
----
-
-*The receipts.* This guide is the self-contained narrative. The exhaustive ledgers it summarizes — the
-dated run log (`VERIFIED-RUN-openhouse.txt`), the findings with code citations (`AUDIT-FINDINGS.md`), the
-fork-commit audit (`ICEBERG-FORK-AUDIT.md`), the tagged-defect ledger (`BUGS.md`), and the block-by-block
-build ledger (`BUILD-STATUS.md`) — live alongside the harness in the working PR that developed it. You do
-not need them to grok the tests; reach for them when you want the evidence behind a specific claim here.
+- **Format is a per-case parameter, not a baked-in constant.** Un-baking the format is what lets a test
+  multiplex and compose; "format-inert" is verified, not assumed.
+- **The dangling MoR delete (`G14`) is a PIN, not a bug**, because `rewrite_position_delete_files` is
+  verified to recover it. MoR on 1.5 simply requires that extra maintenance step.
+- **Encryption/KMS is deferred**: the plugin is out-of-repo, so the plaintext behavior is pinned and the
+  intended-behavior assertion waits for the plugin.
