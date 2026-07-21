@@ -109,6 +109,15 @@ RUN mkdir -p "${LIVY_HOME}/logs"
 COPY /infra/recipes/docker-compose/common/spark/start-spark.sh /
 COPY /build/openhouse-spark-3.5-runtime_2.12/libs/openhouse-spark-3.5-runtime_2.12-uber.jar $SPARK_HOME/openhouse-spark-runtime_2.12-latest-all.jar
 COPY /build/openhouse-spark-apps_2.12/libs/openhouse-spark-apps_2.12-uber.jar $SPARK_HOME/openhouse-spark-apps_2.12-latest-all.jar
+# Bake the LinkedIn fork Iceberg Spark runtime (1.10.0-openhouse) onto the Spark classpath
+# ($SPARK_HOME/jars is auto-loaded by every driver/executor, so no --jars needed for Iceberg).
+# The OpenHouse uber jars above intentionally do NOT bundle iceberg-spark-runtime (it is an
+# `implementation` dep, not fatJarPackagedDependencies), so the fork artifact must be provided
+# here for its custom behavior (e.g. #219 delete-file replication) to take effect. Stage it with:
+#   cp ~/.m2/repository/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.10.0-openhouse/\
+#      iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar \
+#      build/iceberg-fork/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar
+COPY /build/iceberg-fork/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar $SPARK_HOME/jars/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar
 COPY /build/dummytokens/libs/dummytokens*.jar /dummytokens.jar
 RUN java -jar /dummytokens.jar -d /var/config/
 
