@@ -577,6 +577,26 @@ object Scenarios {
       // despite the dangling delete, reads remain correct (the removed row never reappears)
       val keys = spark.sql(s"SELECT ${Core.long0.columnName} FROM $table WHERE ${Core.long0.columnName} <= 2 ORDER BY ${Core.long0.columnName}").collect().toSeq.map(_.getLong(0))
       assert(keys == Seq(2L), s"read after rewrite_data_files must stay correct despite the dangling delete: $keys")
+    }(),
+    // D5 DECIDER (owner: G14 is a BUG unless the recovery path works, then a PIN): does
+    // `rewrite_position_delete_files` actually FOLD OUT the dangling position delete that
+    // rewrite_data_files leaves behind (delete_files 1 -> 0)? If yes, the operator has a working
+    // additional-maintenance recovery (G14 = pin); if no, the dangling delete is unrecoverable via the
+    // documented procedure (G14 = bug). Reads must stay correct throughout. × 3 MoR formats.
+    "maint.mor.rewritePositionDeleteFolds" -> TableTest(Core).step("maint.mor.rewritePositionDeleteFolds") { (spark, table) =>
+      // 1) rewrite_data_files leaves a dangling position delete (the G14 state).
+      spark.sql(s"CALL openhouse.system.rewrite_data_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      val danglingBefore = spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+      // 2) the recovery path: rewrite_position_delete_files — does it fold the dangling delete out?
+      spark.sql(s"CALL openhouse.system.rewrite_position_delete_files(table => '${catalogRelative(table)}', options => map('rewrite-all', 'true'))")
+      val danglingAfter = spark.sql(s"SELECT count(*) FROM $table.delete_files").collect()(0).getLong(0)
+      println(s"DIAG maint.mor.rewritePositionDeleteFolds: delete_files before=$danglingBefore after=$danglingAfter")
+      // reads must stay correct regardless (key 1 removed, 2 live rows).
+      assert(spark.sql(s"SELECT count(*) FROM $table").collect()(0).getLong(0) == 2, "rewrite_position_delete_files changed the live row set")
+      assert(spark.sql(s"SELECT count(*) FROM $table WHERE ${Core.long0.columnName} = 1").collect()(0).getLong(0) == 0, "rewrite_position_delete_files resurrected the deleted row")
+      // D5 PIN: the recovery WORKS — rewrite_position_delete_files folds the dangling delete out.
+      assert(danglingBefore == 1 && danglingAfter == 0,
+        s"D5: expected rewrite_position_delete_files to FOLD the dangling delete (before=1 -> after=0); got before=$danglingBefore after=$danglingAfter — if after>0 the recovery path does NOT work and G14 must be reclassified from pin to BUG")
     }()
   )
 

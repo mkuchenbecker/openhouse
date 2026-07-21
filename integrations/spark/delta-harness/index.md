@@ -69,5 +69,7 @@ file format (or other axis) — they multiplex/compose across formats, layouts, 
 ## DECISION LEDGER (D1–D8 + follow-ups) — OPEN items only need action
 - CLOSED: D1 HTS embed, D2 fixtures @ConditionalOnProperty, D3 insert.explicitColumns pin, D4 renameColumn
   document-only, D6 ORC = **blanket-double** (un-bake format so tests multiplex), D8 PR structure.
-- **OPEN — awaiting user context:** D5 (G14 dangling-delete: pin vs bug classification), D7 (encryption/KMS:
-  go further vs plaintext pin). Pins kept in place meanwhile.
+- **D5 CLOSED (2026-07-20):** G14 dangling-delete → PIN (not a bug) — recovery path `rewrite_position_delete_files`
+  TESTED as working (`maint.mor.rewritePositionDeleteFolds`, delete_files 1→0, ×3 MoR). Operational note: pair
+  rewrite_data_files with rewrite_position_delete_files on MoR/1.5. See AUDIT-FINDINGS G14.
+- **D7 DEFERRED (owner):** encryption/KMS — plaintext pin kept; revisit later.
