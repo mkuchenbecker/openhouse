@@ -72,9 +72,14 @@ fi
 
 echo ">> compiling harness (scala 2.12) against the OpenHouse classpath"
 mkdir -p "$WORK/classes"
+# The harness is split across several .scala files (Framework / Scenario traits / Plan / Env),
+# all in `package harness`. Compile every source under src/main/scala together so cross-file
+# references resolve (order is irrelevant to scalac — it compiles the whole compilation unit set).
+mapfile -t SCALA_SRCS < <(find "$HERE/src/main/scala/harness/openhouse" -name '*.scala' | sort)
+echo ">> ${#SCALA_SRCS[@]} source files"
 "$JDK17/bin/java" -cp "$SCALAC_CP" scala.tools.nsc.Main \
   -classpath "$OHCP" -d "$WORK/classes" \
-  "$HERE/src/main/scala/harness/openhouse/OpenHouseMatrix.scala"
+  "${SCALA_SRCS[@]}"
 
 echo ">> running on JDK 17 (embedded OpenHouse server + OpenHouse catalog)"
 OPENS=(
