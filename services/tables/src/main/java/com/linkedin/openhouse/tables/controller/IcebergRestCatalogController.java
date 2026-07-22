@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
+import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.tables.api.handler.IcebergSnapshotsApiHandler;
@@ -21,6 +22,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitio
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
+import com.linkedin.openhouse.tables.repository.SchemaValidator;
 import com.linkedin.openhouse.tables.services.DatabasesService;
 import java.util.Collections;
 import java.util.HashMap;
@@ -32,10 +34,12 @@ import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.SortOrderParser;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.Catalog;
@@ -135,6 +139,14 @@ public class IcebergRestCatalogController {
 
   /** Used to parse the serialized {@code policies} table property on the RTAS replace path. */
   @Autowired private PoliciesSpecMapper policiesSpecMapper;
+
+  /**
+   * The same {@code SchemaValidator} bean {@code OpenHouseInternalRepositoryImpl} uses on the
+   * native update path, so a REST plain-update commit that evolves the schema is held to the
+   * identical rules (no column drops, no incompatible narrowing, no nested-field drops). Reused
+   * rather than reimplemented so the two paths can never diverge.
+   */
+  @Autowired private SchemaValidator schemaValidator;
 
   /** Supplies the server cluster name that the create request body must carry and match. */
   @Autowired private ClusterProperties clusterProperties;
@@ -400,6 +412,17 @@ public class IcebergRestCatalogController {
    *       which routes through {@code OpenHouseInternalTableOperations.commit} (reserved-key
    *       interception, {@code COMMIT_KEY} CAS) unchanged.
    * </ul>
+   *
+   * <p><b>Server-side update-validation parity.</b> The plain-update path delegates to {@code
+   * CatalogHandlers.updateTable -> OpenHouseInternalCatalog TableOperations.commit}, which BYPASSES
+   * the service-layer update validation that {@code TablesService.putTable -> {@code
+   * OpenHouseInternalRepositoryImpl.save}} runs on the native path. {@link #enforceUpdateGuards}
+   * recovers those guards (table LOCK, reserved {@code openhouse.*}/{@code policies} property guard,
+   * partition-spec evolution rejection, schema-evolution validation) by pre-inspecting the projected
+   * commit before delegating. The CTAS and RTAS branches are handled above, so they do not reach the
+   * guards: CTAS has no existing state to validate, and RTAS runs its own gating in the service
+   * replace branch ({@code validateReplaceTable}, #640) reached via {@link #replaceTable} -- so the
+   * replace eligibility check is enforced exactly once, in the service layer, not duplicated here.
    */
   @PostMapping("/namespaces/{namespace}/tables/{table}")
   public ResponseEntity<String> updateTable(
@@ -416,6 +439,9 @@ public class IcebergRestCatalogController {
     if (isReplacePayload(request)) {
       return replaceTable(ns, ident, request);
     }
+    // Plain UPDATE (INSERT/ALTER/ref ops): recover the service-layer update guards that the direct
+    // CatalogHandlers commit would bypass, then delegate.
+    enforceUpdateGuards(ident, request);
     return json(HttpStatus.OK, CatalogHandlers.updateTable(catalog, ident, request));
   }
 
@@ -557,6 +583,160 @@ public class IcebergRestCatalogController {
     return json(HttpStatus.OK, CatalogHandlers.loadTable(catalog, ident));
   }
 
+  // ---------------------------------------------------------------------------
+  // Server-side update-validation guards (parity with the native
+  // TablesService.putTable -> OpenHouseInternalRepositoryImpl.save UPDATE path).
+  //
+  // Only the plain-UPDATE branch reaches these: a staged create (AssertTableDoesNotExist) and an
+  // RTAS replace (isReplacePayload) are routed away in updateTable() before this runs. RTAS
+  // eligibility (replace.enabled + WAP/replication, #640) is therefore enforced solely by the
+  // service replace branch reached through replaceTable() -- it is NOT re-implemented here, so the
+  // replace gate is never double-applied.
+  // ---------------------------------------------------------------------------
+
+  /** The reserved property key that carries a table's serialized OpenHouse {@code Policies}. */
+  private static final String POLICIES_KEY = "policies";
+
+  /** Namespace prefix that marks a table property as OpenHouse-reserved. */
+  private static final String OPENHOUSE_PROP_PREFIX = "openhouse.";
+
+  /**
+   * Re-applies OpenHouse's service-layer UPDATE validation to a plain REST commit. Runs before the
+   * commit is delegated to {@link CatalogHandlers#updateTable}; a violation throws a mapped
+   * exception (-> 4xx in the Iceberg {@code ErrorResponse} envelope) so the commit never reaches the
+   * catalog. Mirrors the update-eligibility checks in {@code
+   * OpenHouseInternalRepositoryImpl.save(TableDto)}'s non-replace branch: table LOCK, reserved
+   * {@code openhouse.*}/{@code policies} property immutability, partition-spec evolution rejection,
+   * and schema-evolution validation. A pure snapshot commit (happy-path DML) changes none of those,
+   * so every guard is a no-op for it.
+   */
+  private void enforceUpdateGuards(TableIdentifier ident, UpdateTableRequest request) {
+    TableMetadata base;
+    TableMetadata updated;
+    try {
+      Table loaded = catalog.loadTable(ident);
+      if (!(loaded instanceof BaseTable)) {
+        return;
+      }
+      base = ((BaseTable) loaded).operations().current();
+      if (base == null) {
+        return;
+      }
+      // Mirror CatalogHandlers.commit: apply the requested MetadataUpdates to a builder to obtain
+      // the metadata this commit WOULD produce, then validate that projection. (This is inspection
+      // only -- the real commit is still performed by the delegate.)
+      TableMetadata.Builder builder = TableMetadata.buildFrom(base);
+      request.updates().forEach(update -> update.applyTo(builder));
+      updated = builder.build();
+    } catch (NoSuchTableException e) {
+      throw e; // -> 404, same as the delegate would produce.
+    } catch (RuntimeException e) {
+      // If we cannot project the commit for any other reason, do not invent a new failure mode:
+      // fall through and let CatalogHandlers.updateTable apply and report the authoritative error.
+      log.debug("Skipping REST update guards for {}: could not project commit", ident, e);
+      return;
+    }
+
+    enforceNotLocked(ident, base);
+    enforceReservedPropsUnchanged(base, updated);
+    enforcePartitionSpecUnchanged(base, updated);
+    enforceSchemaEvolutionValid(ident, base, updated);
+  }
+
+  private static boolean isReservedKey(String key) {
+    return key.startsWith(OPENHOUSE_PROP_PREFIX) || POLICIES_KEY.equals(key);
+  }
+
+  private static Map<String, String> reservedProps(Map<String, String> props) {
+    return props.entrySet().stream()
+        .filter(e -> isReservedKey(e.getKey()))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  }
+
+  /**
+   * Table LOCK enforcement. A locked table rejects every plain mutation -- parity with {@code
+   * TablesService.putTable}, which throws {@code LOCKED_TABLE_OPERATION} before dispatching an
+   * update. The lock lives in the reserved {@code policies} property as {@code lockState.locked}.
+   */
+  private void enforceNotLocked(TableIdentifier ident, TableMetadata base) {
+    if (isLocked(base)) {
+      throw new UnsupportedClientOperationException(
+          UnsupportedClientOperationException.Operation.LOCKED_TABLE_OPERATION,
+          String.format(
+              "Table %s.%s is in locked state and cannot be updated.",
+              ident.namespace(), ident.name()));
+    }
+  }
+
+  private static boolean isLocked(TableMetadata metadata) {
+    String policiesJson = metadata.properties().get(POLICIES_KEY);
+    if (policiesJson == null || policiesJson.isEmpty()) {
+      return false;
+    }
+    // Minimal, dependency-free probe of the serialized Policies for lockState.locked == true. The
+    // policies blob is server-authored JSON; a lenient JSON check avoids coupling to the full
+    // Policies model here while still recognizing the locked state.
+    try {
+      com.google.gson.JsonObject policies =
+          com.google.gson.JsonParser.parseString(policiesJson).getAsJsonObject();
+      if (!policies.has("lockState") || policies.get("lockState").isJsonNull()) {
+        return false;
+      }
+      com.google.gson.JsonObject lockState = policies.getAsJsonObject("lockState");
+      return lockState.has("locked") && lockState.get("locked").getAsBoolean();
+    } catch (RuntimeException e) {
+      return false;
+    }
+  }
+
+  /**
+   * Reserved-property guard. A user may not add, alter or drop any {@code openhouse.*} property or
+   * the {@code policies} property -- parity with {@code checkIfPreservedTblPropsModified} (which
+   * also covers the {@code openhouse.tableType}-immutability case). The message contains the word
+   * "restriction" that the native path uses.
+   */
+  private void enforceReservedPropsUnchanged(TableMetadata base, TableMetadata updated) {
+    Map<String, String> before = reservedProps(base.properties());
+    Map<String, String> after = reservedProps(updated.properties());
+    if (!before.equals(after)) {
+      throw new UnsupportedClientOperationException(
+          UnsupportedClientOperationException.Operation.ALTER_RESERVED_TBLPROPS,
+          "Bad tblproperties provided: Can't add, alter or drop table properties due to the "
+              + "restriction: [table properties starting with `openhouse.` and the `policies` key "
+              + "cannot be modified].");
+    }
+  }
+
+  /**
+   * Partition-spec evolution rejection. OpenHouse does not permit adding/dropping partition or
+   * clustering columns on an existing table -- parity with {@code checkPartitionSpecEvolution}.
+   */
+  private void enforcePartitionSpecUnchanged(TableMetadata base, TableMetadata updated) {
+    List<String> before =
+        base.spec().fields().stream().map(PartitionField::name).collect(Collectors.toList());
+    List<String> after =
+        updated.spec().fields().stream().map(PartitionField::name).collect(Collectors.toList());
+    if (!before.equals(after)) {
+      throw new UnsupportedClientOperationException(
+          UnsupportedClientOperationException.Operation.PARTITION_EVOLUTION,
+          "Evolution of table partitioning and clustering columns are not supported, recreate the "
+              + "table with new partition spec.");
+    }
+  }
+
+  /**
+   * Schema-evolution validation. When the commit changes the schema, hold it to the same rules as
+   * the native path -- no column drops (top-level or nested), no incompatible type narrowing, no
+   * required-tightening -- by reusing the {@link SchemaValidator} bean. Throws {@link
+   * InvalidSchemaEvolutionException} (-> 400) on violation.
+   */
+  private void enforceSchemaEvolutionValid(
+      TableIdentifier ident, TableMetadata base, TableMetadata updated) {
+    if (!updated.schema().sameSchema(base.schema())) {
+      schemaValidator.validateWriteSchema(base.schema(), updated.schema(), ident.toString());
+    }
+  }
+
   @DeleteMapping("/namespaces/{namespace}/tables/{table}")
   public ResponseEntity<String> dropTable(
       @PathVariable("namespace") String namespace,
@@ -661,9 +841,10 @@ public class IcebergRestCatalogController {
     ValidationException.class,
     BadRequestException.class,
     IllegalArgumentException.class,
-    // OpenHouse service-layer equivalents thrown by the reused create path:
+    // OpenHouse service-layer equivalents thrown by the reused create path and the update guards:
     RequestValidationFailureException.class,
-    UnsupportedClientOperationException.class
+    UnsupportedClientOperationException.class,
+    InvalidSchemaEvolutionException.class
   })
   public ResponseEntity<String> handleBadRequest(Exception e) {
     return error(HttpStatus.BAD_REQUEST, e);
