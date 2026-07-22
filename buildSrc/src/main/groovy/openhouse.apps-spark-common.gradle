@@ -81,7 +81,14 @@ shadowJar {
 
     // can possibly be removed with gradle8 and shadow upgrade
     // https://github.com/GradleUp/shadow/issues/877#issuecomment-2472922043
+    // shadow 7.1.2 bundles ASM 9.2 (reads class-file major <= 62 / Java 18). A newer jackson-core
+    // (2.19, pulled transitively) ships Java-19/20/21 (major 63-65) multi-release variants under
+    // META-INF/versions/{19,20,21}; ASM chokes ("Unsupported class file major version 65"). Drop
+    // those variants -- the base classes suffice at the Java 8/11 runtime. Remove once the shadow
+    // plugin (hence ASM) is upgraded.
     exclude 'META-INF/versions/19/'
+    exclude 'META-INF/versions/20/'
+    exclude 'META-INF/versions/21/'
 
     relocate('io.', 'openhouse.relocated.io.') {
       exclude 'io.netty.resolver.dns.macos.**' // dynamically loaded classes
