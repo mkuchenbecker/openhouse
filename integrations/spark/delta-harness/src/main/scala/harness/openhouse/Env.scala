@@ -84,13 +84,16 @@ object OpenHouseEnv {
       .map(is => scala.io.Source.fromInputStream(is, "UTF-8").mkString.trim)
       .getOrElse("default-token")
 
+  // Phase 2 (REST-first): the Spark-4.0 client is the STOCK iceberg-spark-runtime pointed at a stock
+  // Iceberg RESTCatalog, talking to OpenHouse's /iceberg/v1/* endpoint (IcebergRestCatalogController)
+  // on the embedded server. No custom OpenHouseCatalog jar; `token` is the RESTCatalog bearer-token
+  // key (was auth-token/cluster under the native OpenHouseCatalog client).
   private def wireCatalog(builder: SparkSession.Builder, name: String, uri: String, token: String): SparkSession.Builder =
     builder
       .config(s"spark.sql.catalog.$name", "org.apache.iceberg.spark.SparkCatalog")
-      .config(s"spark.sql.catalog.$name.catalog-impl", "com.linkedin.openhouse.spark.OpenHouseCatalog")
-      .config(s"spark.sql.catalog.$name.uri", uri)
-      .config(s"spark.sql.catalog.$name.cluster", "local-cluster")
-      .config(s"spark.sql.catalog.$name.auth-token", token)
+      .config(s"spark.sql.catalog.$name.catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
+      .config(s"spark.sql.catalog.$name.uri", s"$uri/iceberg")
+      .config(s"spark.sql.catalog.$name.token", token)
 
   def start(): (OpenHouseLocalServer, SparkSession, String, String, Option[ConfigurableApplicationContext]) = {
     // HTS-embed (Option A): when HARNESS_REAL_HTS=1, boot the real House Table Service as a 2nd
@@ -132,13 +135,19 @@ object OpenHouseEnv {
     val base = SparkSession.builder()
       .appName("delta-harness-openhouse")
       .master("local[2]")
+      // Phase 2 (REST-first): stock Iceberg extensions only. The custom OpenHouse Spark extension
+      // (policy DDL sugar) is NOT shipped on the Spark-4 REST-first client, so it is not registered.
       .config("spark.sql.extensions",
-        "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions," +
-          "com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions")
+        "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
       .config("spark.hadoop.fs.defaultFS", "file:///")
       .config("spark.sql.session.timeZone", "UTC")
       .config("spark.sql.autoBroadcastJoinThreshold", "-1")
       .config("spark.driver.bindAddress", "127.0.0.1")
+      // Phase 2: pin the driver host too. On Spark 4.0 the local executor fetches codegen classes
+      // over the driver's netty RPC; without this the driver advertises the box's hostname while
+      // binding to 127.0.0.1, so the fetch is refused (RemoteClassLoaderError). bindAddress alone
+      // was enough on Spark 3.5.
+      .config("spark.driver.host", "127.0.0.1")
       .config("spark.ui.enabled", "false")
 
     val wired = Seq("openhouse", "default_iceberg").foldLeft(base)(wireCatalog(_, _, uri, token))
