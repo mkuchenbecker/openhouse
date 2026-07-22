@@ -150,6 +150,128 @@ public class PartitionSpecMapper {
   }
 
   /**
+   * Inverse of {@link #toPartitionSpec(TableDto)} used by the Iceberg REST catalog endpoint: given
+   * an Iceberg {@link Schema} and {@link PartitionSpec} (as they arrive on a stock {@code
+   * CreateTableRequest}), extract the single OpenHouse {@link TimePartitionSpec} the spec models, or
+   * {@code null} when the table is not time-partitioned.
+   *
+   * <p>This mirrors the client-side {@code TimePartitionSpecBuilder}/{@code PartitionSpecBuilder}
+   * translation (the OpenHouse Java runtime) so a table created through REST maps to the same
+   * OpenHouse model as one created through the native controller. OpenHouse can model at most ONE
+   * time transform (hour/day/month/year) on ONE timestamp column. Any timestamp column carrying a
+   * non-time transform (identity/bucket/truncate/void), or more than one time-partitioned column,
+   * is rejected with {@link RequestValidationFailureException} (surfaced as HTTP 400) rather than
+   * silently dropped.
+   *
+   * @param schema the Iceberg schema the spec is bound to
+   * @param partitionSpec the Iceberg partition spec
+   * @return the OpenHouse {@link TimePartitionSpec}, or {@code null} if none
+   * @throws RequestValidationFailureException if the spec cannot be modeled by OpenHouse
+   */
+  public TimePartitionSpec toTimePartitionSpec(Schema schema, PartitionSpec partitionSpec) {
+    List<PartitionField> timeBasedPartitionFields = new java.util.ArrayList<>();
+    for (PartitionField field : partitionSpec.fields()) {
+      if (schema.findField(field.sourceId()).type().typeId() == ALLOWED_PARTITION_TYPEID) {
+        if (!toGranularity(field).isPresent()) {
+          throw new RequestValidationFailureException(
+              String.format(
+                  "OpenHouse cannot model transform '%s' on timestamp column '%s'; only the time "
+                      + "transforms (hour, day, month, year) are supported for time partitioning",
+                  field.transform().toString(), schema.findColumnName(field.sourceId())));
+        }
+        timeBasedPartitionFields.add(field);
+      }
+    }
+    if (timeBasedPartitionFields.size() > MAX_TIME_PARTITIONING_COLUMNS) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "OpenHouse supports at most %d time-partitioned column, but %d were provided: %s",
+              MAX_TIME_PARTITIONING_COLUMNS,
+              timeBasedPartitionFields.size(),
+              timeBasedPartitionFields.stream()
+                  .map(PartitionField::name)
+                  .collect(Collectors.joining(", "))));
+    }
+    if (timeBasedPartitionFields.isEmpty()) {
+      return null;
+    }
+    PartitionField field = timeBasedPartitionFields.get(0);
+    return TimePartitionSpec.builder()
+        .columnName(schema.findColumnName(field.sourceId()))
+        .granularity(toGranularity(field).get())
+        .build();
+  }
+
+  /**
+   * Inverse of {@link #toPartitionSpec(TableDto)} used by the Iceberg REST catalog endpoint: given
+   * an Iceberg {@link Schema} and {@link PartitionSpec}, extract the OpenHouse {@link
+   * ClusteringColumn}s, or {@code null} when the table is not clustered.
+   *
+   * <p>Mirrors the client-side {@code ClusteringSpecBuilder}. OpenHouse can model clustering on
+   * STRING/INTEGER/LONG/DATE columns using the identity, truncate[n], or bucket[n] transforms.
+   * Timestamp columns are skipped here (they are handled as time partitioning). Any other column
+   * type, or any transform OpenHouse cannot model (including void), is rejected with {@link
+   * RequestValidationFailureException} (HTTP 400) rather than silently dropped.
+   *
+   * @param schema the Iceberg schema the spec is bound to
+   * @param partitionSpec the Iceberg partition spec
+   * @return the OpenHouse clustering columns, or {@code null} if none
+   * @throws RequestValidationFailureException if the spec cannot be modeled by OpenHouse
+   */
+  public List<ClusteringColumn> toClusteringColumns(Schema schema, PartitionSpec partitionSpec) {
+    List<ClusteringColumn> clustering = new java.util.ArrayList<>();
+    for (PartitionField field : partitionSpec.fields()) {
+      Type.TypeID typeID = schema.findField(field.sourceId()).type().typeId();
+      if (ALLOWED_PARTITION_TYPEID == typeID) {
+        // timestamp columns are modeled as time partitioning, not clustering
+        continue;
+      }
+      String columnName = schema.findColumnName(field.sourceId());
+      if (!ALLOWED_CLUSTERING_TYPEIDS.contains(typeID)) {
+        throw new RequestValidationFailureException(
+            String.format(
+                "OpenHouse cannot model partitioning on column '%s' of type %s; supported "
+                    + "clustering types are STRING, INTEGER, LONG, DATE",
+                columnName, typeID.name()));
+      }
+      String transformString = field.transform().toString();
+      Transform transform;
+      if ("identity".equals(transformString)) {
+        transform = null;
+      } else if (extractTransformParameter(transformString, TRUNCATE_REGEX) != null) {
+        transform =
+            Transform.builder()
+                .transformType(Transform.TransformType.TRUNCATE)
+                .transformParams(
+                    Arrays.asList(extractTransformParameter(transformString, TRUNCATE_REGEX)))
+                .build();
+      } else if (extractTransformParameter(transformString, BUCKET_REGEX) != null) {
+        transform =
+            Transform.builder()
+                .transformType(Transform.TransformType.BUCKET)
+                .transformParams(
+                    Arrays.asList(extractTransformParameter(transformString, BUCKET_REGEX)))
+                .build();
+      } else {
+        throw new RequestValidationFailureException(
+            String.format(
+                "OpenHouse cannot model transform '%s' on clustering column '%s'; supported "
+                    + "transforms are identity, truncate[n], bucket[n]",
+                transformString, columnName));
+      }
+      clustering.add(
+          ClusteringColumn.builder().columnName(columnName).transform(transform).build());
+    }
+    if (clustering.size() > ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "OpenHouse supports at most %s clustering columns, but %s were provided",
+              ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS, clustering.size()));
+    }
+    return clustering.isEmpty() ? null : clustering;
+  }
+
+  /**
    * Given a OpenHouse {@link TableDto} generate an Iceberg {@link PartitionSpec} from it.
    *
    * @return tableDto TableDto
