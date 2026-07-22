@@ -1,0 +1,125 @@
+// Rung 2 (Spark 4.0 / Scala 2.13 / Java 17, REST-first) delta-harness classpath module.
+//
+// This module owns NO sources. It exists only so `printHarnessCp` (see
+// integrations/spark/delta-harness/scripts/print-cp.init.gradle) can resolve and BUILD the runtime
+// classpath the delta-harness runs on:
+//   * the embedded OpenHouse server (tables-test-fixtures -> services:tables, which mounts the
+//     IcebergRestCatalogController at /iceberg/v1/*), and
+//   * the STOCK Iceberg Spark 4.0 runtime (shaded fat jar) — REST-first ships NO custom OpenHouse
+//     Spark catalog/runtime, so the client is plain iceberg-spark-runtime-4.0_2.13 pointed at a
+//     stock RESTCatalog.
+// The harness Scala is compiled separately by run-openhouse.sh with scalac 2.13, against this cp.
+plugins {
+  id 'java'
+}
+
+import org.gradle.api.attributes.java.TargetJvmVersion
+
+// Spark 4.0 jars declare jvm.version=17. Request 17 on resolution-only configs so Spark-4.0 (17) +
+// Iceberg-1.10 (jvm.version=11, satisfied by 17) + the Java-8-bytecode OpenHouse server jars
+// (8 <= 17) all resolve onto one classpath. (The java-minimal-conventions plugin used elsewhere
+// pins this to 11, which would refuse the Java-17 Spark jars — so this module does not use it.)
+configurations.configureEach {
+  if (canBeResolved && !canBeConsumed) {
+    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17) }
+  }
+  // javax<->jakarta coexistence: the embedded OpenHouse server is Spring Boot 2.7 + Hibernate 5.6,
+  // which need the javax.* namespace of these APIs. Spark 4.0 transitively drags the jakarta.*
+  // (3.x) variants of the SAME modules, which Gradle would otherwise pick by higher version,
+  // stripping javax.validation.* / javax.el.* and breaking server boot (NoClassDefFoundError
+  // javax/validation/ValidatorFactory). Pin the javax-namespace versions the server was built for.
+  resolutionStrategy {
+    force 'jakarta.validation:jakarta.validation-api:2.0.2'
+    // Jackson: Spark 4.0.0 needs a consistent 2.18.2 stack (its ErrorClassesJsonReader /
+    // SparkThrowableHelper static-init parse error-conditions.json). The Spring-Boot-2.7 server
+    // pulls jackson-databind 2.13.4, which — mixed with Spark's jackson-core 2.19.x /
+    // module-scala 2.18.2 — throws ExceptionInInitializerError. Pin the whole jackson stack to
+    // Spark 4.0.0's 2.18.2 (backward-compatible for the server's basic jackson use).
+    force 'com.fasterxml.jackson.core:jackson-databind:2.18.2'
+    force 'com.fasterxml.jackson.core:jackson-core:2.18.2'
+    force 'com.fasterxml.jackson.core:jackson-annotations:2.18.2'
+    force 'com.fasterxml.jackson.module:jackson-module-scala_2.13:2.18.2'
+    force 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.2'
+    force 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2'
+    force 'com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.18.2'
+    // Avro: Iceberg 1.11 needs 1.12.1 (org.apache.avro.LogicalTypes.timestampNanos, used by
+    // iceberg-avro TypeToSchema; 1.11's declared avro is 1.12.1). Spark 4.0.0 bundles avro 1.11.4,
+    // which lacks it -> NoSuchMethodError in GenericDataFile static init. Pin the whole avro stack
+    // to 1.12.1 (unshaded lane only — the shaded runtime would have isolated iceberg's avro, but
+    // this lane shares one avro). Was 1.12.0 for the Iceberg-1.10 lane (rung-2).
+    force 'org.apache.avro:avro:1.12.1'
+    force 'org.apache.avro:avro-mapred:1.12.1'
+    force 'org.apache.avro:avro-ipc:1.12.1'
+  }
+  // Stale transitive: some server modules still drag the OLD LinkedIn fork
+  // com.linkedin.iceberg:*:1.2.0.6. Its CORE modules carry org.apache.iceberg.* v1.2 classes that
+  // would shadow the v1.10 unshaded classes (e.g. an incompatible RESTSerializers) — exclude those
+  // so a single Iceberg 1.10 core spans the whole classpath. Keep iceberg-aws (distinct
+  // org.apache.iceberg.aws.* package, e.g. S3FileIO, which the server references at Spring boot);
+  // it links against the 1.10 core just as it did against the shaded 1.10 runtime in the rung-1
+  // baseline.
+  exclude group: 'com.linkedin.iceberg', module: 'iceberg-core'
+  exclude group: 'com.linkedin.iceberg', module: 'iceberg-api'
+  exclude group: 'com.linkedin.iceberg', module: 'iceberg-common'
+  exclude group: 'com.linkedin.iceberg', module: 'iceberg-bundled-guava'
+
+  // Single-Hadoop (unshaded lane): the embedded OpenHouse server transitively drags the whole
+  // unshaded org.apache.hadoop:*:2.10.0 stack (via hadoop-client 2.10.0). Spark 4.0 instead ships
+  // the shaded hadoop-client-api/hadoop-client-runtime 3.4.1, which ALSO carry org.apache.hadoop.fs.*.
+  // Both jars land on one classpath; the 2.10.0 hadoop-common sorts first, so its FileSystem — which
+  // lacks openFile(Path):FutureDataInputStreamBuilder (added in Hadoop 3.3) — shadows Spark 4.0's
+  // 3.4.1 FileSystem and every Spark read task dies with NoSuchMethodError. Drop the unshaded 2.10.0
+  // stack so the shaded 3.4.1 client-api/runtime is the SOLE org.apache.hadoop.* provider (3.4.1 is a
+  // superset of the 2.10 API the Java-8-target server modules were built against, so the server boots
+  // + writes metadata unchanged). Mirrors the single-Iceberg exclusion philosophy above.
+  exclude group: 'org.apache.hadoop', module: 'hadoop-client'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-common'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-hdfs-client'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-auth'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-annotations'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-app'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-common'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-core'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-jobclient'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-mapreduce-client-shuffle'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-api'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-client'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-common'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-registry'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-server-common'
+  exclude group: 'org.apache.hadoop', module: 'hadoop-yarn-server-nodemanager'
+}
+
+ext {
+  sparkVersion = '4.0.0'
+  icebergVersion = '1.11.0-openhouse'
+}
+
+dependencies {
+  // Embedded OpenHouse server (Spring, Java-8 bytecode): OpenHouseLocalServer + the full tables
+  // Spring context, including the /iceberg/v1/* IcebergRestCatalogController.
+  testImplementation project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')
+
+  // OpenHouse Java client — supplies com.linkedin.openhouse.javaclient.exception.* that the harness
+  // imports. Under REST-first the custom Spark runtime uber (which used to bundle these) is dropped,
+  // so this module is what keeps the harness compiling.
+  testImplementation project(':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime')
+
+  // Stock Iceberg Spark 4.0 client — the UNSHADED modules (not the shaded runtime fat jar). The
+  // embedded OpenHouse server's new /iceberg REST controller calls org.apache.iceberg.rest.*
+  // serializers with UNSHADED jackson, and writes metadata via unshaded iceberg-core. The shaded
+  // runtime relocates jackson AND parquet, so its RESTSerializers takes a shaded ObjectMapper the
+  // server can't supply (NoSuchMethodError RESTSerializers.registerAll). Using the unshaded modules
+  // makes server AND Spark client share ONE iceberg-1.10 + ONE jackson + ONE parquet — no
+  // shaded/unshaded split, so the F1 collision cannot arise. These transitively pull iceberg-core,
+  // iceberg-data, iceberg-parquet, iceberg-orc, iceberg-arrow (all 1.10.0-openhouse) + parquet/orc.
+  testImplementation "org.apache.iceberg:iceberg-spark-4.0_2.13:${icebergVersion}"
+  testImplementation "org.apache.iceberg:iceberg-spark-extensions-4.0_2.13:${icebergVersion}"
+
+  // Spark 4.0 (Scala 2.13). Pulls scala-library 2.13.x transitively.
+  testImplementation("org.apache.spark:spark-sql_2.13:${sparkVersion}") {
+    exclude group: "io.netty"
+  }
+
+  testImplementation 'com.google.code.gson:gson:2.8.9'
+}
