@@ -108,6 +108,17 @@ allprojects {
     tasks.withType(Test).configureEach {
       useJUnitPlatform()
 
+      // Run each module's test classes across multiple forked JVMs instead of the
+      // Gradle default of a single fork (maxParallelForks = 1), which serializes
+      // every test in a module. Spark-based suites share a static SparkSession
+      // (plus fixed warehouse dirs / ports), so splitting their classes across
+      // forks is unsafe — keep those single-forked and parallelize the rest.
+      def usesSharedSparkSession = project.path.contains('spark')
+      maxParallelForks = usesSharedSparkSession ? 1 :
+          Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
+      // Give each fork its own heap so N concurrent forks don't starve each other.
+      maxHeapSize = "1g"
+
       testLogging {
         // use these options for analyzing results: --console=plain > output.log 2>&1
         events "passed", "skipped", "failed" //, "started"
