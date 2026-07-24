@@ -1,0 +1,20 @@
+name: Branch 1.11 CI
+
+# spark4-upgrade: dedicated CI entrypoint for the `1.11` integration branch. It fires only on
+# pushes/merges to `1.11` (a rare event), and reuses the shared build-run-tests workflow. Because
+# the triggering event's github.ref is refs/heads/1.11, the gated Iceberg-fork provisioning steps
+# inside build-run-tests.yml run for this caller (and only this caller), so the OpenHouse build can
+# resolve org.apache.iceberg:*:1.11.0-openhouse. Ordinary PRs (pr-validations.yml) and push-to-main
+# (build-tag-publish.yml) reuse the same build-run-tests workflow but skip the fork build.
+on:
+  push:
+    branches:
+      - '1.11'
+
+concurrency:
+  group: ci-1.11-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-run-tests:
+    uses: ./.github/workflows/build-run-tests.yml

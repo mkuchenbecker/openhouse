@@ -24,6 +24,28 @@ configurations.configureEach {
   }
 }
 
+// spark4-upgrade: the `java-test-fixtures` plugin (applied by services/common and
+// iceberg/openhouse/internalcatalog) re-derives TARGET_JVM_VERSION from targetCompatibility (=8)
+// and re-stamps it onto its testFixtures* resolvable classpaths
+// (testFixturesCompileClasspath / testFixturesRuntimeClasspath). That stamping happens AFTER the
+// configureEach above has already run, so those configs revert to requesting jvm.version=8 and can
+// no longer resolve the Java-17 Iceberg 1.11 (1.11.0-openhouse) artifacts — the exact failure seen
+// on a stock `./gradlew build`. Re-assert 17 on every resolution-only (canBeResolved &&
+// !canBeConsumed) config once the project — and all java-test-fixtures wiring — is fully evaluated,
+// so a plain `./gradlew` build works with no out-of-tree init script. Consumable configs
+// (apiElements/runtimeElements/testFixturesApiElements/...) are still left at their Java-8 value, so
+// these modules keep advertising Java 8 to downstream consumers. Scoped to this 1.11-lane
+// convention plugin, so the spark-3.5 / iceberg-1.10 (Java 8/11) lane is untouched.
+afterEvaluate {
+  configurations.configureEach {
+    if (canBeResolved && !canBeConsumed) {
+      attributes {
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
+      }
+    }
+  }
+}
+
 dependencies {
   api('org.apache.iceberg:iceberg-bundled-guava:' + icebergVersion)
   api('org.apache.iceberg:iceberg-data:' + icebergVersion)
