@@ -122,4 +122,33 @@ dependencies {
   }
 
   testImplementation 'com.google.code.gson:gson:2.8.9'
+  testImplementation 'commons-io:commons-io:2.11.0'
+
+  // JUnit 5 — this module now owns e2e test SOURCES (the Spark-4.0 / REST-first port of the 3.5
+  // catalogtest suite), in addition to serving the delta-harness classpath.
+  testImplementation "org.junit.jupiter:junit-jupiter-api:${junit_version}"
+  testImplementation "org.junit.jupiter:junit-jupiter-params:${junit_version}"
+  testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:${junit_version}"
+  testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+test {
+  useJUnitPlatform()
+  // Spark 4.0 on Java 17 needs the launcher's documented module-open set (mirrors
+  // delta-harness/run-openhouse.sh, i.e. org.apache.spark.launcher.JavaModuleOptions).
+  jvmArgs(
+      '--add-opens=java.base/java.lang=ALL-UNNAMED',
+      '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
+      '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+      '--add-opens=java.base/java.io=ALL-UNNAMED',
+      '--add-opens=java.base/java.net=ALL-UNNAMED',
+      '--add-opens=java.base/java.nio=ALL-UNNAMED',
+      '--add-opens=java.base/java.util=ALL-UNNAMED',
+      '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
+      '--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED',
+      '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
+      '--add-opens=java.base/sun.nio.cs=ALL-UNNAMED',
+      '--add-opens=java.base/sun.security.action=ALL-UNNAMED',
+      '--add-opens=java.base/sun.util.calendar=ALL-UNNAMED',
+      '--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED')
 }
