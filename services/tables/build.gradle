@@ -22,6 +22,18 @@ plugins {
   id 'openhouse.service-specgen-convention'
 }
 
+// Iceberg 1.11 (this module's server core) strictly declares avro 1.12.1 — iceberg-avro's
+// TypeToSchema.<clinit> calls org.apache.avro.LogicalTypes.timestampNanos(), which only exists in
+// avro >= 1.12.0. The root allprojects block force-pins avro to 1.11.4 (CVE-2024-47561), which
+// downgrades it and triggers NoSuchMethodError at runtime. Re-force 1.12.1 here (only this
+// iceberg-1.11 module): 1.12.1 > 1.11.4 so the CVE stays fixed, and the genuine iceberg-1.5 lane
+// (excluded/overridden elsewhere) is untouched. Mirrors the spark-4.0 itest lane.
+configurations.all {
+  resolutionStrategy {
+    force 'org.apache.avro:avro:1.12.1'
+  }
+}
+
 // Configure unique port for OpenAPI spec generation to avoid conflicts during parallel builds
 openApi {
   customBootRun {
