@@ -14,50 +14,38 @@ ext {
 // resolver refuses to place it on a targetCompatibility=8 module's classpath. That guard is
 // metadata-conservative: -target 8 (v52) bytecode loads and runs fine on the Java 17 runtime this
 // rung uses, next to the Java-17 Iceberg classes (bytecode target is a JVM floor, not an inter-jar
-// contract). So we raise ONLY the *resolution* attribute of the consuming (resolvable) configs to
-// 17, keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement.
-configurations.configureEach {
-  if (canBeResolved && !canBeConsumed) {
-    attributes {
-      attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
-    }
-  }
-}
-
-// spark4-upgrade: the `java-test-fixtures` plugin (applied by services/common and
-// iceberg/openhouse/internalcatalog) re-derives TARGET_JVM_VERSION from targetCompatibility (=8)
-// and re-stamps it onto its testFixtures* resolvable classpaths
-// (testFixturesCompileClasspath / testFixturesRuntimeClasspath). That stamping happens AFTER the
-// configureEach above has already run, so those configs revert to requesting jvm.version=8 and can
-// no longer resolve the Java-17 Iceberg 1.11 (1.11.0-openhouse) artifacts — the exact failure seen
-// on a stock `./gradlew build`. Re-assert 17 on the resolvable *classpath* configs once the project
-// — and all java-test-fixtures wiring — is fully evaluated, so a plain `./gradlew` build works with
-// no out-of-tree init script. Consumable configs (apiElements/runtimeElements/... ) keep their
-// Java-8 value, so these modules still advertise Java 8 to downstream consumers.
+// contract). So we raise ONLY the *resolution* attribute of the consuming classpath configs to 17,
+// keeping the compile target at 8 — honoring the HDFS-client Java-8-bytecode requirement. It also
+// repairs the `java-test-fixtures` plugin's re-stamp: that plugin (applied by services/common and
+// iceberg/openhouse/internalcatalog) re-derives TARGET_JVM_VERSION=8 from targetCompatibility onto
+// its testFixtures*Classpath configs, so those revert to requesting jvm.version=8 and can no longer
+// resolve the Java-17 Iceberg 1.11 artifacts. Consumable configs (apiElements/runtimeElements/...)
+// are left untouched, so these modules keep advertising Java 8 to downstream consumers, and a stock
+// `./gradlew build` works with no out-of-tree init script.
 //
-// Two guards keep this override precise (a broad `configureEach { if (canBeResolved) }` in
-// afterEvaluate is too late/too wide — it mutates configs like `annotationProcessor` that an
-// aggregating consumer such as :all-modules has already resolved via cross-project
-// evaluationDependsOn, which Gradle forbids ("Cannot change attributes ... after it has been
-// resolved")):
-//   1. Only the specific compile/runtime/test/testFixtures classpaths that actually consume Iceberg
-//      1.11 — never annotationProcessor or other resolvable bookkeeping configs.
-//   2. Skip any config already resolved (state != UNRESOLVED), so early cross-project resolution
-//      (e.g. the iceberg-1.5 apps module :apps:openhouse-spark-apps-1.5_2.12, pulled in by
-//      :all-modules) can never trip the "change after resolved" error.
-// Scoped to this 1.11-lane convention plugin, so the spark-3.5 / iceberg-1.10 (Java 8/11) lane is
-// untouched.
-def jvm17TargetedClasspaths = [
-    'compileClasspath',
-    'runtimeClasspath',
-    'testCompileClasspath',
-    'testRuntimeClasspath',
-    'testFixturesCompileClasspath',
-    'testFixturesRuntimeClasspath'
-] as Set
+// CRITICAL — lane separation. This convention is ALSO applied (historically) by the iceberg-1.5
+// apps module :apps:openhouse-spark-apps-1.5_2.12 (dir apps/spark-3.5), which overrides
+// icebergVersion back to the 1.5 line in its own build.gradle. That Java-8 / spark-3.5 lane must NOT
+// receive the jvm.version=17 request: it does not consume Iceberg 1.11, and its classpaths are
+// resolved EARLY during :all-modules cross-project aggregation, so any config-time or late mutation
+// of them is fatal ("Cannot change attributes of ... after it has been resolved"). We therefore:
+//   1. Decide in afterEvaluate, gating on the FINAL icebergVersion the project resolves — the 1.5
+//      lane's build.gradle override has run by then, so it is cleanly excluded and left at Java 8.
+//      (An eager config-time `configureEach` cannot gate on version: standard classpath configs are
+//      realized during plugin application, BEFORE the module body overrides icebergVersion, so it
+//      would leak 17 onto the 1.5 lane.)
+//   2. Target only the compile/runtime classpaths that actually consume Iceberg — never
+//      annotationProcessor or other resolvable bookkeeping configs.
+//   3. Skip any config already resolved (defensive; the version gate is the real fix).
+def isJvm17Classpath = { String name ->
+  (name.endsWith('CompileClasspath') || name.endsWith('RuntimeClasspath'))
+}
 afterEvaluate {
+  if (project.icebergVersion != rootProject.ext.iceberg_1_11_version) {
+    return // 1.5 / spark-3.5 lane (e.g. :apps:openhouse-spark-apps-1.5_2.12): leave Java 8 as-is.
+  }
   configurations.configureEach { conf ->
-    if (jvm17TargetedClasspaths.contains(conf.name)
+    if (isJvm17Classpath(conf.name)
         && conf.canBeResolved && !conf.canBeConsumed
         && conf.state == org.gradle.api.artifacts.Configuration.State.UNRESOLVED) {
       conf.attributes {

@@ -20,6 +20,24 @@ configurations.all {
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
 }
 dependencies {
+    // spark4-upgrade: the shared `openhouse.apps-spark-common` convention declares the
+    // com.linkedin.iceberg:iceberg-{bundled-guava,data,core,common,api} coordinates WITHOUT a
+    // version, relying on the applied iceberg convention to pin them. On the 1.2 apps lane
+    // (:apps:openhouse-spark-apps_2.12) `openhouse.iceberg-conventions-1.2` pins them via forced
+    // `com.linkedin.iceberg:*:<ver>!!`. This 1.5 / spark-3.5 module instead applies
+    // `openhouse.iceberg-conventions-1.5.2`, which the 1.11 server upgrade re-pointed at
+    // org.apache.iceberg:*:1.11.0-openhouse (a DIFFERENT group), so it no longer contributes a
+    // version for the com.linkedin.iceberg coordinates — leaving them version-less and unresolvable
+    // ("Could not find com.linkedin.iceberg:iceberg-core:"). Pin them here to the 1.5 line this
+    // legacy Spark-3.5 apps module actually targets. (iceberg-data is excluded above, but pinning it
+    // is harmless.)
+    constraints {
+        implementation("com.linkedin.iceberg:iceberg-bundled-guava:${icebergVersion}")
+        implementation("com.linkedin.iceberg:iceberg-data:${icebergVersion}")
+        implementation("com.linkedin.iceberg:iceberg-core:${icebergVersion}")
+        implementation("com.linkedin.iceberg:iceberg-common:${icebergVersion}")
+        implementation("com.linkedin.iceberg:iceberg-api:${icebergVersion}")
+    }
     compileOnly (project(path: openhouseSparkRuntimeModule)) {
         exclude group: 'io.netty'
         exclude group: 'org.apache.hadoop', module: 'hadoop-common'
