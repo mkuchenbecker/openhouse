@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
+import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tablestest.rest.OpenHouseRestSparkITest;
 import java.util.HashMap;
 import java.util.List;
@@ -24,6 +25,7 @@ import org.apache.spark.sql.types.DateType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -365,14 +367,127 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
     }
   }
 
-  // DROPPED: testRenameTableFailsConflict. The 3.1 case verified that renaming a table ONTO an
-  // existing table is REJECTED (it asserted the custom WebClientResponseWithMessageException). On
-  // the
-  // stock REST lane the OpenHouse /iceberg rename endpoint does NOT reject the conflict: the rename
-  // silently succeeds and replaces the target (empirically: ALTER TABLE ... RENAME threw nothing
-  // and
-  // the source table no longer existed afterward). The behavior the test asserts is therefore
-  // absent
-  // on this lane and cannot be expressed, so the case is dropped (see 10-RESIDUALS.md) rather than
-  // stubbed.
+  /**
+   * PENDING (see 10-RESIDUALS.md fix checklist). Verifies renaming ONTO an existing table is
+   * rejected. On the stock REST lane the OpenHouse {@code /iceberg} rename endpoint does NOT reject
+   * the conflict — empirically the rename threw nothing and the source table was gone afterward
+   * (silent replace). Ported faithfully (the custom {@code WebClientResponseWithMessageException} is
+   * on the compile classpath) but disabled until the server enforces the conflict.
+   */
+  @Disabled(
+      "rename-onto-existing not rejected on REST lane (silent replace) — see spark4-e2e-tests/10-RESIDUALS.md")
+  @Test
+  public void testRenameTableFailsConflict() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      Catalog icebergCatalog = getOpenHouseCatalog(spark);
+      Schema schema =
+          new Schema(
+              Types.NestedField.required(
+                  1,
+                  "a",
+                  Types.StructType.of(Types.NestedField.required(2, "b", Types.StringType.get()))),
+              Types.NestedField.required(3, "c", Types.StringType.get()));
+
+      TableIdentifier fromTableIdentifier = TableIdentifier.of("db", "rename_test2");
+      TableIdentifier conflictingTableIdentifier = TableIdentifier.of("db", "rename_test_conflict");
+      Map<String, String> props = new HashMap<>();
+      props.put("client.table.schema", SchemaParser.toJson(schema));
+      props.put("user.property", "test_property");
+      Map<String, String> conflictingProps = new HashMap<>();
+      conflictingProps.put("client.table.schema", SchemaParser.toJson(schema));
+      icebergCatalog.createTable(fromTableIdentifier, schema, PartitionSpec.unpartitioned(), props);
+      Table conflictingTable =
+          icebergCatalog.createTable(
+              conflictingTableIdentifier, schema, PartitionSpec.unpartitioned(), conflictingProps);
+      Assertions.assertNull(conflictingTable.properties().get("user.property"));
+
+      // Should fail with a conflict. The 3.1 lane surfaced the custom
+      // WebClientResponseWithMessageException; the exact stock-Iceberg mapping is TBD once the
+      // server enforces the conflict.
+      Assertions.assertThrows(
+          WebClientResponseWithMessageException.class,
+          () ->
+              spark.sql(
+                  "ALTER TABLE openhouse.db.rename_test2 RENAME TO openhouse.db.rename_test_conflict"));
+
+      // Since rename fails, properties on the conflicting table should not have propagated.
+      Assertions.assertNull(
+          icebergCatalog.loadTable(conflictingTableIdentifier).properties().get("user.property"));
+      Assertions.assertNotNull(icebergCatalog.loadTable(fromTableIdentifier));
+    }
+  }
+
+  /**
+   * PENDING (see 10-RESIDUALS.md fix checklist). The 3.1 case drove custom {@code SET/UNSET POLICY
+   * (REPLICATION|RETENTION ...)} SQL and read the result back via the {@code
+   * com.linkedin.openhouse.gen.tables.client.model.Policies} gen-model. Neither the custom OpenHouse
+   * SQL extension nor the {@code Policies} model is available on the REST lane (the model is not even
+   * on this module's compile classpath), so the readback assertions are expressed against the raw
+   * {@code policies} table property string. Disabled: the {@code SET POLICY} DDL is unparseable by
+   * the stock Iceberg SQL extension on this lane.
+   */
+  @Disabled(
+      "custom SET/UNSET POLICY SQL + Policies gen-model unavailable on REST lane — see spark4-e2e-tests/10-RESIDUALS.md")
+  @Test
+  public void testAlterTableUnsetReplicationPolicy() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      spark.sql("CREATE TABLE openhouse." + DATABASE + ".`ttt1` (name string)");
+      spark.sql("INSERT INTO openhouse." + DATABASE + ".ttt1 VALUES ('foo')");
+      spark.sql(
+          "ALTER TABLE openhouse."
+              + DATABASE
+              + ".ttt1 SET POLICY (REPLICATION=({destination:'WAR', interval:12h}))");
+      spark.sql(
+          "ALTER TABLE openhouse."
+              + DATABASE
+              + ".ttt1 SET POLICY (RETENTION= 30d on column name where pattern='yyyy-MM-dd')");
+      String policies = getPoliciesProperty("openhouse." + DATABASE + ".ttt1", spark);
+      Assertions.assertNotNull(policies);
+      Assertions.assertTrue(policies.contains("WAR"));
+      Assertions.assertTrue(policies.contains("yyyy-MM-dd"));
+
+      // unset replication policy
+      spark.sql("ALTER TABLE openhouse." + DATABASE + ".ttt1 UNSET POLICY (REPLICATION)");
+      String updatedPolicy = getPoliciesProperty("openhouse." + DATABASE + ".ttt1", spark);
+      // assert that other policies, retention is not modified after unsetting replication
+      Assertions.assertTrue(updatedPolicy.contains("yyyy-MM-dd"));
+
+      // assert retention can be set after unsetting replication
+      spark.sql(
+          "ALTER TABLE openhouse."
+              + DATABASE
+              + ".ttt1 SET POLICY (RETENTION = 30D on COLUMN name WHERE pattern = 'yyyy')");
+      String policyWithRetention = getPoliciesProperty("openhouse." + DATABASE + ".ttt1", spark);
+      Assertions.assertTrue(policyWithRetention.contains("yyyy"));
+
+      // assert replication can be set again after retention policy
+      spark.sql(
+          "ALTER TABLE openhouse."
+              + DATABASE
+              + ".ttt1 SET POLICY (REPLICATION=({destination:'WAR', interval:12h}))");
+      String policyWithReplication = getPoliciesProperty("openhouse." + DATABASE + ".ttt1", spark);
+      Assertions.assertTrue(policyWithReplication.contains("WAR"));
+
+      // UNSET policy for table without replication
+      spark.sql("CREATE TABLE openhouse." + DATABASE + ".`tttest1` (name string)");
+      spark.sql("INSERT INTO openhouse." + DATABASE + ".tttest1 VALUES ('foo')");
+      spark.sql("ALTER TABLE openhouse." + DATABASE + ".tttest1 UNSET POLICY (REPLICATION)");
+      String policytttest1 = getPoliciesProperty("openhouse." + DATABASE + ".tttest1", spark);
+      Assertions.assertNotNull(policytttest1);
+    }
+  }
+
+  /**
+   * Reads the raw {@code policies} table property string. The 3.1 source deserialized it into the
+   * {@code Policies} gen-model, which is not on this module's compile classpath; the disabled test
+   * above therefore asserts against the raw string.
+   */
+  private String getPoliciesProperty(String tableName, SparkSession spark) {
+    List<Row> propsRows =
+        spark.sql(String.format("show tblProperties %s", tableName)).collectAsList();
+    Map<String, String> collect =
+        propsRows.stream()
+            .collect(java.util.stream.Collectors.toMap(r -> r.getString(0), r -> r.getString(1)));
+    return String.valueOf(collect.get("policies"));
+  }
 }

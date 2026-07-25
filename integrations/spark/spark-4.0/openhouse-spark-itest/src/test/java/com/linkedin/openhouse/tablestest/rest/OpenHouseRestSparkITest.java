@@ -16,13 +16,14 @@ import scala.collection.JavaConverters;
  * Base class for Spark 4.0 / Iceberg 1.11 integration tests running against an embedded OpenHouse
  * server through the REST-first path.
  *
- * <p>This is the Spark-4.0 counterpart of {@link com.linkedin.openhouse.tablestest.OpenHouseSparkITest}.
- * The key difference is the catalog wiring: the 3.5 lane points a custom {@code
- * com.linkedin.openhouse.spark.OpenHouseCatalog} at the {@code /tables} service, whereas the 4.0
- * lane points the STOCK {@code org.apache.iceberg.rest.RESTCatalog} at the OpenHouse {@code
- * /iceberg/v1/*} endpoint ({@code IcebergRestCatalogController}). Client and server therefore share
- * ONE Iceberg (1.11.0-openhouse) — no custom Spark runtime jar — so the in-JVM two-Iceberg-version
- * collision that sinks the legacy 1.5-client/1.11-server e2e lane cannot arise here.
+ * <p>This is the Spark-4.0 counterpart of {@link
+ * com.linkedin.openhouse.tablestest.OpenHouseSparkITest}. The key difference is the catalog wiring:
+ * the 3.5 lane points a custom {@code com.linkedin.openhouse.spark.OpenHouseCatalog} at the {@code
+ * /tables} service, whereas the 4.0 lane points the STOCK {@code
+ * org.apache.iceberg.rest.RESTCatalog} at the OpenHouse {@code /iceberg/v1/*} endpoint ({@code
+ * IcebergRestCatalogController}). Client and server therefore share ONE Iceberg (1.11.0-openhouse)
+ * — no custom Spark runtime jar — so the in-JVM two-Iceberg-version collision that sinks the legacy
+ * 1.5-client/1.11-server e2e lane cannot arise here.
  *
  * <p>The catalog configuration mirrors the delta-harness ({@code
  * harness.OpenHouseEnv.wireCatalog}), which validates this same stack.
@@ -82,12 +83,16 @@ public class OpenHouseRestSparkITest {
     String restUri = getOpenHouseServerBaseUri() + "/iceberg";
     return SparkSession.builder()
         .master("local[1]")
-        // REST-first: only the stock Iceberg extension. The custom OpenHouse SQL extension is not on
+        // REST-first: only the stock Iceberg extension. The custom OpenHouse SQL extension is not
+        // on
         // this lane (there is no custom Spark runtime jar), so custom OpenHouse DDL is unavailable
         // here by design.
-        .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+        .config(
+            "spark.sql.extensions",
+            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         .config("spark.sql.catalog." + CATALOG, "org.apache.iceberg.spark.SparkCatalog")
-        .config("spark.sql.catalog." + CATALOG + ".catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
+        .config(
+            "spark.sql.catalog." + CATALOG + ".catalog-impl", "org.apache.iceberg.rest.RESTCatalog")
         .config("spark.sql.catalog." + CATALOG + ".uri", restUri)
         .config("spark.sql.catalog." + CATALOG + ".token", authToken())
         .config("spark.hadoop.fs.defaultFS", LOCAL_FS)
@@ -95,7 +100,8 @@ public class OpenHouseRestSparkITest {
         .config("spark.sql.autoBroadcastJoinThreshold", "-1")
         .config("spark.driver.bindAddress", "127.0.0.1")
         // Spark 4.0: the local executor fetches generated (codegen) classes over the driver's netty
-        // RPC. Without pinning the driver host, the driver advertises the box hostname while binding
+        // RPC. Without pinning the driver host, the driver advertises the box hostname while
+        // binding
         // to 127.0.0.1, so the fetch is refused (RemoteClassLoaderError) — which in turn poisons
         // Iceberg 1.11's FormatModelRegistry.<clinit> (it reflectively probes an optional Flink
         // format-model class on the executor thread, whose ExecutorClassLoader converts the miss
