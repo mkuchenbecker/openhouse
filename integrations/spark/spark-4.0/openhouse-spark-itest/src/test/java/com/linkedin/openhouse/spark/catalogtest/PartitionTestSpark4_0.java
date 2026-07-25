@@ -1,0 +1,237 @@
+package com.linkedin.openhouse.spark.catalogtest;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+import com.linkedin.openhouse.tablestest.rest.OpenHouseRestSparkITest;
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.apache.spark.sql.SparkSession;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Spark-4.0 / Iceberg-1.11 / REST-first port of the pure-SQL partitioning e2e tests (the 3.1 lane's
+ * {@code PartitionTest} plus the 3.5 lane's {@code PartitionTestSpark3_5}). All cases are stock
+ * Spark SQL / Iceberg partition transforms and port verbatim; only the base class changes.
+ */
+public class PartitionTestSpark4_0 extends OpenHouseRestSparkITest {
+
+  private static final String DATABASE = "d1_partition";
+
+  @Test
+  public void testCreateTablePartitionedWithNestedColumn() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      List<String> transformList =
+          Arrays.asList("days(time)", "header.time", "truncate(10, header.time)");
+      // On the Spark-4.0 / Iceberg-1.11 lane the DESCRIBE rendering of the nested identity
+      // transform
+      // is "bigint" (the source column type) and truncate renders as "truncate(10, header.time)";
+      // the 3.1 lane rendered "header.time" / "truncate(header.time, 10)". Same partition spec,
+      // different DESCRIBE string on the newer engine (matches the 3.5 lane's observation).
+      List<String> expectedResult =
+          Arrays.asList("days(time)", "bigint", "truncate(10, header.time)");
+      for (int i = 0; i < transformList.size(); i++) {
+        String transform = transformList.get(i);
+        String tableName =
+            transform
+                .replaceAll("\\.", "_")
+                .replaceAll("\\(", "_")
+                .replaceAll("\\)", "")
+                .replaceAll(", ", "_");
+        spark.sql(
+            String.format(
+                "CREATE TABLE openhouse."
+                    + DATABASE
+                    + ".%s (time timestamp, header struct<time:long, name:string>) partitioned by (%s)",
+                tableName,
+                transform));
+        // verify that partition spec is correct
+        List<String> description =
+            spark.sql(String.format("DESCRIBE TABLE openhouse." + DATABASE + ".%s", tableName))
+                .select("data_type").collectAsList().stream()
+                .map(row -> row.getString(0))
+                .collect(Collectors.toList());
+        assertTrue(description.contains(expectedResult.get(i)));
+        spark.sql(String.format("DROP TABLE openhouse." + DATABASE + ".%s", tableName));
+      }
+    }
+  }
+
+  @Test
+  public void testCreateTablePartitionedWithBucketTransform() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      List<String> transformList =
+          Arrays.asList("bucket(2, name)", "bucket(4, id)", "bucket(8, category)");
+      List<String> expectedResult =
+          Arrays.asList("bucket(2, name)", "bucket(4, id)", "bucket(8, category)");
+      for (int i = 0; i < transformList.size(); i++) {
+        String transform = transformList.get(i);
+        String tableName =
+            transform
+                .replaceAll("\\.", "_")
+                .replaceAll("\\(", "_")
+                .replaceAll("\\)", "")
+                .replaceAll(", ", "_");
+        spark.sql(
+            String.format(
+                "CREATE TABLE openhouse."
+                    + DATABASE
+                    + ".%s (id string, name string, category string, timestamp timestamp) partitioned by (%s)",
+                tableName,
+                transform));
+
+        // Insert some test data to verify bucketing works
+        spark.sql(
+            String.format(
+                "INSERT INTO openhouse."
+                    + DATABASE
+                    + ".%s VALUES ('1', 'alice', 'A', current_timestamp())",
+                tableName));
+        spark.sql(
+            String.format(
+                "INSERT INTO openhouse."
+                    + DATABASE
+                    + ".%s VALUES ('2', 'bob', 'B', current_timestamp())",
+                tableName));
+
+        // Verify that partition spec is correct
+        List<String> description =
+            spark.sql(String.format("DESCRIBE TABLE openhouse." + DATABASE + ".%s", tableName))
+                .select("data_type").collectAsList().stream()
+                .map(row -> row.getString(0))
+                .collect(Collectors.toList());
+        assertTrue(description.contains(expectedResult.get(i)));
+
+        // Verify data was inserted successfully
+        assertEquals(
+            2,
+            spark
+                .sql(String.format("SELECT * FROM openhouse." + DATABASE + ".%s", tableName))
+                .count());
+
+        spark.sql(String.format("DROP TABLE openhouse." + DATABASE + ".%s", tableName));
+      }
+    }
+  }
+
+  @Test
+  public void testBucketPartitioningCreatesCorrectNumberOfPartitions() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      // Test different bucket sizes
+      int[] bucketSizes = {2, 4, 8};
+      int numValuesToInsert = 20; // Insert more values than bucket count
+
+      for (int bucketCount : bucketSizes) {
+        String tableName = String.format("bucket_partition_test_%d", bucketCount);
+        String transform = String.format("bucket(%d, id)", bucketCount);
+
+        // Create table with bucket partitioning
+        spark.sql(
+            String.format(
+                "CREATE TABLE openhouse."
+                    + DATABASE
+                    + ".%s (id int, name string, value double) partitioned by (%s)",
+                tableName,
+                transform));
+
+        // Insert values from 0 to N
+        for (int i = 0; i < numValuesToInsert; i++) {
+          spark.sql(
+              String.format(
+                  "INSERT INTO openhouse." + DATABASE + ".%s VALUES (%d, 'name_%d', %f)",
+                  tableName,
+                  i,
+                  i,
+                  i * 1.5));
+        }
+
+        // Verify all data was inserted
+        assertEquals(
+            numValuesToInsert,
+            spark
+                .sql(String.format("SELECT * FROM openhouse." + DATABASE + ".%s", tableName))
+                .count());
+
+        // Check that we have exactly bucketCount partitions
+        long partitionCount =
+            spark
+                .sql(
+                    String.format(
+                        "SELECT * FROM openhouse." + DATABASE + ".%s.partitions", tableName))
+                .count();
+        assertEquals(
+            bucketCount,
+            partitionCount,
+            String.format(
+                "Expected %d partitions for bucket(%d, id) but found %d",
+                bucketCount, bucketCount, partitionCount));
+
+        // Verify that each partition has some data (since we inserted enough values)
+        List<Integer> partitionFileCounts =
+            spark
+                .sql(
+                    String.format(
+                        "SELECT file_count FROM openhouse." + DATABASE + ".%s.partitions",
+                        tableName))
+                .select("file_count").collectAsList().stream()
+                .map(row -> row.getInt(0))
+                .collect(Collectors.toList());
+
+        // All partitions should have at least one file
+        assertTrue(
+            partitionFileCounts.stream().allMatch(count -> count > 0),
+            String.format(
+                "All partitions should have files, but found counts: %s", partitionFileCounts));
+
+        spark.sql(String.format("DROP TABLE openhouse." + DATABASE + ".%s", tableName));
+      }
+    }
+  }
+
+  /**
+   * Ported from the 3.5 lane's {@code PartitionTestSpark3_5}. The 3.5 lane observed {@code bigint}
+   * for the {@code header.time} identity transform (vs {@code header.time} on the 3.1 lane). The
+   * expected {@code data_type} rendering is verified empirically on Spark 4.0.
+   */
+  @Test
+  public void testCreateTablePartitionedWithNestedColumn2() throws Exception {
+    try (SparkSession spark = getSparkSession()) {
+      String db = DATABASE + "_spark";
+      List<String> transformList =
+          Arrays.asList("days(time)", "header.time", "truncate(10, header.time)");
+      List<String> expectedResult =
+          Arrays.asList("days(time)", "bigint", "truncate(10, header.time)");
+      for (int i = 0; i < transformList.size(); i++) {
+        String transform = transformList.get(i);
+        String tableName =
+            transform
+                .replaceAll("\\.", "_")
+                .replaceAll("\\(", "_")
+                .replaceAll("\\)", "")
+                .replaceAll(", ", "_");
+        spark.sql(
+            String.format(
+                "CREATE TABLE openhouse."
+                    + db
+                    + ".%s (time timestamp, header struct<time:long, name:string>) partitioned by (%s)",
+                tableName,
+                transform));
+        // verify that partition spec is correct
+        List<String> description =
+            spark.sql(String.format("DESCRIBE TABLE openhouse." + db + ".%s", tableName))
+                .select("data_type").collectAsList().stream()
+                .map(row -> row.getString(0))
+                .collect(Collectors.toList());
+        assertTrue(
+            description.contains(expectedResult.get(i)),
+            "For transform "
+                + transform
+                + " expected "
+                + expectedResult.get(i)
+                + " in "
+                + description);
+        spark.sql(String.format("DROP TABLE openhouse." + db + ".%s", tableName));
+      }
+    }
+  }
+}
