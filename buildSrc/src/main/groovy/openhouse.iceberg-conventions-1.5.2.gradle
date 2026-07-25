@@ -30,16 +30,37 @@ configurations.configureEach {
 // (testFixturesCompileClasspath / testFixturesRuntimeClasspath). That stamping happens AFTER the
 // configureEach above has already run, so those configs revert to requesting jvm.version=8 and can
 // no longer resolve the Java-17 Iceberg 1.11 (1.11.0-openhouse) artifacts — the exact failure seen
-// on a stock `./gradlew build`. Re-assert 17 on every resolution-only (canBeResolved &&
-// !canBeConsumed) config once the project — and all java-test-fixtures wiring — is fully evaluated,
-// so a plain `./gradlew` build works with no out-of-tree init script. Consumable configs
-// (apiElements/runtimeElements/testFixturesApiElements/...) are still left at their Java-8 value, so
-// these modules keep advertising Java 8 to downstream consumers. Scoped to this 1.11-lane
-// convention plugin, so the spark-3.5 / iceberg-1.10 (Java 8/11) lane is untouched.
+// on a stock `./gradlew build`. Re-assert 17 on the resolvable *classpath* configs once the project
+// — and all java-test-fixtures wiring — is fully evaluated, so a plain `./gradlew` build works with
+// no out-of-tree init script. Consumable configs (apiElements/runtimeElements/... ) keep their
+// Java-8 value, so these modules still advertise Java 8 to downstream consumers.
+//
+// Two guards keep this override precise (a broad `configureEach { if (canBeResolved) }` in
+// afterEvaluate is too late/too wide — it mutates configs like `annotationProcessor` that an
+// aggregating consumer such as :all-modules has already resolved via cross-project
+// evaluationDependsOn, which Gradle forbids ("Cannot change attributes ... after it has been
+// resolved")):
+//   1. Only the specific compile/runtime/test/testFixtures classpaths that actually consume Iceberg
+//      1.11 — never annotationProcessor or other resolvable bookkeeping configs.
+//   2. Skip any config already resolved (state != UNRESOLVED), so early cross-project resolution
+//      (e.g. the iceberg-1.5 apps module :apps:openhouse-spark-apps-1.5_2.12, pulled in by
+//      :all-modules) can never trip the "change after resolved" error.
+// Scoped to this 1.11-lane convention plugin, so the spark-3.5 / iceberg-1.10 (Java 8/11) lane is
+// untouched.
+def jvm17TargetedClasspaths = [
+    'compileClasspath',
+    'runtimeClasspath',
+    'testCompileClasspath',
+    'testRuntimeClasspath',
+    'testFixturesCompileClasspath',
+    'testFixturesRuntimeClasspath'
+] as Set
 afterEvaluate {
-  configurations.configureEach {
-    if (canBeResolved && !canBeConsumed) {
-      attributes {
+  configurations.configureEach { conf ->
+    if (jvm17TargetedClasspaths.contains(conf.name)
+        && conf.canBeResolved && !conf.canBeConsumed
+        && conf.state == org.gradle.api.artifacts.Configuration.State.UNRESOLVED) {
+      conf.attributes {
         attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17)
       }
     }
