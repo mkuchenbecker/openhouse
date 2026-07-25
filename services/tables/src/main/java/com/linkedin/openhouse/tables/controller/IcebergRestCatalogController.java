@@ -417,12 +417,13 @@ public class IcebergRestCatalogController {
    * CatalogHandlers.updateTable -> OpenHouseInternalCatalog TableOperations.commit}, which BYPASSES
    * the service-layer update validation that {@code TablesService.putTable -> {@code
    * OpenHouseInternalRepositoryImpl.save}} runs on the native path. {@link #enforceUpdateGuards}
-   * recovers those guards (table LOCK, reserved {@code openhouse.*}/{@code policies} property guard,
-   * partition-spec evolution rejection, schema-evolution validation) by pre-inspecting the projected
-   * commit before delegating. The CTAS and RTAS branches are handled above, so they do not reach the
-   * guards: CTAS has no existing state to validate, and RTAS runs its own gating in the service
-   * replace branch ({@code validateReplaceTable}, #640) reached via {@link #replaceTable} -- so the
-   * replace eligibility check is enforced exactly once, in the service layer, not duplicated here.
+   * recovers those guards (table LOCK, reserved {@code openhouse.*}/{@code policies} property
+   * guard, partition-spec evolution rejection, schema-evolution validation) by pre-inspecting the
+   * projected commit before delegating. The CTAS and RTAS branches are handled above, so they do
+   * not reach the guards: CTAS has no existing state to validate, and RTAS runs its own gating in
+   * the service replace branch ({@code validateReplaceTable}, #640) reached via {@link
+   * #replaceTable} -- so the replace eligibility check is enforced exactly once, in the service
+   * layer, not duplicated here.
    */
   @PostMapping("/namespaces/{namespace}/tables/{table}")
   public ResponseEntity<String> updateTable(
@@ -603,8 +604,8 @@ public class IcebergRestCatalogController {
   /**
    * Re-applies OpenHouse's service-layer UPDATE validation to a plain REST commit. Runs before the
    * commit is delegated to {@link CatalogHandlers#updateTable}; a violation throws a mapped
-   * exception (-> 4xx in the Iceberg {@code ErrorResponse} envelope) so the commit never reaches the
-   * catalog. Mirrors the update-eligibility checks in {@code
+   * exception (-> 4xx in the Iceberg {@code ErrorResponse} envelope) so the commit never reaches
+   * the catalog. Mirrors the update-eligibility checks in {@code
    * OpenHouseInternalRepositoryImpl.save(TableDto)}'s non-replace branch: table LOCK, reserved
    * {@code openhouse.*}/{@code policies} property immutability, partition-spec evolution rejection,
    * and schema-evolution validation. A pure snapshot commit (happy-path DML) changes none of those,

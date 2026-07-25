@@ -192,14 +192,16 @@ public class RepositoryTestWithSettableComponents {
 
       // Secondary, white-box guard on refresh() call count. This is coupled to Iceberg's internal
       // transaction scaffolding, which changed between iceberg-1.5 and iceberg-1.11:
-      //   - iceberg-1.5: newTransaction()->refresh() (1) + a single applyUpdates()->refresh() (1) = 2.
+      //   - iceberg-1.5: newTransaction()->refresh() (1) + a single applyUpdates()->refresh() (1) =
+      // 2.
       //   - iceberg-1.11: BaseTransaction.commitSimpleTransaction() drives applyUpdates() (each of
       //     which calls underlyingOps.refresh() once) through a Tasks retryer sized from the base
       //     metadata's commit.retry.num-retries (default 4 => 5 attempts). With the 1-time
       //     newTransaction()->refresh() that is 1 + 5 = 6.
       // The retry scaffolding iterating does NOT constitute a harmful server retry loop here: the
       // persistence layer is still hit exactly once (asserted above). The count is pinned so that a
-      // future regression that actually re-persists (ballooning refresh well past 6) is still caught.
+      // future regression that actually re-persists (ballooning refresh well past 6) is still
+      // caught.
       verify(spyOperations, times(6)).refresh();
 
       ((SettableCatalogForTest) catalog).setOperation(actualOps);

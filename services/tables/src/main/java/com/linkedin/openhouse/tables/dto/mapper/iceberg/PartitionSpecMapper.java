@@ -152,8 +152,8 @@ public class PartitionSpecMapper {
   /**
    * Inverse of {@link #toPartitionSpec(TableDto)} used by the Iceberg REST catalog endpoint: given
    * an Iceberg {@link Schema} and {@link PartitionSpec} (as they arrive on a stock {@code
-   * CreateTableRequest}), extract the single OpenHouse {@link TimePartitionSpec} the spec models, or
-   * {@code null} when the table is not time-partitioned.
+   * CreateTableRequest}), extract the single OpenHouse {@link TimePartitionSpec} the spec models,
+   * or {@code null} when the table is not time-partitioned.
    *
    * <p>This mirrors the client-side {@code TimePartitionSpecBuilder}/{@code PartitionSpecBuilder}
    * translation (the OpenHouse Java runtime) so a table created through REST maps to the same
