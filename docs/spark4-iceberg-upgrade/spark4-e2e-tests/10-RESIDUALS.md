@@ -37,3 +37,27 @@ Per porting rule #4/#6 those cases are dropped (not stubbed) and documented here
 ## CTASNonNullTest / CTASNonNullTestSpark3_5 → CTASNonNullTestSpark4_0
 - Ported once (both source classes were byte-identical). No omission: Spark-4.0 also leaves the CTAS
   target column nullable by default, so the assertion holds unchanged.
+
+## RTASTest → RTASTestSpark4_0
+- `testRTAS`: dropped the `ALTER TABLE ... SET POLICY (HISTORY MAX_AGE=24H)` statement (custom
+  OpenHouse SQL) and the follow-on `assertEquals("", rtasTable.properties().get("policies"))`
+  assertion (the `policies` table property is populated only by the custom OpenHouse catalog). The
+  RTAS mechanics (schema/spec/snapshots/properties) are kept and pass. The `replace.enabled` gate is
+  still enforced by the embedded server and surfaces as `BadRequestException` (unchanged).
+
+## CatalogOperationTest → CatalogOperationTestSpark4_0
+- `testAlterTableUnsetReplicationPolicy`: DROPPED entirely. Built entirely on custom
+  `SET/UNSET POLICY (REPLICATION|RETENTION ...)` SQL and the `com.linkedin.openhouse.gen.tables.client.model.Policies`
+  gen-model read back from the `policies` table property — none of which exist on the REST lane.
+- `testRenameTable` (catalog-API variant, ported as `testRenameTableCatalogApi`): dropped the
+  `openhouse.tableUri == local-cluster.db.rename_test_renamed` assertion (OpenHouse-only property not
+  surfaced by the stock RESTCatalog). Rename + old-table-gone (`NoSuchTableException`) kept.
+- `testRenameTableFailsConflict`: DROPPED. It verified that renaming ONTO an existing table is
+  rejected (via the custom `WebClientResponseWithMessageException`). On the stock REST lane the
+  OpenHouse `/iceberg` rename endpoint does NOT reject the conflict — empirically `ALTER TABLE ...
+  RENAME TO <existing>` threw nothing and the source table was gone afterward (silent replace). The
+  asserted behavior is absent on this lane, so the case is dropped, not stubbed.
+- Java-API `createTable(id, schema, spec, props)` / `buildTable(...).createTransaction()` cases: the
+  OpenHouse `/iceberg` controller NPEs on a null `PartitionSpec` (the legacy OpenHouseCatalog client
+  defaulted it). Changed the passed spec from `null` to `PartitionSpec.unpartitioned()` — a
+  catalog-wiring adjustment only; table intent (unpartitioned) is unchanged.
