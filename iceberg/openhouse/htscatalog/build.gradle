@@ -5,3 +5,26 @@ plugins {
     id 'openhouse.maven-publish'
 }
 
+// Iceberg 1.11 (this module's server core) strictly declares avro 1.12.1 —
+// iceberg-avro's TypeToSchema.<clinit> calls org.apache.avro.LogicalTypes.timestampNanos(),
+// which only exists in avro >= 1.12.0. The root allprojects block force-pins avro 1.11.4
+// (CVE-2024-47561), which downgrades it and triggers NoSuchMethodError when reading/writing
+// Iceberg data. Re-force 1.12.1 here (only this iceberg-1.11 module): 1.12.1 > 1.11.4 so the
+// CVE stays fixed, and the genuine iceberg-1.5 lane is untouched.
+configurations.all {
+    resolutionStrategy {
+        force 'org.apache.avro:avro:1.12.1'
+    }
+}
+
+dependencies {
+    // Iceberg 1.11 reworked generic data read/write around a FormatModelRegistry. iceberg-data's
+    // GenericFormatModels.register() (run during the generic reader's static init) hard-references
+    // ParquetFormatModel and ORCFormatModel, so iceberg-parquet and iceberg-orc must be on the
+    // runtime classpath even for the Avro-only tables this module uses. iceberg-data no longer
+    // pulls them transitively, so add them explicitly (this module reads generic rows via
+    // GenericReader; other iceberg-1.11 consumers that never touch generic IO don't need them).
+    implementation('org.apache.iceberg:iceberg-parquet:' + icebergVersion)
+    implementation('org.apache.iceberg:iceberg-orc:' + icebergVersion)
+}
+
