@@ -67,6 +67,20 @@ the custom `/tables` client.
 
 ---
 
+## CI performance (fix — makes every branch-1.11 run ~2x faster)
+
+- [ ] **`InvalidMetadataTestSpark4_0.testCorruptSchemaIdSurfacesRealError` runs ~19 min** (single
+  test), which alone pushes the branch-1.11 "Build with Gradle" step to ~33 min. Diagnosis: the test
+  corrupts `current-schema-id` to a non-existent value, then INSERTs. Server-side `refreshMetadata`
+  throws `InvalidTableMetadataException` (`OpenHouseInternalTableOperations` line ~163). The INSERT's
+  Iceberg **commit-retry** loop treats it as retryable and retries with exponential backoff up to the
+  default `commit.retry.total-timeout-ms` (~30 min), so the expected failure only surfaces after
+  ~19 min. Fixes (either): (a) server-side — map invalid/corrupt-metadata to a NON-retryable 4xx so
+  the client fails fast (correct: corrupt metadata is not a transient conflict); or (b) test-scoped —
+  create the table with `commit.retry.num-retries=0` (or a short `commit.retry.total-timeout-ms`) so
+  the INSERT fails fast. Prefer (a). The test itself asserts correct behavior and PASSES; this is
+  purely a runtime cost.
+
 ## Behavioral / engine deltas (accepted — no fix needed, documented for traceability)
 
 - **`WapIdTestSpark4_0.testExpireSnapshotsWithEmptyRefs`**: the 3.1 lane asserted that expiring the
