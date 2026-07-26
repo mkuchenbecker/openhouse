@@ -42,6 +42,8 @@ include ':integrations:spark:spark-3.5:openhouse-spark-runtime'
 include ':integrations:spark:spark-3.5:openhouse-spark-itest'
 // Phase 2 (REST-first): classpath-only module for the Spark-4.0/Scala-2.13 harness.
 include ':integrations:spark:spark-4.0:openhouse-spark-itest'
+// Spark-4.0 / Scala-2.13 port of the OpenHouse Spark SQL extension (SET/UNSET POLICY DDL).
+include ':integrations:spark:spark-4.0:openhouse-spark-runtime'
 
 include ':iceberg:openhouse:htscatalog'
 include ':iceberg:openhouse:internalcatalog'
@@ -80,4 +82,5 @@ project(':integrations:java:iceberg-1.5:openhouse-java-itest').name = 'openhouse
 project(':integrations:spark:spark-3.5:openhouse-spark-runtime').name = 'openhouse-spark-3.5-runtime_2.12'
 project(':integrations:spark:spark-3.5:openhouse-spark-itest').name = 'openhouse-spark-3.5-itest'
 project(':integrations:spark:spark-4.0:openhouse-spark-itest').name = 'openhouse-spark-4.0-itest'
+project(':integrations:spark:spark-4.0:openhouse-spark-runtime').name = 'openhouse-spark-4.0-runtime_2.13'
 project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5').name = 'tables-test-fixtures-iceberg-1.5_2.12'

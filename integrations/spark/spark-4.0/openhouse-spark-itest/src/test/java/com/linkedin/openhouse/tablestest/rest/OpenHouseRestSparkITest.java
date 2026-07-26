@@ -83,16 +83,18 @@ public class OpenHouseRestSparkITest {
     String restUri = getOpenHouseServerBaseUri() + "/iceberg";
     return SparkSession.builder()
         .master("local[1]")
-        // Currently only the stock Iceberg extension is loaded. The OpenHouse SQL extension
-        // (SET/UNSET POLICY, GRANT, column tags) is INTENDED to be loaded here too and mapped to
-        // table-property operations on the stock RESTCatalog, but that is not yet wired: the
-        // extension exists only as a Scala-2.12 spark-3.x runtime, and the /iceberg server has no
-        // translation for the policy property + reserves policies/openhouse.* props. Tracked as a
-        // real backlog item (NOT a permanent design choice) — see
-        // spark4-e2e-tests/backlog-triage.md.
+        // Both the stock Iceberg extension AND the OpenHouse SQL extension (Spark-4.0 / Scala-2.13
+        // port, module :integrations:spark:spark-4.0:openhouse-spark-4.0-runtime_2.13) are loaded.
+        // The OpenHouse extension parses the custom SET/UNSET POLICY DDL (retention / replication /
+        // sharing / history) and lowers it onto the `updated.openhouse.policy` Iceberg table
+        // property, which the /iceberg REST server translates into OpenHouse Policies (see
+        // spark4-e2e-tests/policy-rest-lane.md + policy-sql-extension-spark4.md). GRANT /
+        // column-tag
+        // DDL still parse but are not executable on the REST lane (no server ACL endpoint).
         .config(
             "spark.sql.extensions",
-            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,"
+                + "com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions")
         .config("spark.sql.catalog." + CATALOG, "org.apache.iceberg.spark.SparkCatalog")
         .config(
             "spark.sql.catalog." + CATALOG + ".catalog-impl", "org.apache.iceberg.rest.RESTCatalog")

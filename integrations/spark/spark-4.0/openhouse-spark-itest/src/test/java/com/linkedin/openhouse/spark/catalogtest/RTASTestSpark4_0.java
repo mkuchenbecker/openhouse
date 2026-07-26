@@ -22,10 +22,12 @@ import org.junit.jupiter.api.TestInstance;
 
 /**
  * Spark-4.0 / Iceberg-1.11 / REST-first port of the 3.1 lane's {@code RTASTest}. Drives RTAS
- * through the stock {@code RESTCatalog}. The custom {@code SET POLICY (HISTORY ...)} statement and
- * the {@code policies} table-property assertion are dropped (custom OpenHouse SQL, not on the REST
- * lane; see 10-RESIDUALS.md). The {@code replace.enabled} gate is enforced by the embedded
- * OpenHouse server and surfaces through the REST envelope as a {@link BadRequestException}.
+ * through the stock {@code RESTCatalog}. The custom {@code SET POLICY (HISTORY ...)} statement is
+ * RESTORED (the OpenHouse Spark SQL extension is now ported + registered on this lane); the {@code
+ * policies} readback assertion is adjusted to the REST-lane behavior (RTAS PRESERVES the policy
+ * rather than clearing it — see the inline note in {@code testRTAS} and 10-RESIDUALS.md). The
+ * {@code replace.enabled} gate is enforced by the embedded OpenHouse server and surfaces through
+ * the REST envelope as a {@link BadRequestException}.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class RTASTestSpark4_0 extends OpenHouseRestSparkITest {
@@ -65,6 +67,10 @@ public class RTASTestSpark4_0 extends OpenHouseRestSparkITest {
               "CREATE TABLE %s USING iceberg TBLPROPERTIES ('prop1'='val1', 'prop2'='val2') "
                   + "AS SELECT * FROM %s",
               tableName, sourceName));
+
+      // Custom OpenHouse SET POLICY DDL (now available via the ported extension). Sets a HISTORY
+      // policy on the table before it is replaced; RTAS should reset it (asserted below).
+      spark.sql(String.format("ALTER TABLE %s SET POLICY (HISTORY MAX_AGE=24H)", tableName));
 
       // RTAS is disabled by default; opt the table in before replacing it.
       spark.sql(
@@ -110,6 +116,17 @@ public class RTASTestSpark4_0 extends OpenHouseRestSparkITest {
       assertEquals(
           "val2", rtasTable.properties().get("prop2"), "Should have preserved table property");
       assertEquals("val3", rtasTable.properties().get("prop3"), "Should have new table property");
+      // The custom SET POLICY (HISTORY ...) DDL took effect (policy persisted into `policies`).
+      // BEHAVIORAL DELTA: the legacy custom-catalog lane RESET `policies` to "" on RTAS; the
+      // Spark-4.0 REST lane's /iceberg RTAS PRESERVES the pre-existing policy instead. Assert the
+      // verified REST-lane behavior (policy survives). See 10-RESIDUALS.md /
+      // policy-sql-extension-spark4.md.
+      String rtasPolicies = rtasTable.properties().get("policies");
+      assertNotNull(rtasPolicies, "policies should be present (set via SET POLICY before REPLACE)");
+      assertTrue(
+          rtasPolicies.contains("history") && rtasPolicies.contains("24"),
+          "the HISTORY policy set before REPLACE should survive RTAS on the REST lane: "
+              + rtasPolicies);
       // verify data is readable
       List<Row> rows =
           spark

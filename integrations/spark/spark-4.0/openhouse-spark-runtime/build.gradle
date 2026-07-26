@@ -1,0 +1,100 @@
+// Rung 2 (Spark 4.0 / Scala 2.13 / Java 17) OpenHouse Spark SQL extension runtime.
+//
+// This is the Spark-4.0 / Scala-2.13 port of the legacy Scala-2.12 spark-3.x
+// `openhouse-spark-runtime` extension. It provides
+// `com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions`, which parses the
+// OpenHouse custom DDL (`ALTER TABLE ... SET/UNSET POLICY (...)`, column tags, GRANT/REVOKE) and
+// lowers the SET/UNSET POLICY statements onto the `updated.openhouse.policy` Iceberg table property
+// that the Spark-4.0 REST lane's `/iceberg` server already translates into OpenHouse `Policies`
+// (see docs/spark4-iceberg-upgrade/spark4-e2e-tests/policy-rest-lane.md and commit da20ad4).
+//
+// The module is consumed as a `testImplementation` by the spark-4.0 itest harness so its extension
+// can be registered on the stock RESTCatalog-backed SparkSession. It intentionally does NOT use the
+// `openhouse.java-minimal-conventions` plugin (which pins Java 11 and would refuse the Java-17 Spark
+// 4.0 jars) — mirroring the sibling openhouse-spark-4.0-itest module.
+plugins {
+  id 'scala'
+  id 'java-library'
+}
+
+import org.gradle.api.attributes.java.TargetJvmVersion
+
+ext {
+  sparkVersion = '4.0.0'
+  icebergVersion = '1.11.0-openhouse'
+  scalaVersion = '2.13.16'
+  antlrVersion = '4.13.1'
+}
+
+// Spark 4.0 jars declare jvm.version=17. Request 17 on resolution-only configs so Spark-4.0 (17),
+// Iceberg-1.11 and the Java-8-bytecode OpenHouse client jars all resolve onto one classpath.
+configurations.configureEach {
+  if (canBeResolved && !canBeConsumed) {
+    attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17) }
+  }
+}
+
+configurations {
+  // ANTLR tool used only to generate the parser sources; its runtime is provided by Spark 4.0
+  // (antlr4-runtime 4.13.1), so it is excluded from the published dependencies.
+  antlr
+}
+
+dependencies {
+  antlr "org.antlr:antlr4:${antlrVersion}"
+
+  // Scala 2.13 standard library — needed on the compile classpath so the Scala plugin infers the
+  // 2.13.16 compiler (matches Spark 4.0.0's scala.version). compileOnly: the consumer (spark-4.0
+  // itest) already carries scala-library transitively via Spark 4.0.
+  compileOnly "org.scala-lang:scala-library:${scalaVersion}"
+
+  // Spark 4.0 (Scala 2.13) — ParserInterface / SparkStrategy / V2CommandExec / Catalyst plans.
+  compileOnly("org.apache.spark:spark-sql_2.13:${sparkVersion}") {
+    exclude group: 'io.netty'
+  }
+
+  // Stock Iceberg Spark 4.0 client — Spark3Util / SparkTable / SparkCatalog used by the Exec nodes
+  // and the planner strategy.
+  compileOnly "org.apache.iceberg:iceberg-spark-4.0_2.13:${icebergVersion}"
+
+  // ANTLR runtime is provided by Spark 4.0 at test/runtime; declare it only for compilation of the
+  // generated parser. (Not exported — consumer gets 4.13.1 from Spark.)
+  compileOnly "org.antlr:antlr4-runtime:${antlrVersion}"
+}
+
+// ANTLR source generation (mirrors the spark-3.1 runtime, upgraded to the 4.13.1 tool so the
+// generated parser is compatible with Spark 4.0's bundled antlr4-runtime 4.13.1).
+ext {
+  antlrPackageDirPrefix = "com/linkedin/openhouse/spark/sql/catalyst/parser/extensions/"
+  antlrMainDir = "${projectDir}/src/main/antlr/${antlrPackageDirPrefix}"
+  antlrMainGeneratedSrcDir = "${project.buildDir}/generated-src/antlr/main/"
+}
+
+sourceSets {
+  main {
+    java {
+      srcDirs += antlrMainGeneratedSrcDir
+    }
+  }
+}
+
+task runAntlr(type: JavaExec) {
+  inputs.dir antlrMainDir
+  outputs.dir antlrMainGeneratedSrcDir
+
+  mainClass = "org.antlr.v4.Tool"
+  args = ["${antlrMainDir}/OpenhouseSqlExtensions.g4",
+          "-visitor",
+          "-o", "${antlrMainGeneratedSrcDir}/${antlrPackageDirPrefix}",
+          "-package", "com.linkedin.openhouse.spark.sql.catalyst.parser.extensions"]
+  maxHeapSize = "64m"
+  classpath = configurations.antlr
+}
+
+compileJava.dependsOn runAntlr
+// The Scala sources (AST builder / parser wrapper) reference the ANTLR-generated Java parser, so the
+// Scala compilation must run after the generated Java is compiled, with that output on its classpath.
+compileScala.dependsOn compileJava
+compileScala.classpath += files(compileJava.destinationDirectory)
+
+jar.enabled = true

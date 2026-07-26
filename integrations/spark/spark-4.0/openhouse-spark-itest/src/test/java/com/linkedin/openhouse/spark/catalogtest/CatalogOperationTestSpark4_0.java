@@ -31,9 +31,11 @@ import org.junit.jupiter.api.Test;
  * Spark-4.0 / Iceberg-1.11 / REST-first port of the 3.1 lane's {@code CatalogOperationTest}. Runs
  * against the embedded OpenHouse server through the stock {@code RESTCatalog}. Pure-SQL cases and
  * Iceberg Java-API cases (create/load/append, WRITE ORDERED BY, catalog buildTable) port through
- * the REST catalog. The custom {@code SET/UNSET POLICY} case ({@code
- * testAlterTableUnsetReplicationPolicy} with the {@code Policies} gen-model) is dropped, and
- * OpenHouse-only property assertions ({@code openhouse.tableUri}) are dropped; see 10-RESIDUALS.md.
+ * the REST catalog. The custom {@code SET POLICY} DDL now works on this lane (OpenHouse Spark SQL
+ * extension ported + registered — see {@link PolicySqlDdlTestSpark4_0}); only {@code
+ * testAlterTableUnsetReplicationPolicy} stays {@code @Disabled}, blocked on server support for
+ * {@code UNSET POLICY} (clearing a sub-policy). OpenHouse-only property assertions ({@code
+ * openhouse.tableUri}) remain dropped; see 10-RESIDUALS.md.
  */
 public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
 
@@ -422,16 +424,28 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
   }
 
   /**
-   * PENDING (see 10-RESIDUALS.md fix checklist). The 3.1 case drove custom {@code SET/UNSET POLICY
-   * (REPLICATION|RETENTION ...)} SQL and read the result back via the {@code
-   * com.linkedin.openhouse.gen.tables.client.model.Policies} gen-model. Neither the custom
-   * OpenHouse SQL extension nor the {@code Policies} model is available on the REST lane (the model
-   * is not even on this module's compile classpath), so the readback assertions are expressed
-   * against the raw {@code policies} table property string. Disabled: the {@code SET POLICY} DDL is
-   * unparseable by the stock Iceberg SQL extension on this lane.
+   * PENDING — blocked on a SERVER-side gap, not a client one (see 10-RESIDUALS.md fix checklist and
+   * spark4-e2e-tests/policy-sql-extension-spark4.md).
+   *
+   * <p>The custom {@code SET POLICY} DDL now works end-to-end on the REST lane: the Spark-4.0 port
+   * of {@code OpenhouseSparkSessionExtensions} is registered (see {@code
+   * OpenHouseRestSparkITest.getBuilder}) and the {@code SET POLICY (REPLICATION|RETENTION|SHARING|
+   * HISTORY ...)} statements in this test parse and persist correctly — verified GREEN by {@link
+   * PolicySqlDdlTestSpark4_0}. What this test additionally exercises is {@code UNSET POLICY
+   * (REPLICATION)}: {@code UnSetReplicationPolicyExec} emits {@code updated.openhouse.policy =
+   * {"replication": {}}}, and the OpenHouse {@code /iceberg} server rejects it with HTTP 400 {@code
+   * "CreateUpdateTableRequestBody.policies.replication.config : Incorrect replication policy
+   * specified. Replication config cannot be null."} (an empty replication object is not a valid
+   * config, and the server's policy-merge has no clear/tombstone convention for removing a
+   * sub-policy — see policy-rest-lane.md "Follow-ups"). Re-enable once the {@code /iceberg} server
+   * supports clearing a sub-policy on {@code UNSET POLICY}; the readback assertions here are
+   * against the raw {@code policies} table-property string (no gen-model on this module's compile
+   * classpath).
    */
   @Disabled(
-      "custom SET/UNSET POLICY SQL + Policies gen-model unavailable on REST lane — see spark4-e2e-tests/10-RESIDUALS.md")
+      "SET POLICY works (see PolicySqlDdlTestSpark4_0); UNSET POLICY (REPLICATION) is rejected by the"
+          + " /iceberg server (400: replication config cannot be null) — needs a server-side"
+          + " clear/tombstone convention for UNSET POLICY. See spark4-e2e-tests/10-RESIDUALS.md.")
   @Test
   public void testAlterTableUnsetReplicationPolicy() throws Exception {
     try (SparkSession spark = getSparkSession()) {

@@ -13,9 +13,12 @@ import org.junit.jupiter.api.Test;
 /**
  * Spark-4.0 / Iceberg-1.11 / REST-first port of the 3.1 lane's {@code WapIdTest}. WAP staging,
  * cherry-pick and expire_snapshots are all stock Iceberg (SQL + the {@code openhouse.system.*}
- * procedures registered by the stock Iceberg Spark extension) and port verbatim. The only omission
- * is in {@code testWapWorkflowWithVariousOperations}: the custom OpenHouse {@code SET POLICY} and
- * {@code GRANT} statements are not available on the REST lane (see 10-RESIDUALS.md).
+ * procedures registered by the stock Iceberg Spark extension) and port verbatim. In {@code
+ * testWapWorkflowWithVariousOperations} the custom OpenHouse {@code SET POLICY (SHARING=TRUE)} is
+ * RESTORED (the OpenHouse Spark SQL extension is now ported + registered on this lane and the
+ * policy is asserted persisted); only the {@code GRANT SELECT ... TO ...} statement remains dropped
+ * — GRANT has no server ACL endpoint on the REST lane (see 10-RESIDUALS.md /
+ * policy-sql-extension-spark4.md).
  */
 public class WapIdTestSpark4_0 extends OpenHouseRestSparkITest {
 
@@ -322,9 +325,23 @@ public class WapIdTestSpark4_0 extends OpenHouseRestSparkITest {
       spark.sql("INSERT INTO " + FULL_TABLE_NAME + " VALUES ('main.a')"); // insert
       spark.sql(
           "ALTER TABLE " + FULL_TABLE_NAME + " SET TBLPROPERTIES ('write.wap.enabled'='true')");
-      // NOTE: the 3.1 source also exercised `SET POLICY (SHARING=TRUE)` and `GRANT SELECT ... TO
-      // lejiang` here. Those are custom OpenHouse SQL and are unavailable on the REST lane; dropped
-      // (see 10-RESIDUALS.md). The WAP/cherry-pick/expire workflow below is unchanged.
+      // Restored custom OpenHouse SET POLICY DDL (now available via the ported extension): set a
+      // sharing policy inside the WAP workflow, exactly as the 3.1 source did, and confirm it
+      // persisted. NOTE: the 3.1 source ALSO ran `GRANT SELECT ... TO lejiang` here; GRANT is still
+      // dropped because the REST lane has no server ACL endpoint (see 10-RESIDUALS.md /
+      // policy-sql-extension-spark4.md).
+      spark.sql("ALTER TABLE " + FULL_TABLE_NAME + " SET POLICY (SHARING=TRUE)");
+      String sharingPolicies =
+          spark.sql("SHOW TBLPROPERTIES " + FULL_TABLE_NAME).collectAsList().stream()
+              .filter(r -> "policies".equals(r.getString(0)))
+              .map(r -> r.getString(1))
+              .findFirst()
+              .orElse(null);
+      assertNotNull(sharingPolicies, "sharing policy should be set via SET POLICY (SHARING=TRUE)");
+      assertTrue(
+          sharingPolicies.contains("\"sharingEnabled\": true")
+              || sharingPolicies.contains("\"sharingEnabled\":true"),
+          sharingPolicies);
       spark.conf().set("spark.wap.id", "wap1");
       spark.sql("INSERT INTO " + FULL_TABLE_NAME + " VALUES ('wap1.a')"); // wap insert
       spark.conf().unset("spark.wap.id");
