@@ -18,6 +18,7 @@ import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
@@ -341,7 +342,11 @@ public class IcebergRestCatalogController {
    *       {@code TimePartitionSpec} plus {@code List<ClusteringColumn>} via {@link
    *       PartitionSpecMapper}; specs OpenHouse cannot model are rejected (HTTP 400).
    *   <li><b>Sort order</b>: passed through as JSON when the request carries a sort order.
-   *   <li><b>Properties</b>: user table properties are passed through unchanged.
+   *   <li><b>Properties</b>: user table properties are passed through unchanged, EXCEPT the
+   *       reserved {@value #UPDATED_OPENHOUSE_POLICY_KEY} policy-carrier property, which is
+   *       intercepted, stripped, and translated into the structured {@link Policies} model (see
+   *       {@link #translatePolicyPatch}) so the create pipeline validates and persists it exactly
+   *       like the native {@code /tables} create path.
    * </ul>
    */
   private CreateUpdateTableRequestBody toCreateUpdateTableRequestBody(
@@ -352,6 +357,12 @@ public class IcebergRestCatalogController {
         partitionSpecMapper.toClusteringColumns(request.schema(), request.spec());
     Map<String, String> tableProperties =
         request.properties() == null ? new HashMap<>() : new HashMap<>(request.properties());
+    // Intercept the policy-carrier property: on create there is no prior policy, so the carried
+    // value IS the full policy. Strip it so it is not persisted as an opaque table property, and
+    // hand the translated Policies object to the reused create pipeline (which validates + stores
+    // it into the reserved `policies` property).
+    String policyPatch = tableProperties.remove(UPDATED_OPENHOUSE_POLICY_KEY);
+    Policies policies = policyPatch == null ? null : translatePolicyPatch(null, policyPatch);
     String sortOrder =
         (request.writeOrder() != null && request.writeOrder().isSorted())
             ? SortOrderParser.toJson(request.writeOrder())
@@ -365,6 +376,7 @@ public class IcebergRestCatalogController {
         .timePartitioning(timePartitioning)
         .clustering(clustering)
         .tableProperties(tableProperties)
+        .policies(policies)
         .sortOrder(sortOrder)
         .baseTableVersion(ValidatorConstants.INITIAL_TABLE_VERSION)
         .build();
@@ -439,6 +451,12 @@ public class IcebergRestCatalogController {
     }
     if (isReplacePayload(request)) {
       return replaceTable(ns, ident, request);
+    }
+    if (isPolicyUpdate(request)) {
+      // A SET POLICY carried as the reserved policy-carrier table property. Route it through
+      // OpenHouse's own update pipeline (translate -> validate -> persist into `policies`) instead
+      // of letting CatalogHandlers persist the carrier verbatim and the reserved-prop guard 400 it.
+      return updatePolicy(ns, ident, request);
     }
     // Plain UPDATE (INSERT/ALTER/ref ops): recover the service-layer update guards that the direct
     // CatalogHandlers commit would bypass, then delegate.
@@ -585,6 +603,151 @@ public class IcebergRestCatalogController {
   }
 
   // ---------------------------------------------------------------------------
+  // Policy set/update (parity with the native /tables policy path).
+  //
+  // A stock RESTCatalog cannot speak OpenHouse's structured Policies model; the client contract is
+  // therefore to carry a policy as the reserved `updated.openhouse.policy` table property (see
+  // UPDATED_OPENHOUSE_POLICY_KEY), exactly the legacy Spark SET POLICY encoding. On create this is
+  // handled in toCreateUpdateTableRequestBody(); on update it is handled here.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Detects a policy-set commit: a plain property update that carries the reserved {@value
+   * #UPDATED_OPENHOUSE_POLICY_KEY} property. CTAS ({@code AssertTableDoesNotExist}) and RTAS
+   * ({@link #isReplacePayload}) are ruled out by {@link #updateTable} before this check, so a match
+   * here is always an {@code ALTER TABLE ... SET TBLPROPERTIES} / {@code updateProperties()}
+   * carrying a policy. Snapshot commits (INSERT) and other ALTERs never set this key, so they fall
+   * through to the plain-update path unchanged.
+   */
+  private static boolean isPolicyUpdate(UpdateTableRequest request) {
+    return request.updates().stream()
+        .anyMatch(
+            u ->
+                u instanceof MetadataUpdate.SetProperties
+                    && ((MetadataUpdate.SetProperties) u)
+                        .updated()
+                        .containsKey(UPDATED_OPENHOUSE_POLICY_KEY));
+  }
+
+  /**
+   * Applies a policy-set commit by routing it through OpenHouse's own update pipeline instead of
+   * the direct {@link CatalogHandlers} commit. This mirrors what the legacy client's {@code
+   * OpenHouseTableOperations.constructMetadataRequestBody} does: it strips the {@value
+   * #UPDATED_OPENHOUSE_POLICY_KEY} carrier from the table properties and translates it into the
+   * structured {@link Policies} model (merging onto any existing policy -- see {@link
+   * #translatePolicyPatch}), then hands the full request to {@link TablesApiHandler#updateTable}.
+   * The reused service layer runs the SAME policy validation the native {@code /tables} path runs
+   * ({@code OpenHouseTablesApiValidator.validatePolicies}) and persists the merged policy into the
+   * reserved {@code policies} property ({@code TablePolicyManager.managePoliciesOnUpdateIfNeeded}).
+   * The response is a fresh {@code LoadTableResponse} carrying the updated {@code policies}
+   * property.
+   *
+   * <p>Only the {@code policies} property changes; the carrier is not persisted and no other table
+   * property, schema, spec or sort order is altered (the projected metadata differs from the base
+   * only by the carrier, which is stripped). Locked tables are rejected up front, exactly as {@code
+   * TablesService.putTable} does.
+   */
+  private ResponseEntity<String> updatePolicy(
+      Namespace ns, TableIdentifier ident, UpdateTableRequest request) {
+    BaseTable table = (BaseTable) catalog.loadTable(ident);
+    TableMetadata base = table.operations().current();
+    enforceNotLocked(ident, base);
+
+    TableMetadata.Builder builder = TableMetadata.buildFrom(base);
+    request.updates().forEach(update -> update.applyTo(builder));
+    TableMetadata finalMetadata = builder.build();
+
+    String policyPatch = finalMetadata.properties().get(UPDATED_OPENHOUSE_POLICY_KEY);
+    Policies mergedPolicies =
+        translatePolicyPatch(base.properties().get(POLICIES_KEY), policyPatch);
+
+    // Carry through all other properties unchanged (mirroring the legacy client), minus the policy
+    // carrier which must never be persisted verbatim.
+    Map<String, String> tableProperties = new HashMap<>(finalMetadata.properties());
+    tableProperties.remove(UPDATED_OPENHOUSE_POLICY_KEY);
+
+    String databaseId = ns.level(0);
+    String tableId = ident.name();
+    CreateUpdateTableRequestBody requestBody =
+        CreateUpdateTableRequestBody.builder()
+            .tableId(tableId)
+            .databaseId(databaseId)
+            .clusterId(clusterProperties.getClusterName())
+            .schema(SchemaParser.toJson(finalMetadata.schema()))
+            .timePartitioning(
+                partitionSpecMapper.toTimePartitionSpec(
+                    finalMetadata.schema(), finalMetadata.spec()))
+            .clustering(
+                partitionSpecMapper.toClusteringColumns(
+                    finalMetadata.schema(), finalMetadata.spec()))
+            .tableProperties(tableProperties)
+            .policies(mergedPolicies)
+            .sortOrder(
+                finalMetadata.sortOrder().isSorted()
+                    ? SortOrderParser.toJson(finalMetadata.sortOrder())
+                    : null)
+            .baseTableVersion(base.metadataFileLocation())
+            .build();
+
+    tablesApiHandler.updateTable(
+        databaseId, tableId, requestBody, extractAuthenticatedUserPrincipal());
+
+    return json(HttpStatus.OK, CatalogHandlers.loadTable(catalog, ident));
+  }
+
+  /**
+   * Translates the {@value #UPDATED_OPENHOUSE_POLICY_KEY} carrier JSON into a structured {@link
+   * Policies} object, merging it onto the table's existing policy. This reproduces the merge
+   * semantics of the legacy client's {@code OpenHouseTableOperations.buildUpdatedPolicies} on the
+   * server side (the stock RESTCatalog client cannot merge): each sub-policy present in the patch
+   * overrides the corresponding existing sub-policy, while sub-policies absent from the patch are
+   * preserved. {@code sharingEnabled} is a primitive on the server {@code Policies} model (it
+   * cannot carry a tri-state null), so its presence is detected by inspecting the raw patch JSON --
+   * exactly how the legacy client keyed off its nullable {@code Boolean}. Parsing reuses the shared
+   * {@link PoliciesSpecMapper} bean so the two lanes cannot drift.
+   *
+   * @param existingPoliciesJson the current serialized {@code policies} property, or {@code null}
+   *     on create / when the table has no policy yet
+   * @param patchJson the carrier value (never {@code null} at the call sites)
+   * @return the merged {@link Policies}, or the patch itself when there is no existing policy
+   */
+  private Policies translatePolicyPatch(String existingPoliciesJson, String patchJson) {
+    Policies patch = policiesSpecMapper.toPoliciesObject(patchJson == null ? "" : patchJson);
+    Policies existing =
+        (existingPoliciesJson == null || existingPoliciesJson.isEmpty())
+            ? null
+            : policiesSpecMapper.toPoliciesObject(existingPoliciesJson);
+    if (patch == null) {
+      return existing;
+    }
+    if (existing == null) {
+      return patch;
+    }
+    com.google.gson.JsonObject patchObj =
+        com.google.gson.JsonParser.parseString(patchJson).getAsJsonObject();
+    Policies.PoliciesBuilder merged = existing.toBuilder();
+    if (patch.getRetention() != null) {
+      merged.retention(patch.getRetention());
+    }
+    if (patchObj.has("sharingEnabled")) {
+      merged.sharingEnabled(patch.isSharingEnabled());
+    }
+    if (patch.getColumnTags() != null) {
+      merged.columnTags(patch.getColumnTags());
+    }
+    if (patch.getReplication() != null) {
+      merged.replication(patch.getReplication());
+    }
+    if (patch.getHistory() != null) {
+      merged.history(patch.getHistory());
+    }
+    if (patch.getLockState() != null) {
+      merged.lockState(patch.getLockState());
+    }
+    return merged.build();
+  }
+
+  // ---------------------------------------------------------------------------
   // Server-side update-validation guards (parity with the native
   // TablesService.putTable -> OpenHouseInternalRepositoryImpl.save UPDATE path).
   //
@@ -600,6 +763,19 @@ public class IcebergRestCatalogController {
 
   /** Namespace prefix that marks a table property as OpenHouse-reserved. */
   private static final String OPENHOUSE_PROP_PREFIX = "openhouse.";
+
+  /**
+   * The client contract for setting a table policy over the stock {@code RESTCatalog} lane: a table
+   * property whose value is the JSON serialization of a (partial) OpenHouse {@code Policies}
+   * object, e.g. {@code {"retention":{"count":3,"granularity":"DAY"}}} or {@code
+   * {"sharingEnabled":true}}. This is exactly the key + encoding the legacy Spark {@code
+   * Set*PolicyExec} uses (consumed by the legacy client's {@code
+   * OpenHouseTableOperations.buildUpdatedPolicies}), so a future Spark-4.0 port of the {@code SET
+   * POLICY} SQL extension maps onto this server translation unchanged. Unlike a normal table
+   * property it is NEVER persisted verbatim: on both create and update it is stripped and folded
+   * into the reserved {@link #POLICIES_KEY} property via the OpenHouse policy pipeline.
+   */
+  private static final String UPDATED_OPENHOUSE_POLICY_KEY = "updated.openhouse.policy";
 
   /**
    * Re-applies OpenHouse's service-layer UPDATE validation to a plain REST commit. Runs before the
