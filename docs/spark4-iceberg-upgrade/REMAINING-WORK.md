@@ -65,10 +65,17 @@ Pre-dispatch findings (durable):
 - [x] e2e test on the Spark-4.0 REST lane (`DeletionVectorTestSpark4_0`, 2 methods PASSED); write-up
       `rung3-v3-deletion-vectors.md` (incl. global-v3-default cost assessment: v2 read cliff → Rung 9)
 
-## 3. Rung 7 — Server/metadata-writer runtime → Java 17 (keep Java-8 bytecode where consumed)
-- [ ] Move the server RUNTIME to Java 17; keep `-source/-target 8` (or `release 8`) where the
-      metadata-writer bytecode is consumed by Java-8 readers
-- [ ] Build + boot + harness-gate; write-up `rung7-java17-runtime.md`
+## 3. Rung 7 — Server/metadata-writer runtime → Java 17 (keep Java-8 bytecode where consumed)  ← DONE
+Already satisfied by the 1.11 upgrade architecture; verified empirically (no code change needed).
+- [x] Runtime = Java 17: CI + the embedded server (Spring Boot 2.7) build/boot/serve on JDK 17
+      (`build-run-tests.yml` "Set up JDK 17"); no module pins a Java-8/11 toolchain
+- [x] Bytecode = Java 8 where consumed: `java-minimal-conventions` keeps `targetCompatibility=1_8`;
+      the metadata-writer `OpenHouseInternalCatalog` / `OpenHouseInternalTableOperations` compile to
+      **major version 52 (Java 8)** on a JDK-17 compiler (verified via `javap`), and advertise Java 8
+      to consumers so Java-8 readers of the metadata output keep working
+- [x] Build + boot + harness-gate: the whole Spark-4.0 REST itest e2e suite boots the embedded
+      server in the JDK-17 test JVM and is green on `Branch 1.11 CI`. Write-up
+      `rung7-java17-runtime.md`
 
 ## 4. Rung 8 — FINAL VALIDATION: delta-harness full matrix on Spark 4.0 / Iceberg 1.11
 - [ ] Run the delta-harness full matrix; capture results; write-up `rung8-final-validation.md`
@@ -80,7 +87,9 @@ Pre-dispatch findings (durable):
 ---
 
 ## Change log (commits, newest first)
-- Rung 3 (THE GOAL) — v3 DSv2 deletion vectors proven on the Spark-4.0 REST lane. Isolated
+- (this commit) docs(spark4): Rung 7 — server runtime Java 17 / metadata-writer Java-8 bytecode
+  verified (already satisfied by the 1.11 architecture; `javap` proof major 52). `rung7-java17-runtime.md`
+- `69d83d6` Rung 3 (THE GOAL) — v3 DSv2 deletion vectors proven on the Spark-4.0 REST lane. Isolated
   `deletionVectorTest` fork (`-Dcluster.iceberg.format-version=3`) + `DeletionVectorTestSpark4_0`
   (metadata-writer v3 proof + MOR-`DELETE`→puffin-deletion-vector proof); default-v2 `test` task
   untouched. Write-up `rung3-v3-deletion-vectors.md`.
