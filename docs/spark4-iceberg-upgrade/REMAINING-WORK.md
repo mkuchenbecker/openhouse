@@ -41,7 +41,7 @@ Upgraded from the earlier documented deferral to a real implementation.
 - [x] Restored the dropped `GRANT` in `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations`.
 - [x] Write-up: `grant-revoke-rest-lane.md`; updated `10-RESIDUALS.md` (deferral → fixed).
 
-## 2. Rung 3 — Iceberg 1.11 + v3 DSv2 deletion vectors (THE GOAL)  ← IN PROGRESS
+## 2. Rung 3 — Iceberg 1.11 + v3 DSv2 deletion vectors (THE GOAL)  ← DONE
 Pre-dispatch findings (durable):
 - **Version: already 1.11.** `build.gradle` sets `iceberg_1_11_version = "1.11.0-openhouse"` and the
   Spark-4.0 runtime + itest modules resolve `1.11.0-openhouse`. No version bump needed — 1.11 is the
@@ -53,11 +53,17 @@ Pre-dispatch findings (durable):
   `ClusterProperties.java:43`).
 
 - [x] Confirm the client + server are on Iceberg 1.11 (not 1.10) end-to-end — DONE (1.11.0-openhouse)
-- [ ] Flip `cluster.iceberg.format-version` to 3 for the verification path (embedded test server /
-      configurable) and confirm the 1.11 fork metadata-writer emits valid v3 metadata
-- [ ] Verify DSv2 deletion vectors: Spark-4.0 MOR `DELETE` on a v3 table writes a puffin deletion
-      vector (not positional delete files), and the row is gone on read-back
-- [ ] e2e test on the Spark-4.0 REST lane; write-up `rung3-v3-deletion-vectors.md`
+- [x] Enable `cluster.iceberg.format-version=3` for the verification path WITHOUT flipping the green
+      suite: isolated `deletionVectorTest` Gradle task forks its own JVM with
+      `-Dcluster.iceberg.format-version=3`; `DeletionVectorTestSpark4_0` is excluded from the
+      default-v2 `test` task. Confirmed the 1.11 metadata-writer emits valid v3 (table property +
+      `TableMetadata.formatVersion()==3` + on-disk `"format-version":3`).
+- [x] Verify DSv2 deletion vectors: Spark-4.0 MOR `DELETE` on a v3 table writes a puffin deletion
+      vector (`.delete_files` `file_format=PUFFIN`, physical `*-deletes.puffin` with a
+      `deletion-vector-v1` blob, zero PARQUET pos-deletes), and the row is gone on read-back
+      (survivors `[1,3,4,5,6]`)
+- [x] e2e test on the Spark-4.0 REST lane (`DeletionVectorTestSpark4_0`, 2 methods PASSED); write-up
+      `rung3-v3-deletion-vectors.md` (incl. global-v3-default cost assessment: v2 read cliff → Rung 9)
 
 ## 3. Rung 7 — Server/metadata-writer runtime → Java 17 (keep Java-8 bytecode where consumed)
 - [ ] Move the server RUNTIME to Java 17; keep `-source/-target 8` (or `release 8`) where the
@@ -74,6 +80,10 @@ Pre-dispatch findings (durable):
 ---
 
 ## Change log (commits, newest first)
+- Rung 3 (THE GOAL) — v3 DSv2 deletion vectors proven on the Spark-4.0 REST lane. Isolated
+  `deletionVectorTest` fork (`-Dcluster.iceberg.format-version=3`) + `DeletionVectorTestSpark4_0`
+  (metadata-writer v3 proof + MOR-`DELETE`→puffin-deletion-vector proof); default-v2 `test` task
+  untouched. Write-up `rung3-v3-deletion-vectors.md`.
 - `a87befe` feat(spark-4.0): GRANT/REVOKE/SHOW GRANTS on the REST lane via direct HTTP to
   `/aclPolicies` (+ `GrantRevokeTestSpark4_0`, restored WapId GRANT, `grant-revoke-rest-lane.md`)
 - `4a35709` docs(spark4): add REMAINING-WORK master checklist

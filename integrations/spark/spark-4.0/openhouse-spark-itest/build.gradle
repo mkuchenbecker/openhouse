@@ -138,23 +138,49 @@ dependencies {
   testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
+// Spark 4.0 on Java 17 needs the launcher's documented module-open set (mirrors
+// delta-harness/run-openhouse.sh, i.e. org.apache.spark.launcher.JavaModuleOptions). Shared by the
+// default `test` task and the isolated `deletionVectorTest` task below.
+def sparkModuleOpens = [
+    '--add-opens=java.base/java.lang=ALL-UNNAMED',
+    '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
+    '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
+    '--add-opens=java.base/java.io=ALL-UNNAMED',
+    '--add-opens=java.base/java.net=ALL-UNNAMED',
+    '--add-opens=java.base/java.nio=ALL-UNNAMED',
+    '--add-opens=java.base/java.util=ALL-UNNAMED',
+    '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
+    '--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED',
+    '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
+    '--add-opens=java.base/sun.nio.cs=ALL-UNNAMED',
+    '--add-opens=java.base/sun.security.action=ALL-UNNAMED',
+    '--add-opens=java.base/sun.util.calendar=ALL-UNNAMED',
+    '--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED']
+
 test {
   useJUnitPlatform()
-  // Spark 4.0 on Java 17 needs the launcher's documented module-open set (mirrors
-  // delta-harness/run-openhouse.sh, i.e. org.apache.spark.launcher.JavaModuleOptions).
-  jvmArgs(
-      '--add-opens=java.base/java.lang=ALL-UNNAMED',
-      '--add-opens=java.base/java.lang.invoke=ALL-UNNAMED',
-      '--add-opens=java.base/java.lang.reflect=ALL-UNNAMED',
-      '--add-opens=java.base/java.io=ALL-UNNAMED',
-      '--add-opens=java.base/java.net=ALL-UNNAMED',
-      '--add-opens=java.base/java.nio=ALL-UNNAMED',
-      '--add-opens=java.base/java.util=ALL-UNNAMED',
-      '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
-      '--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED',
-      '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED',
-      '--add-opens=java.base/sun.nio.cs=ALL-UNNAMED',
-      '--add-opens=java.base/sun.security.action=ALL-UNNAMED',
-      '--add-opens=java.base/sun.util.calendar=ALL-UNNAMED',
-      '--add-opens=java.base/jdk.internal.ref=ALL-UNNAMED')
+  jvmArgs(sparkModuleOpens)
+  // Rung 3: the deletion-vector proof needs the embedded server to author format-version=3, which
+  // OpenHouse only does when cluster.iceberg.format-version=3. Setting that JVM-globally here would
+  // flip the whole (green, default-v2) suite to v3, so DeletionVectorTestSpark4_0 is carved out into
+  // the dedicated `deletionVectorTest` fork below and MUST NOT run in this default-v2 JVM.
+  exclude '**/DeletionVectorTestSpark4_0*'
 }
+
+// Rung 3 — Iceberg v3 DSv2 deletion vectors. Isolated fork whose embedded OpenHouse server is
+// configured for format-version=3 via the Spring `cluster.iceberg.format-version` system property
+// (OpenHouseInternalRepositoryImpl forces every table's FORMAT_VERSION to the cluster default on
+// create). Only DeletionVectorTestSpark4_0 runs here; the isolation is by JVM fork (not JUnit
+// ordering), so the default-v2 `test` task above is completely unaffected. Run explicitly with:
+//   ./gradlew :integrations:spark:spark-4.0:openhouse-spark-itest:deletionVectorTest
+tasks.register('deletionVectorTest', Test) {
+  description = 'Rung 3: v3 DSv2 deletion-vector proof (embedded server forced to format-version 3).'
+  group = 'verification'
+  useJUnitPlatform()
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  jvmArgs(sparkModuleOpens)
+  systemProperty 'cluster.iceberg.format-version', '3'
+  include '**/DeletionVectorTestSpark4_0*'
+}
+check.dependsOn 'deletionVectorTest'
