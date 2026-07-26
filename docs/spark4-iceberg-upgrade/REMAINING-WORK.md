@@ -77,8 +77,19 @@ Already satisfied by the 1.11 upgrade architecture; verified empirically (no cod
       server in the JDK-17 test JVM and is green on `Branch 1.11 CI`. Write-up
       `rung7-java17-runtime.md`
 
-## 4. Rung 8 — FINAL VALIDATION: delta-harness full matrix on Spark 4.0 / Iceberg 1.11
-- [ ] Run the delta-harness full matrix; capture results; write-up `rung8-final-validation.md`
+## 4. Rung 8 — FINAL VALIDATION: delta-harness full matrix on Spark 4.0 / Iceberg 1.11  ← DONE
+- [x] Ran the full matrix against the real embedded OpenHouse catalog on the Spark-4.0 / Iceberg-1.11
+      / REST-first stack: **2542 passed, 11 skipped, 21 failed (2574 cases)**, 98.8% pass. First run
+      had 39 failures; ~18 were purely the harness not registering the OpenHouse SQL extension —
+      fixed in `Env.scala` (`24dd99b`), re-run → 21.
+- [x] All 21 residuals triaged (write-up `rung8-final-validation.md`): **zero OpenHouse product
+      regressions.** They split into (A) harness assertions written for the legacy fork/custom-client
+      lane (rename-conflict / ns-create exception types; grant-on-unshared server-400), (B) the REST
+      lane *fixing* legacy bugs the harness still asserts broken (G10 retention & H3 column-tag
+      survive RTAS — harness says "flip this test"), and (C) stock-Spark-4.0/Iceberg-1.11-vs-fork
+      engine deltas (fork col-default feature absent on stock, branch ref-override, concurrent-append
+      count, partition-reject message, rename-consumer handoff). Harness-baseline polish is noted as
+      follow-up; not product work.
 
 ## 5. Rung 9 — Spike: HDFS client on Java 17 runtime (RBF wire-compat) + v3 read cliff  ← DONE
 - [x] Server HDFS client moved to **Hadoop 3.3** (the target that matters; legacy 2.10.0 is unfit
@@ -94,7 +105,14 @@ Already satisfied by the 1.11 upgrade architecture; verified empirically (no cod
 ---
 
 ## Change log (commits, newest first)
-- (this commit) Rung 9 — server HDFS client `hadoop-client 2.10.0 → 3.3.6` (Java-17-capable, RBF
+- (this commit) Rung 8 — delta-harness full matrix: 2542 passed / 11 skipped / 21 failed (2574),
+  all 21 triaged to harness-expectation or stock-engine-vs-fork deltas (0 product regressions);
+  `rung8-final-validation.md`.
+- `08b06e8` fix(build): migrate remaining commons-lang 2.x → commons-lang3 (Hadoop 3.3.6 fallout in
+  apps-1.5 + datalayout); whole-repo `testClasses` green.
+- `24dd99b` test(delta-harness): load the OpenHouse SQL extension in the harness SparkSession
+  (recovers ~18 ddl.* ParseException cases).
+- `2884455` Rung 9 — server HDFS client `hadoop-client 2.10.0 → 3.3.6` (Java-17-capable, RBF
   wire-compat), transitive fallout migrated to modern libs; build + boot + server tests green.
   `rung9-hdfs-java17-v3-readcliff.md`
 - `3f685e7` docs(spark4): Rung 7 — server runtime Java 17 / metadata-writer Java-8 bytecode
