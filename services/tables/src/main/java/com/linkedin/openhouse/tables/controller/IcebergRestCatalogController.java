@@ -845,7 +845,12 @@ public class IcebergRestCatalogController {
     // OpenHouse service-layer equivalents thrown by the reused create path and the update guards:
     RequestValidationFailureException.class,
     UnsupportedClientOperationException.class,
-    InvalidSchemaEvolutionException.class
+    InvalidSchemaEvolutionException.class,
+    // Corrupt/unparseable stored metadata is a permanent bad-state, not a transient server failure.
+    // Map it to a NON-retryable 400 (was falling through to handleGeneric -> 500, which the stock
+    // client's read/commit path retries with exponential backoff up to ~30 min before surfacing the
+    // error). The "has invalid metadata" message is preserved for the client either way.
+    com.linkedin.openhouse.common.exception.InvalidTableMetadataException.class
   })
   public ResponseEntity<String> handleBadRequest(Exception e) {
     return error(HttpStatus.BAD_REQUEST, e);
