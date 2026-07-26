@@ -1,6 +1,5 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
-import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tablestest.rest.OpenHouseRestSparkITest;
 import java.util.HashMap;
 import java.util.List;
@@ -368,14 +367,17 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
   }
 
   /**
-   * PENDING (see 10-RESIDUALS.md fix checklist). Verifies renaming ONTO an existing table is
-   * rejected. On the stock REST lane the OpenHouse {@code /iceberg} rename endpoint does NOT reject
-   * the conflict — empirically the rename threw nothing and the source table was gone afterward
-   * (silent replace). Ported faithfully (the custom {@code WebClientResponseWithMessageException}
-   * is on the compile classpath) but disabled until the server enforces the conflict.
+   * Verifies renaming ONTO an existing table is rejected. The OpenHouse {@code /iceberg} rename
+   * endpoint delegates to {@code OpenHouseInternalCatalog.renameTable}, which now throws {@code
+   * AlreadyExistsException} (-> HTTP 409) when the destination table already exists instead of
+   * silently rewriting the source table's identity onto the occupied name.
+   *
+   * <p>The assertion is engine-agnostic: the exact client-surfaced exception type differs between
+   * the 3.1 custom-client lane ({@code WebClientResponseWithMessageException}) and this stock
+   * {@code RESTCatalog} lane, so we assert the BEHAVIOR instead -- the rename is rejected (some
+   * exception is thrown) AND both the source and the pre-existing destination survive the failed
+   * rename intact (no silent replace).
    */
-  @Disabled(
-      "rename-onto-existing not rejected on REST lane (silent replace) — see spark4-e2e-tests/10-RESIDUALS.md")
   @Test
   public void testRenameTableFailsConflict() throws Exception {
     try (SparkSession spark = getSparkSession()) {
@@ -401,19 +403,21 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
               conflictingTableIdentifier, schema, PartitionSpec.unpartitioned(), conflictingProps);
       Assertions.assertNull(conflictingTable.properties().get("user.property"));
 
-      // Should fail with a conflict. The 3.1 lane surfaced the custom
-      // WebClientResponseWithMessageException; the exact stock-Iceberg mapping is TBD once the
-      // server enforces the conflict.
+      // Renaming onto an existing table must be rejected. The client-surfaced exception type is
+      // engine-specific (stock RESTCatalog maps the server 409 differently than the 3.1 custom
+      // client), so assert only that SOME exception is thrown -- the behavioral contract.
       Assertions.assertThrows(
-          WebClientResponseWithMessageException.class,
+          Exception.class,
           () ->
               spark.sql(
                   "ALTER TABLE openhouse.db.rename_test2 RENAME TO openhouse.db.rename_test_conflict"));
 
-      // Since rename fails, properties on the conflicting table should not have propagated.
+      // The failed rename must not have mutated either table: the source still exists, and the
+      // pre-existing destination is untouched (its "user.property" was never set, so the source's
+      // property must not have leaked onto it via a silent replace).
+      Assertions.assertNotNull(icebergCatalog.loadTable(fromTableIdentifier));
       Assertions.assertNull(
           icebergCatalog.loadTable(conflictingTableIdentifier).properties().get("user.property"));
-      Assertions.assertNotNull(icebergCatalog.loadTable(fromTableIdentifier));
     }
   }
 

@@ -211,6 +211,32 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
   @Override
   public void renameTable(TableIdentifier from, TableIdentifier to) {
     Table fromTable = loadTable(from);
+
+    // Reject a rename onto an already-existing table (silent-replace guard).
+    //
+    // The conflict must be checked at the EFFECTIVE destination -- the source namespace combined
+    // with the new table name -- NOT the raw `to` identifier. Two things make the raw `to`
+    // unreliable:
+    //   1. OpenHouse only supports renaming within a single database: the HTS rename
+    //      (UserTablesServiceImpl.renameUserTable) discards the destination databaseId and reuses
+    //      the source's, so the destination database is always the source's namespace.
+    //   2. On the Spark REST lane, `ALTER TABLE openhouse.db.x RENAME TO openhouse.db.y` leaks the
+    //      Spark catalog name into the destination namespace, so `to` arrives as `openhouse.db.y`
+    //      (namespace [openhouse, db]) while the actual table lives under namespace [db]. A
+    //      tableExists(to) check would resolve the wrong, catalog-prefixed namespace and never see
+    //      the conflict.
+    // Resolving the destination against the source namespace matches exactly the row the rename
+    // will write, so this is the identifier the existence check must use.
+    TableIdentifier effectiveDestination = TableIdentifier.of(from.namespace(), to.name());
+    boolean renamingToSameTable =
+        from.namespace().toString().equalsIgnoreCase(effectiveDestination.namespace().toString())
+            && from.name().equalsIgnoreCase(effectiveDestination.name());
+    if (!renamingToSameTable && tableExists(effectiveDestination)) {
+      throw new org.apache.iceberg.exceptions.AlreadyExistsException(
+          "Cannot rename %s to %s because a table already exists at %s",
+          from, to, effectiveDestination);
+    }
+
     String tableClusterId = fromTable.properties().get(CatalogConstants.OPENHOUSE_CLUSTERID_KEY);
 
     // Preserve existing case if databases are the same
