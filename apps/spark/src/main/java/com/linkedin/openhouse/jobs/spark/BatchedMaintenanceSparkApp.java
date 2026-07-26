@@ -41,8 +41,12 @@ import org.apache.commons.lang3.StringUtils;
  *       signals a failed operation.
  *   <li>{@link #operationType()} — the wire enum value reported back per operation.
  *   <li>{@link #operationLabel()} — a short label used on log lines.
- *   <li>{@link #maxBatchSize()} — optional cap enforced when parsing {@code --tableNames}.
  * </ul>
+ *
+ * <p>Each concrete app also supplies a static {@code buildEntries(tableNames, operationIds,
+ * tableUuids)} wrapper that forwards its own {@code (cap, label)} to the base static {@link
+ * #buildEntries(String, String, String, int, String)} so its batch-size cap is enforced at
+ * parse time inside {@code createApp}, before any instance exists.
  *
  * @see BatchedOrphanFilesDeletionSparkApp the reference concrete implementation.
  */
@@ -78,14 +82,6 @@ public abstract class BatchedMaintenanceSparkApp extends BaseSparkApp {
 
   /** Short label for this operation, used on log lines (e.g. {@code "OFD"}). */
   protected abstract String operationLabel();
-
-  /**
-   * Maximum number of tables permitted in a single batch. Enforced by {@link #buildEntries} at parse
-   * time. Defaults to no practical cap; subclasses override to impose an operation-specific bound.
-   */
-  protected int maxBatchSize() {
-    return Integer.MAX_VALUE;
-  }
 
   @Override
   protected void runInner(Operations ops) {

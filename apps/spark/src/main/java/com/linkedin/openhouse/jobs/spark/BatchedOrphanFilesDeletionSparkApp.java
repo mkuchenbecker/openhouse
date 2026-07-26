@@ -91,11 +91,6 @@ public class BatchedOrphanFilesDeletionSparkApp extends BatchedMaintenanceSparkA
   }
 
   @Override
-  protected int maxBatchSize() {
-    return AppConstants.OFD_MAX_BATCH_SIZE;
-  }
-
-  @Override
   protected void maintainTable(Operations ops, BatchEntry entry) {
     String fqtn = entry.getFqtn();
     Table table = ops.getTable(fqtn);
@@ -121,7 +116,7 @@ public class BatchedOrphanFilesDeletionSparkApp extends BatchedMaintenanceSparkA
         orphanCount,
         Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), fqtn));
     validate(ops, fqtn);
-    log.info("OFD success: fqtn={} orphansDetected={}", fqtn, orphanCount);
+    log.info("OFD orphansDetected={} fqtn={}", orphanCount, fqtn);
   }
 
   /**
