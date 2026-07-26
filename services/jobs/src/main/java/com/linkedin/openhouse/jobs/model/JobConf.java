@@ -34,6 +34,12 @@ public class JobConf {
      */
     ORPHAN_FILES_DELETION_BATCH,
     SNAPSHOTS_EXPIRATION,
+    /**
+     * Multi-table snapshots-expiration. One Spark job processes a list of tables grouped by
+     * database — bin-packing happens scheduler-side. See {@code
+     * BatchedSnapshotsExpirationSparkApp}.
+     */
+    SNAPSHOTS_EXPIRATION_BATCH,
     STAGED_FILES_DELETION,
     /**
      * Multi-table staged-files-deletion. One Spark job processes a list of tables grouped by

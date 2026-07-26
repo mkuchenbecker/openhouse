@@ -47,6 +47,11 @@ public class SchedulerConfig {
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
    * </ul>
+   * Both orphan-files-deletion and snapshots-expiration pack with a {@link
+   * FirstFitDecreasingBinPacker} over {@link TotalFilesBinItem}. Cost scales with file count — per-
+   * file list, manifest joins, and (for OFD) delete calls dominate independent of file size;
+   * snapshot expiration's metadata/manifest work tracks file count similarly, so file-count weight
+   * is the best available proxy for both.
    */
   @Bean
   public SchedulerRunner schedulerRunner(
@@ -58,6 +63,10 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.ofd.max-tables-per-bin}") int ofdMaxTablesPerBin,
       @Value("${optimizer.scheduler.sfd.max-files-per-bin}") long sfdMaxFilesPerBin,
       @Value("${optimizer.scheduler.sfd.max-tables-per-bin}") int sfdMaxTablesPerBin) {
+      @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
+          long snapshotsExpirationMaxFilesPerBin,
+      @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
+          int snapshotsExpirationMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -72,6 +81,11 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(sfdMaxFilesPerBin)
                 .maxItemsPerBin(sfdMaxTablesPerBin)
+            OperationTypeDto.SNAPSHOTS_EXPIRATION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
+                .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
                 .build());
   }
 }
