@@ -41,7 +41,7 @@ Upgraded from the earlier documented deferral to a real implementation.
 - [x] Restored the dropped `GRANT` in `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations`.
 - [x] Write-up: `grant-revoke-rest-lane.md`; updated `10-RESIDUALS.md` (deferral → fixed).
 
-## 2. Rung 3 — Iceberg 1.11 + v3 DSv2 deletion vectors (THE GOAL)
+## 2. Rung 3 — Iceberg 1.11 + v3 DSv2 deletion vectors (THE GOAL)  ← IN PROGRESS
 Pre-dispatch findings (durable):
 - **Version: already 1.11.** `build.gradle` sets `iceberg_1_11_version = "1.11.0-openhouse"` and the
   Spark-4.0 runtime + itest modules resolve `1.11.0-openhouse`. No version bump needed — 1.11 is the
@@ -74,8 +74,9 @@ Pre-dispatch findings (durable):
 ---
 
 ## Change log (commits, newest first)
-- (this commit) feat(spark-4.0): GRANT/REVOKE/SHOW GRANTS on the REST lane via direct HTTP to
+- `a87befe` feat(spark-4.0): GRANT/REVOKE/SHOW GRANTS on the REST lane via direct HTTP to
   `/aclPolicies` (+ `GrantRevokeTestSpark4_0`, restored WapId GRANT, `grant-revoke-rest-lane.md`)
+- `4a35709` docs(spark4): add REMAINING-WORK master checklist
 - `77eb4e9` docs: mark InvalidMetadata CI-perf FIXED
 - `9cceeab` docs: consolidate residuals — backlog all-green except GRANT deferral
 - `923d39b` Restore openhouse.tableUri assertion
