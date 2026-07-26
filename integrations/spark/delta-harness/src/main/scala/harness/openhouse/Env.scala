@@ -135,10 +135,15 @@ object OpenHouseEnv {
     val base = SparkSession.builder()
       .appName("delta-harness-openhouse")
       .master("local[2]")
-      // Phase 2 (REST-first): stock Iceberg extensions only. The custom OpenHouse Spark extension
-      // (policy DDL sugar) is NOT shipped on the Spark-4 REST-first client, so it is not registered.
+      // Phase 2 (REST-first): stock Iceberg extension PLUS the OpenHouse Spark SQL extension, now
+      // ported to Spark-4.0 / Scala-2.13 (module openhouse-spark-4.0-runtime_2.13, on this harness
+      // classpath via the itest module). It parses the custom SET/UNSET POLICY, MODIFY COLUMN SET
+      // TAG, and GRANT/REVOKE DDL and lowers it onto the /iceberg + /aclPolicies server paths — so
+      // the ddl.policy.*, ddl.colTag, and ddl.acl.* scenarios exercise the real DDL instead of
+      // failing to parse. Mirrors OpenHouseRestSparkITest.getBuilder.
       .config("spark.sql.extensions",
-        "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+        "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions," +
+          "com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions")
       .config("spark.hadoop.fs.defaultFS", "file:///")
       .config("spark.sql.session.timeZone", "UTC")
       .config("spark.sql.autoBroadcastJoinThreshold", "-1")
