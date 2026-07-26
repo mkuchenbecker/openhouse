@@ -4,7 +4,6 @@ import com.google.common.collect.Iterables;
 import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.exception.TableValidationException;
-import com.linkedin.openhouse.jobs.spark.optimizer.OptimizerServiceClient;
 import com.linkedin.openhouse.jobs.spark.state.StateManager;
 import com.linkedin.openhouse.jobs.util.AppConstants;
 import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
@@ -13,24 +12,13 @@ import com.linkedin.openhouse.optimizer.client.model.UpdateOperationRequest;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import java.time.Duration;
-import java.util.AbstractMap;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.math.NumberUtils;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.actions.DeleteOrphanFiles;
@@ -45,6 +33,10 @@ import org.apache.iceberg.actions.DeleteOrphanFiles;
  * app remains the deployment unit when bin size is 1, and stays the canonical reference for the
  * actual deletion logic.
  *
+ * <p>The operation-agnostic batching, results-callback, and CLI-parsing machinery lives in {@link
+ * BatchedMaintenanceSparkApp}; this class supplies only the OFD-specific per-table deletion logic
+ * and CLI options.
+ *
  * <p>Example invocation:
  *
  * <pre>{@code
@@ -57,14 +49,11 @@ import org.apache.iceberg.actions.DeleteOrphanFiles;
  * }</pre>
  */
 @Slf4j
-public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
+public class BatchedOrphanFilesDeletionSparkApp extends BatchedMaintenanceSparkApp {
 
   private static final int DEFAULT_MAX_ORPHAN_FILE_SAMPLE_SIZE = 20000;
   private static final int DEFAULT_MIN_OFD_TTL_IN_DAYS = 3;
 
-  private final List<BatchEntry> entries;
-  private final String resultsEndpoint;
-  private final int driverParallelism;
   private final long ttlSeconds;
   private final String backupDir;
   private final int concurrentDeletes;
@@ -83,10 +72,7 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
       int concurrentDeletes,
       boolean streamResults,
       int maxOrphanFileSampleSize) {
-    super(jobId, stateManager, otelEmitter);
-    this.entries = entries;
-    this.resultsEndpoint = resultsEndpoint;
-    this.driverParallelism = Math.max(1, driverParallelism);
+    super(jobId, stateManager, otelEmitter, entries, resultsEndpoint, driverParallelism);
     this.ttlSeconds = ttlSeconds;
     this.backupDir = backupDir;
     this.concurrentDeletes = concurrentDeletes;
@@ -95,264 +81,88 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
   }
 
   @Override
-  protected void runInner(Operations ops) {
-    log.info(
-        "Batched OFD start: entries={} driverParallelism={} resultsEndpoint={}",
-        entries.size(),
-        driverParallelism,
-        resultsEndpoint);
-
-    if (entries.isEmpty()) {
-      log.warn("Batched OFD invoked with no entries; nothing to do");
-      return;
-    }
-
-    Optional<OptimizerServiceClient> client = newOptimizerClient();
-    int successCount = runBatch(ops, client);
-
-    int failureCount = entries.size() - successCount;
-    log.info(
-        "Batched OFD finished: total={} success={} failed={}",
-        entries.size(),
-        successCount,
-        failureCount);
-
-    if (successCount == 0) {
-      throw new RuntimeException(
-          String.format("All %d operations in batch failed", entries.size()));
-    }
+  protected UpdateOperationRequest.OperationTypeEnum operationType() {
+    return UpdateOperationRequest.OperationTypeEnum.ORPHAN_FILES_DELETION;
   }
 
-  private int runBatch(Operations ops, Optional<OptimizerServiceClient> client) {
-    ExecutorService pool = Executors.newFixedThreadPool(driverParallelism);
-    try {
-      // Two-phase pipeline: submit every worker first (so they run concurrently), then await each.
-      // Pairing each Future with its BatchEntry via AbstractMap.SimpleImmutableEntry.
-      List<Map.Entry<BatchEntry, Future<Boolean>>> submissions =
-          entries.stream()
-              .map(
-                  entry ->
-                      new AbstractMap.SimpleImmutableEntry<>(
-                          entry, pool.submit(new TableWorker(ops, entry, client))))
-              .collect(Collectors.toList());
-      return submissions.stream()
-          .mapToInt(submission -> awaitOne(submission.getKey(), submission.getValue(), client))
-          .sum();
-    } finally {
-      shutdownPool(pool);
-    }
+  @Override
+  protected String operationLabel() {
+    return "OFD";
   }
 
-  private int awaitOne(
-      BatchEntry entry, Future<Boolean> future, Optional<OptimizerServiceClient> client) {
-    try {
-      return Boolean.TRUE.equals(future.get()) ? 1 : 0;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      log.error("Worker interrupted: fqtn={}", entry.getFqtn(), e);
-      otelEmitter.count(
-          METRICS_SCOPE,
-          "optimizer_batch_interrupted",
-          1,
-          Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), entry.getFqtn()));
-      return 0;
-    } catch (ExecutionException e) {
-      // The worker catches Throwable internally and always reports its own result, so reaching
-      // here means the worker itself leaked an exception. Be defensive: post FAILED so the
-      // operation row doesn't sit SCHEDULED until the stale-timeout.
-      log.error(
-          "Worker threw outside its own catch for fqtn={} — reporting FAILED",
-          entry.getFqtn(),
-          e.getCause());
-      reportResult(entry, UpdateOperationRequest.StatusEnum.FAILED, client);
-      return 0;
-    }
+  @Override
+  protected int maxBatchSize() {
+    return AppConstants.OFD_MAX_BATCH_SIZE;
   }
 
-  private void shutdownPool(ExecutorService pool) {
-    pool.shutdown();
-    try {
-      if (!pool.awaitTermination(30, TimeUnit.SECONDS)) {
-        pool.shutdownNow();
-      }
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      pool.shutdownNow();
-    }
+  @Override
+  protected void maintainTable(Operations ops, BatchEntry entry) {
+    String fqtn = entry.getFqtn();
+    Table table = ops.getTable(fqtn);
+    long olderThanTimestampMillis =
+        System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(resolveTtlSeconds(table));
+    DeleteOrphanFiles.Result result =
+        ops.deleteOrphanFiles(
+            table,
+            olderThanTimestampMillis,
+            Boolean.parseBoolean(
+                table.properties().getOrDefault(AppConstants.BACKUP_ENABLED_KEY, "false")),
+            backupDir,
+            concurrentDeletes,
+            streamResults,
+            maxOrphanFileSampleSize);
+    // Count via iteration rather than materializing the full path list: a table with millions
+    // of orphan files would otherwise OOM the driver, and that risk multiplies with
+    // driverParallelism workers running concurrently.
+    int orphanCount = Iterables.size(result.orphanFileLocations());
+    otelEmitter.count(
+        METRICS_SCOPE,
+        AppConstants.ORPHAN_FILE_COUNT,
+        orphanCount,
+        Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), fqtn));
+    validate(ops, fqtn);
+    log.info("OFD success: fqtn={} orphansDetected={}", fqtn, orphanCount);
   }
 
   /**
-   * Returns a client bound to {@link #resultsEndpoint}, or empty when the endpoint was not
-   * configured — in that case the legacy {@link
-   * com.linkedin.openhouse.jobs.scheduler.JobsScheduler} is the caller and reports lifecycle via
-   * HTS; the per-operation optimizer callback is skipped.
+   * Re-runs {@link TableStateValidator} — the same post-job consistency check the single-table
+   * {@link OrphanFilesDeletionSparkApp} uses — to confirm the table's manifests and metadata are
+   * intact after deletion. A failure here is treated as a failed operation: it's logged, counted,
+   * and re-thrown so the worker marks {@code success=false}.
    */
-  protected Optional<OptimizerServiceClient> newOptimizerClient() {
-    return Optional.ofNullable(resultsEndpoint).map(OptimizerServiceClient::new);
-  }
-
-  /**
-   * POST the per-operation outcome to the Optimizer Service via the generated client. No-op when
-   * {@code client} is empty (the legacy scheduler-driven path; lifecycle is already tracked via
-   * HTS). When the call exhausts retries we log + count and leave the operation row at SCHEDULED so
-   * the Analyzer's stale-timeout can re-queue it.
-   *
-   * <p>{@code status} is passed in as a {@link UpdateOperationRequest.StatusEnum} rather than a
-   * boolean so the caller's intent is unambiguous and new terminal states (e.g. CANCELED) can be
-   * plumbed in without changing the signature.
-   */
-  private void reportResult(
-      BatchEntry entry,
-      UpdateOperationRequest.StatusEnum status,
-      Optional<OptimizerServiceClient> client) {
-    if (!client.isPresent()) {
-      return;
-    }
-    UpdateOperationRequest body =
-        new UpdateOperationRequest()
-            .operationId(entry.getOperationId().orElse(null))
-            .status(status)
-            .tableUuid(entry.getTableUuid().orElse(null))
-            .databaseName(entry.getDatabaseName())
-            .tableName(entry.getTableName())
-            .operationType(UpdateOperationRequest.OperationTypeEnum.ORPHAN_FILES_DELETION);
-    if (!client.get().updateOperation(entry.getOperationId().orElse(null), body).isPresent()) {
-      log.error(
-          "Failed to report operation result after retries; row will stay SCHEDULED until stale-timeout: operationId={} fqtn={}",
-          entry.getOperationId().orElse(null),
-          entry.getFqtn());
+  private void validate(Operations ops, String fqtn) {
+    try {
+      TableStateValidator.run(ops.spark(), fqtn);
+    } catch (TableValidationException e) {
+      log.error("Post-job validation failed: fqtn={}", fqtn, e);
       otelEmitter.count(
           METRICS_SCOPE,
-          "optimizer_update_failed",
+          "post_run_validation_error",
           1,
-          Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), entry.getFqtn()));
-    }
-  }
-
-  /** One unit of work in a batched OFD job. */
-  private final class TableWorker implements Callable<Boolean> {
-    private final Operations ops;
-    private final BatchEntry entry;
-    private final Optional<OptimizerServiceClient> client;
-
-    TableWorker(Operations ops, BatchEntry entry, Optional<OptimizerServiceClient> client) {
-      this.ops = ops;
-      this.entry = entry;
-      this.client = client;
-    }
-
-    @Override
-    public Boolean call() {
-      String fqtn = entry.getFqtn();
-      UpdateOperationRequest.StatusEnum status = UpdateOperationRequest.StatusEnum.FAILED;
-      try {
-        log.info("OFD start: fqtn={} operationId={}", fqtn, entry.getOperationId().orElse(""));
-        Table table = ops.getTable(fqtn);
-        long olderThanTimestampMillis =
-            System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(resolveTtlSeconds(table));
-        DeleteOrphanFiles.Result result =
-            ops.deleteOrphanFiles(
-                table,
-                olderThanTimestampMillis,
-                Boolean.parseBoolean(
-                    table.properties().getOrDefault(AppConstants.BACKUP_ENABLED_KEY, "false")),
-                backupDir,
-                concurrentDeletes,
-                streamResults,
-                maxOrphanFileSampleSize);
-        // Count via iteration rather than materializing the full path list: a table with millions
-        // of orphan files would otherwise OOM the driver, and that risk multiplies with
-        // driverParallelism workers running concurrently.
-        int orphanCount = Iterables.size(result.orphanFileLocations());
-        otelEmitter.count(
-            METRICS_SCOPE,
-            AppConstants.ORPHAN_FILE_COUNT,
-            orphanCount,
-            Attributes.of(AttributeKey.stringKey(AppConstants.TABLE_NAME), fqtn));
-        validate(fqtn);
-        status = UpdateOperationRequest.StatusEnum.SUCCESS;
-        log.info("OFD success: fqtn={} orphansDetected={}", fqtn, orphanCount);
-      } catch (Throwable t) {
-        log.error("OFD failed: fqtn={} operationId={}", fqtn, entry.getOperationId().orElse(""), t);
-      } finally {
-        // Defensive: reportResult must not throw out of the finally block, since that would mask
-        // the original failure and propagate up to awaitOne, which would then report FAILED again.
-        try {
-          reportResult(entry, status, client);
-        } catch (Throwable t) {
-          log.error(
-              "reportResult itself threw; operation row will stay SCHEDULED until stale-timeout: fqtn={}",
+          Attributes.of(
+              AttributeKey.stringKey(AppConstants.TABLE_NAME),
               fqtn,
-              t);
-        }
-      }
-      return status == UpdateOperationRequest.StatusEnum.SUCCESS;
-    }
-
-    /**
-     * Re-runs {@link TableStateValidator} — the same post-job consistency check the single-table
-     * {@link OrphanFilesDeletionSparkApp} uses — to confirm the table's manifests and metadata are
-     * intact after deletion. A failure here is treated as a failed operation: it's logged, counted,
-     * and re-thrown so the outer {@link #call()} marks {@code success=false}.
-     */
-    private void validate(String fqtn) {
-      try {
-        TableStateValidator.run(ops.spark(), fqtn);
-      } catch (TableValidationException e) {
-        log.error("Post-job validation failed: fqtn={}", fqtn, e);
-        otelEmitter.count(
-            METRICS_SCOPE,
-            "post_run_validation_error",
-            1,
-            Attributes.of(
-                AttributeKey.stringKey(AppConstants.TABLE_NAME),
-                fqtn,
-                AttributeKey.stringKey(AppConstants.JOB_NAME),
-                BatchedOrphanFilesDeletionSparkApp.class.getSimpleName()));
-        throw e;
-      }
-    }
-
-    private long resolveTtlSeconds(Table table) {
-      long resolved = ttlSeconds;
-      if (Boolean.parseBoolean(
-          table.properties().getOrDefault(AppConstants.OFD_ONE_DAY_TTL_ENABLED_KEY, "false"))) {
-        resolved = TimeUnit.DAYS.toSeconds(1);
-      }
-      String tableType =
-          table
-              .properties()
-              .getOrDefault(AppConstants.OPENHOUSE_TABLE_TYPE_KEY, AppConstants.TABLE_TYPE_PRIMARY);
-      if (AppConstants.TABLE_TYPE_REPLICA.equals(tableType)
-          && Duration.ofSeconds(resolved).toDays() < DEFAULT_MIN_OFD_TTL_IN_DAYS) {
-        resolved = TimeUnit.DAYS.toSeconds(DEFAULT_MIN_OFD_TTL_IN_DAYS);
-      }
-      return resolved;
+              AttributeKey.stringKey(AppConstants.JOB_NAME),
+              BatchedOrphanFilesDeletionSparkApp.class.getSimpleName()));
+      throw e;
     }
   }
 
-  /**
-   * Per-table inputs for one operation row inside a bin. {@code operationId} and {@code tableUuid}
-   * are exposed as {@link Optional} because the legacy scheduler path leaves them unset (no
-   * optimizer-service context); the optimizer-service path always populates them.
-   */
-  @lombok.AllArgsConstructor
-  @lombok.Builder
-  @lombok.ToString
-  public static class BatchEntry {
-    @lombok.Getter private final String fqtn;
-    private final String operationId;
-    private final String tableUuid;
-    @lombok.Getter private final String databaseName;
-    @lombok.Getter private final String tableName;
-
-    public Optional<String> getOperationId() {
-      return Optional.ofNullable(operationId);
+  private long resolveTtlSeconds(Table table) {
+    long resolved = ttlSeconds;
+    if (Boolean.parseBoolean(
+        table.properties().getOrDefault(AppConstants.OFD_ONE_DAY_TTL_ENABLED_KEY, "false"))) {
+      resolved = TimeUnit.DAYS.toSeconds(1);
     }
-
-    public Optional<String> getTableUuid() {
-      return Optional.ofNullable(tableUuid);
+    String tableType =
+        table
+            .properties()
+            .getOrDefault(AppConstants.OPENHOUSE_TABLE_TYPE_KEY, AppConstants.TABLE_TYPE_PRIMARY);
+    if (AppConstants.TABLE_TYPE_REPLICA.equals(tableType)
+        && Duration.ofSeconds(resolved).toDays() < DEFAULT_MIN_OFD_TTL_IN_DAYS) {
+      resolved = TimeUnit.DAYS.toSeconds(DEFAULT_MIN_OFD_TTL_IN_DAYS);
     }
+    return resolved;
   }
 
   public static void main(String[] args) {
@@ -406,81 +216,16 @@ public class BatchedOrphanFilesDeletionSparkApp extends BaseSparkApp {
                 "maxOrphanFileSampleSize", String.valueOf(DEFAULT_MAX_ORPHAN_FILE_SAMPLE_SIZE))));
   }
 
+  /**
+   * OFD-specific {@link BatchedMaintenanceSparkApp#buildEntries} wrapper: enforces {@link
+   * AppConstants#OFD_MAX_BATCH_SIZE} and surfaces that constant's name in the over-limit error.
+   */
   static List<BatchEntry> buildEntries(String tableNames, String operationIds, String tableUuids) {
-    if (tableNames == null || tableNames.isEmpty()) {
-      throw new IllegalArgumentException("--tableNames is required and must be non-empty");
-    }
-    String[] tables = tableNames.split(",");
-    if (tables.length > AppConstants.OFD_MAX_BATCH_SIZE) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Batch size %d exceeds OFD_MAX_BATCH_SIZE=%d; reduce --batchMaxItems on the scheduler",
-              tables.length, AppConstants.OFD_MAX_BATCH_SIZE));
-    }
-    String[] ops = StringUtils.isBlank(operationIds) ? null : operationIds.split(",");
-    String[] uuids = StringUtils.isBlank(tableUuids) ? null : tableUuids.split(",");
-    if (ops != null && ops.length != tables.length) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Parallel-list length mismatch: tableNames=%d operationIds=%d",
-              tables.length, ops.length));
-    }
-    if (uuids != null && uuids.length != tables.length) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Parallel-list length mismatch: tableNames=%d tableUuids=%d",
-              tables.length, uuids.length));
-    }
-    List<BatchEntry> entries = new ArrayList<>(tables.length);
-    for (int i = 0; i < tables.length; i++) {
-      String fqtn = tables[i].trim();
-      String[] dbAndTable = fqtn.split("\\.", 2);
-      if (dbAndTable.length != 2 || dbAndTable[0].isEmpty() || dbAndTable[1].isEmpty()) {
-        throw new IllegalArgumentException(
-            "tableNames entries must be fully-qualified (db.table): " + fqtn);
-      }
-      entries.add(
-          BatchEntry.builder()
-              .fqtn(fqtn)
-              .operationId(ops == null ? null : ops[i].trim())
-              .tableUuid(uuids == null ? null : uuids[i].trim())
-              .databaseName(dbAndTable[0])
-              .tableName(dbAndTable[1])
-              .build());
-    }
-    return entries;
-  }
-
-  private static String requireOption(CommandLine cmdLine, String name) {
-    String value = cmdLine.getOptionValue(name);
-    if (value == null || value.isEmpty()) {
-      throw new IllegalArgumentException("--" + name + " is required");
-    }
-    return value;
-  }
-
-  /** Long-only CLI option carrying a value (read with {@code cmdLine.getOptionValue(name)}). */
-  private static Option valueOpt(String name, String description) {
-    return new Option(null, name, true, description);
-  }
-
-  /** Aliased CLI option carrying a value. {@code shortOpt} is the legacy single-letter alias. */
-  private static Option valueOpt(String name, String shortOpt, String description) {
-    return new Option(shortOpt, name, true, description);
-  }
-
-  /** Long-only boolean CLI flag (read with {@code cmdLine.hasOption(name)}). */
-  private static Option flagOpt(String name, String description) {
-    return new Option(null, name, false, description);
-  }
-
-  /** Visible for tests. */
-  List<BatchEntry> getEntries() {
-    return Collections.unmodifiableList(entries);
-  }
-
-  /** Visible for tests. */
-  int getDriverParallelism() {
-    return driverParallelism;
+    return buildEntries(
+        tableNames,
+        operationIds,
+        tableUuids,
+        AppConstants.OFD_MAX_BATCH_SIZE,
+        "OFD_MAX_BATCH_SIZE");
   }
 }
