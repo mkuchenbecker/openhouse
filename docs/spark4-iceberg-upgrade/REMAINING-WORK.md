@@ -80,14 +80,24 @@ Already satisfied by the 1.11 upgrade architecture; verified empirically (no cod
 ## 4. Rung 8 — FINAL VALIDATION: delta-harness full matrix on Spark 4.0 / Iceberg 1.11
 - [ ] Run the delta-harness full matrix; capture results; write-up `rung8-final-validation.md`
 
-## 5. Rung 9 — Spike: HDFS client on Java 17 runtime (RBF wire-compat) + v3 read cliff
-- [ ] Assess HDFS client on Java 17 (RBF wire-compat) and the v3 read cliff; write-up
+## 5. Rung 9 — Spike: HDFS client on Java 17 runtime (RBF wire-compat) + v3 read cliff  ← DONE
+- [x] Server HDFS client moved to **Hadoop 3.3** (the target that matters; legacy 2.10.0 is unfit
+      for Java 17 and lacks `FileSystem.openFile`): `hadoop-conventions` `2.10.0 → 3.3.6`. Fixed the
+      transitive fallout at the source (commons-lang 2.x → lang3; Apache Directory `Strings` → lang3;
+      codehaus Jackson 1.x → fasterxml). Verified: all `hadoop-conventions` modules compile main+test,
+      `cluster:storage:test` green, server boots (`generateOpenApiDocs`), `TablesControllerTest` +
+      `PoliciesSpecMapperTest` green on JDK 17 + Hadoop 3.3.6.
+- [x] Java-17 runtime + RBF wire-compat (3.3.6 client ↔ 3.1/3.2 routers) + v3 read-cliff assessed;
+      real-HDFS-cluster run remains a deployment gate (F-VACUITY-HADOOP). Write-up
       `rung9-hdfs-java17-v3-readcliff.md`
 
 ---
 
 ## Change log (commits, newest first)
-- (this commit) docs(spark4): Rung 7 — server runtime Java 17 / metadata-writer Java-8 bytecode
+- (this commit) Rung 9 — server HDFS client `hadoop-client 2.10.0 → 3.3.6` (Java-17-capable, RBF
+  wire-compat), transitive fallout migrated to modern libs; build + boot + server tests green.
+  `rung9-hdfs-java17-v3-readcliff.md`
+- `3f685e7` docs(spark4): Rung 7 — server runtime Java 17 / metadata-writer Java-8 bytecode
   verified (already satisfied by the 1.11 architecture; `javap` proof major 52). `rung7-java17-runtime.md`
 - `69d83d6` Rung 3 (THE GOAL) — v3 DSv2 deletion vectors proven on the Spark-4.0 REST lane. Isolated
   `deletionVectorTest` fork (`-Dcluster.iceberg.format-version=3`) + `DeletionVectorTestSpark4_0`
