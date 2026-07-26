@@ -720,31 +720,65 @@ public class IcebergRestCatalogController {
     if (patch == null) {
       return existing;
     }
-    if (existing == null) {
-      return patch;
-    }
     com.google.gson.JsonObject patchObj =
         com.google.gson.JsonParser.parseString(patchJson).getAsJsonObject();
-    Policies.PoliciesBuilder merged = existing.toBuilder();
-    if (patch.getRetention() != null) {
+    // Build onto the existing policy (or a fresh one when the table has none yet) so the
+    // empty-object-means-clear rule below is applied uniformly on both the merge and the
+    // no-existing-policy paths -- an UNSET on a table that never had the sub-policy must NOT
+    // fall through and persist an invalid empty sub-policy object.
+    Policies.PoliciesBuilder merged = existing == null ? Policies.builder() : existing.toBuilder();
+
+    // Clear semantics ("tombstone"): a sub-policy present in the patch JSON as an EMPTY object
+    // ({}) means "clear this sub-policy" -- drop it from the merged Policies instead of
+    // overriding with an invalid empty object. This is what UNSET POLICY (...) emits, e.g.
+    // UnSetReplicationPolicyExec sends {"replication": {}}. Detected on the raw patch JSON
+    // because the parsed server model cannot distinguish an absent sub-policy from an
+    // empty-but-present one. A real SET always carries a non-empty object, so its override path
+    // (the else branches) is untouched.
+    if (isClearedSubPolicy(patchObj, "retention")) {
+      merged.retention(null);
+    } else if (patch.getRetention() != null) {
       merged.retention(patch.getRetention());
     }
     if (patchObj.has("sharingEnabled")) {
       merged.sharingEnabled(patch.isSharingEnabled());
     }
-    if (patch.getColumnTags() != null) {
+    if (isClearedSubPolicy(patchObj, "columnTags")) {
+      merged.columnTags(null);
+    } else if (patch.getColumnTags() != null) {
       merged.columnTags(patch.getColumnTags());
     }
-    if (patch.getReplication() != null) {
+    if (isClearedSubPolicy(patchObj, "replication")) {
+      merged.replication(null);
+    } else if (patch.getReplication() != null) {
       merged.replication(patch.getReplication());
     }
-    if (patch.getHistory() != null) {
+    if (isClearedSubPolicy(patchObj, "history")) {
+      merged.history(null);
+    } else if (patch.getHistory() != null) {
       merged.history(patch.getHistory());
     }
     if (patch.getLockState() != null) {
       merged.lockState(patch.getLockState());
     }
     return merged.build();
+  }
+
+  /**
+   * Returns {@code true} when {@code name} is present in the raw patch JSON as an EMPTY object
+   * ({@code {}}) -- the tombstone the OpenHouse Spark {@code UNSET POLICY (...)} DDL emits to clear
+   * a sub-policy (e.g. {@code UnSetReplicationPolicyExec} sends {@code {"replication": {}}}). This
+   * is distinct from a sub-policy absent from the patch (leave existing untouched) and from a
+   * non-empty sub-policy object (a SET, which overrides). Keyed off the raw JSON because the parsed
+   * server {@code Policies}/{@code Replication} model cannot represent the empty-vs-absent
+   * distinction (e.g. an empty {@code {"replication": {}}} deserializes to a {@code Replication}
+   * with a {@code null} config, which would otherwise trip the {@code @NotNull} config constraint
+   * on commit).
+   */
+  private static boolean isClearedSubPolicy(com.google.gson.JsonObject patchObj, String name) {
+    return patchObj.has(name)
+        && patchObj.get(name).isJsonObject()
+        && patchObj.getAsJsonObject(name).size() == 0;
   }
 
   // ---------------------------------------------------------------------------

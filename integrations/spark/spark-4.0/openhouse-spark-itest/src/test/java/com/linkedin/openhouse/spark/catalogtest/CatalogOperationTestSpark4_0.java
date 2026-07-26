@@ -24,7 +24,6 @@ import org.apache.spark.sql.types.DateType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -32,10 +31,11 @@ import org.junit.jupiter.api.Test;
  * against the embedded OpenHouse server through the stock {@code RESTCatalog}. Pure-SQL cases and
  * Iceberg Java-API cases (create/load/append, WRITE ORDERED BY, catalog buildTable) port through
  * the REST catalog. The custom {@code SET POLICY} DDL now works on this lane (OpenHouse Spark SQL
- * extension ported + registered — see {@link PolicySqlDdlTestSpark4_0}); only {@code
- * testAlterTableUnsetReplicationPolicy} stays {@code @Disabled}, blocked on server support for
- * {@code UNSET POLICY} (clearing a sub-policy). OpenHouse-only property assertions ({@code
- * openhouse.tableUri}) remain dropped; see 10-RESIDUALS.md.
+ * extension ported + registered — see {@link PolicySqlDdlTestSpark4_0}), and {@code UNSET POLICY
+ * (REPLICATION)} works too: the server policy-merge treats an empty sub-policy object as a
+ * clear/tombstone (see {@code IcebergRestCatalogController.translatePolicyPatch}), so {@code
+ * testAlterTableUnsetReplicationPolicy} is no longer {@code @Disabled}. OpenHouse-only property
+ * assertions ({@code openhouse.tableUri}) remain dropped; see 10-RESIDUALS.md.
  */
 public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
 
@@ -424,28 +424,26 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
   }
 
   /**
-   * PENDING — blocked on a SERVER-side gap, not a client one (see 10-RESIDUALS.md fix checklist and
-   * spark4-e2e-tests/policy-sql-extension-spark4.md).
+   * {@code UNSET POLICY (REPLICATION)} end-to-end on the REST lane. {@code
+   * UnSetReplicationPolicyExec} emits {@code updated.openhouse.policy = {"replication": {}}}; the
+   * OpenHouse {@code /iceberg} server's policy-merge ({@code
+   * IcebergRestCatalogController.translatePolicyPatch}) now interprets an empty sub-policy object
+   * as a clear/tombstone and drops the sub-policy from the merged {@code Policies}, rather than
+   * overriding with an invalid empty {@code Replication} (previously HTTP 400 "Replication config
+   * cannot be null.").
    *
-   * <p>The custom {@code SET POLICY} DDL now works end-to-end on the REST lane: the Spark-4.0 port
-   * of {@code OpenhouseSparkSessionExtensions} is registered (see {@code
-   * OpenHouseRestSparkITest.getBuilder}) and the {@code SET POLICY (REPLICATION|RETENTION|SHARING|
-   * HISTORY ...)} statements in this test parse and persist correctly — verified GREEN by {@link
-   * PolicySqlDdlTestSpark4_0}. What this test additionally exercises is {@code UNSET POLICY
-   * (REPLICATION)}: {@code UnSetReplicationPolicyExec} emits {@code updated.openhouse.policy =
-   * {"replication": {}}}, and the OpenHouse {@code /iceberg} server rejects it with HTTP 400 {@code
-   * "CreateUpdateTableRequestBody.policies.replication.config : Incorrect replication policy
-   * specified. Replication config cannot be null."} (an empty replication object is not a valid
-   * config, and the server's policy-merge has no clear/tombstone convention for removing a
-   * sub-policy — see policy-rest-lane.md "Follow-ups"). Re-enable once the {@code /iceberg} server
-   * supports clearing a sub-policy on {@code UNSET POLICY}; the readback assertions here are
-   * against the raw {@code policies} table-property string (no gen-model on this module's compile
-   * classpath).
+   * <p>Native-lane parity note: the legacy /tables lane's client merge ({@code
+   * OpenHouseTableOperations.buildUpdatedPolicies}) had the same override structure, but the
+   * generated client {@code Replication} model defaults {@code config} to an empty {@code
+   * ArrayList}, so the client silently sent {@code {"replication":{"config":[]}}} and the native
+   * readback saw {@code replication.config.size() == 0}. The server-side {@code Policies} model has
+   * no such default, so the REST lane instead removes the sub-policy outright. Both leave the table
+   * with no active replication; the difference (empty-config object vs. absent object) is not
+   * observable through this behavioral test. Readback is asserted against the raw {@code policies}
+   * table-property string (there is no {@code Policies} gen-model on this module's compile
+   * classpath), so the post-UNSET assertion checks that the serialized policy no longer carries a
+   * replication config while retention is preserved.
    */
-  @Disabled(
-      "SET POLICY works (see PolicySqlDdlTestSpark4_0); UNSET POLICY (REPLICATION) is rejected by the"
-          + " /iceberg server (400: replication config cannot be null) — needs a server-side"
-          + " clear/tombstone convention for UNSET POLICY. See spark4-e2e-tests/10-RESIDUALS.md.")
   @Test
   public void testAlterTableUnsetReplicationPolicy() throws Exception {
     try (SparkSession spark = getSparkSession()) {
@@ -467,6 +465,14 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
       // unset replication policy
       spark.sql("ALTER TABLE openhouse." + DATABASE + ".ttt1 UNSET POLICY (REPLICATION)");
       String updatedPolicy = getPoliciesProperty("openhouse." + DATABASE + ".ttt1", spark);
+      // The REST-lane clear/tombstone removes the replication sub-policy from the stored policy
+      // (see IcebergRestCatalogController.translatePolicyPatch): the serialized policy no longer
+      // carries the replication config ("WAR"). NOTE: the native /tables lane instead left an
+      // empty-config replication object (config.size()==0) because its generated client model
+      // defaults config to an empty list; the REST server model has no such default, so it drops
+      // the sub-policy outright. Both mean "no active replication".
+      Assertions.assertFalse(updatedPolicy.contains("WAR"));
+      Assertions.assertFalse(updatedPolicy.contains("replication"));
       // assert that other policies, retention is not modified after unsetting replication
       Assertions.assertTrue(updatedPolicy.contains("yyyy-MM-dd"));
 
