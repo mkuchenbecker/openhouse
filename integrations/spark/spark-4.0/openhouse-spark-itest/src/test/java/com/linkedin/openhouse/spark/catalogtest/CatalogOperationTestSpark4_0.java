@@ -371,8 +371,8 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
    * PENDING (see 10-RESIDUALS.md fix checklist). Verifies renaming ONTO an existing table is
    * rejected. On the stock REST lane the OpenHouse {@code /iceberg} rename endpoint does NOT reject
    * the conflict — empirically the rename threw nothing and the source table was gone afterward
-   * (silent replace). Ported faithfully (the custom {@code WebClientResponseWithMessageException} is
-   * on the compile classpath) but disabled until the server enforces the conflict.
+   * (silent replace). Ported faithfully (the custom {@code WebClientResponseWithMessageException}
+   * is on the compile classpath) but disabled until the server enforces the conflict.
    */
   @Disabled(
       "rename-onto-existing not rejected on REST lane (silent replace) — see spark4-e2e-tests/10-RESIDUALS.md")
@@ -420,11 +420,11 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
   /**
    * PENDING (see 10-RESIDUALS.md fix checklist). The 3.1 case drove custom {@code SET/UNSET POLICY
    * (REPLICATION|RETENTION ...)} SQL and read the result back via the {@code
-   * com.linkedin.openhouse.gen.tables.client.model.Policies} gen-model. Neither the custom OpenHouse
-   * SQL extension nor the {@code Policies} model is available on the REST lane (the model is not even
-   * on this module's compile classpath), so the readback assertions are expressed against the raw
-   * {@code policies} table property string. Disabled: the {@code SET POLICY} DDL is unparseable by
-   * the stock Iceberg SQL extension on this lane.
+   * com.linkedin.openhouse.gen.tables.client.model.Policies} gen-model. Neither the custom
+   * OpenHouse SQL extension nor the {@code Policies} model is available on the REST lane (the model
+   * is not even on this module's compile classpath), so the readback assertions are expressed
+   * against the raw {@code policies} table property string. Disabled: the {@code SET POLICY} DDL is
+   * unparseable by the stock Iceberg SQL extension on this lane.
    */
   @Disabled(
       "custom SET/UNSET POLICY SQL + Policies gen-model unavailable on REST lane — see spark4-e2e-tests/10-RESIDUALS.md")
