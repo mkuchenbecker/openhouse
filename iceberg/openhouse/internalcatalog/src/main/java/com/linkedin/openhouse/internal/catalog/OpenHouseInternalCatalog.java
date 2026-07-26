@@ -231,7 +231,13 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
     boolean renamingToSameTable =
         from.namespace().toString().equalsIgnoreCase(effectiveDestination.namespace().toString())
             && from.name().equalsIgnoreCase(effectiveDestination.name());
-    if (!renamingToSameTable && tableExists(effectiveDestination)) {
+    // Existence check via the direct HTS lookup (findHouseTable), NOT tableExists(): tableExists()
+    // does a full loadTable() -> refreshMetadata(), which for a destination whose HTS row is absent
+    // (or whose metadata.json is missing) throws InvalidTableMetadataException instead of returning
+    // false. findHouseTable() only reads the HTS row and returns empty when the destination does
+    // not
+    // exist -- exactly what a pre-rename conflict check needs.
+    if (!renamingToSameTable && findHouseTable(effectiveDestination).isPresent()) {
       throw new org.apache.iceberg.exceptions.AlreadyExistsException(
           "Cannot rename %s to %s because a table already exists at %s",
           from, to, effectiveDestination);
