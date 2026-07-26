@@ -34,6 +34,7 @@ statement
   | SHOW GRANTS ON grantableResource                                                                   #showGrantsStatement
   | VACUUM multipartIdentifier (REMOVE ORPHAN FILES)? (RETAIN POSITIVE_INTEGER HOURS)?                  #vacuumTable
   | OPTIMIZE multipartIdentifier (FULL)? (REWRITE MANIFESTS)?                                           #optimizeTable
+  | ANALYZE TABLE multipartIdentifier COMPUTE CLUSTERING QUALITY                                        #analyzeClusteringQuality
   ;
 
 multipartIdentifier
@@ -73,6 +74,7 @@ nonReserved
     | GRANT | REVOKE | ON | TO | SHOW | GRANTS | PATTERN | WHERE | COLUMN
     | VACUUM | REMOVE | ORPHAN | FILES | RETAIN | HOURS
     | OPTIMIZE | FULL | REWRITE | MANIFESTS
+    | ANALYZE | COMPUTE | CLUSTERING | QUALITY
     ;
 
 sharingPolicy
@@ -219,6 +221,10 @@ OPTIMIZE: 'OPTIMIZE';
 FULL: 'FULL';
 REWRITE: 'REWRITE';
 MANIFESTS: 'MANIFESTS';
+ANALYZE: 'ANALYZE';
+COMPUTE: 'COMPUTE';
+CLUSTERING: 'CLUSTERING';
+QUALITY: 'QUALITY';
 
 POSITIVE_INTEGER
     : DIGIT+
