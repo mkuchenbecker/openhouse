@@ -145,9 +145,17 @@ public class CatalogOperationTestSpark4_0 extends OpenHouseRestSparkITest {
       Table loadedTable = icebergCatalog.loadTable(toTableIdentifier);
       Assertions.assertNotNull(loadedTable);
 
-      // NOTE: the 3.1 source also asserted the OpenHouse-only property
-      // openhouse.tableUri == "local-cluster.db.rename_test_renamed". That property is not surfaced
-      // on the stock REST lane; dropped (see 10-RESIDUALS.md).
+      // The OpenHouse-only reserved property openhouse.tableUri IS surfaced on the stock REST
+      // loadTable lane and is updated by the rename. Its value is
+      // "<cluster>.<namespace>.rename_test_renamed" (e.g. "local-cluster.openhouse.db.rename_test_
+      // renamed"); the namespace carries the catalog prefix on the REST lane, so we assert on the
+      // stable tail to stay robust to the embedded cluster name and namespace rendering.
+      String tableUri = loadedTable.properties().get("openhouse.tableUri");
+      Assertions.assertNotNull(
+          tableUri, "openhouse.tableUri should be surfaced on the REST loadTable lane");
+      Assertions.assertTrue(
+          tableUri.endsWith("db.rename_test_renamed"),
+          "openhouse.tableUri should reflect the renamed table, got: " + tableUri);
 
       Assertions.assertThrows(
           NoSuchTableException.class, () -> icebergCatalog.loadTable(fromTableIdentifier));
