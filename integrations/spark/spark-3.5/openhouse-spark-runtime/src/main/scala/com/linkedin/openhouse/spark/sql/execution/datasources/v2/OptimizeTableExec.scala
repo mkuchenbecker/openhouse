@@ -37,10 +37,19 @@ case class OptimizeTableExec(
 
   override protected def run(): Seq[InternalRow] = {
     val props = catalog.loadTable(ident) match {
-      case iceberg: SparkTable if iceberg.table().properties().containsKey("openhouse.tableId") =>
+      case iceberg: SparkTable
+        if iceberg.table().properties().containsKey(MaintenanceProperties.TABLE_ID_PROP) =>
         iceberg.table().properties().asScala.toMap
       case table =>
         throw new UnsupportedOperationException(s"Cannot optimize non-Openhouse table: $table")
+    }
+
+    // A table opted out of platform maintenance should not be compacted by hand either.
+    val compactionJob = MaintenanceProperties.DATA_COMPACTION_JOB
+    if (MaintenanceProperties.isMaintenanceDisabled(props, compactionJob)) {
+      throw new UnsupportedOperationException(
+        s"Maintenance is disabled for table '$ident' ('maintenance.disabled' or " +
+          s"'maintenance.$compactionJob.disabled'), so OPTIMIZE will not run on it.")
     }
 
     val cat = quoteIfNeeded(catalog.name())
