@@ -20,23 +20,26 @@ Branch: `1.11` (OpenHouse) / fork `1.11.x` (`mkuchenbecker/iceberg`). Real CI ga
 
 ---
 
-## 1. GRANT / REVOKE / SHOW GRANTS on the REST lane  ← IN PROGRESS
-Upgrade from the earlier documented deferral to a real implementation.
+## 1. GRANT / REVOKE / SHOW GRANTS on the REST lane  ← DONE
+Upgraded from the earlier documented deferral to a real implementation.
 
-- [~] Port `GrantRevokeStatementExec` + `ShowGrantsStatementExec` to Spark-4.0 / Scala-2.13
-- [ ] Wire them into the Spark-4.0 `SparkStrategy` (plan → exec)
-- [ ] Call the EXISTING server ACL endpoint (`PATCH /v1/databases/{db}/tables/{t}/aclPolicies`,
+- [x] Port `GrantRevokeStatementExec` + `ShowGrantsStatementExec` (and `Principal` constant) to
+      Spark-4.0 / Scala-2.13; shared HTTP logic in `OpenHouseAclClient`.
+- [x] Wire them into the Spark-4.0 `SparkStrategy` (plan → exec)
+- [x] Call the EXISTING server ACL endpoint (`PATCH /v1/databases/{db}/tables/{t}/aclPolicies`,
       body `UpdateAclPoliciesRequestBody`; `GET .../aclPolicies` → `GetAclPoliciesResponseBody`)
       directly over HTTP — the stock `RESTCatalog` does NOT implement `SupportsGrantRevoke`, so
-      derive base URI (strip `/iceberg`) + bearer token from the session catalog conf.
-- [ ] Privilege→role mapping (from legacy `GrantStatementTest`): SELECT→TABLE_VIEWER,
-      ALTER→TABLE_ADMIN, MANAGE GRANTS→ACL_EDITOR, CREATE TABLE→TABLE_CREATOR (confirm authoritative
-      map in the java client's `SupportsGrantRevoke` impl).
-- [ ] Test: prefer a real roundtrip (GRANT → SHOW GRANTS reads it back) if the embedded server's
-      ACL store works with `cluster.security.tables.authorization.enabled`; else match the legacy
-      bar (assert the correct `UpdateAclPoliciesRequestBody` PATCH is emitted).
-- [ ] Restore the dropped `GRANT` in `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations`.
-- [ ] Write-up: `grant-revoke-rest-lane.md`; update `10-RESIDUALS.md` (deferral → fixed).
+      base URI (strip `/iceberg`) + bearer token are derived from the session catalog conf.
+- [x] Privilege→role mapping mirrored EXACTLY from `javaclient/mapper/Privileges.java`:
+      SELECT/DESCRIBE→TABLE_VIEWER, ALTER→TABLE_ADMIN, MANAGE GRANTS→ACL_EDITOR,
+      CREATE TABLE→TABLE_CREATOR.
+- [x] Test: `GrantRevokeTestSpark4_0`. A real ACL roundtrip is impossible in-JVM (embedded
+      `OpaAuthorizationHandler` no-ops without an external OPA store), so matched the legacy
+      client-contract bar: GRANT/REVOKE return 204 against the real embedded server, AND a capturing
+      `HttpServer` stub proves the exact PATCH (operation+role+principal+path) and SHOW GRANTS row
+      parsing. See `grant-revoke-rest-lane.md` §4.
+- [x] Restored the dropped `GRANT` in `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations`.
+- [x] Write-up: `grant-revoke-rest-lane.md`; updated `10-RESIDUALS.md` (deferral → fixed).
 
 ## 2. Rung 3 — Iceberg 1.11 + v3 DSv2 deletion vectors (THE GOAL)
 Pre-dispatch findings (durable):
@@ -71,7 +74,8 @@ Pre-dispatch findings (durable):
 ---
 
 ## Change log (commits, newest first)
-- (pending) GRANT/REVOKE REST-lane implementation
+- (this commit) feat(spark-4.0): GRANT/REVOKE/SHOW GRANTS on the REST lane via direct HTTP to
+  `/aclPolicies` (+ `GrantRevokeTestSpark4_0`, restored WapId GRANT, `grant-revoke-rest-lane.md`)
 - `77eb4e9` docs: mark InvalidMetadata CI-perf FIXED
 - `9cceeab` docs: consolidate residuals — backlog all-green except GRANT deferral
 - `923d39b` Restore openhouse.tableUri assertion

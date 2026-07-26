@@ -1,9 +1,14 @@
 # Feature: OpenHouse SQL POLICY DDL on the Spark-4.0 / Iceberg-1.11 REST lane
 
 Status: IMPLEMENTED for `SET POLICY` (retention / replication / sharing / history). `UNSET POLICY`
-parses + lowers but is blocked on a server gap. `GRANT` / `REVOKE` / `SHOW GRANTS` and column-tags
-parse but are not executable on the REST lane (no server ACL/tag endpoint). Verified by GREEN
-targeted test runs (JDK 17), listed at the bottom.
+parses + lowers but is blocked on a server gap. Column-tags parse but are not executable on the REST
+lane (no server tag endpoint). Verified by GREEN targeted test runs (JDK 17), listed at the bottom.
+
+> **UPDATE (supersedes the GRANT notes below):** `GRANT` / `REVOKE` / `SHOW GRANTS` are now
+> IMPLEMENTED and verified on the REST lane — the execs call the existing server ACL endpoint
+> (`/v1/databases/.../aclPolicies`) directly over HTTP, so no `/iceberg` ACL endpoint was needed. The
+> "parse only / stays dropped" statements in this file are historical; see
+> **`grant-revoke-rest-lane.md`** for the implemented design and `GrantRevokeTestSpark4_0`.
 
 This is the client-side companion to the server foundation in `policy-rest-lane.md` (commit da20ad4):
 the server already accepts the `updated.openhouse.policy` table property and folds it into the

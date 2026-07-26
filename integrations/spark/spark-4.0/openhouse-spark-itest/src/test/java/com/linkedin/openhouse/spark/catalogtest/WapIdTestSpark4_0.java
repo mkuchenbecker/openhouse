@@ -327,10 +327,11 @@ public class WapIdTestSpark4_0 extends OpenHouseRestSparkITest {
           "ALTER TABLE " + FULL_TABLE_NAME + " SET TBLPROPERTIES ('write.wap.enabled'='true')");
       // Restored custom OpenHouse SET POLICY DDL (now available via the ported extension): set a
       // sharing policy inside the WAP workflow, exactly as the 3.1 source did, and confirm it
-      // persisted. NOTE: the 3.1 source ALSO ran `GRANT SELECT ... TO lejiang` here; GRANT is still
-      // dropped because the REST lane has no server ACL endpoint (see 10-RESIDUALS.md /
-      // policy-sql-extension-spark4.md).
+      // persisted. The 3.1 source's inline `GRANT SELECT ... TO lejiang` is ALSO restored now that
+      // GRANT executes on the REST lane via the direct /aclPolicies HTTP path (see
+      // grant-revoke-rest-lane.md); it runs without error against the embedded server.
       spark.sql("ALTER TABLE " + FULL_TABLE_NAME + " SET POLICY (SHARING=TRUE)");
+      spark.sql("GRANT SELECT ON TABLE " + FULL_TABLE_NAME + " TO lejiang");
       String sharingPolicies =
           spark.sql("SHOW TBLPROPERTIES " + FULL_TABLE_NAME).collectAsList().stream()
               .filter(r -> "policies".equals(r.getString(0)))

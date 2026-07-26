@@ -1,6 +1,6 @@
 package com.linkedin.openhouse.spark.sql.execution.datasources.v2
 
-import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.{SetColumnPolicyTag, SetHistoryPolicy, SetReplicationPolicy, SetRetentionPolicy, SetSharingPolicy, UnSetReplicationPolicy}
+import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.{GrantRevokeStatement, SetColumnPolicyTag, SetHistoryPolicy, SetReplicationPolicy, SetRetentionPolicy, SetSharingPolicy, ShowGrantsStatement, UnSetReplicationPolicy}
 import org.apache.iceberg.spark.{Spark3Util, SparkCatalog, SparkSessionCatalog}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
@@ -28,10 +28,14 @@ case class OpenhouseDataSourceV2Strategy(spark: SparkSession) extends SparkStrat
     case SetColumnPolicyTag(CatalogAndIdentifierExtractor(catalog, ident), policyTag, cols) =>
       SetColumnPolicyTagExec(catalog, ident, policyTag, cols) :: Nil
 
-    // NOTE: GRANT / REVOKE / SHOW GRANTS still parse (grammar + logical plans retained), but the
-    // REST lane has no server ACL endpoint (SupportsGrantRevoke), so no physical execution is wired
-    // here. They fall through to the empty match and surface as an unsupported-plan error until a
-    // /iceberg grant endpoint exists. See policy-sql-extension-spark4.md.
+    // GRANT / REVOKE / SHOW GRANTS: the REST-lane catalog is the stock RESTCatalog (no
+    // SupportsGrantRevoke), so the execs call the OpenHouse server ACL endpoint
+    // (`/v1/databases/.../aclPolicies`) directly over HTTP. See grant-revoke-rest-lane.md.
+    case GrantRevokeStatement(isGrant, resourceType, CatalogAndIdentifierExtractor(catalog, ident), privilege, principal) =>
+      GrantRevokeStatementExec(isGrant, resourceType, catalog, ident, privilege, principal) :: Nil
+    case s @ ShowGrantsStatement(resourceType, CatalogAndIdentifierExtractor(catalog, ident)) =>
+      ShowGrantsStatementExec(s.output, resourceType, catalog, ident) :: Nil
+
     case _ => Nil
   }
 

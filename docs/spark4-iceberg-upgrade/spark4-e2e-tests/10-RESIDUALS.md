@@ -4,10 +4,10 @@ This is a **fix backlog**, not a list of accepted omissions. Every legacy Spark-
 in-JVM `catalogtest` case is ported into the Spark-4.0 REST-first module. This checklist tracked
 each case that could not initially be made green on the REST lane — its exact failure, root cause,
 and the concrete fix. **All of them have now been triaged and fixed** (each `[x]` below links to an
-audit-grade write-up); no `catalogtest` case remains `@Disabled`. The single open item is the
-`GRANT` / `REVOKE` ACL deferral, which needs a new server endpoint and is out of scope for this
-Spark-4.0 / Iceberg-1.11 modernization spike (see the DEFERRED section). The checkboxes record
-triage state: `[x]` = fixed + verified, `[ ]` = deferred with a documented reason.
+audit-grade write-up); no `catalogtest` case remains `@Disabled`. `GRANT` / `REVOKE` / `SHOW GRANTS`
+is now **implemented and verified** on the REST lane too (direct HTTP to the existing
+`/v1/databases/.../aclPolicies` endpoint — see `grant-revoke-rest-lane.md`), closing the former
+deferral. The checkboxes record triage state: `[x]` = fixed + verified.
 
 The REST lane wires Spark to a STOCK `org.apache.iceberg.rest.RESTCatalog` pointed at the OpenHouse
 `/iceberg/v1/*` controller. UPDATE: the custom OpenHouse Spark SQL extension is now ported to
@@ -20,9 +20,9 @@ server policy-merge honors an empty sub-policy object as a clear/tombstone (see
 TAG = (PII, HC)`) is also verified end-to-end (see `column-tags-verification.md`) — the server
 already merges the `columnTags` sub-policy, no code change was needed.
 
-**Backlog status: every fixable item is now GREEN.** The only remaining gap is `GRANT` / `REVOKE`
-/ `SHOW GRANTS` execution, which needs a server-side ACL endpoint on the `/iceberg` lane (the DDL
-parses on the ported extension but has nowhere to commit — see the GRANT deferral section below).
+**Backlog status: every item is now GREEN, including `GRANT` / `REVOKE` / `SHOW GRANTS`** (the DDL
+now executes on the REST lane by calling the existing server ACL endpoint directly over HTTP — see
+the GRANT section below and `grant-revoke-rest-lane.md`).
 Also still by-design absent on this itest module: the OpenHouse Java client's `Policies` gen-model
 on the compile classpath (readbacks assert against the raw `policies` JSON string instead).
 
@@ -63,8 +63,8 @@ on the compile classpath (readbacks assert against the raw `policies` JSON strin
 - [x] **`WapIdTestSpark4_0.testWapWorkflowWithVariousOperations`** — RESTORED the inline
   `ALTER TABLE ... SET POLICY (SHARING=TRUE)` (+ a `policies` readback assertion) now that the
   OpenHouse SQL extension is ported to this lane; test stays GREEN. The `GRANT SELECT ON TABLE ... TO
-  lejiang` statement REMAINS dropped — GRANT has no server ACL endpoint on the REST lane (see the
-  GRANT item in policy-sql-extension-spark4.md).
+  lejiang` statement is now **RESTORED** — GRANT executes on the REST lane via the direct
+  `/aclPolicies` HTTP path (see grant-revoke-rest-lane.md).
 - [x] **`RTASTestSpark4_0.testRTAS`** — RESTORED the inline
   `ALTER TABLE ... SET POLICY (HISTORY MAX_AGE=24H)`. The `assertEquals("", ...policies)` assertion is
   NOT restored verbatim: BEHAVIORAL DELTA — the legacy custom-catalog lane cleared `policies` on RTAS,
@@ -90,22 +90,35 @@ on the compile classpath (readbacks assert against the raw `policies` JSON strin
   column's tags but leaves the `columnTags` map entry present — behaviorally "no tags", verified by
   the test. See `column-tags-verification.md`.
 
-## DEFERRED — `GRANT` / `REVOKE` / `SHOW GRANTS` (needs a server-side ACL endpoint)
+## FIXED — `GRANT` / `REVOKE` / `SHOW GRANTS` (direct HTTP to the existing `/aclPolicies` endpoint)
 
-- [ ] **`GRANT <priv> ON <resource> TO <principal>` / `REVOKE ... FROM ...` / `SHOW GRANTS ON ...`**
-  — the ported Spark-4.0 extension PARSES these (grammar rules `grantStatement` / `revokeStatement`
-  / `showGrantsStatement`), but they have nowhere to commit on the REST lane: the OpenHouse
-  `/iceberg` controller (`IcebergRestCatalogController`) exposes only table CRUD + snapshots +
-  policy translation — it has NO ACL endpoint. The legacy `/tables` lane routed GRANT/REVOKE to a
-  separate server AAA/ACL surface that the stock `RESTCatalog` client cannot reach.
-  - Scope call: implementing a full server ACL endpoint + wiring an exec that calls it is a distinct
-    feature, disproportionate to this Spark-4.0 / Iceberg-1.11 modernization spike (and adjacent to
-    the maintenance/AAA surfaces that are being rewritten separately). It is therefore an explicit,
-    documented DEFERRAL, not a silent omission. The one inline `GRANT` in
-    `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations` stays dropped (the rest of that test —
-    including the restored `SET POLICY (SHARING=TRUE)` — is green).
-  - To close later: add an ACL endpoint on the `/iceberg` lane (or a sibling REST surface), port a
-    `GrantRevokeStatementExec` that commits to it, then add a `GrantRevokeTestSpark4_0` and assert.
+- [x] **`GRANT <priv> ON <resource> TO <principal>` / `REVOKE ... FROM ...` / `SHOW GRANTS ON ...`**
+  — the ported Spark-4.0 extension already PARSED these (grammar `grantStatement` / `revokeStatement`
+  / `showGrantsStatement` + logical plans + AST builder); the physical execs + strategy wiring were
+  the missing piece and are now added. Full write-up: **`grant-revoke-rest-lane.md`**.
+  - Design: the stock `RESTCatalog` does not implement `SupportsGrantRevoke` (the legacy hook), and
+    its `/iceberg` surface has no ACL sub-resource — that path is a dead end. Instead the execs call
+    the **existing** OpenHouse server ACL endpoint directly over HTTP: `PATCH`/`GET
+    {base}/v1/databases/{db}/tables/{t}/aclPolicies`, where `{base}` is the catalog
+    `spark.sql.catalog.<name>.uri` with the trailing `/iceberg` stripped and the same `.token` bearer.
+    The same server process that mounts `/iceberg` also mounts these `/v1/...` ACL endpoints, so no
+    new server endpoint was needed. Privilege→role mapping mirrors the authoritative
+    `javaclient/mapper/Privileges.java` (SELECT/DESCRIBE→TABLE_VIEWER, ALTER→TABLE_ADMIN, MANAGE
+    GRANTS→ACL_EDITOR, CREATE TABLE→TABLE_CREATOR).
+  - Test bar achieved = the **legacy client-contract bar** (the same bar the spark-3.1
+    `GrantRevokeStatementTest` used). A full in-JVM ACL *round-trip* (grant, then see it in SHOW
+    GRANTS) is impossible on the embedded server: its only `AuthorizationHandler` is
+    `OpaAuthorizationHandler`, which no-ops `grantRole`/`revokeRole` and returns an empty
+    `listAclPolicies` whenever no external OPA base-uri is configured (the embedded default), and no
+    in-memory ACL store bean exists. So `GrantRevokeTestSpark4_0` proves: (1) against the **real**
+    embedded server, GRANT/REVOKE return HTTP 204 and SHOW GRANTS returns the `(privilege,
+    principal)` schema — client works end-to-end; (2) against a capturing `HttpServer` stub, the
+    exact PATCH request (path + operation + role + principal + bearer) is emitted and SHOW GRANTS
+    parses server rows and reverse-maps role→privilege. This is NOT a silent deferral — the client
+    works and the server round-trip is validated at the request level (the store itself is an
+    OPA-deployment concern, not a client concern).
+  - The inline `GRANT SELECT ON TABLE ... TO lejiang` in
+    `WapIdTestSpark4_0.testWapWorkflowWithVariousOperations` is **restored** and green.
 
 ---
 
