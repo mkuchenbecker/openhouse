@@ -83,10 +83,13 @@ public class OpenHouseRestSparkITest {
     String restUri = getOpenHouseServerBaseUri() + "/iceberg";
     return SparkSession.builder()
         .master("local[1]")
-        // REST-first: only the stock Iceberg extension. The custom OpenHouse SQL extension is not
-        // on
-        // this lane (there is no custom Spark runtime jar), so custom OpenHouse DDL is unavailable
-        // here by design.
+        // Currently only the stock Iceberg extension is loaded. The OpenHouse SQL extension
+        // (SET/UNSET POLICY, GRANT, column tags) is INTENDED to be loaded here too and mapped to
+        // table-property operations on the stock RESTCatalog, but that is not yet wired: the
+        // extension exists only as a Scala-2.12 spark-3.x runtime, and the /iceberg server has no
+        // translation for the policy property + reserves policies/openhouse.* props. Tracked as a
+        // real backlog item (NOT a permanent design choice) — see
+        // spark4-e2e-tests/backlog-triage.md.
         .config(
             "spark.sql.extensions",
             "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
