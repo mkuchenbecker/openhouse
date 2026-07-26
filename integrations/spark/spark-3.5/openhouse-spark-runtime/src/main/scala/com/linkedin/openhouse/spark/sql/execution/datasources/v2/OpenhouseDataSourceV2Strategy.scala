@@ -32,8 +32,8 @@ case class OpenhouseDataSourceV2Strategy(spark: SparkSession) extends Strategy w
     case r @ ShowGrantsStatement(resourceType, CatalogAndIdentifierExtractor(catalog, ident)) =>
       ShowGrantsStatementExec(r.output, resourceType, catalog, ident) :: Nil
 
-    case VacuumTable(CatalogAndIdentifierExtractor(catalog, ident), removeOrphanFiles, retainHours) =>
-      VacuumTableExec(spark, catalog, ident, removeOrphanFiles, retainHours) :: Nil
+    case r @ VacuumTable(CatalogAndIdentifierExtractor(catalog, ident), removeOrphanFiles, retainHours) =>
+      VacuumTableExec(r.output, spark, catalog, ident, removeOrphanFiles, retainHours) :: Nil
     case r @ OptimizeTable(CatalogAndIdentifierExtractor(catalog, ident), full, rewriteManifests) =>
       OptimizeTableExec(r.output, spark, catalog, ident, full, rewriteManifests) :: Nil
 
