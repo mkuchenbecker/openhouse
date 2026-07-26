@@ -49,4 +49,17 @@ public enum OperationTypeDto {
   public static OperationTypeDto fromDb(com.linkedin.openhouse.optimizer.db.OperationType v) {
     return v == null ? null : OperationTypeDto.valueOf(v.name());
   }
+
+  /**
+   * The Jobs-service {@code JobConf.JobType} string the optimizer launches for this operation.
+   *
+   * <p>The optimizer always dispatches the multi-table, results-aware <i>batched</i> Spark app —
+   * the single-table variant does not understand the batched {@code --tableNames/--operationIds/
+   * --resultsEndpoint} protocol. The batched job types are named {@code <OPERATION>_BATCH} (e.g.
+   * {@code ORPHAN_FILES_DELETION} → {@code ORPHAN_FILES_DELETION_BATCH}), so the JobType is derived
+   * by suffixing {@code _BATCH} onto the base name.
+   */
+  public String toJobType() {
+    return name() + "_BATCH";
+  }
 }
