@@ -128,8 +128,13 @@ public class SparkMultiSchemaEvolutionTestSpark4_0 extends OpenHouseRestSparkITe
               Types.NestedField.optional(4, "newCol1", Types.IntegerType.get()),
               Types.NestedField.optional(3, "newCol2", Types.IntegerType.get()));
       Map<String, String> tableProperties = new HashMap<>();
+      // tableType=REPLICA_TABLE is what permits the direct multi-schema ops.commit below (same as
+      // the sibling tests). Do NOT set openhouse.isTableReplicated=true here: that flag triggers
+      // the
+      // server's replica-UUID/last-updated-ms validation (validateUUIDForReplicaTable), which a
+      // create that only needs the direct-commit capability does not satisfy — and the sibling
+      // REPLICA_TABLE tests don't set it either.
       tableProperties.put("openhouse.tableType", "REPLICA_TABLE");
-      tableProperties.put("openhouse.isTableReplicated", "true");
       tableProperties.put("client.table.schema", SchemaParser.toJson(schemaColumnOrdering));
       ohCatalog.createTable(
           tableIdentifier, schemaColumnOrdering, PartitionSpec.unpartitioned(), tableProperties);
@@ -188,7 +193,9 @@ public class SparkMultiSchemaEvolutionTestSpark4_0 extends OpenHouseRestSparkITe
       Assertions.assertTrue(result.schema().sameSchema(schemaColumnOrdering4));
     } finally {
       if (spark != null) {
-        spark.sql("DROP TABLE openhouse.multiSchemaTest.t2");
+        // IF EXISTS so a failure earlier in the test body surfaces its real cause instead of being
+        // masked by a NoSuchTableException from cleanup.
+        spark.sql("DROP TABLE IF EXISTS openhouse.multiSchemaTest.t2");
       }
     }
   }
