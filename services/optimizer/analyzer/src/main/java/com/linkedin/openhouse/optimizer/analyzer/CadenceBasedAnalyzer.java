@@ -10,15 +10,15 @@ import java.util.Optional;
 /**
  * Reusable {@link OperationAnalyzer} for cadence-driven operations. Any maintenance operation whose
  * eligibility is purely time-based — opt-in via a per-table property, then re-evaluate on a
- * success/failure retry cadence — collapses to a subclass that supplies its {@link OperationTypeDto}
- * and configuration to this base's constructor.
+ * success/failure retry cadence — collapses to a subclass that supplies its {@link
+ * OperationTypeDto} and configuration to this base's constructor.
  *
  * <p>The three strategy methods are implemented once here:
  *
  * <ul>
  *   <li>{@link #getOperationType()} returns the configured operation type.
- *   <li>{@link #isEnabled(TableDto)} returns {@code true} iff the table sets {@code enabledProperty}
- *       to {@code "true"}.
+ *   <li>{@link #isEnabled(TableDto)} returns {@code true} iff the table sets {@code
+ *       enabledProperty} to {@code "true"}.
  *   <li>{@link #shouldSchedule} delegates verbatim to {@link CadencePolicy}.
  * </ul>
  *

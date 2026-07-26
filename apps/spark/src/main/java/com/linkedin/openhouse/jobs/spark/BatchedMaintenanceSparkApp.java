@@ -26,15 +26,16 @@ import org.apache.commons.cli.Option;
 import org.apache.commons.lang3.StringUtils;
 
 /**
- * Reusable base for batched, results-aware maintenance Spark apps. One Spark job processes a list of
- * {@code (table, operationId)} pairs that the optimizer scheduler bin-packed into a single batch.
- * Each table is handled by a worker thread; per-table failures are caught and reported back
+ * Reusable base for batched, results-aware maintenance Spark apps. One Spark job processes a list
+ * of {@code (table, operationId)} pairs that the optimizer scheduler bin-packed into a single
+ * batch. Each table is handled by a worker thread; per-table failures are caught and reported back
  * independently — the job continues for the remaining tables and exits 0 if at least one table
  * succeeds.
  *
- * <p>This class owns the operation-agnostic machinery: CLI parsing into {@link BatchEntry} rows, the
- * fixed-size worker pool, per-operation SUCCESS/FAILED PATCH callbacks to the Optimizer Service, and
- * the success/failure accounting. Concrete subclasses supply only the operation-specific pieces:
+ * <p>This class owns the operation-agnostic machinery: CLI parsing into {@link BatchEntry} rows,
+ * the fixed-size worker pool, per-operation SUCCESS/FAILED PATCH callbacks to the Optimizer
+ * Service, and the success/failure accounting. Concrete subclasses supply only the
+ * operation-specific pieces:
  *
  * <ul>
  *   <li>{@link #maintainTable(Operations, BatchEntry)} — the actual per-table maintenance; throwing
@@ -45,8 +46,8 @@ import org.apache.commons.lang3.StringUtils;
  *
  * <p>Each concrete app also supplies a static {@code buildEntries(tableNames, operationIds,
  * tableUuids)} wrapper that forwards its own {@code (cap, label)} to the base static {@link
- * #buildEntries(String, String, String, int, String)} so its batch-size cap is enforced at
- * parse time inside {@code createApp}, before any instance exists.
+ * #buildEntries(String, String, String, int, String)} so its batch-size cap is enforced at parse
+ * time inside {@code createApp}, before any instance exists.
  *
  * @see BatchedOrphanFilesDeletionSparkApp the reference concrete implementation.
  */
@@ -71,13 +72,15 @@ public abstract class BatchedMaintenanceSparkApp extends BaseSparkApp {
   }
 
   /**
-   * Performs the operation-specific maintenance for a single table. Throwing any exception marks the
-   * operation FAILED (it is caught, logged, and reported back independently); returning normally
-   * marks it SUCCESS.
+   * Performs the operation-specific maintenance for a single table. Throwing any exception marks
+   * the operation FAILED (it is caught, logged, and reported back independently); returning
+   * normally marks it SUCCESS.
    */
   protected abstract void maintainTable(Operations ops, BatchEntry entry) throws Exception;
 
-  /** The wire enum value reported back to the Optimizer Service for each operation in this batch. */
+  /**
+   * The wire enum value reported back to the Optimizer Service for each operation in this batch.
+   */
   protected abstract UpdateOperationRequest.OperationTypeEnum operationType();
 
   /** Short label for this operation, used on log lines (e.g. {@code "OFD"}). */
@@ -173,9 +176,10 @@ public abstract class BatchedMaintenanceSparkApp extends BaseSparkApp {
   }
 
   /**
-   * Returns a client bound to {@code resultsEndpoint}, or empty when the endpoint was not configured
-   * — in that case the legacy {@link com.linkedin.openhouse.jobs.scheduler.JobsScheduler} is the
-   * caller and reports lifecycle via HTS; the per-operation optimizer callback is skipped.
+   * Returns a client bound to {@code resultsEndpoint}, or empty when the endpoint was not
+   * configured — in that case the legacy {@link
+   * com.linkedin.openhouse.jobs.scheduler.JobsScheduler} is the caller and reports lifecycle via
+   * HTS; the per-operation optimizer callback is skipped.
    */
   protected Optional<OptimizerServiceClient> newOptimizerClient() {
     return Optional.ofNullable(resultsEndpoint).map(OptimizerServiceClient::new);
@@ -293,8 +297,9 @@ public abstract class BatchedMaintenanceSparkApp extends BaseSparkApp {
 
   /**
    * Parses the parallel {@code --tableNames/--operationIds/--tableUuids} CSV lists into {@link
-   * BatchEntry} rows, enforcing {@code maxBatchSize}. {@code maxBatchSizeLabel} is the human-readable
-   * name of the cap surfaced in the over-limit error message (e.g. {@code "OFD_MAX_BATCH_SIZE"}).
+   * BatchEntry} rows, enforcing {@code maxBatchSize}. {@code maxBatchSizeLabel} is the
+   * human-readable name of the cap surfaced in the over-limit error message (e.g. {@code
+   * "OFD_MAX_BATCH_SIZE"}).
    */
   protected static List<BatchEntry> buildEntries(
       String tableNames,
