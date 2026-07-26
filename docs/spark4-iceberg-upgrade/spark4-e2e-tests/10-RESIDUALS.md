@@ -111,17 +111,16 @@ on the compile classpath (readbacks assert against the raw `policies` JSON strin
 
 ## CI performance (fix — makes every branch-1.11 run ~2x faster)
 
-- [ ] **`InvalidMetadataTestSpark4_0.testCorruptSchemaIdSurfacesRealError` runs ~19 min** (single
-  test), which alone pushes the branch-1.11 "Build with Gradle" step to ~33 min. Diagnosis: the test
-  corrupts `current-schema-id` to a non-existent value, then INSERTs. Server-side `refreshMetadata`
-  throws `InvalidTableMetadataException` (`OpenHouseInternalTableOperations` line ~163). The INSERT's
-  Iceberg **commit-retry** loop treats it as retryable and retries with exponential backoff up to the
-  default `commit.retry.total-timeout-ms` (~30 min), so the expected failure only surfaces after
-  ~19 min. Fixes (either): (a) server-side — map invalid/corrupt-metadata to a NON-retryable 4xx so
-  the client fails fast (correct: corrupt metadata is not a transient conflict); or (b) test-scoped —
-  create the table with `commit.retry.num-retries=0` (or a short `commit.retry.total-timeout-ms`) so
-  the INSERT fails fast. Prefer (a). The test itself asserts correct behavior and PASSES; this is
-  purely a runtime cost.
+- [x] **`InvalidMetadataTestSpark4_0.testCorruptSchemaIdSurfacesRealError` was ~19 min → now fast**
+  — FIXED via option (a). Diagnosis: the test corrupts `current-schema-id` to a non-existent value,
+  then INSERTs. Server-side `refreshMetadata` throws `InvalidTableMetadataException`
+  (`OpenHouseInternalTableOperations` line ~163). The INSERT's Iceberg **commit-retry** loop treated
+  it as retryable and backed off up to the default `commit.retry.total-timeout-ms` (~30 min), so the
+  expected failure only surfaced after ~19 min. Fix: `IcebergRestCatalogController` now maps
+  `com.linkedin.openhouse.common.exception.InvalidTableMetadataException` to a NON-retryable HTTP 400
+  (`handleBadRequest`, ~line 1063) — corrupt metadata is not a transient conflict, so the client
+  fails fast instead of retrying. The test asserts correct behavior and PASSES; this cut the
+  branch-1.11 "Build with Gradle" step by ~1/3.
 
 ## Behavioral / engine deltas (accepted — no fix needed, documented for traceability)
 
