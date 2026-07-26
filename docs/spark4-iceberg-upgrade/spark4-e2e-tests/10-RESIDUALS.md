@@ -36,6 +36,13 @@ the custom `/tables` client.
     destination already exists (no 409 conflict); it upserts.
   - Fix: server-side, `/iceberg` `renameTable` must reject when the destination exists (HTTP 409) so
     the stock client raises `AlreadyExistsException`; then re-enable and assert that type.
+  - INVESTIGATION NOTE (attempt 1): adding a `catalog.tableExists(request.destination())` guard in
+    `IcebergRestCatalogController#renameTable` did NOT make the test throw — `spark.sql("ALTER TABLE
+    … RENAME TO <existing>")` still succeeded silently. So the Spark-4.0 SQL rename path does not
+    trip the `/tables/rename` controller guard as expected (either Spark resolves/renames without
+    hitting that endpoint with the existing-destination identifier, or `tableExists(destination)`
+    resolves to false there). Next attempt must first trace the actual REST request the Spark-4.0
+    rename emits (log the endpoint + identifiers) before choosing where to enforce the 409.
 
 ## Inline omissions inside otherwise-green cases (custom SQL dropped, method kept green)
 

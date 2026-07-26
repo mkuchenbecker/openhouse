@@ -21,9 +21,10 @@ import org.junit.jupiter.api.Test;
  * e2e/SparkMultiSchemaEvolutionTest}. Exercises multi-schema evolution on REPLICA tables by
  * hand-building {@link TableMetadata} and committing it through {@link TableOperations}.
  *
- * <p>The 3.5 source cast the catalog to {@code OpenHouseCatalog} and used {@code newTableOps}; on the
- * REST lane the catalog is a stock {@code RESTCatalog}, so the {@link TableOperations} is obtained
- * via {@code ((BaseTable) table).operations()}. Uses the 1.11 one-arg {@code addSchema(schema)}.
+ * <p>The 3.5 source cast the catalog to {@code OpenHouseCatalog} and used {@code newTableOps}; on
+ * the REST lane the catalog is a stock {@code RESTCatalog}, so the {@link TableOperations} is
+ * obtained via {@code ((BaseTable) table).operations()}. Uses the 1.11 one-arg {@code
+ * addSchema(schema)}.
  */
 public class SparkMultiSchemaEvolutionTestSpark4_0 extends OpenHouseRestSparkITest {
 
@@ -96,7 +97,10 @@ public class SparkMultiSchemaEvolutionTestSpark4_0 extends OpenHouseRestSparkITe
 
       TableMetadata metadata = ops.current();
       TableMetadata finalEvolvedMetadata =
-          TableMetadata.buildFrom(metadata).addSchema(finalEvolvedSchema).setCurrentSchema(1).build();
+          TableMetadata.buildFrom(metadata)
+              .addSchema(finalEvolvedSchema)
+              .setCurrentSchema(1)
+              .build();
 
       Assertions.assertEquals(finalEvolvedMetadata.schemas().size(), 2);
       ops.commit(metadata, finalEvolvedMetadata);
