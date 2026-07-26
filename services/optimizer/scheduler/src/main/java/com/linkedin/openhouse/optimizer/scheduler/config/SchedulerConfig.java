@@ -37,9 +37,16 @@ public class SchedulerConfig {
   }
 
   /**
-   * Orphan files deletion: a {@link FirstFitDecreasingBinPacker} over {@link TotalFilesBinItem}.
-   * Cost scales with file count — per-file list, manifest joins, and delete calls dominate
-   * independent of file size.
+   * Registers the operation types this scheduler can pack and launch.
+   *
+   * <ul>
+   *   <li><b>Orphan files deletion</b>: a {@link FirstFitDecreasingBinPacker} over {@link
+   *       TotalFilesBinItem}. Cost scales with file count — per-file list, manifest joins, and
+   *       delete calls dominate independent of file size.
+   *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
+   *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
+   *       delete workload, so file count is the right cost driver.
+   * </ul>
    */
   @Bean
   public SchedulerRunner schedulerRunner(
@@ -48,7 +55,9 @@ public class SchedulerConfig {
       JobsServiceClient jobsClient,
       @Value("${optimizer.scheduler.results-endpoint}") String resultsEndpoint,
       @Value("${optimizer.scheduler.ofd.max-files-per-bin}") long ofdMaxFilesPerBin,
-      @Value("${optimizer.scheduler.ofd.max-tables-per-bin}") int ofdMaxTablesPerBin) {
+      @Value("${optimizer.scheduler.ofd.max-tables-per-bin}") int ofdMaxTablesPerBin,
+      @Value("${optimizer.scheduler.sfd.max-files-per-bin}") long sfdMaxFilesPerBin,
+      @Value("${optimizer.scheduler.sfd.max-tables-per-bin}") int sfdMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -56,6 +65,13 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(ofdMaxFilesPerBin)
                 .maxItemsPerBin(ofdMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.STAGED_FILES_DELETION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(sfdMaxFilesPerBin)
+                .maxItemsPerBin(sfdMaxTablesPerBin)
                 .build());
   }
 }

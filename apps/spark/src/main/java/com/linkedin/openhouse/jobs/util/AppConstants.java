@@ -72,5 +72,14 @@ public final class AppConstants {
    */
   public static final int OFD_MAX_BATCH_SIZE = 200;
 
+  /**
+   * Hard ceiling on the number of tables a single batched Staged-Files-Deletion job can carry. Same
+   * wire path and reasoning as {@link #OFD_MAX_BATCH_SIZE}: parallel CSV CLI args (see {@code
+   * BatchedStagedFilesDeletionSparkApp#buildEntries}) whose per-entry footprint keeps the assembled
+   * command line well under the typical Linux {@code ARG_MAX}. It is a footgun stop, not the
+   * operating point — operators tune the per-job batch size on the scheduler.
+   */
+  public static final int SFD_MAX_BATCH_SIZE = 200;
+
   private AppConstants() {}
 }

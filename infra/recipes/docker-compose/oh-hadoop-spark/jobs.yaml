@@ -71,6 +71,11 @@ jobs:
         args: ["--trashDir", ".trash", "--daysOld", "10", "--recursive", "true"]
         <<: *apps-defaults
         << : *livy-engine
+      - type: STAGED_FILES_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedStagedFilesDeletionSparkApp
+        args: ["--trashDir", ".trash", "--daysOld", "10", "--recursive", "true"]
+        <<: *apps-defaults
+        << : *livy-engine
       - type: ORPHAN_DIRECTORY_DELETION
         class-name: com.linkedin.openhouse.jobs.spark.OrphanTableDirectoryDeletionSparkApp
         args: [ "--trashDir", ".trash" ]
