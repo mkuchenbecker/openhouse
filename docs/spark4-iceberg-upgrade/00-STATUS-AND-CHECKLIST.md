@@ -25,8 +25,27 @@ Related repos/branches:
 - [x] `/lock` 500 fixed at root (commons-lang 2.x dropped from the 1.11 classpath → `NoClassDefFoundError` in the *existing* validator; one-line import → `commons-lang3`; **no API/behavior change**). Swept + fixed 2 more latent instances (databases validator, OTel config).
 - [x] Consolidated onto single `1.11` branch with granular commit history (main + each change as its own commit). Stacked PRs #12/#16 closed as superseded.
 
+## ✅ branch-1.11 CI is GREEN (run 30188222096, SHA d1e68da, 2026-07-26)
+Full `Branch 1.11 CI` passed end to end: fork build+publish → Gradle build+all tests (incl. the new
+Spark-4.0 REST e2e suite, 66 pass / 0 fail / 2 skipped) → docker integration tests → success. The
+"make it work" milestone is complete.
+
+Path to green (this session, on top of the consolidated `1.11` branch):
+- Fixed `spark-3.5-itest` compile (`addSchema` 1-arg for 1.11); spotless sweeps.
+- Diagnosed the last red as a single root cause — the legacy Spark-3.5/Iceberg-1.5 in-JVM e2e suite
+  (58 catalogTest + 6 apps-1.5) cannot co-load with a 1.11 server. Per decision: built a **Spark-4.0
+  / Iceberg-1.11 / REST-first e2e port** (`integrations/spark/spark-4.0/openhouse-spark-itest`, 9
+  classes / 67 tests, client=server=1.11 so no collision) and **gated** the superseded legacy in-JVM
+  suites (documented as a fix backlog, not accepted residuals — see `spark4-e2e-tests/`).
+- Fixed the one port failure (`testMultiSchemaEvolutionColumnOrderingOnCreate`: dropped an
+  unnecessary `isTableReplicated=true` that tripped replica validation).
+
+Follow-ups (fix backlog, `spark4-e2e-tests/10-RESIDUALS.md` + `20-legacy-gated.md`): CI-perf (the
+19-min `InvalidMetadataTest` commit-retry loop → make corrupt-metadata non-retryable), rename-409,
+2 disabled port cases, and the gated legacy suites (statementtest/default-test/apps-1.5).
+
 ## Decisions (all made) — status
-- [x] **#1 CI = build fork from source, gated to `1.11` pushes only.** Implemented: `branch-1.11.yml` caller + fork-provision steps `if github.ref == refs/heads/1.11`; in-tree JVM-17 resolution-attribute fix (scoped to classpath configs, skips resolved configs) so a stock `./gradlew` works. Fork build in the CI runner **proven working** (jars published). Config-crash fixed. **Branch build compiling — verifying green (IN PROGRESS).**
+- [x] **#1 CI = build fork from source, gated to `1.11` pushes only.** Implemented: `branch-1.11.yml` caller + fork-provision steps `if github.ref == refs/heads/1.11`; in-tree JVM-17 resolution-attribute fix (scoped to classpath configs, skips resolved configs) so a stock `./gradlew` works. Fork build in the CI runner proven working (jars published). Config-crash fixed. **Branch build GREEN (run 30188222096).** (The `pull_request` PR check stays red by design — the fork isn't provisioned on the PR path; separate deferred decision.)
 - [x] **#3 `/lock`** — fixed at root, existing API untouched. DONE.
 - [x] **#4 Behavioral residuals** — document only. (24 custom-SQL ParseException + ~15 REST-lane behavioral differences.) Documented.
 - [ ] **#2 Custom Spark 4.0 wired into OpenHouse's build/testing** — decided YES; **NOT STARTED**. Blocked on disk (building the full Spark distribution needs ~15–30 GB; ~6 GB free; the 21 GB of finished-validation docker images are the reclaimable space — awaiting prune go-ahead).
