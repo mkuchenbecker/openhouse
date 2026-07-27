@@ -46,6 +46,10 @@ public class SchedulerConfig {
    *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
+   *   <li><b>Table stats collection</b>: same packer over {@link TotalFilesBinItem}. Produces the
+   *       {@code table_stats} rows other analyzers consume; cost tracks the number of files scanned.
+   *   <li><b>Sort stats collection</b>: same packer over {@link TotalFilesBinItem}. Samples and
+   *       rewrites to estimate sort compression, so file count is again the dominant cost driver.
    * </ul>
    */
   @Bean
@@ -61,7 +65,15 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
-          int snapshotsExpirationMaxTablesPerBin) {
+          int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.tableStatsCollection.max-files-per-bin}")
+          long tableStatsCollectionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.tableStatsCollection.max-tables-per-bin}")
+          int tableStatsCollectionMaxTablesPerBin,
+      @Value("${optimizer.scheduler.sortStatsCollection.max-files-per-bin}")
+          long sortStatsCollectionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.sortStatsCollection.max-tables-per-bin}")
+          int sortStatsCollectionMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -83,6 +95,20 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.TABLE_STATS_COLLECTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(tableStatsCollectionMaxFilesPerBin)
+                .maxItemsPerBin(tableStatsCollectionMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.SORT_STATS_COLLECTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(sortStatsCollectionMaxFilesPerBin)
+                .maxItemsPerBin(sortStatsCollectionMaxTablesPerBin)
                 .build());
   }
 }

@@ -50,10 +50,20 @@ public class JobConf {
     DATA_COMPACTION,
     ORPHAN_DIRECTORY_DELETION,
     TABLE_STATS_COLLECTION,
+    /**
+     * Multi-table table-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedTableStatsCollectionSparkApp}.
+     */
+    TABLE_STATS_COLLECTION_BATCH,
     DATA_LAYOUT_STRATEGY_GENERATION,
     DATA_LAYOUT_STRATEGY_EXECUTION,
     REPLICATION,
     SORT_STATS_COLLECTION,
+    /**
+     * Multi-table sort-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedSortStatsCollectionSparkApp}.
+     */
+    SORT_STATS_COLLECTION_BATCH,
     TABLE_DIRECTORY_DELETION
   }
 }
