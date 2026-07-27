@@ -180,7 +180,10 @@ public class SchedulerRunner {
             String.format(
                 "batched-%s-%d",
                 bin.getOperationType().name().toLowerCase(), claimedAt.toEpochMilli()),
-            bin.getOperationType().name(),
+            // The optimizer always launches the multi-table batched Spark app; toJobType() maps the
+            // operation to its <OPERATION>_BATCH JobType (jobs.yaml routes that to the Batched
+            // app).
+            bin.getOperationType().toJobType(),
             claimedItems.stream()
                 .map(BinItem::getFullyQualifiedTableName)
                 .collect(Collectors.toList()),

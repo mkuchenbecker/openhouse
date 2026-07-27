@@ -179,7 +179,7 @@ class SchedulerRunnerTest {
     verify(jobsClient)
         .launch(
             anyString(),
-            eq(ORPHAN_FILES_DELETION.name()),
+            eq(ORPHAN_FILES_DELETION.toJobType()),
             tableNames.capture(),
             anyList(),
             anyString());
