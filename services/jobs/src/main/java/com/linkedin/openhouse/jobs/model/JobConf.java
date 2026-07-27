@@ -35,6 +35,12 @@ public class JobConf {
     ORPHAN_FILES_DELETION_BATCH,
     SNAPSHOTS_EXPIRATION,
     STAGED_FILES_DELETION,
+    /**
+     * Multi-table staged-files-deletion. One Spark job processes a list of tables grouped by
+     * database — bin-packing happens scheduler-side. See {@code
+     * BatchedStagedFilesDeletionSparkApp}.
+     */
+    STAGED_FILES_DELETION_BATCH,
     DATA_COMPACTION,
     ORPHAN_DIRECTORY_DELETION,
     TABLE_STATS_COLLECTION,
