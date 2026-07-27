@@ -33,6 +33,12 @@ public class JobConf {
      * BatchedOrphanFilesDeletionSparkApp}.
      */
     ORPHAN_FILES_DELETION_BATCH,
+    /**
+     * Multi-table retention. One Spark job processes a bin-packed list of tables, re-resolving each
+     * table's retention column/granularity/count from its policies at runtime. See {@code
+     * BatchedRetentionSparkApp}.
+     */
+    RETENTION_BATCH,
     SNAPSHOTS_EXPIRATION,
     /**
      * Multi-table snapshots-expiration. One Spark job processes a list of tables grouped by

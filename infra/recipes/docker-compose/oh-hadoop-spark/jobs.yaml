@@ -40,6 +40,14 @@ jobs:
         args: ["--backupDir", ".backup"]
         << : *apps-defaults
         << : *livy-engine
+      - type: RETENTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedRetentionSparkApp
+        args: ["--backupDir", ".backup"]
+        <<: *apps-defaults
+        spark-properties:
+          <<: *spark-defaults
+          "spark.driver.memory": "2g"
+        << : *livy-engine
       - type: DATA_COMPACTION
         class-name: com.linkedin.openhouse.jobs.spark.DataCompactionSparkApp
         args: []
