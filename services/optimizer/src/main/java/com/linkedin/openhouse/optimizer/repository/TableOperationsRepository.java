@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.optimizer.repository;
 
+import com.linkedin.openhouse.optimizer.db.OperationScope;
 import com.linkedin.openhouse.optimizer.db.OperationStatus;
 import com.linkedin.openhouse.optimizer.db.OperationType;
 import com.linkedin.openhouse.optimizer.db.TableOperationsRow;
@@ -51,6 +52,21 @@ public interface TableOperationsRepository extends JpaRepository<TableOperations
         tableName.orElse(null),
         scheduledAt.orElse(null),
         pageable);
+  }
+
+  /**
+   * Find operation rows for a given type and scope, optionally filtered by status. Added in M6 for
+   * the directory-deletion path: the analyzer loads active {@code DATABASE}-scoped rows (to avoid
+   * re-scheduling a database that already has one in flight), and the scheduler loads {@code
+   * PENDING} {@code DATABASE}-scoped rows to dispatch. Keeping this separate from {@link #find}
+   * leaves the hot per-table path untouched.
+   */
+  default List<TableOperationsRow> findByScope(
+      OperationType operationType,
+      Optional<OperationStatus> status,
+      OperationScope operationScope,
+      Pageable pageable) {
+    return findByScopeInternal(operationType, status.orElse(null), operationScope, pageable);
   }
 
   /**
@@ -127,6 +143,17 @@ public interface TableOperationsRepository extends JpaRepository<TableOperations
       @Param("tableName") String tableName,
       @Param("scheduledAt") Instant scheduledAt,
       @Param("ids") List<String> ids,
+      Pageable pageable);
+
+  @Query(
+      "SELECT r FROM TableOperationsRow r "
+          + "WHERE r.operationType = :operationType "
+          + "AND r.operationScope = :operationScope "
+          + "AND (:status IS NULL OR r.status = :status)")
+  List<TableOperationsRow> findByScopeInternal(
+      @Param("operationType") OperationType operationType,
+      @Param("status") OperationStatus status,
+      @Param("operationScope") OperationScope operationScope,
       Pageable pageable);
 
   @Modifying(flushAutomatically = true, clearAutomatically = true)

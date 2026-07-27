@@ -278,6 +278,49 @@ class TableOperationsRepositoryTest {
     assertThat(repository.findById(scheduledId)).isPresent();
   }
 
+  @Test
+  void databaseScopedRow_persistsWithNullTableUuid_andIsFoundByScope() {
+    // M6: a directory/database-scoped operation has no live table — null table_uuid/table_name.
+    String id = UUID.randomUUID().toString();
+    repository.save(
+        TableOperationsRow.builder()
+            .id(id)
+            .databaseName("db1")
+            .operationType(OperationType.ORPHAN_DIRECTORY_DELETION)
+            .operationScope(com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE)
+            .status(OperationStatus.PENDING)
+            .createdAt(Instant.now())
+            .build());
+
+    TableOperationsRow row = repository.findById(id).orElseThrow();
+    assertThat(row.getTableUuid()).isNull();
+    assertThat(row.getTableName()).isNull();
+    assertThat(row.getOperationScope())
+        .isEqualTo(com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE);
+
+    List<TableOperationsRow> byScope =
+        repository.findByScope(
+            OperationType.ORPHAN_DIRECTORY_DELETION,
+            Optional.of(OperationStatus.PENDING),
+            com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE,
+            PAGE);
+    assertThat(byScope).extracting(TableOperationsRow::getId).containsExactly(id);
+  }
+
+  @Test
+  void findByScope_doesNotReturnPerTableRows() {
+    // A per-table (TABLE scope) op must not leak into a DATABASE-scope query for the same db.
+    repository.save(pendingRow(UUID.randomUUID().toString(), "tbl1", "db1"));
+
+    List<TableOperationsRow> byScope =
+        repository.findByScope(
+            OperationType.ORPHAN_FILES_DELETION,
+            Optional.of(OperationStatus.PENDING),
+            com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE,
+            PAGE);
+    assertThat(byScope).isEmpty();
+  }
+
   // --- helpers ---
 
   private TableOperationsRow pendingRow(String id, String tableName) {

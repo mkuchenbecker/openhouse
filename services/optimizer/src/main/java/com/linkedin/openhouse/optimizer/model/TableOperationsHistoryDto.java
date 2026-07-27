@@ -34,6 +34,12 @@ public class TableOperationsHistoryDto {
   /** Operation type for this completed run. */
   private OperationTypeDto operationType;
 
+  /** What the completed operation targeted (table / database / directory). */
+  private OperationScopeDto operationScope;
+
+  /** Filesystem directory targeted, for {@code DIRECTORY} scope; null otherwise. */
+  private String directoryPath;
+
   /** When the operation completed, as recorded by the complete endpoint. */
   private Instant completedAt;
 
@@ -48,6 +54,8 @@ public class TableOperationsHistoryDto {
         .databaseName(databaseName)
         .tableName(tableName)
         .operationType(operationType == null ? null : operationType.toDb())
+        .operationScope((operationScope == null ? OperationScopeDto.TABLE : operationScope).toDb())
+        .directoryPath(directoryPath)
         .completedAt(completedAt)
         .status(status == null ? null : status.toDb())
         .build();
@@ -64,6 +72,8 @@ public class TableOperationsHistoryDto {
         .databaseName(row.getDatabaseName())
         .tableName(row.getTableName())
         .operationType(OperationTypeDto.fromDb(row.getOperationType()))
+        .operationScope(OperationScopeDto.fromDb(row.getOperationScope()))
+        .directoryPath(row.getDirectoryPath())
         .completedAt(row.getCompletedAt())
         .status(HistoryStatusDto.fromDb(row.getStatus()))
         .build();

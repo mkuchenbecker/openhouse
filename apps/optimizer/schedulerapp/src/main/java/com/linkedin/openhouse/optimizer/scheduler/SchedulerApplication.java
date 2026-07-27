@@ -43,8 +43,12 @@ public class SchedulerApplication implements CommandLineRunner, ExitCodeGenerato
   @Override
   public void run(String... args) {
     try {
-      log.info("Scheduler starting; operation types: {}", runner.getRegisteredOperationTypes());
+      log.info(
+          "Scheduler starting; per-table types: {}; directory types: {}",
+          runner.getRegisteredOperationTypes(),
+          runner.getRegisteredDirectoryOperationTypes());
       runner.getRegisteredOperationTypes().forEach(runner::schedule);
+      runner.getRegisteredDirectoryOperationTypes().forEach(runner::scheduleDirectory);
       log.info("Scheduler completed successfully");
     } catch (Exception e) {
       log.error("Scheduler failed", e);

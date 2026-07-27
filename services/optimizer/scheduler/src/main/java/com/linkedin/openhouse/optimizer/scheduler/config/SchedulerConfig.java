@@ -61,7 +61,16 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
-          int snapshotsExpirationMaxTablesPerBin) {
+          int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.orphan-directory-deletion.max-databases-per-bin:25}")
+          int orphanDirMaxDatabasesPerBin,
+      @Value("${optimizer.scheduler.table-directory-deletion.max-databases-per-bin:25}")
+          int tableDirMaxDatabasesPerBin) {
+    // ORPHAN_DIRECTORY_DELETION and TABLE_DIRECTORY_DELETION are database-scoped (M6): registered
+    // via
+    // registerDirectoryOperation, they dispatch through SchedulerRunner.scheduleDirectory, which
+    // launches the <OP>_BATCH Spark app with --databaseNames (no table_stats bin-packing — bins are
+    // formed by database count). See services/optimizer/DIRECTORY-DELETION-DESIGN.md.
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -83,6 +92,10 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
-                .build());
+                .build())
+        .registerDirectoryOperation(
+            OperationTypeDto.ORPHAN_DIRECTORY_DELETION, orphanDirMaxDatabasesPerBin)
+        .registerDirectoryOperation(
+            OperationTypeDto.TABLE_DIRECTORY_DELETION, tableDirMaxDatabasesPerBin);
   }
 }

@@ -49,11 +49,25 @@ public class JobConf {
     STAGED_FILES_DELETION_BATCH,
     DATA_COMPACTION,
     ORPHAN_DIRECTORY_DELETION,
+    /**
+     * Multi-directory orphan-table-directory deletion. One Spark job stages/deletes a list of
+     * orphaned (dropped-table) directories. This is the batched counterpart the optimizer's {@code
+     * OperationTypeDto.toJobType()} resolves {@code ORPHAN_DIRECTORY_DELETION} to. See {@code
+     * BatchedOrphanTableDirectoryDeletionSparkApp}.
+     */
+    ORPHAN_DIRECTORY_DELETION_BATCH,
     TABLE_STATS_COLLECTION,
     DATA_LAYOUT_STRATEGY_GENERATION,
     DATA_LAYOUT_STRATEGY_EXECUTION,
     REPLICATION,
     SORT_STATS_COLLECTION,
-    TABLE_DIRECTORY_DELETION
+    TABLE_DIRECTORY_DELETION,
+    /**
+     * Multi-directory dropped-table-directory deletion. One Spark job purges a list of
+     * dropped/purged table storage directories. Batched counterpart of {@code
+     * TABLE_DIRECTORY_DELETION} that {@code OperationTypeDto.toJobType()} resolves to. See {@code
+     * BatchedTableDirectoryDeletionSparkApp}.
+     */
+    TABLE_DIRECTORY_DELETION_BATCH
   }
 }
