@@ -89,5 +89,21 @@ public final class AppConstants {
    */
   public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
 
+  /**
+   * Hard ceiling on the number of tables a single batched data-layout-strategy <b>generation</b>
+   * job can carry. Same wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE} (parallel CSV CLI args);
+   * generation is a stats-scan per table, so the cap is a footgun stop, not the operating point —
+   * operators tune the per-job size with {@code --batchMaxItems} on the scheduler.
+   */
+  public static final int DATA_LAYOUT_STRATEGY_GENERATION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched data-layout-strategy <b>execution</b> job
+   * can carry. Execution rewrites data files (compaction-like, size-bound), so batches are packed
+   * by table size and typically far smaller than the cap; this constant is a footgun stop, not the
+   * operating point.
+   */
+  public static final int DATA_LAYOUT_STRATEGY_EXECUTION_MAX_BATCH_SIZE = 200;
+
   private AppConstants() {}
 }

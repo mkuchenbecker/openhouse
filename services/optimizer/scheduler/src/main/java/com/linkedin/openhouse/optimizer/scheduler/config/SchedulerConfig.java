@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.optimizer.scheduler.config;
 
 import com.linkedin.openhouse.optimizer.binpack.FirstFitDecreasingBinPacker;
+import com.linkedin.openhouse.optimizer.binpack.TableSizeBytesBinItem;
 import com.linkedin.openhouse.optimizer.binpack.TotalFilesBinItem;
 import com.linkedin.openhouse.optimizer.model.OperationTypeDto;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
@@ -46,6 +47,11 @@ public class SchedulerConfig {
    *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
+   *   <li><b>Data-layout-strategy generation</b>: {@link TotalFilesBinItem}; generation is a
+   *       per-table stats scan whose cost tracks the number of files/manifests read.
+   *   <li><b>Data-layout-strategy execution</b>: {@link TableSizeBytesBinItem}; execution rewrites
+   *       data files (compaction), so the dominant cost is the volume of bytes shuffled, packed by
+   *       table size.
    * </ul>
    */
   @Bean
@@ -61,7 +67,12 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
-          int snapshotsExpirationMaxTablesPerBin) {
+          int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dls-generation.max-files-per-bin}") long dlsGenMaxFilesPerBin,
+      @Value("${optimizer.scheduler.dls-generation.max-tables-per-bin}") int dlsGenMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dls-execution.max-bytes-per-bin}") long dlsExecMaxBytesPerBin,
+      @Value("${optimizer.scheduler.dls-execution.max-tables-per-bin}")
+          int dlsExecMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -83,6 +94,20 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.DATA_LAYOUT_STRATEGY_GENERATION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(dlsGenMaxFilesPerBin)
+                .maxItemsPerBin(dlsGenMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.DATA_LAYOUT_STRATEGY_EXECUTION,
+            FirstFitDecreasingBinPacker.<TableSizeBytesBinItem>builder()
+                .binItemSupplier(TableSizeBytesBinItem::new)
+                .maxWeightPerBin(dlsExecMaxBytesPerBin)
+                .maxItemsPerBin(dlsExecMaxTablesPerBin)
                 .build());
   }
 }
