@@ -48,6 +48,12 @@ public class JobConf {
      */
     STAGED_FILES_DELETION_BATCH,
     DATA_COMPACTION,
+    /**
+     * Multi-table data-compaction. One Spark job compacts a list of tables that the optimizer
+     * scheduler bin-packed by data volume into a single batch. See {@code
+     * BatchedDataCompactionSparkApp}.
+     */
+    DATA_COMPACTION_BATCH,
     ORPHAN_DIRECTORY_DELETION,
     TABLE_STATS_COLLECTION,
     DATA_LAYOUT_STRATEGY_GENERATION,

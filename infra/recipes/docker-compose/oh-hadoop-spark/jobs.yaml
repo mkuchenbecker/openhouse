@@ -45,6 +45,11 @@ jobs:
         args: []
         << : *apps-defaults
         << : *livy-engine
+      - type: DATA_COMPACTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataCompactionSparkApp
+        args: []
+        << : *apps-defaults
+        << : *livy-engine
       - type: SNAPSHOTS_EXPIRATION
         class-name: com.linkedin.openhouse.jobs.spark.SnapshotsExpirationSparkApp
         args: []

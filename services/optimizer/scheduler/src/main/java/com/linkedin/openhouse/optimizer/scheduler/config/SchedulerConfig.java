@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.optimizer.scheduler.config;
 
 import com.linkedin.openhouse.optimizer.binpack.FirstFitDecreasingBinPacker;
+import com.linkedin.openhouse.optimizer.binpack.TableSizeBinItem;
 import com.linkedin.openhouse.optimizer.binpack.TotalFilesBinItem;
 import com.linkedin.openhouse.optimizer.model.OperationTypeDto;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
@@ -46,6 +47,9 @@ public class SchedulerConfig {
    *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
+   *   <li><b>Data compaction</b>: a {@link FirstFitDecreasingBinPacker} over {@link
+   *       TableSizeBinItem}. Cost scales with data volume: every byte is read, re-sorted, and
+   *       written back, so bins are capped on {@code tableSizeBytes} rather than file count.
    * </ul>
    */
   @Bean
@@ -61,7 +65,9 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
-          int snapshotsExpirationMaxTablesPerBin) {
+          int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dataCompaction.max-bytes-per-bin}") long dcMaxBytesPerBin,
+      @Value("${optimizer.scheduler.dataCompaction.max-tables-per-bin}") int dcMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -83,6 +89,20 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.DATA_COMPACTION,
+            // Weight bins on tableSizeBytes (TableSizeBinItem), not file count: compaction reads
+            // and
+            // rewrites every byte of each table, so its Spark cost — shuffle, I/O, commit time —
+            // scales with data volume. Bytes-per-bin therefore bounds a batch's true work far
+            // better
+            // than a file-count cap, which would let a bin of a few very large tables blow past the
+            // driver's budget while a bin of many tiny-file tables stays trivially cheap.
+            FirstFitDecreasingBinPacker.<TableSizeBinItem>builder()
+                .binItemSupplier(TableSizeBinItem::new)
+                .maxWeightPerBin(dcMaxBytesPerBin)
+                .maxItemsPerBin(dcMaxTablesPerBin)
                 .build());
   }
 }
