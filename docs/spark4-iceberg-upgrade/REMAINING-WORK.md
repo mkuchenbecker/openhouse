@@ -7,6 +7,9 @@ verification) under `docs/spark4-iceberg-upgrade/`. This file is the index + liv
 Branch: `1.11` (OpenHouse) / fork `1.11.x` (`mkuchenbecker/iceberg`). Real CI gate: `Branch 1.11 CI`
 (push event). PR-path `Pull Request Validations` is red-by-design (fork not provisioned on PRs).
 
+**Companion docs:** `CHANGE-HISTORY.md` (per-repo sequential diff walkthrough + repos-in-scope +
+pending PRs) · `KNOWN-GAPS.md` (open follow-ups, deployment gates, deferred scope).
+
 ## Status legend
 `[ ]` not started · `[~]` in progress · `[x]` done + verified (CI-green) · `[!]` blocked/deferred
 
