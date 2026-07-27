@@ -57,7 +57,11 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.ofd.max-files-per-bin}") long ofdMaxFilesPerBin,
       @Value("${optimizer.scheduler.ofd.max-tables-per-bin}") int ofdMaxTablesPerBin,
       @Value("${optimizer.scheduler.sfd.max-files-per-bin}") long sfdMaxFilesPerBin,
-      @Value("${optimizer.scheduler.sfd.max-tables-per-bin}") int sfdMaxTablesPerBin) {
+      @Value("${optimizer.scheduler.sfd.max-tables-per-bin}") int sfdMaxTablesPerBin,
+      @Value("${optimizer.scheduler.snapshotsExpiration.max-files-per-bin}")
+          long snapshotsExpirationMaxFilesPerBin,
+      @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
+          int snapshotsExpirationMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
         .registerOperation(
             OperationTypeDto.ORPHAN_FILES_DELETION,
@@ -72,6 +76,13 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(sfdMaxFilesPerBin)
                 .maxItemsPerBin(sfdMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.SNAPSHOTS_EXPIRATION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
+                .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
                 .build());
   }
 }

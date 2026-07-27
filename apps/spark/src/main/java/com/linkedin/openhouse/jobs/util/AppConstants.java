@@ -81,5 +81,13 @@ public final class AppConstants {
    */
   public static final int SFD_MAX_BATCH_SIZE = 200;
 
+  /**
+   * Hard ceiling on the number of tables a single batched snapshots-expiration job can carry. Same
+   * wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE}: parallel CSV CLI args bounded well under
+   * {@code ARG_MAX}. A footgun stop, not the operating point — operators tune the per-job batch
+   * size with {@code --batchMaxItems} on the scheduler.
+   */
+  public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
+
   private AppConstants() {}
 }

@@ -50,6 +50,11 @@ jobs:
         args: []
         << : *apps-defaults
         << : *livy-engine
+      - type: SNAPSHOTS_EXPIRATION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedSnapshotsExpirationSparkApp
+        args: []
+        << : *apps-defaults
+        << : *livy-engine
       - type: ORPHAN_FILES_DELETION
         class-name: com.linkedin.openhouse.jobs.spark.OrphanFilesDeletionSparkApp
         args: ["--backupDir", ".backup"]
