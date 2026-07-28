@@ -108,6 +108,7 @@ public final class AppConstants {
    */
   public static final int DATA_COMPACTION_MAX_BATCH_SIZE = 100;
 
+  /**
    * Hard ceiling on the number of tables a single batched data-layout-strategy <b>generation</b>
    * job can carry. Same wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE} (parallel CSV CLI args);
    * generation is a stats-scan per table, so the cap is a footgun stop, not the operating point —
