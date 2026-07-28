@@ -37,6 +37,12 @@ public class TableOperationDto {
   /** Operation type. */
   private OperationTypeDto operationType;
 
+  /** What this operation targets (table / database / directory). Defaults to {@code TABLE}. */
+  private OperationScopeDto operationScope;
+
+  /** Filesystem directory this operation targets, for {@code DIRECTORY} scope; null otherwise. */
+  private String directoryPath;
+
   /** Current lifecycle status. */
   private OperationStatusDto status;
 
@@ -57,6 +63,24 @@ public class TableOperationDto {
         .databaseName(table.getDatabaseName())
         .tableName(table.getTableId())
         .operationType(operationType)
+        .operationScope(OperationScopeDto.TABLE)
+        .status(OperationStatusDto.PENDING)
+        .createdAt(Instant.now())
+        .build();
+  }
+
+  /**
+   * Create a new PENDING <em>database-scoped</em> operation. Used by the directory-deletion
+   * analyzers, whose unit of work is a database's storage rather than a live table — so {@code
+   * tableUuid} and {@code tableName} are left null and {@code operationScope} is {@code DATABASE}.
+   */
+  public static TableOperationDto pendingForDatabase(
+      String databaseName, OperationTypeDto operationType) {
+    return TableOperationDto.builder()
+        .id(UUID.randomUUID().toString())
+        .databaseName(databaseName)
+        .operationType(operationType)
+        .operationScope(OperationScopeDto.DATABASE)
         .status(OperationStatusDto.PENDING)
         .createdAt(Instant.now())
         .build();
@@ -77,6 +101,8 @@ public class TableOperationDto {
         .databaseName(databaseName)
         .tableName(tableName)
         .operationType(operationType == null ? null : operationType.toDb())
+        .operationScope((operationScope == null ? OperationScopeDto.TABLE : operationScope).toDb())
+        .directoryPath(directoryPath)
         .status(status == null ? null : status.toDb())
         .createdAt(createdAt)
         .scheduledAt(scheduledAt)
@@ -95,6 +121,8 @@ public class TableOperationDto {
         .databaseName(row.getDatabaseName())
         .tableName(row.getTableName())
         .operationType(OperationTypeDto.fromDb(row.getOperationType()))
+        .operationScope(OperationScopeDto.fromDb(row.getOperationScope()))
+        .directoryPath(row.getDirectoryPath())
         .status(OperationStatusDto.fromDb(row.getStatus()))
         .createdAt(row.getCreatedAt())
         .scheduledAt(row.getScheduledAt())

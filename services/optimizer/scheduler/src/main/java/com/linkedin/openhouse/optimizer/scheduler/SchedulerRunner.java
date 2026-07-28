@@ -3,6 +3,7 @@ package com.linkedin.openhouse.optimizer.scheduler;
 import com.linkedin.openhouse.optimizer.binpack.Bin;
 import com.linkedin.openhouse.optimizer.binpack.BinItem;
 import com.linkedin.openhouse.optimizer.binpack.BinPacker;
+import com.linkedin.openhouse.optimizer.db.OperationScope;
 import com.linkedin.openhouse.optimizer.db.OperationStatus;
 import com.linkedin.openhouse.optimizer.db.TableOperationsRow;
 import com.linkedin.openhouse.optimizer.db.TableStatsRow;
@@ -54,12 +55,19 @@ public class SchedulerRunner {
   private final String resultsEndpoint;
   private final Map<OperationTypeDto, BinPacker> registry;
 
+  /**
+   * Directory/database-scoped operations and their per-bin database cap. Kept separate from {@link
+   * #registry} because these ops have no {@code table_stats} rows to bin-pack by weight — they are
+   * grouped by simple count. See {@link #scheduleDirectory}.
+   */
+  private final Map<OperationTypeDto, Integer> directoryRegistry;
+
   public SchedulerRunner(
       TableOperationsRepository operationsRepo,
       TableStatsRepository statsRepo,
       JobsServiceClient jobsClient,
       String resultsEndpoint) {
-    this(operationsRepo, statsRepo, jobsClient, resultsEndpoint, Map.of());
+    this(operationsRepo, statsRepo, jobsClient, resultsEndpoint, Map.of(), Map.of());
   }
 
   private SchedulerRunner(
@@ -67,12 +75,14 @@ public class SchedulerRunner {
       TableStatsRepository statsRepo,
       JobsServiceClient jobsClient,
       String resultsEndpoint,
-      Map<OperationTypeDto, BinPacker> registry) {
+      Map<OperationTypeDto, BinPacker> registry,
+      Map<OperationTypeDto, Integer> directoryRegistry) {
     this.operationsRepo = operationsRepo;
     this.statsRepo = statsRepo;
     this.jobsClient = jobsClient;
     this.resultsEndpoint = resultsEndpoint;
     this.registry = registry;
+    this.directoryRegistry = directoryRegistry;
   }
 
   /**
@@ -84,11 +94,32 @@ public class SchedulerRunner {
     HashMap<OperationTypeDto, BinPacker> next = new HashMap<>(registry);
     next.put(type, packer);
     return new SchedulerRunner(
-        operationsRepo, statsRepo, jobsClient, resultsEndpoint, Map.copyOf(next));
+        operationsRepo,
+        statsRepo,
+        jobsClient,
+        resultsEndpoint,
+        Map.copyOf(next),
+        directoryRegistry);
+  }
+
+  /**
+   * Return a new {@link SchedulerRunner} that also dispatches the database-scoped directory
+   * operation {@code type}, batching up to {@code maxDatabasesPerBin} databases per launched job.
+   * Pure: the receiver is unchanged.
+   */
+  public SchedulerRunner registerDirectoryOperation(OperationTypeDto type, int maxDatabasesPerBin) {
+    HashMap<OperationTypeDto, Integer> next = new HashMap<>(directoryRegistry);
+    next.put(type, maxDatabasesPerBin);
+    return new SchedulerRunner(
+        operationsRepo, statsRepo, jobsClient, resultsEndpoint, registry, Map.copyOf(next));
   }
 
   public Set<OperationTypeDto> getRegisteredOperationTypes() {
     return registry.keySet();
+  }
+
+  public Set<OperationTypeDto> getRegisteredDirectoryOperationTypes() {
+    return directoryRegistry.keySet();
   }
 
   public void schedule(OperationTypeDto type) {
@@ -150,6 +181,136 @@ public class SchedulerRunner {
                     .stream()
                     .map(grouping -> new Bin(type, grouping))
                     .forEach(this::scheduleBin));
+  }
+
+  /**
+   * Dispatch a database-scoped directory operation. Reads its PENDING {@code DATABASE}-scoped rows,
+   * dedupes to one per database (oldest wins; the rest are CANCELED), chunks them into bins of the
+   * registered {@code maxDatabasesPerBin}, and launches one {@code <OP>_BATCH} Spark job per bin
+   * with {@code --databaseNames}. Unlike {@link #schedule}, there is no {@code table_stats}
+   * bin-packing — directory work carries no per-table weight, so bins are formed by count.
+   */
+  public void scheduleDirectory(OperationTypeDto type) {
+    Integer maxDatabasesPerBin = directoryRegistry.get(type);
+    if (maxDatabasesPerBin == null) {
+      return;
+    }
+    Comparator<TableOperationsRow> oldestFirst =
+        Comparator.comparing(TableOperationsRow::getCreatedAt)
+            .thenComparing(TableOperationsRow::getId);
+
+    Map<String, List<TableOperationsRow>> byDatabase =
+        operationsRepo
+            .findByScope(
+                type.toDb(),
+                Optional.of(OperationStatus.PENDING),
+                OperationScope.DATABASE,
+                Pageable.unpaged())
+            .stream()
+            .collect(Collectors.groupingBy(TableOperationsRow::getDatabaseName));
+
+    // Cancel duplicate-per-database PENDING rows, keeping the oldest.
+    byDatabase.values().stream()
+        .filter(rows -> rows.size() > 1)
+        .flatMap(rows -> rows.stream().sorted(oldestFirst).skip(1))
+        .map(TableOperationsRow::getId)
+        .collect(
+            Collectors.collectingAndThen(
+                Collectors.toList(),
+                ids -> {
+                  if (!ids.isEmpty()) {
+                    operationsRepo.cancel(ids);
+                  }
+                  return null;
+                }));
+
+    List<TableOperationsRow> toSchedule =
+        byDatabase.values().stream()
+            .map(rows -> rows.stream().min(oldestFirst).orElseThrow())
+            .sorted(oldestFirst)
+            .collect(Collectors.toList());
+
+    for (int i = 0; i < toSchedule.size(); i += maxDatabasesPerBin) {
+      scheduleDirectoryBin(
+          type, toSchedule.subList(i, Math.min(i + maxDatabasesPerBin, toSchedule.size())));
+    }
+  }
+
+  /**
+   * Claim a directory-op bin (CAS PENDING → SCHEDULING with a watermark, narrow to the rows this
+   * caller actually owns), launch one batched Spark job for the claimed databases, and mark
+   * SCHEDULED — or revert to PENDING if launch failed. Mirrors {@link #scheduleBin} without the
+   * stats/bin-item machinery.
+   */
+  @Transactional
+  void scheduleDirectoryBin(OperationTypeDto type, List<TableOperationsRow> bin) {
+    Instant claimedAt = Instant.now();
+    List<String> ids = bin.stream().map(TableOperationsRow::getId).collect(Collectors.toList());
+    operationsRepo.updateBatch(
+        ids,
+        OperationStatus.PENDING,
+        OperationStatus.SCHEDULING,
+        Optional.of(claimedAt),
+        Optional.empty());
+    Set<String> claimedIds =
+        operationsRepo
+            .find(
+                Optional.empty(),
+                Optional.of(OperationStatus.SCHEDULING),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(claimedAt),
+                Optional.of(ids),
+                Pageable.unpaged())
+            .stream()
+            .map(TableOperationsRow::getId)
+            .collect(Collectors.toSet());
+    List<TableOperationsRow> claimed =
+        bin.stream().filter(r -> claimedIds.contains(r.getId())).collect(Collectors.toList());
+    if (claimed.isEmpty()) {
+      log.info("All rows in directory bin already claimed by another scheduler instance; skipping");
+      return;
+    }
+    List<String> claimedOpIds =
+        claimed.stream().map(TableOperationsRow::getId).collect(Collectors.toList());
+    List<String> databaseNames =
+        claimed.stream().map(TableOperationsRow::getDatabaseName).collect(Collectors.toList());
+
+    jobsClient
+        .launchDirectory(
+            String.format("batched-%s-%d", type.name().toLowerCase(), claimedAt.toEpochMilli()),
+            type.toJobType(),
+            databaseNames,
+            claimedOpIds,
+            resultsEndpoint)
+        .ifPresentOrElse(
+            jobId -> {
+              int updated =
+                  operationsRepo.updateBatch(
+                      claimedOpIds,
+                      OperationStatus.SCHEDULING,
+                      OperationStatus.SCHEDULED,
+                      Optional.empty(),
+                      Optional.of(jobId));
+              log.info(
+                  "Submitted directory job {} for {} database(s) ({} rows marked SCHEDULED)",
+                  jobId,
+                  databaseNames.size(),
+                  updated);
+            },
+            () -> {
+              int reverted =
+                  operationsRepo.updateBatch(
+                      claimedOpIds,
+                      OperationStatus.SCHEDULING,
+                      OperationStatus.PENDING,
+                      Optional.empty(),
+                      Optional.empty());
+              log.warn(
+                  "Directory job submission failed; reverted {} claimed rows to PENDING for retry",
+                  reverted);
+            });
   }
 
   /**

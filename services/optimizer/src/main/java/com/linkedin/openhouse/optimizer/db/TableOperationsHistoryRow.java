@@ -47,22 +47,37 @@ public class TableOperationsHistoryRow {
   @Column(name = "id", nullable = false, length = 36)
   private String id;
 
-  /** Stable table identity from the Tables Service. */
-  @Column(name = "table_uuid", nullable = false, length = 36)
+  /**
+   * Stable table identity from the Tables Service. NULLABLE since M6 (null for non-TABLE scope).
+   */
+  @Column(name = "table_uuid", length = 36)
   private String tableUuid;
 
-  /** Denormalized database name. */
+  /** Denormalized database name. Always present. */
   @Column(name = "database_name", nullable = false, length = 128)
   private String databaseName;
 
-  /** Denormalized table name. */
-  @Column(name = "table_name", nullable = false, length = 128)
+  /** Denormalized table name. NULLABLE since M6 (null for non-TABLE scope). */
+  @Column(name = "table_name", length = 128)
   private String tableName;
 
   /** The type of maintenance operation this history row records. */
   @Enumerated(EnumType.STRING)
   @Column(name = "operation_type", nullable = false, length = 50)
   private OperationType operationType;
+
+  /**
+   * What the completed operation targeted (added M6). {@link OperationScope#TABLE} by default;
+   * {@link OperationScope#DATABASE} for directory-deletion history keyed by {@code database_name}.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "operation_scope", length = 20)
+  @Builder.Default
+  private OperationScope operationScope = OperationScope.TABLE;
+
+  /** Filesystem directory for {@link OperationScope#DIRECTORY} rows; null otherwise. */
+  @Column(name = "directory_path", length = 1024)
+  private String directoryPath;
 
   /** When the operation completed, as recorded by the complete endpoint. */
   @Column(name = "completed_at", nullable = false)

@@ -42,4 +42,26 @@ public interface TableOperationsHistoryRepository
           + "  WHERE r2.tableUuid = r.tableUuid AND r2.operationType = r.operationType)")
   List<TableOperationsHistoryRow> findLatest(
       @Param("operationType") OperationType operationType, Pageable pageable);
+
+  /**
+   * Return the most-recent {@code DATABASE}-scoped history row per {@code (database_name,
+   * operation_type)}, filtered to a single operation type. The directory-deletion counterpart of
+   * {@link #findLatest}: directory ops have a null {@code table_uuid}, so cadence is evaluated per
+   * database rather than per table. Backed by index {@code idx_toph_optype_scope_db_completed}.
+   *
+   * <p>Ties on {@code completed_at} for the same {@code (database_name, operation_type)} return all
+   * tied rows; callers should dedupe in memory.
+   */
+  @Query(
+      "SELECT r FROM TableOperationsHistoryRow r "
+          + "WHERE r.operationType = :operationType "
+          + "AND r.operationScope = com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE "
+          + "AND r.completedAt = ("
+          + "  SELECT MAX(r2.completedAt) FROM TableOperationsHistoryRow r2 "
+          + "  WHERE r2.databaseName = r.databaseName "
+          + "  AND r2.operationType = r.operationType "
+          + "  AND r2.operationScope = "
+          + "      com.linkedin.openhouse.optimizer.db.OperationScope.DATABASE)")
+  List<TableOperationsHistoryRow> findLatestByDatabaseScope(
+      @Param("operationType") OperationType operationType, Pageable pageable);
 }
