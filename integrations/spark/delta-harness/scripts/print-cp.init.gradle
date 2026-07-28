@@ -8,24 +8,48 @@
 // exclusion so the graph carries a single Iceberg — rather than filtering resolved jars by hand.
 // The shaded fat jar provides all org.apache.iceberg.* classes, so excluding the unshaded modules
 // is safe. This exclusion applies only to this classpath-extraction invocation.
+//
+// The harness classpath source module. Overridable via -DharnessItestPath for the spark-4.0
+// (Scala 2.13) lane; defaults to the spark-3.5 (Scala 2.12) lane.
+def harnessItestPath = System.getProperty('harnessItestPath') ?: ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest'
+
+// The F1 exclusion (shaded-runtime lane only). The spark-3.5 lane uses the SHADED
+// iceberg-spark-runtime fat jar, so the unshaded org.apache.iceberg modules must be excluded or
+// shaded-vs-unshaded parquet/avro/jackson collide. The spark-4.0 REST-first lane instead uses the
+// UNSHADED iceberg-spark modules (its embedded server's /iceberg REST controller needs unshaded
+// jackson serializers), so a single unshaded Iceberg spans server+client — no exclusion there.
+def shadedRuntimeLane = harnessItestPath == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest'
+
+// Phase 2 note: Iceberg 1.11's module metadata declares jvm.version=17. The target-JVM resolution
+// relaxation that lets the Java-8/11-target server modules consume it is centralized in the
+// spark-4.0 itest module's configureEach (TARGET_JVM_VERSION_ATTRIBUTE = 17), so no init-script
+// attribute override is needed here.
+
 allprojects {
-  if (path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
+  if (path == harnessItestPath) {
     afterEvaluate {
-      configurations.testRuntimeClasspath {
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-core'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-api'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-common'
-        exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+      if (shadedRuntimeLane) {
+        configurations.testRuntimeClasspath {
+          exclude group: 'org.apache.iceberg', module: 'iceberg-core'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-api'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-common'
+          exclude group: 'org.apache.iceberg', module: 'iceberg-data'
+        }
       }
       // HTS-embed (Option A): pull the REAL House Table Service classes
       // (UserTablesServiceImpl, controllers, JDBC repos, api-spec model) onto the harness
       // classpath so the harness can boot a real HTS as a 2nd Spring context and point the
       // embedded tables server's HouseTableRepositoryImpl at it. Only needed for the real-HTS
-      // mode; the default stub path does not use these classes. Same single-Iceberg exclusion
-      // above covers housetables' transitive unshaded iceberg.
+      // mode; the default stub path does not use these classes.
       dependencies.add('testImplementation', project(':services:housetables'))
     }
     tasks.register('printHarnessCp') {
+      // Depend on the configuration so its project artifacts (the runtime uber jars, the
+      // tables-test-fixtures jar, and each service module jar) are actually BUILT — not merely
+      // resolved to paths. Without this, a fresh container resolves valid paths to jars that were
+      // never assembled, and the harness scalac fails with "object linkedin is not a member of
+      // package com".
+      dependsOn configurations.testRuntimeClasspath
       doLast {
         def cp = configurations.testRuntimeClasspath.resolve().collect { it.absolutePath }
         new File(System.getProperty('cpOut')).text = cp.join(':')

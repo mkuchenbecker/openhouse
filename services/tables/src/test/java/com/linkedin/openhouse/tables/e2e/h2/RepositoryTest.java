@@ -797,6 +797,15 @@ public class RepositoryTest {
                     .tableId(fromTableIdentifier.name())
                     .build())
             .isPresent());
+
+    // Clean up the renamed table so it does not leak into sibling tests. The rename-conflict guard
+    // (OpenHouseInternalCatalog.renameTable) now rejects a rename onto an already-existing
+    // destination, so a leaked d1.t1_renamed would make a later rename in another test fail.
+    openHouseInternalRepository.deleteById(
+        TableDtoPrimaryKey.builder()
+            .databaseId(toTableIdentifier.namespace().toString())
+            .tableId(toTableIdentifier.name())
+            .build());
   }
 
   @Test
@@ -830,6 +839,15 @@ public class RepositoryTest {
     Assertions.assertEquals(
         renamedTable.get().getTableProperties().get("openhouse.tableUri"),
         "local-cluster.d1.t1_renamed");
+
+    // Clean up the renamed table so it does not leak into sibling tests (see the rename-conflict
+    // guard note in testRenameTableMetadataUpdate). The row lives under the preserved (source)
+    // namespace, so delete it by that key.
+    openHouseInternalRepository.deleteById(
+        TableDtoPrimaryKey.builder()
+            .databaseId(fromTableIdentifier.namespace().toString())
+            .tableId(toTableIdentifier.name())
+            .build());
   }
 
   @Test

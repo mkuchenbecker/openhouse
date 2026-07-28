@@ -9,6 +9,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN update-alternatives --install "/usr/bin/python" "python" "$(which python3)" 1
 
+# Trust any extra CA certificates staged in the build context (e.g. a
+# TLS-terminating egress proxy's CA). Without this, curl (Spark download), git
+# (Livy source clone), and Maven (Livy build) fail HTTPS with "self-signed
+# certificate in certificate chain" behind such a proxy. The directory is always
+# present (committed with a README/.gitkeep); real *.crt files are gitignored and
+# staged per-environment, so this is a no-op when no CA is provided.
+COPY /infra/recipes/docker-compose/common/spark/extra-ca-certs/ /usr/local/share/ca-certificates/openhouse-extra/
+RUN if ls /usr/local/share/ca-certificates/openhouse-extra/*.crt >/dev/null 2>&1; then \
+      update-ca-certificates && \
+      for c in /usr/local/share/ca-certificates/openhouse-extra/*.crt; do \
+        csplit -z -s -f /tmp/xcert- -b '%03d.pem' "$c" '/-----BEGIN CERTIFICATE-----/' '{*}' && \
+        i=0 ; for f in /tmp/xcert-*.pem; do \
+          keytool -importcert -noprompt -alias "extra-$(basename $c)-$i" -file "$f" \
+            -keystore "$JAVA_HOME/lib/security/cacerts" -storepass changeit || true ; \
+          i=$((i+1)) ; \
+        done ; rm -f /tmp/xcert-*.pem ; \
+      done ; \
+    else echo "no extra CA certs staged; skipping" ; fi
+
 # Fix the value of PYTHONHASHSEED
 # Note: this is needed when you use Python 3.3 or greater
 ENV SPARK_VERSION=3.5.2 \
@@ -46,7 +65,13 @@ RUN git clone https://github.com/apache/incubator-livy \
     && rm -rf "/incubator-livy"
 
 
-FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+# Runtime base must be Java 11+: the Iceberg 1.10 fork is compiled to class-file
+# version 55 (Java 11) and fails on the Java-8 bde2020 base with
+# UnsupportedClassVersionError. Spark 3.5 supports Java 11, and Spark ships its own
+# Hadoop 3.3.4 client, so the bde2020 Hadoop base is not required here (HDFS is
+# reached via fully-qualified hdfs:// URIs). temurin:11-jdk-jammy matches the builder
+# stage (consistent glibc), unlike Debian-9/glibc-2.24 which cannot install JDK 11.
+FROM eclipse-temurin:11-jdk-jammy
 
 ENV LIVY_HOME=/opt/livy \
 SPARK_HOME=/opt/spark
@@ -84,6 +109,15 @@ RUN mkdir -p "${LIVY_HOME}/logs"
 COPY /infra/recipes/docker-compose/common/spark/start-spark.sh /
 COPY /build/openhouse-spark-3.5-runtime_2.12/libs/openhouse-spark-3.5-runtime_2.12-uber.jar $SPARK_HOME/openhouse-spark-runtime_2.12-latest-all.jar
 COPY /build/openhouse-spark-apps_2.12/libs/openhouse-spark-apps_2.12-uber.jar $SPARK_HOME/openhouse-spark-apps_2.12-latest-all.jar
+# Bake the LinkedIn fork Iceberg Spark runtime (1.10.0-openhouse) onto the Spark classpath
+# ($SPARK_HOME/jars is auto-loaded by every driver/executor, so no --jars needed for Iceberg).
+# The OpenHouse uber jars above intentionally do NOT bundle iceberg-spark-runtime (it is an
+# `implementation` dep, not fatJarPackagedDependencies), so the fork artifact must be provided
+# here for its custom behavior (e.g. #219 delete-file replication) to take effect. Stage it with:
+#   cp ~/.m2/repository/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.10.0-openhouse/\
+#      iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar \
+#      build/iceberg-fork/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar
+COPY /build/iceberg-fork/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar $SPARK_HOME/jars/iceberg-spark-runtime-3.5_2.12-1.10.0-openhouse.jar
 COPY /build/dummytokens/libs/dummytokens*.jar /dummytokens.jar
 RUN java -jar /dummytokens.jar -d /var/config/
 

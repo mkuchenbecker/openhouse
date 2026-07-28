@@ -1,11 +1,47 @@
+// spark4-upgrade: server core bumped from com.linkedin.iceberg 1.5.2.15 -> stock
+// org.apache.iceberg 1.11.0-openhouse. Group changed (fork artifacts are LinkedIn-published; the
+// 1.11.0-openhouse artifacts come from the fork's publishToMavenLocal).
+import org.gradle.api.attributes.java.TargetJvmVersion
+
 ext {
-  icebergVersion = rootProject.ext.iceberg_1_5_version
+  // spark4-upgrade: server core -> 1.11.0-openhouse (matures v3 deletion vectors). This feeds
+  // services/tables (the embedded OpenHouse server) + iceberg/* + tables-test-fixtures, i.e. the
+  // metadata-authoring path.
+  icebergVersion = rootProject.ext.iceberg_1_11_version
 }
 
+// Iceberg 1.11 publishes Gradle Module Metadata declaring jvm.version=17, so Gradle's variant
+// resolver refuses to place it on a targetCompatibility=8 module's classpath. That guard is
+// metadata-conservative: -target 8 (v52) bytecode loads and runs fine on the Java 17 runtime this
+// rung uses, next to the Java-17 Iceberg classes (bytecode target is a JVM floor, not an inter-jar
+// contract).
+//
+// Rather than raise the resolution attribute on every consuming classpath config — which races
+// fatally against the many configs that :all-modules cross-project aggregation, the client codegen
+// script, and Spring Boot's productionRuntimeClasspath resolve EARLY during configuration
+// ("Cannot change attributes of <config> after it has been resolved") — we relax the PRODUCER's
+// declared jvm version at metadata resolution time, ONCE, via a ComponentMetadataRule. No consumer
+// configuration is ever mutated, so there is no ordering/race surface and a stock `./gradlew build`
+// works with no init script. The java-test-fixtures re-stamp (testFixtures* configs reverting to
+// request jvm 8) is handled by the same rule: the iceberg artifacts now advertise jvm 8, so a jvm-8
+// request selects them. Scoped to group `org.apache.iceberg`, so the com.linkedin.iceberg 1.5 /
+// spark-3.5 lane (which applies this convention with icebergVersion overridden back to 1.5) is
+// completely untouched.
 dependencies {
-  api('com.linkedin.iceberg:iceberg-bundled-guava:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-data:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-core:' + icebergVersion)
-  api('com.linkedin.iceberg:iceberg-common:' + icebergVersion)
+  components {
+    all { details ->
+      if (details.id.group == 'org.apache.iceberg') {
+        details.allVariants {
+          attributes {
+            attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 8)
+          }
+        }
+      }
+    }
+  }
+  api('org.apache.iceberg:iceberg-bundled-guava:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-data:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-core:' + icebergVersion)
+  api('org.apache.iceberg:iceberg-common:' + icebergVersion)
   implementation('org.testcontainers:testcontainers:1.19.8')
 }

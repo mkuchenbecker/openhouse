@@ -1,5 +1,11 @@
 ext {
-  hadoopVersion = '2.10.0'
+  // spark4-upgrade / Rung 9: the OpenHouse server links hadoop-client to write table metadata to
+  // HDFS. The legacy 2.10.0 pin predates Java 17 and lacks the Hadoop 3.3+ `FileSystem.openFile`
+  // API that Iceberg 1.10/1.11 calls, so it is unfit for the Java-17 server runtime. Move to the
+  // Hadoop 3.3 line: 3.3.x runs on Java 17 (with the launcher --add-opens already applied) and its
+  // RPC client is wire-compatible with the 3.1/3.2 RBF (Router-Based Federation) cluster. The
+  // iceberg-1.2/spark-3.1 coexistence lane is unaffected (it excludes/relocates its own Hadoop).
+  hadoopVersion = '3.3.6'
 }
 
 dependencies {

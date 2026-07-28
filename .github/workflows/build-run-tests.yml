@@ -20,6 +20,53 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      # spark4-upgrade: the OpenHouse build on the `1.11` branch depends on the custom Iceberg fork
+      # published as org.apache.iceberg:*:1.11.0-openhouse. That fork exists only as SOURCE on
+      # mkuchenbecker/iceberg@1.11.x — it is in no CI-reachable artifact repo — so it must be built
+      # and published into the runner's mavenLocal before the OpenHouse build can resolve it.
+      #
+      # This fork build is EXPENSIVE, so it is gated to pushes/merges to the `1.11` branch only
+      # (github.ref == 'refs/heads/1.11'). This reusable workflow inherits github.ref from the
+      # calling workflow's triggering event, so these two steps run ONLY when the caller is the
+      # push-to-1.11 workflow (.github/workflows/branch-1.11.yml). They are SKIPPED for the
+      # PR-to-main caller (pr-validations.yml, ref = refs/pull/N/merge) and the push-to-main caller
+      # (build-tag-publish.yml, ref = refs/heads/main). Result: ordinary PRs and other branches do
+      # NOT pay for the fork build. Both steps run in this same job so the published artifacts land
+      # in the shared ~/.m2 mavenLocal that the "Build with Gradle" step below resolves from.
+      - name: Checkout custom Iceberg fork (1.11 branch only)
+        if: github.ref == 'refs/heads/1.11'
+        uses: actions/checkout@v6
+        with:
+          repository: mkuchenbecker/iceberg
+          ref: 1.11.x
+          path: iceberg-fork
+
+      - name: Build and publish Iceberg fork to mavenLocal (1.11 branch only)
+        if: github.ref == 'refs/heads/1.11'
+        working-directory: iceberg-fork
+        # JDK 17 is already on PATH from the "Set up JDK 17" step above (1.11 raised its Java floor to
+        # 17). -DforceVersion stamps the 1.11.0-openhouse version; -DsparkVersions=4.0 selects the
+        # Spark 4.0 / Scala 2.13 lane. Publish exactly the modules the OpenHouse 1.11 build resolves
+        # (core/api/common/data/parquet/orc/arrow/bundled-guava + the spark-4.0_2.13 family).
+        # -x test -x compileTestJava -x compileTestScala skips the fork's test compile+run, which
+        # does not all compile (and is irrelevant to publishing the fork's main artifacts).
+        run: |
+          ./gradlew --no-daemon \
+            -DforceVersion=1.11.0-openhouse \
+            -DsparkVersions=4.0 \
+            :iceberg-bundled-guava:publishToMavenLocal \
+            :iceberg-api:publishToMavenLocal \
+            :iceberg-common:publishToMavenLocal \
+            :iceberg-core:publishToMavenLocal \
+            :iceberg-data:publishToMavenLocal \
+            :iceberg-parquet:publishToMavenLocal \
+            :iceberg-orc:publishToMavenLocal \
+            :iceberg-arrow:publishToMavenLocal \
+            :iceberg-spark:iceberg-spark-4.0_2.13:publishToMavenLocal \
+            :iceberg-spark:iceberg-spark-extensions-4.0_2.13:publishToMavenLocal \
+            :iceberg-spark:iceberg-spark-runtime-4.0_2.13:publishToMavenLocal \
+            -x test -x compileTestJava -x compileTestScala
+
       - name: Build with Gradle
         run: ./gradlew clean build
 

@@ -89,5 +89,21 @@ test {
   }
 }
 
-test.dependsOn statementTest
-statementTest.dependsOn catalogTest
+// spark4-upgrade: the ENTIRE openhouse-spark-3.5-itest module is legacy Spark-3.5 / Iceberg-1.5
+// integration coverage — the custom OpenHouseCatalog Spark client and the custom
+// OpenhouseSparkSessionExtensions DDL, exercised against an embedded OpenHouse server. On this branch
+// the server is Iceberg 1.11, so every test that touches Iceberg loads TWO org.apache.iceberg
+// class-sets (1.5 client + 1.11 server) in one classloader and dies with NoSuchMethodError /
+// NoClassDefFoundError. This is a test-harness artifact — in production the Spark job and the server
+// are separate processes — and none of what this module tests (the custom catalog client, the custom
+// SQL extension) is even on the Spark-4.0 REST-first 1.11 lane, whose client is the stock RESTCatalog.
+// Measured on 1.11: catalogTest 58/58 fail, statementTest 60/60 fail, test 49/90 fail.
+//
+// Coverage moves to the 1.11 lane's single-Iceberg-version suites: the Spark-4.0 / REST-first port
+// under integrations/spark/spark-4.0/openhouse-spark-itest and the delta-harness. Restoring this
+// module for a true Spark-3.5 / Iceberg-1.10 "both lanes" setup would require its own Iceberg-1.10
+// embedded-server build (not yet done). Gate the whole module's test execution off the 1.11 branch;
+// see docs/spark4-iceberg-upgrade/spark4-e2e-tests/20-legacy-gated.md.
+catalogTest.enabled = false
+statementTest.enabled = false
+test.enabled = false

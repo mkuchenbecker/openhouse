@@ -25,7 +25,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.common.TableType;
 import java.util.HashMap;
 import java.util.Map;
-import org.apache.directory.api.util.Strings;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.iceberg.catalog.Catalog;
 import org.junit.jupiter.api.Assertions;
 import org.springframework.http.MediaType;
@@ -256,7 +256,7 @@ public final class RequestAndValidateHelper {
             .getAsString();
     assertTrue(returnMsg.contains("Bad tblproperties provided"));
 
-    if (!Strings.isEmpty(badKey)) {
+    if (!StringUtils.isEmpty(badKey)) {
       // Digging into the bad props a bit more if badKey appears
       String remainingSubstring =
           returnMsg.substring(

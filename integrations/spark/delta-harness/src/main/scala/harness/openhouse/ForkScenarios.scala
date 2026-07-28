@@ -377,7 +377,10 @@ trait ForkScenarios extends ScenarioKit {
     val fileCount = spark.sql(s"SELECT count(*) FROM $table.data_files").collect()(0).getLong(0)
     assert(fileCount >= 2, s"[$fmt] expected multiple data files for a split test, got $fileCount")
 
-    val key = org.apache.iceberg.spark.SparkSQLProperties.SPLIT_SIZE // "spark.sql.iceberg.split-size"
+    // Phase 2 port: Iceberg 1.11 removed the SparkSQLProperties.SPLIT_SIZE constant (session split-size
+    // superseded by adaptive split sizing). Inline its literal value — the constant was a `static final
+    // String`, so this is bytecode-identical to the pre-1.11 reference and preserves the test's behavior.
+    val key = "spark.sql.iceberg.split-size"
     val saved = spark.conf.getOption(key)
     def keys(): Seq[Long] = spark.sql(s"SELECT id FROM $table ORDER BY id").collect().toSeq.map(_.getLong(0))
     def rddParts(): Int = spark.sql(s"SELECT * FROM $table").rdd.getNumPartitions

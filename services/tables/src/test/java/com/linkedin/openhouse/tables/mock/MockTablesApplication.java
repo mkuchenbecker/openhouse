@@ -3,6 +3,8 @@ package com.linkedin.openhouse.tables.mock;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
+import com.linkedin.openhouse.tables.repository.SchemaValidator;
+import com.linkedin.openhouse.tables.repository.impl.BaseIcebergSchemaValidator;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -52,4 +54,16 @@ public class MockTablesApplication {
   @MockBean OpenHouseInternalCatalog openHouseInternalCatalog;
 
   @MockBean HouseTableRepository houseTableRepository;
+
+  /**
+   * The Iceberg REST catalog controller (component-scanned above) autowires a {@link
+   * SchemaValidator}. Its production implementation {@link BaseIcebergSchemaValidator} lives in the
+   * {@code repository.impl} package, which this mock context intentionally does not scan (it mocks
+   * {@link OpenHouseInternalRepository} instead of wiring the real repository beans). Provide the
+   * validator explicitly so the controller can be constructed.
+   */
+  @org.springframework.context.annotation.Bean
+  SchemaValidator schemaValidator() {
+    return new BaseIcebergSchemaValidator();
+  }
 }

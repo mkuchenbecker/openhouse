@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang3.StringEscapeUtils;
 import org.apache.spark.sql.SparkSession;
 
 /**
