@@ -90,6 +90,15 @@ public final class AppConstants {
   public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
 
   /**
+   * Hard ceiling on the number of tables a single batched RETENTION job can carry. Mirrors {@link
+   * #OFD_MAX_BATCH_SIZE}: the wire path is the same parallel-CSV CLI-arg envelope (see {@code
+   * BatchedRetentionSparkApp#buildEntries}), so the same {@code ARG_MAX} reasoning applies. This is
+   * a footgun stop, not the operating point — operators tune the per-job batch size with {@code
+   * --batchMaxItems} on the scheduler.
+   */
+  public static final int RETENTION_MAX_BATCH_SIZE = 200;
+
+  /**
    * Hard ceiling on the number of tables a single batched data-compaction job can carry. Set well
    * below {@link #OFD_MAX_BATCH_SIZE}: compaction reads and rewrites every byte of each table, so a
    * batch's driver-side memory and job-duration footprint scale with data volume, not just with the

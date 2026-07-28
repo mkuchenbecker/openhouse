@@ -47,6 +47,9 @@ public class SchedulerConfig {
    *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
+   *   <li><b>Retention</b>: same packer over {@link TotalFilesBinItem}. A retention pass rewrites
+   *       the affected partitions/files, so file count is again the dominant cost driver; it reuses
+   *       the file-count bin item with its own per-bin caps.
    *   <li><b>Data compaction</b>: a {@link FirstFitDecreasingBinPacker} over {@link
    *       TableSizeBinItem}. Cost scales with data volume: every byte is read, re-sorted, and
    *       written back, so bins are capped on {@code tableSizeBytes} rather than file count.
@@ -66,6 +69,8 @@ public class SchedulerConfig {
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
           int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.retention.max-files-per-bin}") long retentionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.retention.max-tables-per-bin}") int retentionMaxTablesPerBin,
       @Value("${optimizer.scheduler.dataCompaction.max-bytes-per-bin}") long dcMaxBytesPerBin,
       @Value("${optimizer.scheduler.dataCompaction.max-tables-per-bin}") int dcMaxTablesPerBin) {
     return new SchedulerRunner(operationsRepo, statsRepo, jobsClient, resultsEndpoint)
@@ -89,6 +94,13 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.RETENTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(retentionMaxFilesPerBin)
+                .maxItemsPerBin(retentionMaxTablesPerBin)
                 .build())
         .registerOperation(
             OperationTypeDto.DATA_COMPACTION,
