@@ -90,6 +90,15 @@ public final class AppConstants {
   public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
 
   /**
+   * Hard ceiling on the number of tables a single batched RETENTION job can carry. Mirrors {@link
+   * #OFD_MAX_BATCH_SIZE}: the wire path is the same parallel-CSV CLI-arg envelope (see {@code
+   * BatchedRetentionSparkApp#buildEntries}), so the same {@code ARG_MAX} reasoning applies. This is
+   * a footgun stop, not the operating point — operators tune the per-job batch size with {@code
+   * --batchMaxItems} on the scheduler.
+   */
+  public static final int RETENTION_MAX_BATCH_SIZE = 200;
+
+  /**
    * Hard ceiling on the number of tables a single batched data-layout-strategy <b>generation</b>
    * job can carry. Same wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE} (parallel CSV CLI args);
    * generation is a stats-scan per table, so the cap is a footgun stop, not the operating point —

@@ -47,6 +47,9 @@ public class SchedulerConfig {
    *   <li><b>Staged files deletion</b>: same {@link FirstFitDecreasingBinPacker} over {@link
    *       TotalFilesBinItem}. Deleting abandoned staged/trash files is likewise a per-file list +
    *       delete workload, so file count is the right cost driver.
+   *   <li><b>Retention</b>: same packer over {@link TotalFilesBinItem}. A retention pass rewrites
+   *       the affected partitions/files, so file count is again the dominant cost driver; it reuses
+   *       the file-count bin item with its own per-bin caps.
    *   <li><b>Data-layout-strategy generation</b>: {@link TotalFilesBinItem}; generation is a
    *       per-table stats scan whose cost tracks the number of files/manifests read.
    *   <li><b>Data-layout-strategy execution</b>: {@link TableSizeBytesBinItem}; execution rewrites
@@ -68,6 +71,8 @@ public class SchedulerConfig {
           long snapshotsExpirationMaxFilesPerBin,
       @Value("${optimizer.scheduler.snapshotsExpiration.max-tables-per-bin}")
           int snapshotsExpirationMaxTablesPerBin,
+      @Value("${optimizer.scheduler.retention.max-files-per-bin}") long retentionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.retention.max-tables-per-bin}") int retentionMaxTablesPerBin,
       @Value("${optimizer.scheduler.dls-generation.max-files-per-bin}") long dlsGenMaxFilesPerBin,
       @Value("${optimizer.scheduler.dls-generation.max-tables-per-bin}") int dlsGenMaxTablesPerBin,
       @Value("${optimizer.scheduler.dls-execution.max-bytes-per-bin}") long dlsExecMaxBytesPerBin,
@@ -94,6 +99,13 @@ public class SchedulerConfig {
                 .binItemSupplier(TotalFilesBinItem::new)
                 .maxWeightPerBin(snapshotsExpirationMaxFilesPerBin)
                 .maxItemsPerBin(snapshotsExpirationMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.RETENTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(retentionMaxFilesPerBin)
+                .maxItemsPerBin(retentionMaxTablesPerBin)
                 .build())
         .registerOperation(
             OperationTypeDto.DATA_LAYOUT_STRATEGY_GENERATION,
