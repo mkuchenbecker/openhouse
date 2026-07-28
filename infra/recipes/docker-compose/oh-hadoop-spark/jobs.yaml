@@ -99,6 +99,16 @@ jobs:
         args: [ "--trashDir", ".trash" ]
         <<: *apps-defaults
         << : *livy-engine
+      - type: ORPHAN_DIRECTORY_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedOrphanTableDirectoryDeletionSparkApp
+        args: [ "--trashDir", ".trash" ]
+        <<: *apps-defaults
+        << : *livy-engine
+      - type: TABLE_DIRECTORY_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedTableDirectoryDeletionSparkApp
+        args: [ "--trashDir", ".trash" ]
+        <<: *apps-defaults
+        << : *livy-engine
       - type: TABLE_STATS_COLLECTION
         class-name: com.linkedin.openhouse.jobs.spark.TableStatsCollectionSparkApp
         args: []

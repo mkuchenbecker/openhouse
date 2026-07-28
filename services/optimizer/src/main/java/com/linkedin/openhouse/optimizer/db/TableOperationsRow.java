@@ -49,22 +49,45 @@ public class TableOperationsRow {
   @Column(name = "id", nullable = false, length = 36)
   private String id;
 
-  /** Stable table identity from the Tables Service. Survives renames; rotates on drop+recreate. */
-  @Column(name = "table_uuid", nullable = false, length = 36)
+  /**
+   * Stable table identity from the Tables Service. Survives renames; rotates on drop+recreate.
+   * NULLABLE since M6: directory/database-scoped operations (see {@link #operationScope}) target
+   * work that has no live table, so they carry a null {@code table_uuid}. Per-table operations
+   * always populate it.
+   */
+  @Column(name = "table_uuid", length = 36)
   private String tableUuid;
 
-  /** Denormalized database name. */
+  /** Denormalized database name. Always present — every operation belongs to a database. */
   @Column(name = "database_name", nullable = false, length = 128)
   private String databaseName;
 
-  /** Denormalized table name. */
-  @Column(name = "table_name", nullable = false, length = 128)
+  /** Denormalized table name. NULLABLE since M6: null for non-{@code TABLE}-scoped operations. */
+  @Column(name = "table_name", length = 128)
   private String tableName;
 
   /** The type of maintenance operation this row recommends. */
   @Enumerated(EnumType.STRING)
   @Column(name = "operation_type", nullable = false, length = 50)
   private OperationType operationType;
+
+  /**
+   * What this operation targets (added M6). {@link OperationScope#TABLE} for the per-table majority
+   * (keyed by {@code table_uuid}); {@link OperationScope#DATABASE} for directory-deletion ops keyed
+   * by {@code database_name}. Defaults to {@code TABLE}; a null DB value is read as {@code TABLE}.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "operation_scope", length = 20)
+  @Builder.Default
+  private OperationScope operationScope = OperationScope.TABLE;
+
+  /**
+   * Filesystem directory this operation targets, for {@link OperationScope#DIRECTORY} rows. Null
+   * for {@code TABLE} and {@code DATABASE} scopes. Reserved for a future per-directory discovery
+   * path.
+   */
+  @Column(name = "directory_path", length = 1024)
+  private String directoryPath;
 
   /** Lifecycle state — drives the scheduler's CAS claim and the analyzer's eligibility check. */
   @Enumerated(EnumType.STRING)

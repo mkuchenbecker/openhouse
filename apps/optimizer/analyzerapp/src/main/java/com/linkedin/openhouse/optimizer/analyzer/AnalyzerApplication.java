@@ -19,11 +19,20 @@ public class AnalyzerApplication {
   }
 
   /**
-   * Runs the analyzer once per registered {@link OperationAnalyzer} per process invocation. Each
-   * call is scoped to one operation type; the runner iterates databases internally.
+   * Runs the analyzer once per registered {@link OperationAnalyzer} per process invocation, then
+   * once per registered {@link DirectoryOperationAnalyzer}. Per-table analyzers iterate {@code
+   * table_stats}; directory (database-scoped) analyzers enumerate databases. Each call is scoped to
+   * one operation type. Directory analyzers gated off by their per-op opt-in are no-ops.
    */
   @Bean
-  public CommandLineRunner run(AnalyzerRunner runner, List<OperationAnalyzer> analyzers) {
-    return args -> analyzers.forEach(a -> runner.analyze(a.getOperationType()));
+  public CommandLineRunner run(
+      AnalyzerRunner runner,
+      List<OperationAnalyzer> analyzers,
+      DirectoryDeletionAnalyzerRunner directoryRunner,
+      List<DirectoryOperationAnalyzer> directoryAnalyzers) {
+    return args -> {
+      analyzers.forEach(a -> runner.analyze(a.getOperationType()));
+      directoryAnalyzers.forEach(a -> directoryRunner.analyze(a.getOperationType()));
+    };
   }
 }
