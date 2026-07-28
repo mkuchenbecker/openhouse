@@ -90,6 +90,15 @@ public final class AppConstants {
   public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
 
   /**
+   * Hard ceiling on the number of tables a single batched RETENTION job can carry. Mirrors {@link
+   * #OFD_MAX_BATCH_SIZE}: the wire path is the same parallel-CSV CLI-arg envelope (see {@code
+   * BatchedRetentionSparkApp#buildEntries}), so the same {@code ARG_MAX} reasoning applies. This is
+   * a footgun stop, not the operating point — operators tune the per-job batch size with {@code
+   * --batchMaxItems} on the scheduler.
+   */
+  public static final int RETENTION_MAX_BATCH_SIZE = 200;
+
+  /**
    * Hard ceiling on the number of orphan table directories a single batched {@code
    * ORPHAN_DIRECTORY_DELETION} job can carry. Mirrors {@link #OFD_MAX_BATCH_SIZE}: the wire path is
    * a parallel CSV of directory paths on the command line, so the cap is a footgun stop against an
