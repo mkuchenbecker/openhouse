@@ -59,6 +59,10 @@ public class SchedulerConfig {
    *   <li><b>Data-layout-strategy execution</b>: {@link TableSizeBytesBinItem}; execution rewrites
    *       data files (compaction), so the dominant cost is the volume of bytes shuffled, packed by
    *       table size.
+   *   <li><b>Table stats collection</b>: same packer over {@link TotalFilesBinItem}. Produces the
+   *       {@code table_stats} rows other analyzers consume; cost tracks the number of files scanned.
+   *   <li><b>Sort stats collection</b>: same packer over {@link TotalFilesBinItem}. Samples and
+   *       rewrites to estimate sort compression, so file count is again the dominant cost driver.
    * </ul>
    */
   @Bean
@@ -84,6 +88,14 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.dls-execution.max-bytes-per-bin}") long dlsExecMaxBytesPerBin,
       @Value("${optimizer.scheduler.dls-execution.max-tables-per-bin}")
           int dlsExecMaxTablesPerBin,
+      @Value("${optimizer.scheduler.tableStatsCollection.max-files-per-bin}")
+          long tableStatsCollectionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.tableStatsCollection.max-tables-per-bin}")
+          int tableStatsCollectionMaxTablesPerBin,
+      @Value("${optimizer.scheduler.sortStatsCollection.max-files-per-bin}")
+          long sortStatsCollectionMaxFilesPerBin,
+      @Value("${optimizer.scheduler.sortStatsCollection.max-tables-per-bin}")
+          int sortStatsCollectionMaxTablesPerBin,
       @Value("${optimizer.scheduler.orphan-directory-deletion.max-databases-per-bin:25}")
           int orphanDirMaxDatabasesPerBin,
       @Value("${optimizer.scheduler.table-directory-deletion.max-databases-per-bin:25}")
@@ -149,6 +161,20 @@ public class SchedulerConfig {
                 .binItemSupplier(TableSizeBytesBinItem::new)
                 .maxWeightPerBin(dlsExecMaxBytesPerBin)
                 .maxItemsPerBin(dlsExecMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.TABLE_STATS_COLLECTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(tableStatsCollectionMaxFilesPerBin)
+                .maxItemsPerBin(tableStatsCollectionMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.SORT_STATS_COLLECTION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(sortStatsCollectionMaxFilesPerBin)
+                .maxItemsPerBin(sortStatsCollectionMaxTablesPerBin)
                 .build())
         .registerDirectoryOperation(
             OperationTypeDto.ORPHAN_DIRECTORY_DELETION, orphanDirMaxDatabasesPerBin)

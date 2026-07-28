@@ -69,6 +69,11 @@ public class JobConf {
      */
     ORPHAN_DIRECTORY_DELETION_BATCH,
     TABLE_STATS_COLLECTION,
+    /**
+     * Multi-table table-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedTableStatsCollectionSparkApp}.
+     */
+    TABLE_STATS_COLLECTION_BATCH,
     DATA_LAYOUT_STRATEGY_GENERATION,
     /**
      * Multi-table data-layout-strategy generation. One Spark job (re)generates and stores
@@ -85,6 +90,11 @@ public class JobConf {
     DATA_LAYOUT_STRATEGY_EXECUTION_BATCH,
     REPLICATION,
     SORT_STATS_COLLECTION,
+    /**
+     * Multi-table sort-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedSortStatsCollectionSparkApp}.
+     */
+    SORT_STATS_COLLECTION_BATCH,
     TABLE_DIRECTORY_DELETION,
     /**
      * Multi-directory dropped-table-directory deletion. One Spark job purges a list of

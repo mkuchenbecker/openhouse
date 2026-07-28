@@ -125,6 +125,20 @@ public final class AppConstants {
   public static final int DATA_LAYOUT_STRATEGY_EXECUTION_MAX_BATCH_SIZE = 200;
 
   /**
+   * Hard ceiling on the number of tables a single batched TABLE_STATS_COLLECTION job can carry.
+   * Same parallel-CSV wire path and footgun-stop rationale as {@link #OFD_MAX_BATCH_SIZE}; the
+   * operating batch size is tuned scheduler-side via {@code --batchMaxItems}.
+   */
+  public static final int TABLE_STATS_COLLECTION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched SORT_STATS_COLLECTION job can carry. Same
+   * parallel-CSV wire path and footgun-stop rationale as {@link #OFD_MAX_BATCH_SIZE}; the operating
+   * batch size is tuned scheduler-side via {@code --batchMaxItems}.
+   */
+  public static final int SORT_STATS_COLLECTION_MAX_BATCH_SIZE = 200;
+
+  /**
    * Hard ceiling on the number of orphan table directories a single batched {@code
    * ORPHAN_DIRECTORY_DELETION} job can carry. Mirrors {@link #OFD_MAX_BATCH_SIZE}: the wire path is
    * a parallel CSV of directory paths on the command line, so the cap is a footgun stop against an
