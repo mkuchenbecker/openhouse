@@ -91,7 +91,7 @@ configurations.configureEach {
 }
 
 ext {
-  sparkVersion = '4.0.0'
+  sparkVersion = '4.2.0'
   icebergVersion = '1.11.0-openhouse'
 }
 
@@ -113,14 +113,14 @@ dependencies {
   // makes server AND Spark client share ONE iceberg-1.10 + ONE jackson + ONE parquet — no
   // shaded/unshaded split, so the F1 collision cannot arise. These transitively pull iceberg-core,
   // iceberg-data, iceberg-parquet, iceberg-orc, iceberg-arrow (all 1.10.0-openhouse) + parquet/orc.
-  testImplementation "org.apache.iceberg:iceberg-spark-4.0_2.13:${icebergVersion}"
-  testImplementation "org.apache.iceberg:iceberg-spark-extensions-4.0_2.13:${icebergVersion}"
+  testImplementation "org.apache.iceberg:iceberg-spark-4.2_2.13:${icebergVersion}"
+  testImplementation "org.apache.iceberg:iceberg-spark-extensions-4.2_2.13:${icebergVersion}"
 
   // OpenHouse Spark SQL extension (Spark-4.0 / Scala-2.13 port): provides the SET/UNSET POLICY DDL
   // (retention / replication / sharing / history) that lowers onto the `updated.openhouse.policy`
   // table property the /iceberg REST server translates into OpenHouse Policies. Registered in
   // OpenHouseRestSparkITest.getBuilder via spark.sql.extensions.
-  testImplementation project(':integrations:spark:spark-4.0:openhouse-spark-4.0-runtime_2.13')
+  testImplementation project(':integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13')
 
   // Spark 4.0 (Scala 2.13). Pulls scala-library 2.13.x transitively.
   testImplementation("org.apache.spark:spark-sql_2.13:${sparkVersion}") {

@@ -31,7 +31,7 @@ SCALAC_CP="$M2/scala-compiler/$SCALA_VER/scala-compiler-$SCALA_VER.jar:$M2/scala
 
 # Phase 2: resolve the classpath from the Spark-4.0/Scala-2.13 itest module (REST-first: stock
 # iceberg-spark-runtime-4.0 + embedded OpenHouse server, no custom OH runtime).
-HARNESS_ITEST_PATH="${HARNESS_ITEST_PATH:-:integrations:spark:spark-4.0:openhouse-spark-4.0-itest}"
+HARNESS_ITEST_PATH="${HARNESS_ITEST_PATH:-:integrations:spark:spark-4.2:openhouse-spark-4.2-itest}"
 
 # Classpath resolution is the slow part (~25-80s of gradle). It only changes when OpenHouse deps
 # change, so we cache it in $WORK/oh-cp.txt and reuse it for fast inner-loop iteration. Force a

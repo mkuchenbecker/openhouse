@@ -33,27 +33,28 @@ jobs:
       # (build-tag-publish.yml, ref = refs/heads/main). Result: ordinary PRs and other branches do
       # NOT pay for the fork build. Both steps run in this same job so the published artifacts land
       # in the shared ~/.m2 mavenLocal that the "Build with Gradle" step below resolves from.
-      - name: Checkout custom Iceberg fork (1.11 branch only)
-        if: github.ref == 'refs/heads/1.11'
+      - name: Checkout custom Iceberg fork (spark-4.2 branch only)
+        if: github.ref == 'refs/heads/spark-4.2' || github.base_ref == 'spark-4.2'
         uses: actions/checkout@v6
         with:
           repository: mkuchenbecker/iceberg
-          ref: 1.11.x
+          ref: spark-4.2
           path: iceberg-fork
 
-      - name: Build and publish Iceberg fork to mavenLocal (1.11 branch only)
-        if: github.ref == 'refs/heads/1.11'
+      - name: Build and publish Iceberg fork to mavenLocal (spark-4.2 branch only)
+        if: github.ref == 'refs/heads/spark-4.2' || github.base_ref == 'spark-4.2'
         working-directory: iceberg-fork
         # JDK 17 is already on PATH from the "Set up JDK 17" step above (1.11 raised its Java floor to
-        # 17). -DforceVersion stamps the 1.11.0-openhouse version; -DsparkVersions=4.0 selects the
-        # Spark 4.0 / Scala 2.13 lane. Publish exactly the modules the OpenHouse 1.11 build resolves
-        # (core/api/common/data/parquet/orc/arrow/bundled-guava + the spark-4.0_2.13 family).
-        # -x test -x compileTestJava -x compileTestScala skips the fork's test compile+run, which
-        # does not all compile (and is irrelevant to publishing the fork's main artifacts).
+        # 17). -DforceVersion stamps the 1.11.0-openhouse version; -DsparkVersions=4.2 selects the
+        # Spark 4.2 / Scala 2.13 lane (spark/v4.2 is authored in the fork; upstream Iceberg has no
+        # v4.2 yet). Publish exactly the modules the OpenHouse spark-4.2 build resolves
+        # (core/api/common/data/parquet/orc/arrow/bundled-guava + the spark-4.2_2.13 family).
+        # -x test -x compileTestJava skips the fork's test compile+run, which does not all compile
+        # (and is irrelevant to publishing the fork's main artifacts).
         run: |
           ./gradlew --no-daemon \
             -DforceVersion=1.11.0-openhouse \
-            -DsparkVersions=4.0 \
+            -DsparkVersions=4.2 \
             :iceberg-bundled-guava:publishToMavenLocal \
             :iceberg-api:publishToMavenLocal \
             :iceberg-common:publishToMavenLocal \
@@ -62,10 +63,10 @@ jobs:
             :iceberg-parquet:publishToMavenLocal \
             :iceberg-orc:publishToMavenLocal \
             :iceberg-arrow:publishToMavenLocal \
-            :iceberg-spark:iceberg-spark-4.0_2.13:publishToMavenLocal \
-            :iceberg-spark:iceberg-spark-extensions-4.0_2.13:publishToMavenLocal \
-            :iceberg-spark:iceberg-spark-runtime-4.0_2.13:publishToMavenLocal \
-            -x test -x compileTestJava -x compileTestScala
+            :iceberg-spark:iceberg-spark-4.2_2.13:publishToMavenLocal \
+            :iceberg-spark:iceberg-spark-extensions-4.2_2.13:publishToMavenLocal \
+            :iceberg-spark:iceberg-spark-runtime-4.2_2.13:publishToMavenLocal \
+            -x test -x compileTestJava
 
       - name: Build with Gradle
         run: ./gradlew clean build

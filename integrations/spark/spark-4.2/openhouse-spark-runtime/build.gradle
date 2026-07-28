@@ -11,7 +11,7 @@
 // The module is consumed as a `testImplementation` by the spark-4.0 itest harness so its extension
 // can be registered on the stock RESTCatalog-backed SparkSession. It intentionally does NOT use the
 // `openhouse.java-minimal-conventions` plugin (which pins Java 11 and would refuse the Java-17 Spark
-// 4.0 jars) — mirroring the sibling openhouse-spark-4.0-itest module.
+// 4.0 jars) — mirroring the sibling openhouse-spark-4.2-itest module.
 plugins {
   id 'scala'
   id 'java-library'
@@ -20,7 +20,7 @@ plugins {
 import org.gradle.api.attributes.java.TargetJvmVersion
 
 ext {
-  sparkVersion = '4.0.0'
+  sparkVersion = '4.2.0'
   icebergVersion = '1.11.0-openhouse'
   scalaVersion = '2.13.16'
   antlrVersion = '4.13.1'
@@ -55,7 +55,7 @@ dependencies {
 
   // Stock Iceberg Spark 4.0 client — Spark3Util / SparkTable / SparkCatalog used by the Exec nodes
   // and the planner strategy.
-  compileOnly "org.apache.iceberg:iceberg-spark-4.0_2.13:${icebergVersion}"
+  compileOnly "org.apache.iceberg:iceberg-spark-4.2_2.13:${icebergVersion}"
 
   // ANTLR runtime is provided by Spark 4.0 at test/runtime; declare it only for compilation of the
   // generated parser. (Not exported — consumer gets 4.13.1 from Spark.)
