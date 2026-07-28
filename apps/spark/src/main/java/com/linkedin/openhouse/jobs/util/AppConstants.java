@@ -99,6 +99,16 @@ public final class AppConstants {
   public static final int RETENTION_MAX_BATCH_SIZE = 200;
 
   /**
+   * Hard ceiling on the number of tables a single batched data-compaction job can carry. Set well
+   * below {@link #OFD_MAX_BATCH_SIZE}: compaction reads and rewrites every byte of each table, so a
+   * batch's driver-side memory and job-duration footprint scale with data volume, not just with the
+   * per-entry CLI cost. Like the OFD cap this is a footgun stop, not the operating point —
+   * operators tune the per-job batch size with {@code --batchMaxItems} and the scheduler's per-bin
+   * byte cap.
+   */
+  public static final int DATA_COMPACTION_MAX_BATCH_SIZE = 100;
+
+  /**
    * Hard ceiling on the number of tables a single batched TABLE_STATS_COLLECTION job can carry.
    * Same parallel-CSV wire path and footgun-stop rationale as {@link #OFD_MAX_BATCH_SIZE}; the
    * operating batch size is tuned scheduler-side via {@code --batchMaxItems}.
