@@ -63,7 +63,19 @@ public class JobConf {
     ORPHAN_DIRECTORY_DELETION,
     TABLE_STATS_COLLECTION,
     DATA_LAYOUT_STRATEGY_GENERATION,
+    /**
+     * Multi-table data-layout-strategy generation. One Spark job (re)generates and stores
+     * compaction strategies for a bin-packed list of tables — bin-packing happens scheduler-side.
+     * See {@code BatchedDataLayoutStrategyGenerationSparkApp}.
+     */
+    DATA_LAYOUT_STRATEGY_GENERATION_BATCH,
     DATA_LAYOUT_STRATEGY_EXECUTION,
+    /**
+     * Multi-table data-layout-strategy execution. One Spark job applies the previously generated
+     * strategy (compaction rewrite) for a bin-packed list of tables — bin-packing happens
+     * scheduler-side. See {@code BatchedDataLayoutStrategyExecutionSparkApp}.
+     */
+    DATA_LAYOUT_STRATEGY_EXECUTION_BATCH,
     REPLICATION,
     SORT_STATS_COLLECTION,
     TABLE_DIRECTORY_DELETION
