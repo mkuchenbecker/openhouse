@@ -2,6 +2,7 @@ package com.linkedin.openhouse.optimizer.scheduler.config;
 
 import com.linkedin.openhouse.optimizer.binpack.FirstFitDecreasingBinPacker;
 import com.linkedin.openhouse.optimizer.binpack.TableSizeBinItem;
+import com.linkedin.openhouse.optimizer.binpack.TableSizeBytesBinItem;
 import com.linkedin.openhouse.optimizer.binpack.TotalFilesBinItem;
 import com.linkedin.openhouse.optimizer.model.OperationTypeDto;
 import com.linkedin.openhouse.optimizer.repository.TableOperationsRepository;
@@ -53,6 +54,11 @@ public class SchedulerConfig {
    *   <li><b>Data compaction</b>: a {@link FirstFitDecreasingBinPacker} over {@link
    *       TableSizeBinItem}. Cost scales with data volume: every byte is read, re-sorted, and
    *       written back, so bins are capped on {@code tableSizeBytes} rather than file count.
+   *   <li><b>Data-layout-strategy generation</b>: {@link TotalFilesBinItem}; generation is a
+   *       per-table stats scan whose cost tracks the number of files/manifests read.
+   *   <li><b>Data-layout-strategy execution</b>: {@link TableSizeBytesBinItem}; execution rewrites
+   *       data files (compaction), so the dominant cost is the volume of bytes shuffled, packed by
+   *       table size.
    * </ul>
    */
   @Bean
@@ -73,6 +79,11 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.retention.max-tables-per-bin}") int retentionMaxTablesPerBin,
       @Value("${optimizer.scheduler.dataCompaction.max-bytes-per-bin}") long dcMaxBytesPerBin,
       @Value("${optimizer.scheduler.dataCompaction.max-tables-per-bin}") int dcMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dls-generation.max-files-per-bin}") long dlsGenMaxFilesPerBin,
+      @Value("${optimizer.scheduler.dls-generation.max-tables-per-bin}") int dlsGenMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dls-execution.max-bytes-per-bin}") long dlsExecMaxBytesPerBin,
+      @Value("${optimizer.scheduler.dls-execution.max-tables-per-bin}")
+          int dlsExecMaxTablesPerBin,
       @Value("${optimizer.scheduler.orphan-directory-deletion.max-databases-per-bin:25}")
           int orphanDirMaxDatabasesPerBin,
       @Value("${optimizer.scheduler.table-directory-deletion.max-databases-per-bin:25}")
@@ -124,6 +135,20 @@ public class SchedulerConfig {
                 .binItemSupplier(TableSizeBinItem::new)
                 .maxWeightPerBin(dcMaxBytesPerBin)
                 .maxItemsPerBin(dcMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.DATA_LAYOUT_STRATEGY_GENERATION,
+            FirstFitDecreasingBinPacker.<TotalFilesBinItem>builder()
+                .binItemSupplier(TotalFilesBinItem::new)
+                .maxWeightPerBin(dlsGenMaxFilesPerBin)
+                .maxItemsPerBin(dlsGenMaxTablesPerBin)
+                .build())
+        .registerOperation(
+            OperationTypeDto.DATA_LAYOUT_STRATEGY_EXECUTION,
+            FirstFitDecreasingBinPacker.<TableSizeBytesBinItem>builder()
+                .binItemSupplier(TableSizeBytesBinItem::new)
+                .maxWeightPerBin(dlsExecMaxBytesPerBin)
+                .maxItemsPerBin(dlsExecMaxTablesPerBin)
                 .build())
         .registerDirectoryOperation(
             OperationTypeDto.ORPHAN_DIRECTORY_DELETION, orphanDirMaxDatabasesPerBin)

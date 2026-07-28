@@ -119,8 +119,18 @@ jobs:
         args: ["--outputTableName", "u_openhouse.dlo_strategies", "--partitionLevelOutputTableName", "u_openhouse.dlo_partition_strategies"]
         <<: *apps-defaults
         << : *livy-engine
+      - type: DATA_LAYOUT_STRATEGY_GENERATION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataLayoutStrategyGenerationSparkApp
+        args: []
+        <<: *apps-defaults
+        << : *livy-engine
       - type: DATA_LAYOUT_STRATEGY_EXECUTION
         class-name: com.linkedin.openhouse.jobs.spark.DataCompactionSparkApp
+        args: []
+        <<: *apps-defaults
+        << : *livy-engine
+      - type: DATA_LAYOUT_STRATEGY_EXECUTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataLayoutStrategyExecutionSparkApp
         args: []
         <<: *apps-defaults
         << : *livy-engine
