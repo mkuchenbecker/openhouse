@@ -48,6 +48,22 @@ configurations.configureEach {
     // to 1.12.1 (unshaded lane only — the shaded runtime would have isolated iceberg's avro, but
     // this lane shares one avro). Was 1.12.0 for the Iceberg-1.10 lane (rung-2).
     force 'org.apache.avro:avro:1.12.1'
+    // Netty: Spark 4.2 requires an ALIGNED Netty 4.2.x set. Spark's NettyRpcEnv -> NettyUtils
+    // .createEventLoop references io.netty.channel.epoll.EpollIoHandler, a 4.2-only class in
+    // netty-transport-classes-epoll. The `exclude group: io.netty` on spark-sql below strips
+    // Spark's own aligned 4.2.x netty; the classpath then mixes netty-common 4.2.13 (dragged in
+    // transitively) with netty-transport*/-epoll 4.1.86 -> NoClassDefFoundError
+    // io/netty/channel/epoll/EpollIoHandler at Spark session init. Pin every netty artifact to
+    // 4.2.13 (the version Spark 4.2.0 ships), skipping the macos-native DNS resolver (OS-classified,
+    // unused here). Netty 4.2 is API-compatible with 4.1 for the embedded server's basic use.
+    eachDependency { details ->
+      if (details.requested.group == 'io.netty'
+          && details.requested.name.startsWith('netty-')
+          && !details.requested.name.contains('resolver-dns-native-macos')) {
+        details.useVersion '4.2.13.Final'
+        details.because 'Spark 4.2 needs an aligned Netty 4.2.x (EpollIoHandler)'
+      }
+    }
     force 'org.apache.avro:avro-mapred:1.12.1'
     force 'org.apache.avro:avro-ipc:1.12.1'
   }
