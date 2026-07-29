@@ -49,8 +49,12 @@ jobs:
         # Spark 4.2 / Scala 2.13 lane (spark/v4.2 is authored in the fork; upstream Iceberg has no
         # v4.2 yet). Publish exactly the modules the OpenHouse spark-4.2 build resolves
         # (core/api/common/data/parquet/orc/arrow/bundled-guava + the spark-4.2_2.13 family).
-        # -x test -x compileTestJava skips the fork's test compile+run, which does not all compile
-        # (and is irrelevant to publishing the fork's main artifacts).
+        # -x test -x compileTestJava -x compileTestScala skips the fork's test compile+run, which does
+        # not all compile (and is irrelevant to publishing the fork's main artifacts). compileTestScala
+        # matters: without it, the spark-4.2 modules' test compilation is pulled into the graph, which
+        # drags in :iceberg-open-api:compileTestFixturesJava (the REST test harness) — broken on this
+        # fork base — and fails the publish. Excluding it prunes that whole path (matches the local
+        # publish and the 4.0 lane).
         run: |
           ./gradlew --no-daemon \
             -DforceVersion=1.11.0-openhouse \
@@ -66,7 +70,7 @@ jobs:
             :iceberg-spark:iceberg-spark-4.2_2.13:publishToMavenLocal \
             :iceberg-spark:iceberg-spark-extensions-4.2_2.13:publishToMavenLocal \
             :iceberg-spark:iceberg-spark-runtime-4.2_2.13:publishToMavenLocal \
-            -x test -x compileTestJava
+            -x test -x compileTestJava -x compileTestScala
 
       - name: Build with Gradle
         run: ./gradlew clean build
