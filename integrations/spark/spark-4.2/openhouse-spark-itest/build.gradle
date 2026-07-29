@@ -48,6 +48,22 @@ configurations.configureEach {
     // to 1.12.1 (unshaded lane only — the shaded runtime would have isolated iceberg's avro, but
     // this lane shares one avro). Was 1.12.0 for the Iceberg-1.10 lane (rung-2).
     force 'org.apache.avro:avro:1.12.1'
+    // Netty: Spark 4.2 requires an ALIGNED Netty 4.2.x set. Spark's NettyRpcEnv -> NettyUtils
+    // .createEventLoop references io.netty.channel.epoll.EpollIoHandler, a 4.2-only class in
+    // netty-transport-classes-epoll. The `exclude group: io.netty` on spark-sql below strips
+    // Spark's own aligned 4.2.x netty; the classpath then mixes netty-common 4.2.13 (dragged in
+    // transitively) with netty-transport*/-epoll 4.1.86 -> NoClassDefFoundError
+    // io/netty/channel/epoll/EpollIoHandler at Spark session init. Pin every netty artifact to
+    // 4.2.13 (the version Spark 4.2.0 ships), skipping the macos-native DNS resolver (OS-classified,
+    // unused here). Netty 4.2 is API-compatible with 4.1 for the embedded server's basic use.
+    eachDependency { details ->
+      if (details.requested.group == 'io.netty'
+          && details.requested.name.startsWith('netty-')
+          && !details.requested.name.contains('resolver-dns-native-macos')) {
+        details.useVersion '4.2.13.Final'
+        details.because 'Spark 4.2 needs an aligned Netty 4.2.x (EpollIoHandler)'
+      }
+    }
     force 'org.apache.avro:avro-mapred:1.12.1'
     force 'org.apache.avro:avro-ipc:1.12.1'
   }
@@ -91,7 +107,7 @@ configurations.configureEach {
 }
 
 ext {
-  sparkVersion = '4.0.0'
+  sparkVersion = '4.2.0'
   icebergVersion = '1.11.0-openhouse'
 }
 
@@ -113,14 +129,14 @@ dependencies {
   // makes server AND Spark client share ONE iceberg-1.10 + ONE jackson + ONE parquet — no
   // shaded/unshaded split, so the F1 collision cannot arise. These transitively pull iceberg-core,
   // iceberg-data, iceberg-parquet, iceberg-orc, iceberg-arrow (all 1.10.0-openhouse) + parquet/orc.
-  testImplementation "org.apache.iceberg:iceberg-spark-4.0_2.13:${icebergVersion}"
-  testImplementation "org.apache.iceberg:iceberg-spark-extensions-4.0_2.13:${icebergVersion}"
+  testImplementation "org.apache.iceberg:iceberg-spark-4.2_2.13:${icebergVersion}"
+  testImplementation "org.apache.iceberg:iceberg-spark-extensions-4.2_2.13:${icebergVersion}"
 
   // OpenHouse Spark SQL extension (Spark-4.0 / Scala-2.13 port): provides the SET/UNSET POLICY DDL
   // (retention / replication / sharing / history) that lowers onto the `updated.openhouse.policy`
   // table property the /iceberg REST server translates into OpenHouse Policies. Registered in
   // OpenHouseRestSparkITest.getBuilder via spark.sql.extensions.
-  testImplementation project(':integrations:spark:spark-4.0:openhouse-spark-4.0-runtime_2.13')
+  testImplementation project(':integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13')
 
   // Spark 4.0 (Scala 2.13). Pulls scala-library 2.13.x transitively.
   testImplementation("org.apache.spark:spark-sql_2.13:${sparkVersion}") {
@@ -129,6 +145,12 @@ dependencies {
 
   testImplementation 'com.google.code.gson:gson:2.8.9'
   testImplementation 'commons-io:commons-io:2.11.0'
+  // commons-collections 3.x (org.apache.commons.collections.*): the embedded OpenHouse server
+  // (Spring/Hibernate/Hadoop stack) needs the legacy 3.x CollectionUtils at request time. Spark 4.0
+  // dragged it in transitively; Spark 4.2's dependency tree ships only commons-collections4
+  // (org.apache.commons.collections4.*, a different package), so the server's createTable handler
+  // dies with NoClassDefFoundError: org/apache/commons/collections/CollectionUtils. Add it back.
+  testImplementation 'commons-collections:commons-collections:3.2.2'
 
   // JUnit 5 — this module now owns e2e test SOURCES (the Spark-4.0 / REST-first port of the 3.5
   // catalogtest suite), in addition to serving the delta-harness classpath.
