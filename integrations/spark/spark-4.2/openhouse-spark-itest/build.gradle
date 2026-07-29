@@ -145,6 +145,12 @@ dependencies {
 
   testImplementation 'com.google.code.gson:gson:2.8.9'
   testImplementation 'commons-io:commons-io:2.11.0'
+  // commons-collections 3.x (org.apache.commons.collections.*): the embedded OpenHouse server
+  // (Spring/Hibernate/Hadoop stack) needs the legacy 3.x CollectionUtils at request time. Spark 4.0
+  // dragged it in transitively; Spark 4.2's dependency tree ships only commons-collections4
+  // (org.apache.commons.collections4.*, a different package), so the server's createTable handler
+  // dies with NoClassDefFoundError: org/apache/commons/collections/CollectionUtils. Add it back.
+  testImplementation 'commons-collections:commons-collections:3.2.2'
 
   // JUnit 5 — this module now owns e2e test SOURCES (the Spark-4.0 / REST-first port of the 3.5
   // catalogtest suite), in addition to serving the delta-harness classpath.
