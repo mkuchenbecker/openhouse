@@ -3,10 +3,13 @@ package com.linkedin.openhouse.jobs.util;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.linkedin.openhouse.common.stats.model.ColumnData;
+import com.linkedin.openhouse.common.stats.model.HistoryPolicyStatsSchema;
 import com.linkedin.openhouse.common.stats.model.PolicyStats;
 import com.linkedin.openhouse.common.stats.model.ReplicationPolicyStatsSchema;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema;
 import org.apache.spark.sql.types.DataTypes;
@@ -474,6 +477,76 @@ public class TableStatsCollectorUtilTest {
 
     Assertions.assertNull(result.getReplicationPolicies());
     Assertions.assertFalse(result.getSharingEnabled());
+  }
+
+  // ==================== Snapshot Expiration Cutoff Tests ====================
+
+  @Test
+  public void testSnapshotExpirationCutoffMillis_withDefaultWhenUnset() {
+    // Test: an unset maxAge falls back to the default 3-day TTL that SE enforces
+    long nowMillis = 1_700_000_000_000L;
+    HistoryPolicyStatsSchema historyPolicy = new HistoryPolicyStatsSchema();
+
+    long cutoff = TableStatsCollectorUtil.snapshotExpirationCutoffMillis(historyPolicy, nowMillis);
+
+    Assertions.assertEquals(nowMillis - TimeUnit.DAYS.toMillis(3), cutoff);
+  }
+
+  @Test
+  public void testSnapshotExpirationCutoffMillis_withMaxAgeInDays() {
+    // Test: maxAge of 3 DAY yields a cutoff 3 days before now
+    long nowMillis = 1_700_000_000_000L;
+    HistoryPolicyStatsSchema historyPolicy =
+        HistoryPolicyStatsSchema.builder().maxAge(3).granularity("DAY").build();
+
+    long cutoff = TableStatsCollectorUtil.snapshotExpirationCutoffMillis(historyPolicy, nowMillis);
+
+    Assertions.assertEquals(nowMillis - TimeUnit.DAYS.toMillis(3), cutoff);
+  }
+
+  @Test
+  public void testSnapshotExpirationCutoffMillis_honorsHourGranularity() {
+    // Test: granularity is honored (24 HOUR == one day before now)
+    long nowMillis = 1_700_000_000_000L;
+    HistoryPolicyStatsSchema historyPolicy =
+        HistoryPolicyStatsSchema.builder().maxAge(24).granularity("HOUR").build();
+
+    long cutoff = TableStatsCollectorUtil.snapshotExpirationCutoffMillis(historyPolicy, nowMillis);
+
+    Assertions.assertEquals(nowMillis - TimeUnit.HOURS.toMillis(24), cutoff);
+  }
+
+  @Test
+  public void testSnapshotExpirationCutoffMillis_zeroMaxAgeUsesDefault() {
+    // Test: an explicit maxAge of 0 is treated as the default TTL, matching SE
+    long nowMillis = 1_700_000_000_000L;
+    HistoryPolicyStatsSchema historyPolicy =
+        HistoryPolicyStatsSchema.builder().maxAge(0).granularity("DAY").build();
+
+    long cutoff = TableStatsCollectorUtil.snapshotExpirationCutoffMillis(historyPolicy, nowMillis);
+
+    Assertions.assertEquals(nowMillis - TimeUnit.DAYS.toMillis(3), cutoff);
+  }
+
+  // ==================== Snapshot Age Count Tests ====================
+
+  @Test
+  public void testCountSnapshotsOlderThan_countsStrictlyOlder() {
+    // Test: only timestamps strictly older than the cutoff are counted (boundary excluded)
+    long cutoffMillis = 1_000L;
+    List<Long> snapshotTimestamps = Arrays.asList(500L, 999L, 1_000L, 1_500L);
+
+    long result = TableStatsCollectorUtil.countSnapshotsOlderThan(snapshotTimestamps, cutoffMillis);
+
+    Assertions.assertEquals(2, result);
+  }
+
+  @Test
+  public void testCountSnapshotsOlderThan_withEmptyList() {
+    // Test: empty input yields zero
+    long result = TableStatsCollectorUtil.countSnapshotsOlderThan(Collections.emptyList(), 1_000L);
+
+    Assertions.assertEquals(0, result);
   }
 
   // Note: The following methods require Spark runtime and are tested in integration tests:

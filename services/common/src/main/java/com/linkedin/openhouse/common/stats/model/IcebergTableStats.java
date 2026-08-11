@@ -35,6 +35,13 @@ public class IcebergTableStats extends BaseTableMetadata {
 
   private Integer numSnapshots;
 
+  // Non-current snapshots older than the table's configured snapshot-expiration (history) policy:
+  // the snapshots SE should have removed. Excludes the current snapshot, which SE always preserves.
+  private Long numSnapshotsOlderThanExpirationSetting;
+
+  // Non-current snapshots older than a fixed 7-day lens.
+  private Long numSnapshotsOlderThanSevenDays;
+
   private Long numExistingMetadataJsonFiles;
 
   private Long numReferencedManifestFiles;
