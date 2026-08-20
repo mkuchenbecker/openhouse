@@ -60,7 +60,8 @@ public class SchedulerConfig {
    *       data files (compaction), so the dominant cost is the volume of bytes shuffled, packed by
    *       table size.
    *   <li><b>Table stats collection</b>: same packer over {@link TotalFilesBinItem}. Produces the
-   *       {@code table_stats} rows other analyzers consume; cost tracks the number of files scanned.
+   *       {@code table_stats} rows other analyzers consume; cost tracks the number of files
+   *       scanned.
    *   <li><b>Sort stats collection</b>: same packer over {@link TotalFilesBinItem}. Samples and
    *       rewrites to estimate sort compression, so file count is again the dominant cost driver.
    * </ul>
@@ -86,8 +87,7 @@ public class SchedulerConfig {
       @Value("${optimizer.scheduler.dls-generation.max-files-per-bin}") long dlsGenMaxFilesPerBin,
       @Value("${optimizer.scheduler.dls-generation.max-tables-per-bin}") int dlsGenMaxTablesPerBin,
       @Value("${optimizer.scheduler.dls-execution.max-bytes-per-bin}") long dlsExecMaxBytesPerBin,
-      @Value("${optimizer.scheduler.dls-execution.max-tables-per-bin}")
-          int dlsExecMaxTablesPerBin,
+      @Value("${optimizer.scheduler.dls-execution.max-tables-per-bin}") int dlsExecMaxTablesPerBin,
       @Value("${optimizer.scheduler.tableStatsCollection.max-files-per-bin}")
           long tableStatsCollectionMaxFilesPerBin,
       @Value("${optimizer.scheduler.tableStatsCollection.max-tables-per-bin}")
