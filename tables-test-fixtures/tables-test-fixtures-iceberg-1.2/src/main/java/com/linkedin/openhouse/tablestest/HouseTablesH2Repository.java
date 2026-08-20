@@ -22,12 +22,13 @@ import org.springframework.stereotype.Repository;
  * communication to the implementation of {@link HouseTableRepository} is not needed. With {@link
  * Primary} annotation, this repository will be the default injection.
  *
- * <p>The {@link ConditionalOnProperty} guard makes this in-memory stub the default (matchIfMissing =
- * true, so every existing consumer is unaffected), but lets a consumer opt OUT of it by setting
- * {@code openhouse.htsStub.enabled=false}. When opted out, the stub bean is not created and the real
- * {@link com.linkedin.openhouse.internal.catalog.repository.HouseTableRepositoryImpl} (the HTTP client
- * to a real House Table Service) becomes the sole {@link HouseTableRepository} — used by the
- * delta-harness to test against an embedded real HTS. Test-only; no production/behavioral change.
+ * <p>The {@link ConditionalOnProperty} guard makes this in-memory stub the default (matchIfMissing
+ * = true, so every existing consumer is unaffected), but lets a consumer opt OUT of it by setting
+ * {@code openhouse.htsStub.enabled=false}. When opted out, the stub bean is not created and the
+ * real {@link com.linkedin.openhouse.internal.catalog.repository.HouseTableRepositoryImpl} (the
+ * HTTP client to a real House Table Service) becomes the sole {@link HouseTableRepository} — used
+ * by the delta-harness to test against an embedded real HTS. Test-only; no production/behavioral
+ * change.
  */
 @Repository
 @Primary
