@@ -111,7 +111,7 @@ public class TablesServiceImpl implements TablesService {
 
     // Special case handling
     if (tableDto.isPresent() && createUpdateTableRequestBody.isStageReplace()) {
-      // Check if table creator has the privilege to replace the table.
+      // Replace is a wholesale overwrite, so it requires write-path privileges.
       authorizationUtils.checkReplaceTablePrivilege(tableDto.get(), tableCreatorUpdater);
     } else if (tableDto.isPresent()) {
       if (failOnExist) {
