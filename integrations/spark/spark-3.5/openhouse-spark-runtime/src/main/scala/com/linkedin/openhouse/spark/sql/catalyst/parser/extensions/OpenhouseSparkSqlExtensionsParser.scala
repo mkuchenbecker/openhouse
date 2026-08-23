@@ -11,10 +11,12 @@ import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSqlExtensionsPostProcessor
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.types.{DataType, StructType}
+import org.apache.iceberg.spark.ExtendedParser
+import org.apache.iceberg.spark.ExtendedParser.RawOrderField
 
 import java.util.Locale
 
-class OpenhouseSparkSqlExtensionsParser (delegate: ParserInterface) extends ParserInterface {
+class OpenhouseSparkSqlExtensionsParser (delegate: ParserInterface) extends ExtendedParser {
   private lazy val astBuilder = new OpenhouseSqlExtensionsAstBuilder(delegate)
 
   override def parsePlan(sqlText: String): LogicalPlan = {
@@ -51,6 +53,21 @@ class OpenhouseSparkSqlExtensionsParser (delegate: ParserInterface) extends Pars
 
   def parseRawDataType(sqlText: String): DataType = {
     delegate.parseDataType(sqlText)
+  }
+
+  // Iceberg's rewrite_data_files procedure parses its sort_order / zorder(...) argument via
+  // ExtendedParser.parseSortOrder(spark, ...), which requires the session's top-level parser to be
+  // an Iceberg ExtendedParser. Because this parser wraps Iceberg's (OpenHouse's extension is applied
+  // after Iceberg's), it must itself be an ExtendedParser and delegate sort-order parsing to the
+  // wrapped Iceberg parser -- otherwise every sort/zorder compaction fails with
+  // "parser is not an Iceberg ExtendedParser".
+  override def parseSortOrder(orderString: String): java.util.List[RawOrderField] = {
+    delegate match {
+      case extended: ExtendedParser => extended.parseSortOrder(orderString)
+      case _ =>
+        throw new IllegalStateException(
+          s"Cannot parse sort order '$orderString': the delegate parser is not an Iceberg ExtendedParser")
+    }
   }
 
   private def isOpenhouseCommand(sqlText: String): Boolean = {
