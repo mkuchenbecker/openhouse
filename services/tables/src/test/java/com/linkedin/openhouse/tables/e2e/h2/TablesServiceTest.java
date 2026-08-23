@@ -614,43 +614,49 @@ public class TablesServiceTest {
             .build();
     Pair<TableDto, Boolean> createResult =
         tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
-
-    CreateUpdateTableRequestBody replaceRequest =
-        buildCreateUpdateTableRequestBody(createResult.getFirst())
-            .toBuilder()
-            .stageReplace(true)
-            .build();
-    Pair<TableDto, Boolean> replaceResult =
-        tablesService.putTable(replaceRequest, "notTheCreator", true);
-    Assertions.assertFalse(replaceResult.getSecond());
-    Assertions.assertEquals(TEST_USER, replaceResult.getFirst().getTableCreator());
-
-    tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    try {
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Pair<TableDto, Boolean> replaceResult =
+          tablesService.putTable(replaceRequest, "notTheCreator", true);
+      Assertions.assertFalse(replaceResult.getSecond());
+      Assertions.assertEquals(TEST_USER, replaceResult.getFirst().getTableCreator());
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
   }
 
-  /** Replace is denied when the acting principal lacks UPDATE_TABLE_METADATA. */
+  /**
+   * Replace is denied when the acting principal lacks UPDATE_TABLE_METADATA — even for the table's
+   * creator. This pins the permission-model change: the creator has no implicit replace right, so a
+   * regression back to creator-equality (which would allow this call) fails this test.
+   */
   @Test
   public void testStageReplaceDeniedWithoutUpdatePrivilege() {
     TableDto tableDtoCopy = TABLE_DTO.toBuilder().build();
     Pair<TableDto, Boolean> createResult =
         tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
-
-    Mockito.when(
-            authorizationHandler.checkAccessDecision(
-                Mockito.any(),
-                Mockito.any(TableDto.class),
-                Mockito.eq(Privileges.UPDATE_TABLE_METADATA)))
-        .thenReturn(false);
-    CreateUpdateTableRequestBody replaceRequest =
-        buildCreateUpdateTableRequestBody(createResult.getFirst())
-            .toBuilder()
-            .stageReplace(true)
-            .build();
-    Assertions.assertThrows(
-        AccessDeniedException.class,
-        () -> tablesService.putTable(replaceRequest, "notTheCreator", true));
-
-    tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    try {
+      Mockito.when(
+              authorizationHandler.checkAccessDecision(
+                  Mockito.any(),
+                  Mockito.any(TableDto.class),
+                  Mockito.eq(Privileges.UPDATE_TABLE_METADATA)))
+          .thenReturn(false);
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Assertions.assertThrows(
+          AccessDeniedException.class,
+          () -> tablesService.putTable(replaceRequest, TEST_USER, true));
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
   }
 
   /** Replace of a replica table escalates to SYSTEM_ADMIN like every other write. */
@@ -676,20 +682,22 @@ public class TablesServiceTest {
             .build();
     Pair<TableDto, Boolean> createResult =
         tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
-
-    Mockito.when(
-            authorizationHandler.checkAccessDecision(
-                Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.SYSTEM_ADMIN)))
-        .thenReturn(false);
-    CreateUpdateTableRequestBody replaceRequest =
-        buildCreateUpdateTableRequestBody(createResult.getFirst())
-            .toBuilder()
-            .stageReplace(true)
-            .build();
-    Assertions.assertThrows(
-        AccessDeniedException.class, () -> tablesService.putTable(replaceRequest, TEST_USER, true));
-
-    tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    try {
+      Mockito.when(
+              authorizationHandler.checkAccessDecision(
+                  Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.SYSTEM_ADMIN)))
+          .thenReturn(false);
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Assertions.assertThrows(
+          AccessDeniedException.class,
+          () -> tablesService.putTable(replaceRequest, TEST_USER, true));
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
   }
 
   /** Test replica table permissions: update requires SYSTEM_ADMIN, delete uses DELETE_TABLE. */
