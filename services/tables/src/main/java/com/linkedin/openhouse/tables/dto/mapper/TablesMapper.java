@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.tables.dto.mapper;
 
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
+import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
@@ -14,6 +15,7 @@ import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import java.util.HashMap;
+import java.util.Set;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -59,6 +61,8 @@ public interface TablesMapper {
     @Mapping(source = "requestBody.newIntermediateSchemas", target = "newIntermediateSchemas"),
     @Mapping(source = "requestBody.policies", target = "policies", qualifiedByName = "mapPolicies"),
     @Mapping(source = "requestBody.stageCreate", target = "stageCreate"),
+    @Mapping(source = "requestBody.stageReplace", target = "stageReplace"),
+    @Mapping(source = "requestBody.replaceCommit", target = "replaceCommit"),
     @Mapping(
         source = "requestBody.tableType",
         target = "tableType",
@@ -105,6 +109,12 @@ public interface TablesMapper {
         source = "requestBody.createUpdateTableRequestBody.stageCreate",
         target = "stageCreate"),
     @Mapping(
+        source = "requestBody.createUpdateTableRequestBody.stageReplace",
+        target = "stageReplace"),
+    @Mapping(
+        source = "requestBody.createUpdateTableRequestBody.replaceCommit",
+        target = "replaceCommit"),
+    @Mapping(
         source = "requestBody.createUpdateTableRequestBody.tableType",
         target = "tableType",
         defaultExpression = "java(TableType.PRIMARY_TABLE)"),
@@ -123,12 +133,15 @@ public interface TablesMapper {
    *     com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody} to be forwarded to
    *     the client.
    */
+  // config is not sourced from TableDto; the API handler stamps the per-table client config onto
+  // the response separately, so the mapper leaves it null.
+  @Mapping(target = "config", ignore = true)
   GetTableResponseBody toGetTableResponseBody(TableDto tableDto);
 
   @Mappings({
     @Mapping(
-        conditionExpression = "java(tableIdentifier.namespace() != null)",
-        expression = "java(tableIdentifier.namespace().toString())",
+        expression =
+            "java(tableIdentifier.namespace() != null ? tableIdentifier.namespace().toString() : null)",
         target = "databaseId"),
     @Mapping(expression = "java(tableIdentifier.name())", target = "tableId")
   })
@@ -142,12 +155,26 @@ public interface TablesMapper {
 
   @Mappings({
     @Mapping(
-        conditionExpression = "java(tableIdentifier.namespace() != null)",
-        expression = "java(tableIdentifier.namespace().toString())",
+        expression =
+            "java(tableIdentifier.namespace() != null ? tableIdentifier.namespace().toString() : null)",
         target = "databaseId"),
     @Mapping(expression = "java(tableIdentifier.name())", target = "tableId")
   })
   TableDto toTableDto(TableIdentifier tableIdentifier);
+
+  /**
+   * Build a partially-populated TableDto from a HouseTable, populating only the fields the caller
+   * requested. Identifier fields (databaseId, tableId) are always populated. Used by the paginated
+   * search endpoint to avoid loading metadata.json per table.
+   */
+  default TableDto toTableDto(HouseTable houseTable, Set<String> fields) {
+    TableDto.TableDtoBuilder builder =
+        TableDto.builder().databaseId(houseTable.getDatabaseId()).tableId(houseTable.getTableId());
+    if (fields != null && fields.contains("tableLocation")) {
+      builder.tableLocation(houseTable.getTableLocation());
+    }
+    return builder.build();
+  }
 
   /**
    * Transform {@link SoftDeletedTableDto} to {@link GetSoftDeletedTableResponseBody}

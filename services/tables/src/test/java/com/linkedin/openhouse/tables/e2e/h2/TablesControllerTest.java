@@ -51,6 +51,7 @@ import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -58,8 +59,12 @@ import java.util.List;
 import java.util.Map;
 import lombok.SneakyThrows;
 import org.apache.commons.lang.StringUtils;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.Catalog;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.types.Types;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Assertions;
@@ -824,6 +829,213 @@ public class TablesControllerTest {
 
   @SneakyThrows
   @Test
+  public void testStagedReplace() {
+    // Enable RTAS and remove policy
+    GetTableResponseBody baseTable =
+        TableModelConstants.buildGetTableResponseBodyWithDbTbl("d_sr", "t_sr");
+    Map<String, String> propsWithRtas = new HashMap<>(baseTable.getTableProperties());
+    propsWithRtas.put(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true");
+    GetTableResponseBody stageReplaceTable =
+        baseTable.toBuilder().tableProperties(propsWithRtas).policies(null).build();
+
+    // Create a real table first
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(
+            stageReplaceTable, mvc, storageManager);
+
+    String originalTableLocation =
+        JsonPath.read(createResult.getResponse().getContentAsString(), "$.tableLocation");
+    String originalSchema =
+        JsonPath.read(createResult.getResponse().getContentAsString(), "$.schema");
+
+    // Build a new schema with an additional column
+    Schema newSchema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.StringType.get()),
+            Types.NestedField.required(2, "name", Types.StringType.get()),
+            Types.NestedField.required(3, "timestampCol", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(7, "newCol", Types.StringType.get()));
+    String newSchemaJson = getSchemaJsonFromSchema(newSchema);
+
+    // Issue a stageReplace call with changed schema
+    MvcResult stageReplaceResult =
+        mvc.perform(
+                MockMvcRequestBuilders.post(
+                        String.format(
+                            ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX
+                                + "/databases/%s/tables/",
+                            stageReplaceTable.getDatabaseId()))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        buildCreateUpdateTableRequestBody(stageReplaceTable)
+                            .toBuilder()
+                            .baseTableVersion(originalTableLocation)
+                            .schema(newSchemaJson)
+                            .stageReplace(true)
+                            .build()
+                            .toJson())
+                    .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isCreated())
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andReturn();
+
+    // The stageReplace call should return a different metadata location
+    String stageReplaceTableLocation =
+        JsonPath.read(stageReplaceResult.getResponse().getContentAsString(), "$.tableLocation");
+    Assertions.assertNotEquals(stageReplaceTableLocation, originalTableLocation);
+
+    // The new metadata should have the updated schema
+    TableMetadata metadata =
+        TableMetadataParser.read(new HadoopFileIO(new Configuration()), stageReplaceTableLocation);
+    Assertions.assertEquals(2, metadata.schemas().size());
+    Assertions.assertEquals(newSchema.asStruct(), metadata.schema().asStruct());
+
+    // Fetch the existing table
+    MvcResult getResult =
+        mvc.perform(
+                MockMvcRequestBuilders.get(
+                        String.format(
+                            ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX
+                                + "/databases/%s/tables/%s",
+                            stageReplaceTable.getDatabaseId(),
+                            stageReplaceTable.getTableId()))
+                    .accept(MediaType.APPLICATION_JSON))
+            .andExpect(status().isOk())
+            .andReturn();
+
+    // The existing table should NOT be modified
+    String currentSchema = JsonPath.read(getResult.getResponse().getContentAsString(), "$.schema");
+    Assertions.assertEquals(originalSchema, currentSchema);
+
+    RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, stageReplaceTable);
+  }
+
+  @SneakyThrows
+  @Test
+  public void testStagedReplaceFailsWhenRtasDisabled() {
+    // Table created without enabling RTAS; replace is disabled by default.
+    GetTableResponseBody table =
+        TableModelConstants.buildGetTableResponseBodyWithDbTbl("d_sr_dis", "t_sr_dis");
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(table, mvc, storageManager);
+    String originalTableLocation =
+        JsonPath.read(createResult.getResponse().getContentAsString(), "$.tableLocation");
+
+    // A stageReplace against a table without replaceEnabled should be rejected.
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    String.format(
+                        ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX + "/databases/%s/tables/",
+                        table.getDatabaseId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    buildCreateUpdateTableRequestBody(table)
+                        .toBuilder()
+                        .baseTableVersion(originalTableLocation)
+                        .stageReplace(true)
+                        .build()
+                        .toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", containsString("REPLACE TABLE AS SELECT is not enabled")));
+
+    RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, table);
+  }
+
+  @SneakyThrows
+  @Test
+  public void testReplaceWithWapEnabledIsRejected() {
+    // Enable RTAS and remove policy
+    GetTableResponseBody baseTable =
+        TableModelConstants.buildGetTableResponseBodyWithDbTbl("d_sr", "t_sr");
+    Map<String, String> props = new HashMap<>(baseTable.getTableProperties());
+    props.put(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true");
+    props.put(CatalogConstants.WAP_ENABLED_TABLE_PROP, "true");
+    GetTableResponseBody table =
+        baseTable.toBuilder().tableProperties(props).policies(null).build();
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(table, mvc, storageManager);
+    String originalTableLocation =
+        JsonPath.read(createResult.getResponse().getContentAsString(), "$.tableLocation");
+
+    // A stageReplace whose resulting table enables WAP must be rejected.
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    String.format(
+                        ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX + "/databases/%s/tables/",
+                        table.getDatabaseId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    buildCreateUpdateTableRequestBody(table)
+                        .toBuilder()
+                        .tableProperties(props)
+                        .baseTableVersion(originalTableLocation)
+                        .stageReplace(true)
+                        .build()
+                        .toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message", containsString("REPLACE TABLE AS SELECT cannot be performed")))
+        .andExpect(jsonPath("$.message", containsString("WAP")));
+
+    RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, table);
+  }
+
+  @SneakyThrows
+  @Test
+  public void testReplaceWithReplicationEnabledIsRejected() {
+    // Enable RTAS
+    GetTableResponseBody baseTable =
+        TableModelConstants.buildGetTableResponseBodyWithDbTbl("d_sr", "t_sr");
+    Map<String, String> propsWithRtas = new HashMap<>(baseTable.getTableProperties());
+    propsWithRtas.put(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true");
+    GetTableResponseBody table = baseTable.toBuilder().tableProperties(propsWithRtas).build();
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(table, mvc, storageManager);
+    String originalTableLocation =
+        JsonPath.read(createResult.getResponse().getContentAsString(), "$.tableLocation");
+
+    // A stageReplace whose resulting table enables replication must be rejected.
+    Policies policiesWithReplication =
+        table
+            .getPolicies()
+            .toBuilder()
+            .replication(
+                Replication.builder()
+                    .config(
+                        Collections.singletonList(
+                            ReplicationConfig.builder()
+                                .destination("CLUSTER1")
+                                .interval("12H")
+                                .build()))
+                    .build())
+            .build();
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    String.format(
+                        ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX + "/databases/%s/tables/",
+                        table.getDatabaseId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    buildCreateUpdateTableRequestBody(table)
+                        .toBuilder()
+                        .policies(policiesWithReplication)
+                        .baseTableVersion(originalTableLocation)
+                        .stageReplace(true)
+                        .build()
+                        .toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.message", containsString("REPLACE TABLE AS SELECT cannot be performed")))
+        .andExpect(jsonPath("$.message", containsString("replication")));
+
+    RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, table);
+  }
+
+  @SneakyThrows
+  @Test
   public void testStagedCreateDoesntExistInConsecutiveCalls() {
     RequestAndValidateHelper.createTableAndValidateResponse(
         GET_TABLE_RESPONSE_BODY, mvc, storageManager, true);
@@ -942,6 +1154,48 @@ public class TablesControllerTest {
     for (int i = 0; i < 10; i++) {
       RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, tables.get(i));
     }
+  }
+
+  @Test
+  public void testSearchTablesPaginatedWithTableLocationField() throws Exception {
+    List<GetTableResponseBody> tables = new ArrayList<>();
+    for (int i = 0; i < 3; i++) {
+      GetTableResponseBody table = buildGetTableResponseBodyWithDbTbl("d1", "tloc" + i);
+      tables.add(table);
+      RequestAndValidateHelper.createTableAndValidateResponse(table, mvc, storageManager);
+    }
+
+    mvc.perform(
+            MockMvcRequestBuilders.post("/v2/databases/d1/tables/search")
+                .param("page", "0")
+                .param("size", "10")
+                .param("fields", "tableLocation")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+        .andExpect(jsonPath("$.pageResults.content", hasSize(3)))
+        .andExpect(jsonPath("$.pageResults.content[0].tableId", notNullValue()))
+        .andExpect(jsonPath("$.pageResults.content[0].databaseId", is("d1")))
+        .andExpect(jsonPath("$.pageResults.content[0].tableLocation", notNullValue()))
+        .andExpect(
+            jsonPath(
+                "$.pageResults.content[0].tableLocation",
+                org.hamcrest.Matchers.endsWith(".metadata.json")));
+
+    for (GetTableResponseBody t : tables) {
+      RequestAndValidateHelper.deleteTableAndValidateResponse(mvc, t);
+    }
+  }
+
+  @Test
+  public void testSearchTablesPaginatedRejectsUnknownField() throws Exception {
+    mvc.perform(
+            MockMvcRequestBuilders.post("/v2/databases/d1/tables/search")
+                .param("fields", "schema")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", containsString("schema")))
+        .andExpect(jsonPath("$.message", containsString("tableLocation")));
   }
 
   @Test

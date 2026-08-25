@@ -13,7 +13,9 @@ import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.services.TablesService;
+import java.util.List;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
@@ -34,15 +36,30 @@ public class OpenHouseTablesApiHandler implements TablesApiHandler {
 
   @Autowired private ClusterProperties clusterProperties;
 
+  @Autowired private ReadBridgeConfigResolver readBridgeConfigResolver;
+
+  /**
+   * Stamp the server-resolved, per-table client {@code config} (Iceberg REST {@code
+   * LoadTableResponse.config} convention) onto a freshly mapped response body. The mapper leaves
+   * {@code config} null; it is a request-time decision resolved here.
+   */
+  private GetTableResponseBody withConfig(
+      GetTableResponseBody body, String databaseId, String tableId, TableDto tableDto) {
+    return body.toBuilder()
+        .config(readBridgeConfigResolver.resolve(databaseId, tableId, tableDto))
+        .build();
+  }
+
   @Override
   public ApiResponse<GetTableResponseBody> getTable(
       String databaseId, String tableId, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
+    TableDto tableDto = tableService.getTable(databaseId, tableId, actingPrincipal);
     return ApiResponse.<GetTableResponseBody>builder()
         .httpStatus(HttpStatus.OK)
         .responseBody(
-            tablesMapper.toGetTableResponseBody(
-                tableService.getTable(databaseId, tableId, actingPrincipal)))
+            withConfig(
+                tablesMapper.toGetTableResponseBody(tableDto), databaseId, tableId, tableDto))
         .build();
   }
 
@@ -63,15 +80,20 @@ public class OpenHouseTablesApiHandler implements TablesApiHandler {
 
   @Override
   public ApiResponse<GetAllTablesResponseBody> searchTables(
-      String databaseId, int page, int size, String sortBy) {
-    tablesApiValidator.validateSearchTables(databaseId, page, size, sortBy);
+      String databaseId,
+      int page,
+      int size,
+      String sortBy,
+      List<String> fields,
+      String actingPrincipal) {
+    tablesApiValidator.validateSearchTables(databaseId, page, size, sortBy, fields);
     return ApiResponse.<GetAllTablesResponseBody>builder()
         .httpStatus(HttpStatus.OK)
         .responseBody(
             GetAllTablesResponseBody.builder()
                 .pageResults(
                     tableService
-                        .searchTables(databaseId, page, size, sortBy)
+                        .searchTables(databaseId, page, size, sortBy, fields, actingPrincipal)
                         .map(tableDto -> tablesMapper.toGetTableResponseBody(tableDto)))
                 .build())
         .build();
@@ -86,9 +108,15 @@ public class OpenHouseTablesApiHandler implements TablesApiHandler {
         clusterProperties.getClusterName(), databaseId, createUpdateTableRequestBody);
     Pair<TableDto, Boolean> putResult =
         tableService.putTable(createUpdateTableRequestBody, tableCreator, true);
+    TableDto tableDto = putResult.getFirst();
     return ApiResponse.<GetTableResponseBody>builder()
         .httpStatus(HttpStatus.CREATED)
-        .responseBody(tablesMapper.toGetTableResponseBody(putResult.getFirst()))
+        .responseBody(
+            withConfig(
+                tablesMapper.toGetTableResponseBody(tableDto),
+                databaseId,
+                tableDto.getTableId(),
+                tableDto))
         .build();
   }
 
@@ -103,9 +131,12 @@ public class OpenHouseTablesApiHandler implements TablesApiHandler {
     Pair<TableDto, Boolean> putResult =
         tableService.putTable(createUpdateTableRequestBody, tableCreatorUpdator, false);
     HttpStatus status = putResult.getSecond() ? HttpStatus.CREATED : HttpStatus.OK;
+    TableDto tableDto = putResult.getFirst();
     return ApiResponse.<GetTableResponseBody>builder()
         .httpStatus(status)
-        .responseBody(tablesMapper.toGetTableResponseBody(putResult.getFirst()))
+        .responseBody(
+            withConfig(
+                tablesMapper.toGetTableResponseBody(tableDto), databaseId, tableId, tableDto))
         .build();
   }
 

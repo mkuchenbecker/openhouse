@@ -20,6 +20,8 @@ public final class AppConstants {
   public static final String REWRITTEN_DATA_FILE_COUNT = "rewritten_data_file_count";
   public static final String REWRITTEN_DATA_FILE_BYTES = "rewritten_data_file_bytes";
   public static final String REWRITTEN_DATA_FILE_GROUP_COUNT = "rewritten_data_file_group_count";
+  public static final String RETENTION_POLICY_MISCONFIGURED_TABLE_COUNT =
+      "retention_policy_misconfigured_table_count";
 
   // Openhouse jobs status tags
   public static final String STATUS = "status";
@@ -56,6 +58,103 @@ public final class AppConstants {
   // Maintenance jobs table properties keys
   public static final String BACKUP_ENABLED_KEY = "retention.backup.enabled";
   public static final String BACKUP_DIR_KEY = "retention.backup.dir";
+  public static final String OPENHOUSE_TABLE_TYPE_KEY = "openhouse.tableType";
+  public static final String TABLE_TYPE_PRIMARY = "PRIMARY_TABLE";
+  public static final String TABLE_TYPE_REPLICA = "REPLICA_TABLE";
+  public static final String OFD_ONE_DAY_TTL_ENABLED_KEY = "ofd.one_day_ttl.enabled";
+
+  /**
+   * Hard ceiling on the number of tables a single batched OFD job can carry. Wire path is parallel
+   * CSV CLI args (see {@code BatchedOrphanFilesDeletionSparkApp#buildEntries}); at ~120 chars per
+   * entry (36-char UUID × 3 lists) this gives ~24 KB on the command line, well under the typical
+   * Linux {@code ARG_MAX} of 128 KB but leaves headroom for the {@code spark-submit} envelope and
+   * JVM flags. The scheduler-driven path uses a smaller per-entry footprint but inherits the same
+   * cap for defense in depth. Operators tune the per-job batch size with {@code --batchMaxItems}
+   * (default {@code 25}); this constant is a footgun stop, not the operating point.
+   */
+  public static final int OFD_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched Staged-Files-Deletion job can carry. Same
+   * wire path and reasoning as {@link #OFD_MAX_BATCH_SIZE}: parallel CSV CLI args (see {@code
+   * BatchedStagedFilesDeletionSparkApp#buildEntries}) whose per-entry footprint keeps the assembled
+   * command line well under the typical Linux {@code ARG_MAX}. It is a footgun stop, not the
+   * operating point — operators tune the per-job batch size on the scheduler.
+   */
+  public static final int SFD_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched snapshots-expiration job can carry. Same
+   * wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE}: parallel CSV CLI args bounded well under
+   * {@code ARG_MAX}. A footgun stop, not the operating point — operators tune the per-job batch
+   * size with {@code --batchMaxItems} on the scheduler.
+   */
+  public static final int SNAPSHOTS_EXPIRATION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched RETENTION job can carry. Mirrors {@link
+   * #OFD_MAX_BATCH_SIZE}: the wire path is the same parallel-CSV CLI-arg envelope (see {@code
+   * BatchedRetentionSparkApp#buildEntries}), so the same {@code ARG_MAX} reasoning applies. This is
+   * a footgun stop, not the operating point — operators tune the per-job batch size with {@code
+   * --batchMaxItems} on the scheduler.
+   */
+  public static final int RETENTION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched data-compaction job can carry. Set well
+   * below {@link #OFD_MAX_BATCH_SIZE}: compaction reads and rewrites every byte of each table, so a
+   * batch's driver-side memory and job-duration footprint scale with data volume, not just with the
+   * per-entry CLI cost. Like the OFD cap this is a footgun stop, not the operating point —
+   * operators tune the per-job batch size with {@code --batchMaxItems} and the scheduler's per-bin
+   * byte cap.
+   */
+  public static final int DATA_COMPACTION_MAX_BATCH_SIZE = 100;
+
+  /**
+   * Hard ceiling on the number of tables a single batched data-layout-strategy <b>generation</b>
+   * job can carry. Same wire-path reasoning as {@link #OFD_MAX_BATCH_SIZE} (parallel CSV CLI args);
+   * generation is a stats-scan per table, so the cap is a footgun stop, not the operating point —
+   * operators tune the per-job size with {@code --batchMaxItems} on the scheduler.
+   */
+  public static final int DATA_LAYOUT_STRATEGY_GENERATION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched data-layout-strategy <b>execution</b> job
+   * can carry. Execution rewrites data files (compaction-like, size-bound), so batches are packed
+   * by table size and typically far smaller than the cap; this constant is a footgun stop, not the
+   * operating point.
+   */
+  public static final int DATA_LAYOUT_STRATEGY_EXECUTION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched TABLE_STATS_COLLECTION job can carry.
+   * Same parallel-CSV wire path and footgun-stop rationale as {@link #OFD_MAX_BATCH_SIZE}; the
+   * operating batch size is tuned scheduler-side via {@code --batchMaxItems}.
+   */
+  public static final int TABLE_STATS_COLLECTION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of tables a single batched SORT_STATS_COLLECTION job can carry. Same
+   * parallel-CSV wire path and footgun-stop rationale as {@link #OFD_MAX_BATCH_SIZE}; the operating
+   * batch size is tuned scheduler-side via {@code --batchMaxItems}.
+   */
+  public static final int SORT_STATS_COLLECTION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of orphan table directories a single batched {@code
+   * ORPHAN_DIRECTORY_DELETION} job can carry. Mirrors {@link #OFD_MAX_BATCH_SIZE}: the wire path is
+   * a parallel CSV of directory paths on the command line, so the cap is a footgun stop against an
+   * over-long argv rather than the operating point. See {@code
+   * BatchedOrphanTableDirectoryDeletionSparkApp#buildEntries}.
+   */
+  public static final int ORPHAN_DIRECTORY_DELETION_MAX_BATCH_SIZE = 200;
+
+  /**
+   * Hard ceiling on the number of dropped-table directories a single batched {@code
+   * TABLE_DIRECTORY_DELETION} job can carry. See {@link #ORPHAN_DIRECTORY_DELETION_MAX_BATCH_SIZE}
+   * and {@code BatchedTableDirectoryDeletionSparkApp#buildEntries}.
+   */
+  public static final int TABLE_DIRECTORY_DELETION_MAX_BATCH_SIZE = 200;
 
   private AppConstants() {}
 }

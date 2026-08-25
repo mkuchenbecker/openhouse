@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -30,6 +31,7 @@ import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -60,6 +62,21 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
   @Getter(AccessLevel.PROTECTED)
   private String cluster;
 
+  /**
+   * The per-table client {@code config} (Iceberg REST {@code LoadTableResponse.config} convention)
+   * the OH server stamped onto the most recent table-load response (or {@code null} if none / not
+   * yet refreshed). A final holder keeps Lombok's all-args constructor unchanged.
+   */
+  private final AtomicReference<Map<String, String>> config = new AtomicReference<>();
+
+  /**
+   * The server-stamped per-table client config from the last {@code doRefresh}, or {@code null}
+   * when absent. Subclasses read it to gate read-time behavior.
+   */
+  protected Map<String, String> currentConfig() {
+    return config.get();
+  }
+
   @Override
   protected String tableName() {
     return tableIdentifier.toString();
@@ -80,10 +97,9 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
   @Override
   public void doRefresh() {
     log.info("Calling doRefresh for table: {}", tableName());
-    Optional<String> tableLocation =
+    Optional<GetTableResponseBody> tableResponse =
         tableApi
             .getTableV1(tableIdentifier.namespace().toString(), tableIdentifier.name())
-            .mapNotNull(GetTableResponseBody::getTableLocation)
             /*
              on 404 from table service, resume the stream as empty response.
              for any other error, surface it!
@@ -97,20 +113,42 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
                 WebClientRequestException.class,
                 e -> Mono.error(new WebClientRequestWithMessageException(e)))
             .blockOptional();
+    // Capture the server-stamped per-table config so subclasses can gate read-time behavior via
+    // currentConfig(); absent => null. Side-channel only: never sent back on writes.
+    this.config.set(tableResponse.map(GetTableResponseBody::getConfig).orElse(null));
+    Optional<String> tableLocation = tableResponse.map(GetTableResponseBody::getTableLocation);
     if (!tableLocation.isPresent() && currentMetadataLocation() != null) {
       throw new NoSuchTableException(
           "Cannot find table %s after refresh, maybe another process deleted it", tableName());
     }
-    super.refreshFromMetadataLocation(tableLocation.orElse(null));
+    // Route the parse through loadMetadata() so subclasses can transform metadata as it loads;
+    // (null, 20) preserves the stock refresh behavior.
+    super.refreshFromMetadataLocation(tableLocation.orElse(null), null, 20, this::loadMetadata);
     log.debug("Calling doRefresh succeeded");
+  }
+
+  /**
+   * Loads the table metadata from storage, then runs the read-time {@link ReadBridge} over it using
+   * the per-table behavior the server stamped onto {@link #currentConfig()}. Absent config, or
+   * config carrying nothing to bridge, leaves the raw metadata untouched; a malformed known entry
+   * fails loud (see {@link ReadBridge}).
+   */
+  protected TableMetadata loadMetadata(String metadataLocation) {
+    TableMetadata raw = TableMetadataParser.read(io(), metadataLocation);
+    return ReadBridge.apply(raw, currentConfig());
   }
 
   @Override
   public void doCommit(TableMetadata base, TableMetadata metadata) {
     log.info("Calling doCommit for table: {}", tableName());
     boolean metadataUpdated = isMetadataUpdated(base, metadata);
+    boolean snapshotsUpdated = areSnapshotsUpdated(base, metadata);
     try {
-      if (areSnapshotsUpdated(base, metadata)) {
+      if (metadataUpdated && snapshotsUpdated && base != null) {
+        // Only CTAS and RTAS can update both metadata and snapshots at the same time.
+        // When the table exists, it will be a replace commit operation.
+        putSnapshotsForReplace(base, metadata);
+      } else if (snapshotsUpdated) {
         putSnapshots(base, metadata);
       } else if (metadataUpdated) {
         createUpdateTable(base, metadata);
@@ -316,15 +354,18 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
   }
 
   /**
-   * A wrapper for a remote REST call to put snapshot.
+   * Builds an {@link IcebergSnapshotsRequestBody} from the given metadata and sends it to the
+   * snapshot API.
    *
    * @param base the metadata before the snapshot was created
    * @param newMetadata metadata containing a new snapshot
+   * @param createUpdateTableRequestBody the request body for the table metadata
    */
-  private void putSnapshots(TableMetadata base, TableMetadata newMetadata) {
+  private void commitSnapshots(
+      TableMetadata base,
+      TableMetadata newMetadata,
+      CreateUpdateTableRequestBody createUpdateTableRequestBody) {
     IcebergSnapshotsRequestBody icebergSnapshotsRequestBody = new IcebergSnapshotsRequestBody();
-    CreateUpdateTableRequestBody createUpdateTableRequestBody =
-        constructMetadataRequestBody(base, newMetadata);
     icebergSnapshotsRequestBody.baseTableVersion(
         base == null ? INITIAL_TABLE_VERSION : base.metadataFileLocation());
     icebergSnapshotsRequestBody.jsonSnapshots(
@@ -347,6 +388,31 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
                     createUpdateTableRequestBody.getDatabaseId(),
                     createUpdateTableRequestBody.getTableId()))
         .block();
+  }
+
+  /**
+   * A wrapper for a remote REST call to put snapshot.
+   *
+   * @param base the metadata before the snapshot was created
+   * @param newMetadata metadata containing a new snapshot
+   */
+  private void putSnapshots(TableMetadata base, TableMetadata newMetadata) {
+    CreateUpdateTableRequestBody createUpdateTableRequestBody =
+        constructMetadataRequestBody(base, newMetadata);
+    commitSnapshots(base, newMetadata, createUpdateTableRequestBody);
+  }
+
+  /**
+   * A wrapper for a remote REST call to put snapshot for a replace table operation.
+   *
+   * @param base the metadata before the snapshot was created
+   * @param newMetadata metadata containing a new snapshot
+   */
+  private void putSnapshotsForReplace(TableMetadata base, TableMetadata newMetadata) {
+    CreateUpdateTableRequestBody createUpdateTableRequestBody =
+        constructMetadataRequestBody(base, newMetadata);
+    createUpdateTableRequestBody.replaceCommit(true);
+    commitSnapshots(base, newMetadata, createUpdateTableRequestBody);
   }
 
   static Mono<GetTableResponseBody> handleCreateUpdateHttpError(

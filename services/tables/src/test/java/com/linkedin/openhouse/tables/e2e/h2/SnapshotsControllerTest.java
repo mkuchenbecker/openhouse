@@ -2,14 +2,19 @@ package com.linkedin.openhouse.tables.e2e.h2;
 
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static com.linkedin.openhouse.tables.e2e.h2.RequestAndValidateHelper.putSnapshotsAndValidateResponse;
+import static com.linkedin.openhouse.tables.e2e.h2.ValidationUtilities.*;
 import static com.linkedin.openhouse.tables.model.IcebergSnapshotsModelTestUtilities.*;
 import static com.linkedin.openhouse.tables.model.TableModelConstants.*;
+import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.google.common.collect.ImmutableList;
 import com.jayway.jsonpath.JsonPath;
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.local.LocalStorage;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
@@ -29,6 +34,7 @@ import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.DataFile;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.Table;
@@ -36,6 +42,7 @@ import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -44,10 +51,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /** A dedicated test classes of e2e controller tests for Snapshot API. */
 @SpringBootTest
@@ -301,6 +310,166 @@ public class SnapshotsControllerTest {
             .snapshotRefs(obtainSnapshotRefsFromSnapshot(snapshots.get(snapshots.size() - 1)))
             .build();
     putSnapshotsAndValidateResponse(catalog, mvc, icebergSnapshotRequestBody, false);
+  }
+
+  @ParameterizedTest
+  @MethodSource("responseBodyFeeder")
+  public void testPutSnapshotsReplaceCommit(GetTableResponseBody getTableResponseBody)
+      throws Exception {
+    // Enable RTAS and remove policy
+    Map<String, String> propsWithRtas = new HashMap<>(getTableResponseBody.getTableProperties());
+    propsWithRtas.put(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true");
+    getTableResponseBody =
+        getTableResponseBody.toBuilder().tableProperties(propsWithRtas).policies(null).build();
+
+    // Step 1: Create a table
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(
+            getTableResponseBody, mvc, storageManager);
+    GetTableResponseBody getResponseBody = buildGetTableResponseBody(createResult);
+
+    // Step 2: Build a replace commit request with a new schema, partition spec, and table
+    // properties
+    String currentTableLocation =
+        RequestAndValidateHelper.getCurrentTableLocation(
+            mvc, getResponseBody.getDatabaseId(), getResponseBody.getTableId());
+
+    // New schema: add a new column "newCol"
+    Schema newSchema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.StringType.get()),
+            Types.NestedField.required(2, "name", Types.StringType.get()),
+            Types.NestedField.required(3, "timestampCol", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(
+                7,
+                "newCol",
+                Types.StringType.get())); // the old schema has 6 columns, so the next id is 7
+    String newSchemaJson =
+        com.linkedin.openhouse.common.schema.IcebergSchemaHelper.getSchemaJsonFromSchema(newSchema);
+
+    // New table properties
+    Map<String, String> newTableProps = new HashMap<>(getResponseBody.getTableProperties());
+    newTableProps.put("user.replaced", "true");
+    newTableProps.put("policies", ""); // policy will be empty since we didn't set it in the request
+
+    // Create a snapshot by appending a data file
+    Table table =
+        catalog.loadTable(
+            TableIdentifier.of(getResponseBody.getDatabaseId(), getResponseBody.getTableId()));
+    String dataFilePath =
+        storageManager.getDefaultStorage().getClient().getRootPrefix() + "/data_replace.orc";
+    DataFile newDataFile =
+        createDummyDataFile(dataFilePath, getPartitionSpec(getTableResponseBody));
+    Snapshot newSnapshot = table.newAppend().appendFile(newDataFile).apply();
+    List<String> jsonSnapshots = Collections.singletonList(SnapshotParser.toJson(newSnapshot));
+    Map<String, String> snapshotRefs =
+        obtainSnapshotRefsFromSnapshot(SnapshotParser.toJson(newSnapshot));
+
+    // Build the replace commit request body
+    CreateUpdateTableRequestBody replaceRequestBody =
+        buildCreateUpdateTableRequestBody(getResponseBody)
+            .toBuilder()
+            .baseTableVersion(currentTableLocation)
+            .schema(newSchemaJson)
+            .timePartitioning(null) // new partition spec
+            .clustering(null)
+            .policies(null) // remove policies
+            .tableProperties(newTableProps)
+            .replaceCommit(true)
+            .build();
+
+    IcebergSnapshotsRequestBody replaceCommitRequest =
+        IcebergSnapshotsRequestBody.builder()
+            .baseTableVersion(currentTableLocation)
+            .createUpdateTableRequestBody(replaceRequestBody)
+            .jsonSnapshots(jsonSnapshots)
+            .snapshotRefs(snapshotRefs)
+            .build();
+
+    // Step 3: Verify the table is overwritten with new schema, partition spec, properties, and
+    // snapshots
+    putSnapshotsAndValidateResponse(catalog, mvc, replaceCommitRequest, false);
+  }
+
+  @ParameterizedTest
+  @MethodSource("responseBodyFeeder")
+  public void testReplaceCommitRejectedOnLockedTable(GetTableResponseBody getTableResponseBody)
+      throws Exception {
+    // Regression guard (integration): a CREATE OR REPLACE (RTAS) against a locked table must be
+    // rejected with 400, just like a normal write. Previously the replace path bypassed the lock.
+
+    // Enable RTAS
+    Map<String, String> propsWithRtas = new HashMap<>(getTableResponseBody.getTableProperties());
+    propsWithRtas.put(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true");
+    getTableResponseBody =
+        getTableResponseBody.toBuilder().tableProperties(propsWithRtas).policies(null).build();
+
+    // Step 1: create the table
+    MvcResult createResult =
+        RequestAndValidateHelper.createTableAndValidateResponse(
+            getTableResponseBody, mvc, storageManager);
+    GetTableResponseBody getResponseBody = buildGetTableResponseBody(createResult);
+
+    // Step 2: lock the table via REST
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    String.format(
+                        CURRENT_MAJOR_VERSION_PREFIX + "/databases/%s/tables/%s/lock",
+                        getResponseBody.getDatabaseId(),
+                        getResponseBody.getTableId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    CreateUpdateLockRequestBody.builder()
+                        .locked(true)
+                        .message("setting lock")
+                        .build()
+                        .toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated());
+
+    // Step 3: build a replace commit (RTAS) with a new snapshot
+    String currentTableLocation =
+        RequestAndValidateHelper.getCurrentTableLocation(
+            mvc, getResponseBody.getDatabaseId(), getResponseBody.getTableId());
+    Table table =
+        catalog.loadTable(
+            TableIdentifier.of(getResponseBody.getDatabaseId(), getResponseBody.getTableId()));
+    String dataFilePath =
+        storageManager.getDefaultStorage().getClient().getRootPrefix() + "/data_locked_replace.orc";
+    DataFile newDataFile =
+        createDummyDataFile(dataFilePath, getPartitionSpec(getTableResponseBody));
+    Snapshot newSnapshot = table.newAppend().appendFile(newDataFile).apply();
+    List<String> jsonSnapshots = Collections.singletonList(SnapshotParser.toJson(newSnapshot));
+    Map<String, String> snapshotRefs =
+        obtainSnapshotRefsFromSnapshot(SnapshotParser.toJson(newSnapshot));
+
+    CreateUpdateTableRequestBody replaceRequestBody =
+        buildCreateUpdateTableRequestBody(getResponseBody)
+            .toBuilder()
+            .baseTableVersion(currentTableLocation)
+            .replaceCommit(true)
+            .build();
+    IcebergSnapshotsRequestBody replaceCommitRequest =
+        IcebergSnapshotsRequestBody.builder()
+            .baseTableVersion(currentTableLocation)
+            .createUpdateTableRequestBody(replaceRequestBody)
+            .jsonSnapshots(jsonSnapshots)
+            .snapshotRefs(snapshotRefs)
+            .build();
+
+    // Step 4: the RTAS must be rejected because the table is locked.
+    mvc.perform(
+            MockMvcRequestBuilders.put(
+                    String.format(
+                        CURRENT_MAJOR_VERSION_PREFIX
+                            + "/databases/%s/tables/%s/iceberg/v2/snapshots",
+                        getResponseBody.getDatabaseId(),
+                        getResponseBody.getTableId()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(replaceCommitRequest.toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", containsString("locked state")));
   }
 
   @AfterEach

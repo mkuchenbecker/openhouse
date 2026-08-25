@@ -27,15 +27,81 @@ public class JobConf {
     SQL_TEST,
     RETENTION,
     ORPHAN_FILES_DELETION,
+    /**
+     * Multi-table orphan-files-deletion. One Spark job processes a list of tables grouped by
+     * database — bin-packing happens scheduler-side. See {@code
+     * BatchedOrphanFilesDeletionSparkApp}.
+     */
+    ORPHAN_FILES_DELETION_BATCH,
+    /**
+     * Multi-table retention. One Spark job processes a bin-packed list of tables, re-resolving each
+     * table's retention column/granularity/count from its policies at runtime. See {@code
+     * BatchedRetentionSparkApp}.
+     */
+    RETENTION_BATCH,
     SNAPSHOTS_EXPIRATION,
+    /**
+     * Multi-table snapshots-expiration. One Spark job processes a list of tables grouped by
+     * database — bin-packing happens scheduler-side. See {@code
+     * BatchedSnapshotsExpirationSparkApp}.
+     */
+    SNAPSHOTS_EXPIRATION_BATCH,
     STAGED_FILES_DELETION,
+    /**
+     * Multi-table staged-files-deletion. One Spark job processes a list of tables grouped by
+     * database — bin-packing happens scheduler-side. See {@code
+     * BatchedStagedFilesDeletionSparkApp}.
+     */
+    STAGED_FILES_DELETION_BATCH,
     DATA_COMPACTION,
+    /**
+     * Multi-table data-compaction. One Spark job compacts a list of tables that the optimizer
+     * scheduler bin-packed by data volume into a single batch. See {@code
+     * BatchedDataCompactionSparkApp}.
+     */
+    DATA_COMPACTION_BATCH,
     ORPHAN_DIRECTORY_DELETION,
+    /**
+     * Multi-directory orphan-table-directory deletion. One Spark job stages/deletes a list of
+     * orphaned (dropped-table) directories. This is the batched counterpart the optimizer's {@code
+     * OperationTypeDto.toJobType()} resolves {@code ORPHAN_DIRECTORY_DELETION} to. See {@code
+     * BatchedOrphanTableDirectoryDeletionSparkApp}.
+     */
+    ORPHAN_DIRECTORY_DELETION_BATCH,
     TABLE_STATS_COLLECTION,
+    /**
+     * Multi-table table-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedTableStatsCollectionSparkApp}.
+     */
+    TABLE_STATS_COLLECTION_BATCH,
     DATA_LAYOUT_STRATEGY_GENERATION,
+    /**
+     * Multi-table data-layout-strategy generation. One Spark job (re)generates and stores
+     * compaction strategies for a bin-packed list of tables — bin-packing happens scheduler-side.
+     * See {@code BatchedDataLayoutStrategyGenerationSparkApp}.
+     */
+    DATA_LAYOUT_STRATEGY_GENERATION_BATCH,
     DATA_LAYOUT_STRATEGY_EXECUTION,
+    /**
+     * Multi-table data-layout-strategy execution. One Spark job applies the previously generated
+     * strategy (compaction rewrite) for a bin-packed list of tables — bin-packing happens
+     * scheduler-side. See {@code BatchedDataLayoutStrategyExecutionSparkApp}.
+     */
+    DATA_LAYOUT_STRATEGY_EXECUTION_BATCH,
     REPLICATION,
     SORT_STATS_COLLECTION,
-    TABLE_DIRECTORY_DELETION
+    /**
+     * Multi-table sort-stats-collection. One Spark job processes a bin-packed list of tables;
+     * bin-packing happens scheduler-side. See {@code BatchedSortStatsCollectionSparkApp}.
+     */
+    SORT_STATS_COLLECTION_BATCH,
+    TABLE_DIRECTORY_DELETION,
+    /**
+     * Multi-directory dropped-table-directory deletion. One Spark job purges a list of
+     * dropped/purged table storage directories. Batched counterpart of {@code
+     * TABLE_DIRECTORY_DELETION} that {@code OperationTypeDto.toJobType()} resolves to. See {@code
+     * BatchedTableDirectoryDeletionSparkApp}.
+     */
+    TABLE_DIRECTORY_DELETION_BATCH
   }
 }

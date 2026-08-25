@@ -17,7 +17,21 @@ import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.audit.model.OperationStatus;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
+import com.linkedin.openhouse.tables.config.InternalCatalogProperties;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotParser;
+import org.apache.iceberg.SnapshotRef;
+import org.apache.iceberg.SnapshotRefParser;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -28,6 +42,7 @@ import org.springframework.stereotype.Component;
  * Aspect class to support table operation auditing for all controllers. It enhances the ability of
  * particular methods by adding logic of building and emitting audit events.
  */
+@Slf4j
 @Aspect
 @Component
 public class TableAuditAspect {
@@ -35,6 +50,15 @@ public class TableAuditAspect {
   @Autowired private ClusterProperties clusterProperties;
 
   @Autowired private AuditHandler<TableAuditEvent> tableAuditHandler;
+
+  @Autowired private InternalCatalogProperties internalCatalogProperties;
+
+  /**
+   * Cached compiled allowlist patterns. Built lazily on first use from {@code
+   * cluster.iceberg.tables.audit.table-properties-allowlist}. The aspect is a singleton and the
+   * config is bound once at startup, so a one-shot lazy init is sufficient.
+   */
+  private volatile List<Pattern> allowlistPatterns;
 
   /**
    * Install the Around advice for getTable() method in OpenHouseTablesApiHandler.
@@ -110,10 +134,14 @@ public class TableAuditAspect {
       String tableCreator)
       throws Throwable {
     ApiResponse<GetTableResponseBody> result = null;
-    OperationType operationType =
-        createUpdateTableRequestBody.isStageCreate()
-            ? OperationType.STAGED_CREATE
-            : OperationType.CREATE;
+    OperationType operationType = null;
+    if (createUpdateTableRequestBody.isStageCreate()) {
+      operationType = OperationType.STAGED_CREATE;
+    } else if (createUpdateTableRequestBody.isStageReplace()) {
+      operationType = OperationType.STAGED_REPLACE;
+    } else {
+      operationType = OperationType.CREATE;
+    }
     TableAuditEvent event =
         TableAuditEvent.builder()
             .eventTimestamp(Instant.now())
@@ -351,26 +379,89 @@ public class TableAuditAspect {
       String tableCreator)
       throws Throwable {
     ApiResponse<GetTableResponseBody> result = null;
-    OperationType operationType =
-        icebergSnapshotRequestBody.getBaseTableVersion().equals(INITIAL_TABLE_VERSION)
-            ? OperationType.STAGED_COMMIT
-            : OperationType.COMMIT;
-    TableAuditEvent event =
+    OperationType operationType = null;
+    if (icebergSnapshotRequestBody.getCreateUpdateTableRequestBody().isReplaceCommit()) {
+      operationType = OperationType.REPLACE_COMMIT;
+    } else if (icebergSnapshotRequestBody.getBaseTableVersion().equals(INITIAL_TABLE_VERSION)) {
+      operationType = OperationType.STAGED_COMMIT;
+    } else {
+      operationType = OperationType.COMMIT;
+    }
+    TableAuditEvent.TableAuditEventBuilder eventBuilder =
         TableAuditEvent.builder()
             .eventTimestamp(Instant.now())
             .databaseName(databaseId)
             .tableName(tableId)
-            .operationType(operationType)
-            .build();
+            .operationType(operationType);
+    extractSnapshotInfo(icebergSnapshotRequestBody, eventBuilder);
     try {
       result = (ApiResponse<GetTableResponseBody>) point.proceed();
+      // Read tableProperties from the response, not the request body: OpenHouse mutates
+      // properties server-side during commit (e.g. openhouse.tableVersion,
+      // openhouse.lastModifiedTime), and the audit event should reflect the committed state.
+      TableAuditEvent event =
+          eventBuilder
+              .auditedTableProperties(
+                  filterTableProperties(result.getResponseBody().getTableProperties()))
+              .build();
       buildAndSendEvent(
           event, OperationStatus.SUCCESS, result.getResponseBody().getTableLocation());
     } catch (Throwable t) {
-      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      // On failure there is no committed state to read from, so tableProperties stays null.
+      buildAndSendEvent(eventBuilder.build(), OperationStatus.FAILED, null);
       throw t;
     }
     return result;
+  }
+
+  /**
+   * Extracts snapshot ID and timestamp of the main branch from the request body. The snapshotRefs
+   * map contains branch name to JSON-serialized SnapshotRef. We read the main branch's snapshot-id
+   * (this is what Iceberg treats as current-snapshot-id — see TableMetadata.Builder.setRef()) and
+   * then find the matching snapshot in jsonSnapshots to get its timestamp-ms.
+   *
+   * <p>Leaves both fields null if the main branch ref is absent (e.g. branch-only commits where
+   * main didn't advance, or non-commit operations) or if the matching snapshot can't be found.
+   */
+  private void extractSnapshotInfo(
+      IcebergSnapshotsRequestBody requestBody,
+      TableAuditEvent.TableAuditEventBuilder eventBuilder) {
+    try {
+      Map<String, String> snapshotRefs = requestBody.getSnapshotRefs();
+      if (snapshotRefs == null) {
+        return;
+      }
+      String mainRefJson = snapshotRefs.get(SnapshotRef.MAIN_BRANCH);
+      if (mainRefJson == null) {
+        return;
+      }
+      long mainSnapshotId = SnapshotRefParser.fromJson(mainRefJson).snapshotId();
+      eventBuilder.currentSnapshotId(mainSnapshotId);
+
+      // Find the matching snapshot in jsonSnapshots to get its timestamp-ms. Iterate in reverse
+      // because Iceberg appends snapshots chronologically and main's snapshot is typically the
+      // most recent. Skip snapshots whose JSON doesn't contain the target id as a cheap
+      // pre-filter before invoking the JSON parser.
+      List<String> jsonSnapshots = requestBody.getJsonSnapshots();
+      if (jsonSnapshots == null) {
+        return;
+      }
+      String mainSnapshotIdStr = Long.toString(mainSnapshotId);
+      for (int i = jsonSnapshots.size() - 1; i >= 0; i--) {
+        String snapshotJson = jsonSnapshots.get(i);
+        if (!snapshotJson.contains(mainSnapshotIdStr)) {
+          continue;
+        }
+        Snapshot snapshot = SnapshotParser.fromJson(snapshotJson);
+        if (snapshot.snapshotId() == mainSnapshotId) {
+          eventBuilder.currentSnapshotTimestampMs(snapshot.timestampMillis());
+          return;
+        }
+      }
+    } catch (Exception e) {
+      // Snapshot extraction is best-effort; don't fail the audit event
+      log.warn("Failed to extract snapshot info for audit event", e);
+    }
   }
 
   /** Install the Around advice for getAllDatabases() method in OpenHouseDatabasesApiHandler */
@@ -460,6 +551,106 @@ public class TableAuditAspect {
       throw t;
     }
     return result;
+  }
+
+  /**
+   * Narrows the committed table properties down to the configured allowlist ({@code
+   * cluster.iceberg.tables.audit.table-properties-allowlist}) and enforces two byte-size caps to
+   * keep the audit event within the Kafka producer's max.request.size budget: a per-value cap
+   * ({@code table-property-value-max-size}) and a combined-total cap ({@code
+   * table-properties-total-max-size}). Values exceeding either cap are skipped with a warning log.
+   * Returns {@code null} when there is nothing to emit so downstream audit handlers can skip the
+   * field entirely.
+   *
+   * <p>Allowlist entries are Java regular expressions matched against the property key (full match,
+   * via {@link Pattern#matches}); a key is emitted if it matches at least one pattern. Invalid
+   * patterns are logged and skipped — they never block audit emission. Source keys are visited in
+   * sorted order so that the total-cap cutoff is deterministic regardless of the source map's
+   * iteration order.
+   */
+  private Map<String, String> filterTableProperties(Map<String, String> source) {
+    if (source == null || source.isEmpty()) {
+      return null;
+    }
+    List<Pattern> patterns = compiledAllowlistPatterns();
+    if (patterns.isEmpty()) {
+      return null;
+    }
+    InternalCatalogProperties.Audit auditConfig = internalCatalogProperties.getAudit();
+    long maxValueBytes = auditConfig.getTablePropertyValueMaxSize().toBytes();
+    long maxTotalBytes = auditConfig.getTablePropertiesTotalMaxSize().toBytes();
+    // Sort keys so the greedy total-byte cap below drops the same properties every run; the source
+    // HashMap has no stable order. Irrelevant when the cap isn't hit.
+    List<String> sortedKeys = new ArrayList<>(source.keySet());
+    Collections.sort(sortedKeys);
+    Map<String, String> filtered = new HashMap<>();
+    long totalBytes = 0;
+    for (String key : sortedKeys) {
+      if (!matchesAnyPattern(key, patterns)) {
+        continue;
+      }
+      String value = source.get(key);
+      if (value == null) {
+        continue;
+      }
+      long valueBytes = value.getBytes(StandardCharsets.UTF_8).length;
+      if (valueBytes > maxValueBytes) {
+        log.warn(
+            "Dropping audited table-property '{}': value size {} bytes exceeds per-value cap {} bytes",
+            key,
+            valueBytes,
+            maxValueBytes);
+        continue;
+      }
+      if (totalBytes + valueBytes > maxTotalBytes) {
+        log.warn(
+            "Dropping audited table-property '{}': including it would exceed total cap {} bytes "
+                + "(already accumulated {} bytes)",
+            key,
+            maxTotalBytes,
+            totalBytes);
+        continue;
+      }
+      filtered.put(key, value);
+      totalBytes += valueBytes;
+    }
+    return filtered.isEmpty() ? null : filtered;
+  }
+
+  /** Returns {@code true} if {@code key} fully matches at least one allowlist pattern. */
+  private boolean matchesAnyPattern(String key, List<Pattern> patterns) {
+    for (Pattern pattern : patterns) {
+      if (pattern.matcher(key).matches()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Compiles the configured allowlist into {@link Pattern}s once and caches the result. Returns
+   * {@link Collections#emptyList()} when the allowlist is unset or every pattern is invalid.
+   */
+  private List<Pattern> compiledAllowlistPatterns() {
+    List<Pattern> cached = allowlistPatterns;
+    if (cached != null) {
+      return cached;
+    }
+    List<String> allowlist = internalCatalogProperties.getAudit().getTablePropertiesAllowlist();
+    if (allowlist == null || allowlist.isEmpty()) {
+      allowlistPatterns = Collections.emptyList();
+      return allowlistPatterns;
+    }
+    List<Pattern> compiled = new ArrayList<>(allowlist.size());
+    for (String regex : allowlist) {
+      try {
+        compiled.add(Pattern.compile(regex));
+      } catch (PatternSyntaxException e) {
+        log.warn("Skipping invalid table-property allowlist regex '{}': {}", regex, e.getMessage());
+      }
+    }
+    allowlistPatterns = Collections.unmodifiableList(compiled);
+    return allowlistPatterns;
   }
 
   private void buildAndSendEvent(

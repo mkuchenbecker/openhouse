@@ -7,6 +7,8 @@ public final class CatalogConstants {
   public static final String INTERMEDIATE_SCHEMAS_KEY = "newIntermediateSchemas";
   public static final String SORT_ORDER_KEY = "sortOrder";
   public static final String IS_STAGE_CREATE_KEY = "isStageCreate";
+  public static final String IS_STAGE_REPLACE_KEY = "isStageReplace";
+  public static final String IS_REPLACE_COMMIT_KEY = "isReplaceCommit";
   public static final String OPENHOUSE_TABLE_VERSION = "openhouse.tableVersion";
   public static final String OPENHOUSE_UUID_KEY = "openhouse.tableUUID";
   public static final String OPENHOUSE_TABLEID_KEY = "openhouse.tableId";
@@ -27,6 +29,10 @@ public final class CatalogConstants {
   public static final String COMMIT_KEY = "commitKey";
 
   public static final String EVOLVED_SCHEMA_KEY = "evolved.table.schema";
+
+  public static final String RTAS_ENABLED_TABLE_PROP = "replace.enabled";
+
+  public static final String WAP_ENABLED_TABLE_PROP = "write.wap.enabled";
 
   static final String FEATURE_TOGGLE_STOP_CREATE = "stop_create";
 

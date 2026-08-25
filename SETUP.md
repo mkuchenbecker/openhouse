@@ -173,13 +173,27 @@ curl "${curlArgs[@]}" -XGET http://localhost:8000/v1/databases/d3/tables/t1
 
 #### Update a Table
 
+The PUT request requires two values from a prior GET response:
+
+- **`baseTableVersion`** — use the `tableVersion` field from GET (after the first update this becomes a metadata file path, not `"INITIAL_VERSION"`)
+- **`tableProperties`** — must include all `openhouse.*` properties from the GET response merged with any user-defined properties; omitting them causes a 500 in the server's cross-cluster eligibility check
+
+First GET the current state:
+
+```
+curl "${curlArgs[@]}" -XGET http://localhost:8000/v1/databases/d3/tables/t1
+```
+
+Then PUT with the returned `tableVersion` and `tableProperties`:
+
 ```
 curl "${curlArgs[@]}" -XPUT http://localhost:8000/v1/databases/d3/tables/t1 \
 --data-raw '{
   "tableId": "t1",
   "databaseId": "d3",
-  "baseTableVersion":<fill in previous version>
-  "clusterId": "<fill in cluster id>",
+  "clusterId": "<clusterId from GET response>",
+  "tableType": "PRIMARY_TABLE",
+  "baseTableVersion": "<tableVersion from GET response>",
   "schema": "{\"type\": \"struct\", \"fields\": [{\"id\": 1,\"required\": true,\"name\": \"id\",\"type\": \"string\"},{\"id\": 2,\"required\": true,\"name\": \"name\",\"type\": \"string\"},{\"id\": 3,\"required\": true,\"name\": \"ts\",\"type\": \"timestamp\"}, {\"id\": 4,\"required\": true,\"name\": \"country\",\"type\": \"string\"}]}",
   "timePartitioning": {
     "columnName": "ts",
@@ -191,6 +205,7 @@ curl "${curlArgs[@]}" -XPUT http://localhost:8000/v1/databases/d3/tables/t1 \
     }
   ],
   "tableProperties": {
+    "<copy all key/value pairs from tableProperties in GET response, including openhouse.* keys>": "...",
     "key": "value"
   }
 }'
@@ -272,7 +287,8 @@ docker exec -it local.spark-master /bin/bash
 Start `spark-shell` with the following command: Available users are `openhouse` and `u_tableowner`.
 
 ```
-bin/spark-shell --packages org.apache.iceberg:iceberg-spark-runtime-3.1_2.12:1.2.0 \
+bin/spark-shell --master spark://spark-master:7077 \
+  --packages org.apache.iceberg:iceberg-spark-runtime-3.1_2.12:1.2.0 \
   --jars openhouse-spark-runtime_2.12-*-all.jar  \
   --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions   \
   --conf spark.sql.catalog.openhouse=org.apache.iceberg.spark.SparkCatalog   \
@@ -282,6 +298,10 @@ bin/spark-shell --packages org.apache.iceberg:iceberg-spark-runtime-3.1_2.12:1.2
   --conf spark.sql.catalog.openhouse.auth-token=$(cat /var/config/$(whoami).token) \
   --conf spark.sql.catalog.openhouse.cluster=LocalHadoopCluster
 ```
+
+> **Note:** `--master spark://spark-master:7077` connects to the Spark standalone cluster
+> instead of using the default `local[*]` mode. Without this, Spark actions that scan
+> HDFS (e.g. orphan file deletion) may hang.
 
 If you are integrating with ADLS, use this `spark-shell` command instead:
 
@@ -597,6 +617,40 @@ docker compose --profile with_jobs_scheduler run openhouse-jobs-scheduler - \
 > [!NOTE]
 > Try HTTP plugin in IntelliJ to trigger /jobs service local endpoint in local mode by running HTTP scripts in
 services/jobs/src/test/http/.
+
+### Test batched orphan file deletion through job-scheduler
+
+The batched OFD scheduler runs orphan-files-deletion across multiple tables in a single Spark job, bin-packed per database. Builds on top of the table you created in [Test through Spark-shell](#test-through-spark-shell).
+
+1. **Manufacture an orphan file** that's older than the default OFD TTL (7 days). From the spark-shell session:
+   ```scala
+   scala> val fs = org.apache.hadoop.fs.FileSystem.get(spark.sparkContext.hadoopConfiguration)
+   scala> val orphan = new org.apache.hadoop.fs.Path("/data/openhouse/db/tb/data/test_orphan.orc")
+   scala> fs.createNewFile(orphan)
+   scala> fs.setTimes(orphan, System.currentTimeMillis() - 8L*24L*3600L*1000L, -1)  // 8 days old
+   ```
+
+2. **Build and run the batched scheduler.**
+   ```
+   docker compose --profile with_jobs_scheduler build
+   docker compose --profile with_jobs_scheduler run openhouse-jobs-scheduler - \
+       --type ORPHAN_FILES_DELETION_BATCH --cluster local \
+       --tablesURL http://openhouse-tables:8080 --jobsURL http://openhouse-jobs:8080 \
+       --batchMaxItems 5 \
+       --tableMinAgeThresholdHours 0 --taskPollIntervalMs 5000
+   ```
+
+> [!NOTE]
+> The orphan file at `/data/openhouse/db/tb/data/test_orphan.orc` should be gone after the job completes. Check the scheduler logs for `Packed N eligible tables into M batches` and the Spark app logs for `OFD success: fqtn=db.tb orphansDetected=1`.
+
+> [!NOTE]
+> The scheduler groups tables by database before bin-packing — no batch ever crosses a database. `--batchMaxItems` caps tables per batch (default 25; the Spark app enforces a hard ceiling of `MAX_BATCH_SIZE=200`).
+
+> [!NOTE]
+> To list files under the table from the HDFS namenode container:
+> ```
+> docker exec -it local.namenode hdfs dfs -ls -R /data/openhouse/db/tb
+> ```
 
 ## FAQs
 

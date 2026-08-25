@@ -61,7 +61,12 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     PageCursor cursor = decodePageToken(pageToken, pageSize);
     ApiResponse<GetAllTablesResponseBody> response =
         tablesApiHandler.searchTables(
-            icebergNamespace.level(0), cursor.getPage(), cursor.getPageSize(), "tableId");
+            icebergNamespace.level(0),
+            cursor.getPage(),
+            cursor.getPageSize(),
+            "tableId",
+            Collections.emptyList(),
+            extractAuthenticatedUserPrincipal());
     Page<GetTableResponseBody> page = response.getResponseBody().getPageResults();
     LinkedHashSet<TableIdentifier> identifiers =
         page.getContent().stream()

@@ -5,9 +5,12 @@ Data lives in HDFS, so these tests run inside a Docker container on the same
 network as the oh-hadoop-spark Docker Compose services.
 """
 
+import datetime as _dt
 import logging
+import multiprocessing
 import os
 import sys
+import tempfile
 import time
 
 import pyarrow as pa
@@ -15,9 +18,11 @@ import pytest
 import requests
 from pyiceberg.exceptions import NoSuchTableError
 
-from openhouse.dataloader import OpenHouseDataLoader
+from openhouse.dataloader import DataLoaderContext, JvmConfig, OpenHouseDataLoader
 from openhouse.dataloader.catalog import OpenHouseCatalog
-from openhouse.dataloader.filters import col
+from openhouse.dataloader.data_loader_split import to_sql_identifier
+from openhouse.dataloader.filters import SqlTarget, col, to_sql
+from openhouse.dataloader.table_transformer import TableTransformer
 
 BASE_URL = "http://openhouse-tables:8080"
 LIVY_URL = "http://spark-livy:8998"
@@ -80,6 +85,15 @@ class LivySession:
 
     def execute(self, sql: str) -> None:
         """Submit a SQL statement and wait for completion. Raises on error."""
+        self._run(sql)
+
+    def query(self, sql: str) -> list[list]:
+        """Submit a SELECT, wait for completion, and return its result rows."""
+        output = self._run(sql)
+        return output["data"]["application/json"]["data"]
+
+    def _run(self, sql: str) -> dict:
+        """Submit a SQL statement, wait for completion, and return its output. Raises on error."""
         print(f"  SQL: {sql}")
         resp = requests.post(
             f"{self._session_url}/statements", json={"code": sql}, headers=HEADERS, timeout=REQUEST_TIMEOUT
@@ -98,13 +112,57 @@ class LivySession:
                 output = resp.json()["output"]
                 if output["status"] == "error":
                     raise RuntimeError(f"SQL failed: {output.get('evalue', output)}")
-                return
+                return output
             if state in ("error", "cancelled"):
                 raise RuntimeError(f"Statement entered state: {state}")
             time.sleep(1)
 
     def close(self) -> None:
         requests.delete(self._session_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+
+
+def _parse_max_heap_bytes(jvm_output: str) -> int:
+    """Extract MaxHeapSize value in bytes from -XX:+PrintFlagsFinal output."""
+    for line in jvm_output.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[1] == "MaxHeapSize":
+            return int(parts[3])
+    raise ValueError("MaxHeapSize not found in JVM output")
+
+
+def _assert_jvm_heap(log_path: str, requested_mb: int, upper_bound_mb: int, label: str) -> int:
+    """Read a JVM flags log file, assert MaxHeapSize <= upper_bound, and return the actual value."""
+    with open(log_path) as f:
+        output = f.read()
+    assert "MaxHeapSize" in output, f"{label} JVM did not print flags — jvm_args not honored"
+    heap = _parse_max_heap_bytes(output)
+    assert heap <= upper_bound_mb * 1024 * 1024, (
+        f"{label} MaxHeapSize {heap} exceeds {upper_bound_mb}m — -Xmx{requested_mb}m not honored"
+    )
+    return heap
+
+
+def _materialize_split_in_child(split, jvm_log_path):
+    """Materialize a single split in this process, capturing stdout+stderr to *jvm_log_path*.
+
+    Intended to run via multiprocessing so the child gets a fresh JVM that
+    picks up worker_jvm_args from LIBHDFS_OPTS.
+    """
+    saved_stdout = os.dup(1)
+    saved_stderr = os.dup(2)
+    log_fd = os.open(jvm_log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    os.dup2(log_fd, 1)
+    os.dup2(log_fd, 2)
+    os.close(log_fd)
+    try:
+        batches = list(split)
+        num_rows = sum(b.num_rows for b in batches)
+    finally:
+        os.dup2(saved_stdout, 1)
+        os.close(saved_stdout)
+        os.dup2(saved_stderr, 2)
+        os.close(saved_stderr)
+    print(f"  child process read {num_rows} rows from split")
 
 
 def _read_all(loader: OpenHouseDataLoader) -> pa.Table:
@@ -142,11 +200,18 @@ if __name__ == "__main__":
         properties={"DEFAULT_SCHEME": "hdfs", "DEFAULT_NETLOC": HDFS_NETLOC},
     )
 
+    # Set jvm_args before any DataLoader is created so LIBHDFS_OPTS is in
+    # place when the JVM starts.  We capture both stdout and stderr to a
+    # log file because -XX:+PrintFlagsFinal may write to either fd.
+    jvm_log_fd, jvm_log = tempfile.mkstemp(suffix=".log")
+    os.close(jvm_log_fd)
+    ctx = DataLoaderContext(jvm_config=JvmConfig(planner_args="-Xmx127m -XX:+PrintFlagsFinal"))
+
     livy = LivySession(LIVY_URL, token_str)
     try:
         # 1. Nonexistent table raises NoSuchTableError
         with pytest.raises(NoSuchTableError):
-            loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table="nonexistent_table")
+            loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table="nonexistent_table", context=ctx)
             _read_all(loader)
         print("PASS: nonexistent table raised NoSuchTableError")
 
@@ -155,24 +220,39 @@ if __name__ == "__main__":
             f"CREATE TABLE {FQTN} ({CREATE_COLUMNS}) USING iceberg TBLPROPERTIES ('itest.custom-key' = 'custom-value')"
         )
         try:
-            loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID)
-            assert list(loader) == [], "Expected no splits for empty table"
-            assert loader.snapshot_id is None, "Expected no snapshot for empty table"
-            assert loader.table_properties.get("itest.custom-key") == "custom-value"
+            # Capture stdout+stderr from here through the first HDFS read
+            # so we can verify -XX:+PrintFlagsFinal output at the end.
+            # The JVM starts during the first table load and prints flags then.
+            saved_stdout = os.dup(1)
+            saved_stderr = os.dup(2)
+            log_fd = os.open(jvm_log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            os.dup2(log_fd, 1)
+            os.dup2(log_fd, 2)
+            os.close(log_fd)
+            try:
+                loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID)
+                assert list(loader) == [], "Expected no splits for empty table"
+                assert loader.snapshot_id is None, "Expected no snapshot for empty table"
+                assert loader.table_properties.get("itest.custom-key") == "custom-value"
+
+                # 3. Write data via Spark
+                livy.execute(f"INSERT INTO {FQTN} VALUES (1, 'alice', 1.1), (2, 'bob', 2.2), (3, 'charlie', 3.3)")
+                snap1 = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID).snapshot_id
+                assert snap1 is not None
+
+                # 4. Read all data with batch_size and verify batch count
+                loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID, batch_size=2)
+                batches = [batch for split in loader for batch in split]
+                assert len(batches) == 2, f"Expected 2 batches (3 rows, batch_size=2), got {len(batches)}"
+                for batch in batches:
+                    assert batch.num_rows <= 2
+                result = pa.concat_tables([pa.Table.from_batches([b]) for b in batches]).sort_by(COL_ID)
+            finally:
+                os.dup2(saved_stdout, 1)
+                os.close(saved_stdout)
+                os.dup2(saved_stderr, 2)
+                os.close(saved_stderr)
             print("PASS: empty table returned no splits and custom property is accessible")
-
-            # 3. Write data via Spark
-            livy.execute(f"INSERT INTO {FQTN} VALUES (1, 'alice', 1.1), (2, 'bob', 2.2), (3, 'charlie', 3.3)")
-            snap1 = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID).snapshot_id
-            assert snap1 is not None
-
-            # 4. Read all data with batch_size and verify batch count
-            loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID, batch_size=2)
-            batches = [batch for split in loader for batch in split]
-            assert len(batches) == 2, f"Expected 2 batches (3 rows, batch_size=2), got {len(batches)}"
-            for batch in batches:
-                assert batch.num_rows <= 2
-            result = pa.concat_tables([pa.Table.from_batches([b]) for b in batches]).sort_by(COL_ID)
             assert result.num_rows == 3
             assert result.column(COL_ID).to_pylist() == [1, 2, 3]
             assert result.column(COL_NAME).to_pylist() == ["alice", "bob", "charlie"]
@@ -213,6 +293,37 @@ if __name__ == "__main__":
             assert result.column(COL_SCORE).to_pylist() == [1.1, 2.2, 3.3, 4.4]
             print(f"PASS: after second insert, read all {result.num_rows} rows")
 
+            # 6b. Spark-SQL filter parity: read rows with DataLoader filters, then read the
+            #     same rows from Spark using to_sql(filters, SqlTarget.SPARK), and verify the
+            #     two row sets are identical. diana (score > 2.0 but excluded by the name IN)
+            #     proves the predicate is actually applied on both sides, not ignored.
+            parity_filter = (col(COL_SCORE) > 2.0) & col(COL_NAME).is_in(["alice", "bob", "charlie"])
+            parity_loader = OpenHouseDataLoader(
+                catalog=catalog, database=DATABASE_ID, table=TABLE_ID, filters=parity_filter
+            )
+            dl_result = _read_all(parity_loader)
+            dl_rows = list(
+                zip(
+                    dl_result.column(COL_ID).to_pylist(),
+                    dl_result.column(COL_NAME).to_pylist(),
+                    dl_result.column(COL_SCORE).to_pylist(),
+                    strict=True,
+                )
+            )
+
+            spark_where = to_sql(parity_filter, SqlTarget.SPARK)
+            spark_rows = [
+                tuple(row)
+                for row in livy.query(
+                    f"SELECT {COL_ID}, {COL_NAME}, {COL_SCORE} FROM {FQTN} WHERE {spark_where} ORDER BY {COL_ID}"
+                )
+            ]
+            assert dl_rows, "Expected the parity filter to match at least one row"
+            assert dl_rows == spark_rows, (
+                f"DataLoader rows {dl_rows} != Spark rows {spark_rows} (Spark WHERE: {spark_where})"
+            )
+            print(f"PASS: DataLoader and Spark agree on {len(dl_rows)} rows for WHERE {spark_where}")
+
             # 7. Pin to the old snapshot and verify only the original data is returned
             loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=TABLE_ID, snapshot_id=snap1)
             result = _read_all(loader)
@@ -228,8 +339,110 @@ if __name__ == "__main__":
                 list(loader)
             print("PASS: invalid snapshot_id raised ValueError")
 
+            # 8. Materialize a split in a child process with worker_jvm_args.
+            #    The child gets a fresh JVM, so -Xmx254m takes effect there
+            #    independently of the planner's -Xmx127m.
+            worker_ctx = DataLoaderContext(jvm_config=JvmConfig(worker_args="-Xmx254m -XX:+PrintFlagsFinal"))
+            worker_loader = OpenHouseDataLoader(
+                catalog=catalog, database=DATABASE_ID, table=TABLE_ID, context=worker_ctx
+            )
+            splits = list(worker_loader)
+            assert splits, "Expected at least one split"
+            worker_jvm_log_fd, worker_jvm_log = tempfile.mkstemp(suffix=".log")
+            os.close(worker_jvm_log_fd)
+            spawn_ctx = multiprocessing.get_context("spawn")
+            proc = spawn_ctx.Process(target=_materialize_split_in_child, args=(splits[0], worker_jvm_log))
+            proc.start()
+            proc.join(timeout=120)
+            assert proc.exitcode == 0, f"Child process failed with exit code {proc.exitcode}"
+            print("PASS: worker_jvm_args split materialized in child process")
+
         finally:
             livy.execute(f"DROP TABLE IF EXISTS {FQTN}")
+
+        # Verify planner and worker jvm_args were honored by their respective JVMs
+        planner_heap = _assert_jvm_heap(jvm_log, requested_mb=127, upper_bound_mb=128, label="Planner")
+        print(f"PASS: planner_jvm_args honored by JVM (MaxHeapSize={planner_heap})")
+        worker_heap = _assert_jvm_heap(worker_jvm_log, requested_mb=254, upper_bound_mb=256, label="Worker")
+        assert worker_heap > planner_heap, (
+            f"Worker MaxHeapSize ({worker_heap}) should be larger than planner ({planner_heap})"
+        )
+        print(f"PASS: worker_jvm_args honored by child JVM (MaxHeapSize={worker_heap})")
+
+        # 9. Day-partitioned table: datetime filters must prune partitions.
+        part_table = "t_part_itest"
+        part_fqtn = f"openhouse.{DATABASE_ID}.{part_table}"
+        livy.execute(f"CREATE TABLE {part_fqtn} (id BIGINT, ts TIMESTAMP) USING iceberg PARTITIONED BY (days(ts))")
+        try:
+            livy.execute(
+                f"INSERT INTO {part_fqtn} VALUES "
+                f"(1, TIMESTAMP '2026-05-02 00:00:00'), "
+                f"(2, TIMESTAMP '2026-05-03 00:00:00'), "
+                f"(3, TIMESTAMP '2026-05-08 00:00:00')"
+            )
+
+            # A trivial passthrough transformer forces OpenHouseDataLoader into the
+            # SQL roundtrip path (filters -> DataFusion SQL -> sqlglot -> scan_optimizer ->
+            # PyIceberg expression). Without a transformer, _build_query() returns None
+            # and the loader skips that path entirely, which would mean a CAST(literal,
+            # TIMESTAMP) regression in _literal_to_expr / scan_optimizer would go unnoticed.
+            class _PartPassthroughTransformer(TableTransformer):
+                def __init__(self):
+                    super().__init__(dialect=SqlTarget.DATA_FUSION)
+
+                def transform(self, table, context):
+                    return f'SELECT "id", "ts" FROM {to_sql_identifier(table)}'
+
+            part_ctx = DataLoaderContext(table_transformer=_PartPassthroughTransformer())
+
+            loader = OpenHouseDataLoader(catalog=catalog, database=DATABASE_ID, table=part_table, context=part_ctx)
+            assert _read_all(loader).num_rows == 3
+            print("PASS: partitioned table read all 3 rows with no filter")
+
+            # Assert on split count, not just final rows. DataFusion's WHERE clause
+            # still filters correctly even if manifest pruning is silently dropped, so
+            # row-count assertions miss a CAST-handling regression. Split count is the
+            # direct signal that PyIceberg saw the predicate and pruned partition files.
+            range_filter = (col("ts") >= _dt.datetime(2026, 5, 2, tzinfo=_dt.timezone.utc)) & (
+                col("ts") < _dt.datetime(2026, 5, 4, tzinfo=_dt.timezone.utc)
+            )
+            range_loader = OpenHouseDataLoader(
+                catalog=catalog,
+                database=DATABASE_ID,
+                table=part_table,
+                filters=range_filter,
+                context=part_ctx,
+            )
+            range_splits = list(range_loader)
+            assert len(range_splits) == 2, (
+                f"Expected 2 splits from datetime range filter (5/2 + 5/3 partitions pruned to 5/2 + 5/3 splits), "
+                f"got {len(range_splits)}"
+            )
+            result = _read_all(range_loader)
+            assert result.column("id").to_pylist() == [1, 2], (
+                f"Expected ids [1, 2] from datetime range filter, got {result.column('id').to_pylist()}"
+            )
+            print(f"PASS: datetime range filter returned {result.num_rows} rows from {len(range_splits)} splits")
+
+            tight_filter = col("ts") >= _dt.datetime(2026, 5, 8, tzinfo=_dt.timezone.utc)
+            tight_loader = OpenHouseDataLoader(
+                catalog=catalog,
+                database=DATABASE_ID,
+                table=part_table,
+                filters=tight_filter,
+                context=part_ctx,
+            )
+            tight_splits = list(tight_loader)
+            assert len(tight_splits) == 1, (
+                f"Expected 1 split from tight datetime filter (only 5/8 partition survives), got {len(tight_splits)}"
+            )
+            result = _read_all(tight_loader)
+            assert result.column("id").to_pylist() == [3], (
+                f"Expected id [3] from tight datetime filter, got {result.column('id').to_pylist()}"
+            )
+            print(f"PASS: tight datetime filter returned {result.num_rows} row from {len(tight_splits)} split")
+        finally:
+            livy.execute(f"DROP TABLE IF EXISTS {part_fqtn}")
 
         print("All integration tests passed")
     finally:

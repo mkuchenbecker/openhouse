@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.e2e.h2;
 
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static com.linkedin.openhouse.common.schema.IcebergSchemaHelper.*;
+import static com.linkedin.openhouse.tables.e2e.h2.ValidationUtilities.*;
 import static com.linkedin.openhouse.tables.model.TableModelConstants.*;
 
 import com.google.common.collect.ImmutableMap;
@@ -28,8 +29,12 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.TablesService;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import java.io.IOException;
+import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.UUID;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.types.Types;
@@ -89,13 +94,6 @@ public class TablesServiceTest {
     } else {
       Assertions.assertEquals(INITIAL_TABLE_VERSION, actual.getTableVersion());
     }
-  }
-
-  /**
-   * Getting rid of "file:" part if needed for ease of comparison of tableLocation / tableVersion
-   */
-  static String stripPathScheme(String path) {
-    return path.startsWith("file:") ? path.split("file:")[1] : path;
   }
 
   private TableDto verifyPutTableRequest(
@@ -265,6 +263,43 @@ public class TablesServiceTest {
   public void testTableDeleteAlreadyDeleted() {
     verifyPutTableRequest(TABLE_DTO, null, true);
     tablesService.deleteTable(TABLE_DTO.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER);
+    Assertions.assertThrows(
+        NoSuchUserTableException.class,
+        () ->
+            tablesService.deleteTable(
+                TABLE_DTO.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER));
+  }
+
+  /**
+   * Regression test for the corrupted-metadata drop path: even when metadata.json cannot be parsed
+   * (loadTable would throw), deleteTable must still succeed because it goes through the HTS-only
+   * findTableRefById lookup and avoids loadTable entirely.
+   */
+  @Test
+  public void testTableDeleteSucceedsWhenMetadataJsonIsCorrupted() throws IOException {
+    TableDto created = verifyPutTableRequest(TABLE_DTO, null, true);
+
+    // tableLocation on TableDto is the metadata.json path (file:/<base>/<filename>.metadata.json).
+    Path metadataPath = Paths.get(URI.create(created.getTableLocation()));
+    Assertions.assertTrue(
+        Files.exists(metadataPath),
+        "metadata.json should exist on disk after create: " + metadataPath);
+
+    // Corrupt the file so TableMetadataParser.read fails.
+    Files.write(metadataPath, "{\"not\":\"valid iceberg metadata\"}".getBytes());
+
+    // Sanity check: reading the table now fails because loadTable parses metadata.json.
+    Assertions.assertThrows(
+        Exception.class,
+        () -> tablesService.getTable(TABLE_DTO.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER));
+
+    // Drop should still succeed despite the corruption.
+    Assertions.assertDoesNotThrow(
+        () ->
+            tablesService.deleteTable(
+                TABLE_DTO.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER));
+
+    // Verify HTS row is gone — a second delete should now hit the not-found path.
     Assertions.assertThrows(
         NoSuchUserTableException.class,
         () ->
@@ -567,9 +602,9 @@ public class TablesServiceTest {
     tablesService.deleteTable(tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER);
   }
 
-  /** Test that if tableType is REPLICA_TABLE only system admin can update the table. required. */
+  /** Test replica table permissions: update requires SYSTEM_ADMIN, delete uses DELETE_TABLE. */
   @Test
-  public void testReplicaTableUpdateAsNonSystemAdmin() {
+  public void testReplicaTableUpdateAndDeletePermissions() {
     UUID expectedUUID = UUID.randomUUID();
     TableDto tableDtoCopy =
         TABLE_DTO
@@ -592,25 +627,31 @@ public class TablesServiceTest {
     TableDto putResultCreate = verifyPutTableRequest(tableDtoCopy, null, true);
     Assertions.assertEquals(putResultCreate.getTableType(), TableType.REPLICA_TABLE);
     Assertions.assertEquals(putResultCreate.getTableUUID(), expectedUUID.toString());
-    // Read Table
-    Assertions.assertEquals(
-        expectedUUID.toString(),
-        tablesService
-            .getTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER)
-            .getTableUUID());
 
+    // Deny SYSTEM_ADMIN — update on replica should fail
     Mockito.when(
             authorizationHandler.checkAccessDecision(
                 Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.SYSTEM_ADMIN)))
         .thenReturn(false);
     Assertions.assertThrows(
         AccessDeniedException.class,
+        () -> verifyPutTableRequest(tableDtoCopy, putResultCreate, false));
+
+    // Deny DELETE_TABLE — delete on replica should fail
+    Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.DELETE_TABLE)))
+        .thenReturn(false);
+    Assertions.assertThrows(
+        AccessDeniedException.class,
         () ->
             tablesService.deleteTable(
                 tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER));
+
+    // Allow DELETE_TABLE — delete on replica should succeed (SYSTEM_ADMIN still denied)
     Mockito.when(
             authorizationHandler.checkAccessDecision(
-                Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.SYSTEM_ADMIN)))
+                Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.DELETE_TABLE)))
         .thenReturn(true);
     tablesService.deleteTable(tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER);
   }
@@ -630,6 +671,58 @@ public class TablesServiceTest {
         () ->
             tablesService.deleteTable(
                 tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER));
+  }
+
+  @Test
+  public void testSearchTablesWithFieldsRequiresGetTableMetadata() {
+    TableDto tableDtoCopy = TABLE_DTO.toBuilder().build();
+    verifyPutTableRequest(tableDtoCopy, null, true);
+
+    // No fields requested — identifier-only search must succeed regardless of GET_TABLE_METADATA.
+    Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                Mockito.any(),
+                Mockito.any(DatabaseDto.class),
+                Mockito.eq(Privileges.GET_TABLE_METADATA)))
+        .thenReturn(false);
+    Assertions.assertDoesNotThrow(
+        () ->
+            tablesService.searchTables(
+                tableDtoCopy.getDatabaseId(), 0, 10, null, Collections.emptyList(), TEST_USER));
+    Assertions.assertDoesNotThrow(
+        () ->
+            tablesService.searchTables(tableDtoCopy.getDatabaseId(), 0, 10, null, null, TEST_USER));
+
+    // Fields requested but GET_TABLE_METADATA denied — must throw.
+    Assertions.assertThrows(
+        AccessDeniedException.class,
+        () ->
+            tablesService.searchTables(
+                tableDtoCopy.getDatabaseId(),
+                0,
+                10,
+                null,
+                Arrays.asList("tableLocation"),
+                TEST_USER));
+
+    // Allow GET_TABLE_METADATA — field-projection search now succeeds.
+    Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                Mockito.any(),
+                Mockito.any(DatabaseDto.class),
+                Mockito.eq(Privileges.GET_TABLE_METADATA)))
+        .thenReturn(true);
+    Assertions.assertDoesNotThrow(
+        () ->
+            tablesService.searchTables(
+                tableDtoCopy.getDatabaseId(),
+                0,
+                10,
+                null,
+                Arrays.asList("tableLocation"),
+                TEST_USER));
+
+    tablesService.deleteTable(tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER);
   }
 
   /** assert lock is created as policy object on createLock call */

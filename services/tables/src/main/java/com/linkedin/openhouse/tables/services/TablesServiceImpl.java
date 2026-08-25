@@ -26,6 +26,7 @@ import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
+import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -80,11 +81,22 @@ public class TablesServiceImpl implements TablesService {
   }
 
   @Override
-  public Page<TableDto> searchTables(String databaseId, int page, int size, String sortBy) {
+  public Page<TableDto> searchTables(
+      String databaseId,
+      int page,
+      int size,
+      String sortBy,
+      List<String> fields,
+      String actingPrincipal) {
+    if (fields != null && !fields.isEmpty()) {
+      authorizationUtils.checkDatabasePrivilege(
+          databaseId, actingPrincipal, Privileges.GET_TABLE_METADATA);
+    }
     Pageable pageable = createPageable(page, size, sortBy, null);
-    return openHouseInternalRepository.searchTables(databaseId, pageable);
+    return openHouseInternalRepository.searchTables(databaseId, pageable, fields);
   }
 
+  @WithSpan("TablesService.putTable")
   @Override
   public Pair<TableDto, Boolean> putTable(
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
@@ -92,12 +104,16 @@ public class TablesServiceImpl implements TablesService {
       Boolean failOnExist) {
     String databaseId = createUpdateTableRequestBody.getDatabaseId();
     String tableId = createUpdateTableRequestBody.getTableId();
+
     Optional<TableDto> tableDto =
         openHouseInternalRepository.findById(
             TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build());
 
     // Special case handling
-    if (tableDto.isPresent()) {
+    if (tableDto.isPresent() && createUpdateTableRequestBody.isStageReplace()) {
+      // Check if table creator has the privilege to replace the table.
+      authorizationUtils.checkReplaceTablePrivilege(tableDto.get(), tableCreatorUpdater);
+    } else if (tableDto.isPresent()) {
       if (failOnExist) {
         throw new AlreadyExistsException("Table", String.format("%s.%s", databaseId, tableId));
       }
@@ -201,12 +217,14 @@ public class TablesServiceImpl implements TablesService {
     TableDtoPrimaryKey tableDtoPrimaryKey =
         TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build();
 
-    Optional<TableDto> tableDto = openHouseInternalRepository.findById(tableDtoPrimaryKey);
-    if (!tableDto.isPresent()) {
-      throw new NoSuchUserTableException(databaseId, tableId);
-    }
-    authorizationUtils.checkTableWritePathPrivileges(
-        tableDto.get(), actingPrincipal, Privileges.DELETE_TABLE);
+    // Table-ref lookup (no metadata.json parse) is enough here — drop only needs identifiers +
+    // tableUUID for the ACL check. Lets us drop tables whose metadata.json is corrupted.
+    TableDto tableDto =
+        openHouseInternalRepository
+            .findTableRefById(tableDtoPrimaryKey)
+            .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+
+    authorizationUtils.checkTableDropPrivilege(tableDto, actingPrincipal, Privileges.DELETE_TABLE);
 
     openHouseInternalRepository.deleteById(tableDtoPrimaryKey);
   }

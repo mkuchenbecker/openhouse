@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import math
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from typing import Any
+from uuid import UUID
 
 from pyiceberg import expressions as ice
+from sqlglot import exp
 
 
 class Filter(ABC):
@@ -305,6 +311,194 @@ class Not(Filter):
 
     def __repr__(self) -> str:
         return f"~{self.operand!r}"
+
+
+# --- Conversion functions ---
+
+
+def _quote_identifier(name: str) -> str:
+    """Escape a SQL identifier using sqlglot."""
+    return exp.to_identifier(name, quoted=True).sql()
+
+
+def _escape_like(value: str) -> str:
+    """Escape LIKE-special characters so they are matched literally."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _non_finite_double(value: float | Decimal) -> exp.Cast:
+    """Build ``CAST('<spelling>' AS DOUBLE)`` for a non-finite float/decimal.
+
+    Spark and DataFusion both parse the IEEE special-value spellings ``NaN`` /
+    ``Infinity`` / ``-Infinity`` (the lowercase ``str(float(...))`` forms like
+    ``'inf'`` are not reliably cast by Spark).
+    """
+    number = float(value)
+    if math.isnan(number):
+        spelling = "NaN"
+    elif number == math.inf:
+        spelling = "Infinity"
+    elif number == -math.inf:
+        spelling = "-Infinity"
+    else:
+        raise ValueError(f"_non_finite_double expects a non-finite value, got {value!r}")
+    return exp.Cast(this=exp.Literal.string(spelling), to=exp.DataType.build("DOUBLE"))
+
+
+def _literal_to_expr(value: object) -> exp.Expression:
+    """Convert a Python literal to a sqlglot literal expression.
+
+    Datetime/date/time values are emitted as plain string literals (ISO format).
+    DataFusion implicitly coerces string literals to the column type at execution,
+    and PyIceberg promotes StringLiteral to the matching typed literal during expression binding.
+    """
+    if isinstance(value, str):
+        return exp.Literal.string(value)
+    if isinstance(value, bool):
+        return exp.true() if value else exp.false()
+    if isinstance(value, datetime):
+        return exp.Literal.string(value.isoformat())
+    if isinstance(value, date):
+        return exp.Literal.string(value.isoformat())
+    if isinstance(value, time):
+        if value.tzinfo is not None:
+            raise TypeError(
+                "The SQL target does not support timezones for time data types. "
+                "The time should match the timezone used in the dataset."
+            )
+        return exp.Literal.string(value.isoformat())
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return _non_finite_double(value)
+        return exp.Literal.number(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            return _non_finite_double(value)
+        return exp.Literal.number(value)
+    if isinstance(value, UUID):
+        return exp.Literal.string(str(value))
+    raise TypeError(f"Unsupported literal type: {type(value).__name__}")
+
+
+class SqlTarget(Enum):
+    """A SQL flavor used by this library.
+
+    Used both to render filters (:func:`to_sql`) and to declare the SQL a
+    ``TableTransformer`` emits. Members name a concrete SQL flavor; the backing
+    sqlglot dialect string is an internal detail — callers use the member, not
+    the string.
+    """
+
+    SPARK = "spark"
+    TRINO = "trino"
+    DATA_FUSION = "datafusion"
+
+
+def _column_expr(name: str) -> exp.Column:
+    """Build a quoted sqlglot column reference."""
+    return exp.column(exp.to_identifier(name, quoted=True))
+
+
+def _like_prefix(column: str, prefix: str) -> exp.Expression:
+    r"""Build ``col LIKE 'prefix%' ESCAPE '\'`` with the prefix matched literally."""
+    pattern = exp.Literal.string(_escape_like(prefix) + "%")
+    like = exp.Like(this=_column_expr(column), expression=pattern)
+    return exp.Escape(this=like, expression=exp.Literal.string("\\"))
+
+
+def _isnan(column: str, target: SqlTarget) -> exp.Anonymous:
+    """Build the dialect-appropriate NaN-check function call.
+
+    Trino spells it ``is_nan``; Spark and DataFusion use ``isnan``. (sqlglot's
+    built-in IsNan node renders ``IS_NAN(...)``, which none of these accept, so we
+    emit an Anonymous function with the correct name for the target.)
+    """
+    name = "is_nan" if target is SqlTarget.TRINO else "isnan"
+    return exp.Anonymous(this=name, expressions=[_column_expr(column)])
+
+
+def _filter_to_expr(filter_expr: Filter, target: SqlTarget) -> exp.Expression:
+    """Build a sqlglot expression tree for a Filter, ready to render for *target*.
+
+    The tree is dialect-agnostic except where SQL genuinely diverges (NaN checks);
+    sqlglot handles per-dialect identifier quoting, operators, and literal
+    formatting at render time. See :func:`to_sql`.
+    """
+    match filter_expr:
+        case AlwaysTrue():
+            return exp.true()
+
+        # Comparison
+        case EqualTo(column, value):
+            return exp.EQ(this=_column_expr(column), expression=_literal_to_expr(value))
+        case NotEqualTo(column, value):
+            return exp.NEQ(this=_column_expr(column), expression=_literal_to_expr(value))
+        case GreaterThan(column, value):
+            return exp.GT(this=_column_expr(column), expression=_literal_to_expr(value))
+        case GreaterThanOrEqual(column, value):
+            return exp.GTE(this=_column_expr(column), expression=_literal_to_expr(value))
+        case LessThan(column, value):
+            return exp.LT(this=_column_expr(column), expression=_literal_to_expr(value))
+        case LessThanOrEqual(column, value):
+            return exp.LTE(this=_column_expr(column), expression=_literal_to_expr(value))
+
+        # Null / NaN
+        case IsNull(column):
+            return exp.Is(this=_column_expr(column), expression=exp.Null())
+        case IsNotNull(column):
+            return exp.not_(exp.Is(this=_column_expr(column), expression=exp.Null()))
+        case IsNaN(column):
+            return _isnan(column, target)
+        case IsNotNaN(column):
+            return exp.not_(_isnan(column, target))
+
+        # Set membership
+        case In(column, values):
+            return exp.In(this=_column_expr(column), expressions=[_literal_to_expr(v) for v in values])
+        case NotIn(column, values):
+            return exp.not_(exp.In(this=_column_expr(column), expressions=[_literal_to_expr(v) for v in values]))
+
+        # String prefix
+        case StartsWith(column, prefix):
+            return _like_prefix(column, prefix)
+        case NotStartsWith(column, prefix):
+            return exp.not_(_like_prefix(column, prefix))
+
+        # Range
+        case Between(column, lower, upper):
+            return exp.Between(
+                this=_column_expr(column),
+                low=_literal_to_expr(lower),
+                high=_literal_to_expr(upper),
+            )
+
+        # Logical combinators
+        case And(left, right):
+            return exp.and_(_filter_to_expr(left, target), _filter_to_expr(right, target))
+        case Or(left, right):
+            return exp.or_(_filter_to_expr(left, target), _filter_to_expr(right, target))
+        case Not(operand):
+            return exp.not_(_filter_to_expr(operand, target))
+
+        case _:
+            raise TypeError(f"Unsupported filter type: {type(filter_expr).__name__}")
+
+
+def to_sql(filter_expr: Filter, target: SqlTarget = SqlTarget.SPARK) -> str:
+    """Render a filter as a SQL boolean expression for the given target.
+
+    The result is a WHERE-clause-ready predicate (without a leading ``WHERE``).
+
+    Example::
+
+        to_sql(col("age") > 21)                       # `age` > 21
+        to_sql((col("a") == 1) & col("b").is_null())  # `a` = 1 AND `b` IS NULL
+
+    Args:
+        filter_expr: The filter expression to render.
+        target: The SQL flavor to render for. Defaults to Spark.
+    """
+    return _filter_to_expr(filter_expr, target).sql(dialect=target.value)
 
 
 def _to_pyiceberg(expr: Filter) -> ice.BooleanExpression:

@@ -40,13 +40,31 @@ jobs:
         args: ["--backupDir", ".backup"]
         << : *apps-defaults
         << : *livy-engine
+      - type: RETENTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedRetentionSparkApp
+        args: ["--backupDir", ".backup"]
+        <<: *apps-defaults
+        spark-properties:
+          <<: *spark-defaults
+          "spark.driver.memory": "2g"
+        << : *livy-engine
       - type: DATA_COMPACTION
         class-name: com.linkedin.openhouse.jobs.spark.DataCompactionSparkApp
         args: []
         << : *apps-defaults
         << : *livy-engine
+      - type: DATA_COMPACTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataCompactionSparkApp
+        args: []
+        << : *apps-defaults
+        << : *livy-engine
       - type: SNAPSHOTS_EXPIRATION
         class-name: com.linkedin.openhouse.jobs.spark.SnapshotsExpirationSparkApp
+        args: []
+        << : *apps-defaults
+        << : *livy-engine
+      - type: SNAPSHOTS_EXPIRATION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedSnapshotsExpirationSparkApp
         args: []
         << : *apps-defaults
         << : *livy-engine
@@ -58,8 +76,21 @@ jobs:
           <<: *spark-defaults
           "spark.driver.memory": "2g"
         << : *livy-engine
+      - type: ORPHAN_FILES_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedOrphanFilesDeletionSparkApp
+        args: ["--backupDir", ".backup"]
+        <<: *apps-defaults
+        spark-properties:
+          <<: *spark-defaults
+          "spark.driver.memory": "2g"
+        << : *livy-engine
       - type: STAGED_FILES_DELETION
         class-name: com.linkedin.openhouse.jobs.spark.StagedFilesDeletionSparkApp
+        args: ["--trashDir", ".trash", "--daysOld", "10", "--recursive", "true"]
+        <<: *apps-defaults
+        << : *livy-engine
+      - type: STAGED_FILES_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedStagedFilesDeletionSparkApp
         args: ["--trashDir", ".trash", "--daysOld", "10", "--recursive", "true"]
         <<: *apps-defaults
         << : *livy-engine
@@ -68,8 +99,23 @@ jobs:
         args: [ "--trashDir", ".trash" ]
         <<: *apps-defaults
         << : *livy-engine
+      - type: ORPHAN_DIRECTORY_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedOrphanTableDirectoryDeletionSparkApp
+        args: [ "--trashDir", ".trash" ]
+        <<: *apps-defaults
+        << : *livy-engine
+      - type: TABLE_DIRECTORY_DELETION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedTableDirectoryDeletionSparkApp
+        args: [ "--trashDir", ".trash" ]
+        <<: *apps-defaults
+        << : *livy-engine
       - type: TABLE_STATS_COLLECTION
         class-name: com.linkedin.openhouse.jobs.spark.TableStatsCollectionSparkApp
+        args: []
+        <<: *apps-defaults
+        << : *livy-engine
+      - type: TABLE_STATS_COLLECTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedTableStatsCollectionSparkApp
         args: []
         <<: *apps-defaults
         << : *livy-engine
@@ -78,13 +124,28 @@ jobs:
         args: ["--outputTableName", "u_openhouse.dlo_strategies", "--partitionLevelOutputTableName", "u_openhouse.dlo_partition_strategies"]
         <<: *apps-defaults
         << : *livy-engine
+      - type: DATA_LAYOUT_STRATEGY_GENERATION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataLayoutStrategyGenerationSparkApp
+        args: []
+        <<: *apps-defaults
+        << : *livy-engine
       - type: DATA_LAYOUT_STRATEGY_EXECUTION
         class-name: com.linkedin.openhouse.jobs.spark.DataCompactionSparkApp
         args: []
         <<: *apps-defaults
         << : *livy-engine
+      - type: DATA_LAYOUT_STRATEGY_EXECUTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedDataLayoutStrategyExecutionSparkApp
+        args: []
+        <<: *apps-defaults
+        << : *livy-engine
       - type: SORT_STATS_COLLECTION
         class-name: com.linkedin.openhouse.jobs.spark.SortStatsCollectionSparkApp
+        args: []
+        <<: *apps-defaults
+        <<: *livy-engine
+      - type: SORT_STATS_COLLECTION_BATCH
+        class-name: com.linkedin.openhouse.jobs.spark.BatchedSortStatsCollectionSparkApp
         args: []
         <<: *apps-defaults
         <<: *livy-engine

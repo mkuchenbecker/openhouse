@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -20,9 +21,21 @@ import org.springframework.stereotype.Repository;
  * The {@link org.springframework.context.annotation.Bean} injected into /tables e2e tests when
  * communication to the implementation of {@link HouseTableRepository} is not needed. With {@link
  * Primary} annotation, this repository will be the default injection.
+ *
+ * <p>The {@link ConditionalOnProperty} guard makes this in-memory stub the default (matchIfMissing
+ * = true, so every existing consumer is unaffected), but lets a consumer opt OUT of it by setting
+ * {@code openhouse.htsStub.enabled=false}. When opted out, the stub bean is not created and the
+ * real {@link com.linkedin.openhouse.internal.catalog.repository.HouseTableRepositoryImpl} (the
+ * HTTP client to a real House Table Service) becomes the sole {@link HouseTableRepository} — used
+ * by the delta-harness to test against an embedded real HTS. Test-only; no production/behavioral
+ * change.
  */
 @Repository
 @Primary
+@ConditionalOnProperty(
+    name = "openhouse.htsStub.enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 public interface HouseTablesH2Repository extends HouseTableRepository {
 
   Map<SoftDeletedTablePrimaryKey, HouseTable> softDeletedTables = new HashMap<>();
