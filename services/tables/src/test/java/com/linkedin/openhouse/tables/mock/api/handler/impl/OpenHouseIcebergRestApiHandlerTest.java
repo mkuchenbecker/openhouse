@@ -58,7 +58,7 @@ public class OpenHouseIcebergRestApiHandlerTest {
 
   @Test
   void listTablesUsesOpaquePaginationToken() {
-    when(tablesApiHandler.searchTables("db", 0, 1, "tableId"))
+    when(tablesApiHandler.searchTables("db", 0, 1, "tableId", Collections.emptyList(), "undefined"))
         .thenReturn(pageResponse("db", "t1", 0, 1, 2));
 
     ListTablesResponse firstPage = handler.listTables(ICEBERG_REST_PREFIX, "db", null, 1);
@@ -66,7 +66,7 @@ public class OpenHouseIcebergRestApiHandlerTest {
     assertThat(firstPage.getIdentifiers()).containsExactly(TableIdentifier.of("db", "t1"));
     assertThat(firstPage.getNextPageToken()).isNotBlank();
 
-    when(tablesApiHandler.searchTables("db", 1, 1, "tableId"))
+    when(tablesApiHandler.searchTables("db", 1, 1, "tableId", Collections.emptyList(), "undefined"))
         .thenReturn(pageResponse("db", "t2", 1, 1, 2));
     ListTablesResponse secondPage =
         handler.listTables(ICEBERG_REST_PREFIX, "db", firstPage.getNextPageToken(), null);
