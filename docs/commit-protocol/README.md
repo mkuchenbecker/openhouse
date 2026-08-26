@@ -29,13 +29,17 @@ the risk lives, and this document set establishes four conclusions about them:
    rewrite of already-committed metadata.json, and the unguarded rename
    ([Appendix B](appendix-b-code-review.md)). All three were found independently by
    briefed and blind reviewers.
-4. **The structural fix is to move metadata authorship to the server.** Adopting the
+4. **The structural fix is to move metadata authorship to the server.** Two options
+   reach it ([Appendix D](appendix-d-rest-native-migration.md), grounded in the Iceberg
+   protocol reference of [Appendix C](appendix-c-iceberg-commit-protocol.md)): adopt the
    Iceberg REST catalog commit contract — typed requirements plus updates, the catalog
    service as sole author of metadata content, the HTS row CAS unchanged as the atomic
-   arbiter — eliminates the client-authority weakness and the whole-table conflict
-   granularity by construction, at an estimated 15–25 engineering-weeks
-   ([Appendix D](appendix-d-rest-native-migration.md), grounded in the Iceberg
-   protocol reference of [Appendix C](appendix-c-iceberg-commit-protocol.md)).
+   arbiter — or derive the same typed updates server-side over today's wire contract,
+   which needs no client change at all. Both eliminate the client-authority weakness by
+   construction; only REST adoption also removes the whole-table conflict granularity and
+   retires the bespoke client, which is why it is recommended, conditional on OpenHouse
+   committing to that retirement. **13–22 engineering-weeks remain** of the 15–25
+   originally scoped for it, the prototype phase being delivered here.
    A working prototype of that commit path is included in the same change set as
    this document (`services/tables/src/main/java/com/linkedin/openhouse/tables/resthandler/`): a
    REST commit endpoint that validates requirements against fresh state, rebuilds
