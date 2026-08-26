@@ -171,7 +171,7 @@ public class HtsRepositoryTest {
 
   @Test
   public void testRenameUserTable() {
-    htsRepository.save(TEST_TUPLE_1_1.get_userTableRow());
+    UserTableRow savedRow = htsRepository.save(TEST_TUPLE_1_1.get_userTableRow());
     UserTableRowPrimaryKey key =
         UserTableRowPrimaryKey.builder()
             .tableId(TEST_TUPLE_1_1.getTableId())
@@ -181,12 +181,15 @@ public class HtsRepositoryTest {
     assertThat(htsRepository.existsById(key)).isTrue();
 
     String newTableMetadata = TEST_TUPLE_1_1.getTableLoc() + "_v2";
-    htsRepository.renameTableId(
-        TEST_TUPLE_1_1.getDatabaseId(),
-        TEST_TUPLE_1_1.getTableId(),
-        TEST_TUPLE_1_1.getDatabaseId(),
-        TEST_TUPLE_1_1.getTableId() + "_renamed",
-        newTableMetadata);
+    int updatedRows =
+        htsRepository.renameTableId(
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId(),
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId() + "_renamed",
+            newTableMetadata,
+            savedRow.getVersion());
+    Assertions.assertEquals(1, updatedRows);
 
     UserTableRow result =
         htsRepository
@@ -197,9 +200,54 @@ public class HtsRepositoryTest {
                     .build())
             .orElse(UserTableRow.builder().build());
     assertThat(result.getMetadataLocation()).isEqualTo(newTableMetadata);
+    // rename must bump the optimistic-lock @Version column so concurrent writers using the old
+    // version conflict instead of silently overwriting the renamed row.
+    assertThat(result.getVersion()).isEqualTo(savedRow.getVersion() + 1);
 
     // verify testTuple1_1 doesn't exist any more.
     assertThat(htsRepository.existsById(key)).isFalse();
+  }
+
+  @Test
+  public void testRenameUserTableAtStaleVersionUpdatesNoRows() {
+    UserTableRow savedRow = htsRepository.save(TEST_TUPLE_1_1.get_userTableRow());
+
+    // A concurrent commit advances the row (bumping @Version) after the renamer read it.
+    UserTableRow committedRow =
+        htsRepository.save(
+            savedRow.toBuilder().metadataLocation(TEST_TUPLE_1_1.getTableLoc() + "_v2").build());
+    Assertions.assertNotEquals(savedRow.getVersion(), committedRow.getVersion());
+
+    // The rename conditioned on the stale version must match 0 rows instead of clobbering the
+    // concurrently committed metadataLocation.
+    int updatedRows =
+        htsRepository.renameTableId(
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId(),
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId() + "_renamed",
+            TEST_TUPLE_1_1.getTableLoc() + "_renamed",
+            savedRow.getVersion());
+    Assertions.assertEquals(0, updatedRows);
+
+    // The winning commit's row is intact: same id, same metadataLocation, same version.
+    UserTableRow result =
+        htsRepository
+            .findById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(TEST_TUPLE_1_1.getDatabaseId())
+                    .tableId(TEST_TUPLE_1_1.getTableId())
+                    .build())
+            .orElse(UserTableRow.builder().build());
+    assertThat(result.getMetadataLocation()).isEqualTo(TEST_TUPLE_1_1.getTableLoc() + "_v2");
+    assertThat(result.getVersion()).isEqualTo(committedRow.getVersion());
+    assertThat(
+            htsRepository.existsById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(TEST_TUPLE_1_1.getDatabaseId())
+                    .tableId(TEST_TUPLE_1_1.getTableId() + "_renamed")
+                    .build()))
+        .isFalse();
   }
 
   @Test
@@ -228,7 +276,8 @@ public class HtsRepositoryTest {
         TEST_TUPLE_1_1.getTableId(),
         TEST_TUPLE_1_1.getDatabaseId().toUpperCase(),
         renamedUpperCaseTableId,
-        TEST_TUPLE_1_1.getTableLoc());
+        TEST_TUPLE_1_1.getTableLoc(),
+        0L);
 
     // Try fetching with lower case ID, should still work
     UserTableRow result =

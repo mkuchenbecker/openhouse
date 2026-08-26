@@ -62,13 +62,21 @@ public interface UserTablesService {
    * @param toTableId The new tableId of the renamed row.
    * @param metadataLocation The new metadata file of the table with updated table properties for
    *     updated ids.
+   * @param expectedMetadataLocation The metadata location the caller observed when it decided to
+   *     rename, i.e. its optimistic-concurrency token. When non-null the rename only succeeds if
+   *     the row is still at this location; a mismatch (a concurrent commit advanced the table)
+   *     surfaces as {@link
+   *     com.linkedin.openhouse.common.exception.EntityConcurrentModificationException}. When null,
+   *     the rename is still guarded against concurrent modification between its own read and
+   *     update.
    */
   void renameUserTable(
       String fromDatabaseId,
       String fromTableId,
       String toDatabaseId,
       String toTableId,
-      String metadataLocation);
+      String metadataLocation,
+      String expectedMetadataLocation);
 
   /**
    * Restore a soft-deleted user table identified by its databaseId, tableId, and deletedAtMs

@@ -28,12 +28,26 @@ public interface HouseTableRepository
 
   Page<HouseTable> findAllByDatabaseId(String databaseId, Pageable pageable);
 
+  /**
+   * Rename a table, updating its metadata location.
+   *
+   * @param fromDatabaseId databaseId of the table to rename
+   * @param fromTableId tableId of the table to rename
+   * @param toDatabaseId destination databaseId
+   * @param toTableId destination tableId
+   * @param metadataLocation the new metadata file reflecting the renamed identifiers
+   * @param expectedMetadataLocation the metadata location the caller observed when it initiated the
+   *     rename (optimistic-concurrency token). When non-null, the rename fails with a concurrent
+   *     update conflict if the table has advanced past this location, instead of silently
+   *     overwriting the newer metadata. May be null when the caller has no base to declare.
+   */
   void rename(
       String fromDatabaseId,
       String fromTableId,
       String toDatabaseId,
       String toTableId,
-      String metadataLocation);
+      String metadataLocation,
+      String expectedMetadataLocation);
 
   /**
    * Find all soft-deleted tables by database ID with pagination and optional filtering

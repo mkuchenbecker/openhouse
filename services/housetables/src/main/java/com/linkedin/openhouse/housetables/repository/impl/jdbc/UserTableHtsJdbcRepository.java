@@ -112,15 +112,26 @@ public interface UserTableHtsJdbcRepository
         userTableRowPrimaryKey.getDatabaseId(), userTableRowPrimaryKey.getTableId());
   }
 
+  /**
+   * Renames a table row, participating in the optimistic-lock protocol: the update only matches a
+   * row still at {@code expectedVersion} and atomically bumps {@link UserTableRow}'s
+   * {@literal @}Version column. A concurrent modification (e.g. a table commit) that advances the
+   * row between the caller's read and this update makes the update match 0 rows; callers must treat
+   * a 0 return value as a concurrent-modification conflict instead of assuming the rename landed.
+   *
+   * @return the number of rows updated: 1 if the rename landed, 0 if the row was concurrently
+   *     modified (version mismatch) or no longer exists.
+   */
   @Transactional
-  @Modifying
+  @Modifying(clearAutomatically = true)
   @Query(
-      "UPDATE UserTableRow table SET table.tableId = :toTableId, table.metadataLocation = :metadataLocation, table.databaseId = :toDatabaseId "
-          + "WHERE lower(table.databaseId) = lower(:fromDatabaseId) AND lower(table.tableId) = lower(:fromTableId)")
-  void renameTableId(
+      "UPDATE UserTableRow table SET table.tableId = :toTableId, table.metadataLocation = :metadataLocation, table.databaseId = :toDatabaseId, table.version = table.version + 1 "
+          + "WHERE lower(table.databaseId) = lower(:fromDatabaseId) AND lower(table.tableId) = lower(:fromTableId) AND table.version = :expectedVersion")
+  int renameTableId(
       @Param("fromDatabaseId") String fromDatabaseId,
       @Param("fromTableId") String fromTableId,
       @Param("toDatabaseId") String toDatabaseId,
       @Param("toTableId") String toTableId,
-      @Param("metadataLocation") String metadataLocation);
+      @Param("metadataLocation") String metadataLocation,
+      @Param("expectedVersion") Long expectedVersion);
 }

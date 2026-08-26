@@ -327,7 +327,42 @@ public class HouseTableRepositoryImplTest {
                 HOUSE_TABLE.getTableId(),
                 HOUSE_TABLE_SAME_DB.getDatabaseId(),
                 HOUSE_TABLE.getTableId() + "_renamed",
-                HOUSE_TABLE.getTableLocation() + "_v2"));
+                HOUSE_TABLE.getTableLocation() + "_v2",
+                HOUSE_TABLE.getTableLocation()));
+  }
+
+  @Test
+  public void testRepoRenamePassesExpectedMetadataLocation() throws Exception {
+    mockHtsServer.enqueue(
+        new MockResponse()
+            .setResponseCode(204)
+            .setBody("")
+            .addHeader("Content-Type", "application/json"));
+
+    htsRepo.rename(
+        HOUSE_TABLE.getDatabaseId(),
+        HOUSE_TABLE.getTableId(),
+        HOUSE_TABLE_SAME_DB.getDatabaseId(),
+        HOUSE_TABLE.getTableId() + "_renamed",
+        HOUSE_TABLE.getTableLocation() + "_v2",
+        HOUSE_TABLE.getTableLocation());
+
+    // The static mock server records requests across tests; drain to the rename request.
+    okhttp3.mockwebserver.RecordedRequest renameRequest = null;
+    okhttp3.mockwebserver.RecordedRequest recordedRequest;
+    while ((recordedRequest = mockHtsServer.takeRequest(5, TimeUnit.SECONDS)) != null) {
+      if (recordedRequest.getPath() != null
+          && recordedRequest.getPath().startsWith("/hts/tables/rename")) {
+        renameRequest = recordedRequest;
+        break;
+      }
+    }
+    Assertions.assertNotNull(renameRequest, "the rename request should have been recorded");
+    // The rename request must declare the caller's expected base so HTS can apply its
+    // optimistic-concurrency check.
+    Assertions.assertTrue(
+        renameRequest.getPath().contains("expectedMetadataLocation="),
+        "rename request should carry expectedMetadataLocation, got: " + renameRequest.getPath());
   }
 
   @Test
@@ -351,7 +386,8 @@ public class HouseTableRepositoryImplTest {
                   HOUSE_TABLE.getTableId(),
                   HOUSE_TABLE_SAME_DB.getDatabaseId(),
                   HOUSE_TABLE.getTableId() + "_renamed",
-                  HOUSE_TABLE.getTableLocation() + "_v2"));
+                  HOUSE_TABLE.getTableLocation() + "_v2",
+                  HOUSE_TABLE.getTableLocation()));
     }
   }
 

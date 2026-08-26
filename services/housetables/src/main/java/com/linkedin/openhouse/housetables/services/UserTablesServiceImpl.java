@@ -136,6 +136,10 @@ public class UserTablesServiceImpl implements UserTablesService {
    * @param toTableId The new tableId of the renamed row.
    * @param metadataLocation The new metadata file of the table with updated table properties that
    *     match the new tableId
+   * @param expectedMetadataLocation The metadata location the caller observed when initiating the
+   *     rename (its optimistic-concurrency token), or null to skip the caller-side check. The
+   *     rename update itself is always conditional on the row's version read below, so a commit
+   *     racing this rename can never be silently overwritten.
    */
   @Override
   public void renameUserTable(
@@ -143,10 +147,31 @@ public class UserTablesServiceImpl implements UserTablesService {
       String fromTableId,
       String toDatabaseId,
       String toTableId,
-      String metadataLocation) {
-    if (!htsJdbcRepository.existsById(
-        UserTableRowPrimaryKey.builder().databaseId(fromDatabaseId).tableId(fromTableId).build())) {
-      throw new NoSuchUserTableException(fromDatabaseId, fromTableId);
+      String metadataLocation,
+      String expectedMetadataLocation) {
+    UserTableRow fromUserTableRow =
+        htsJdbcRepository
+            .findById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(fromDatabaseId)
+                    .tableId(fromTableId)
+                    .build())
+            .orElseThrow(() -> new NoSuchUserTableException(fromDatabaseId, fromTableId));
+    if (expectedMetadataLocation != null
+        && !expectedMetadataLocation.equals(fromUserTableRow.getMetadataLocation())) {
+      throw new EntityConcurrentModificationException(
+          String.format(
+              "databaseId : %s, tableId : %s, metadataLocation: %s %s",
+              fromDatabaseId,
+              fromTableId,
+              expectedMetadataLocation,
+              "The requested user table has been modified/created by other processes."),
+          UserTableRowPrimaryKey.builder()
+              .databaseId(fromDatabaseId)
+              .tableId(fromTableId)
+              .build()
+              .toString(),
+          new RuntimeException());
     }
     // Renames user table within the same database
     try {
@@ -159,8 +184,32 @@ public class UserTablesServiceImpl implements UserTablesService {
       // Use fromDatabaseId for destination db to preserve the original case of the database
       // TODO: Use toDataBaseId for destination instead of fromDatabaseId once rename across
       // databases is supported
-      htsJdbcRepository.renameTableId(
-          fromDatabaseId, fromTableId, fromDatabaseId, toTableId, metadataLocation);
+      // The update is conditional on the version read above and bumps it atomically, so a
+      // concurrent commit that advances the row between the read and this update makes the
+      // update match 0 rows instead of clobbering the newer metadataLocation.
+      int updatedRows =
+          htsJdbcRepository.renameTableId(
+              fromDatabaseId,
+              fromTableId,
+              fromDatabaseId,
+              toTableId,
+              metadataLocation,
+              fromUserTableRow.getVersion());
+      if (updatedRows == 0) {
+        throw new EntityConcurrentModificationException(
+            String.format(
+                "databaseId : %s, tableId : %s, version: %s %s",
+                fromDatabaseId,
+                fromTableId,
+                fromUserTableRow.getVersion(),
+                "The requested user table has been modified/created by other processes."),
+            UserTableRowPrimaryKey.builder()
+                .databaseId(fromDatabaseId)
+                .tableId(fromTableId)
+                .build()
+                .toString(),
+            new RuntimeException());
+      }
     } catch (DataIntegrityViolationException e) {
       throw new AlreadyExistsException("Table", toTableId);
     }
