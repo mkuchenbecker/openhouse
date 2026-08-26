@@ -1,6 +1,6 @@
 package harness
 
-/** Mixes the standard and RTAS scenario-owned case lists into one catalog source. */
+/** Mixes the standard, RTAS, and merge-on-read scenario lists into one catalog source. */
 object Scenarios
     extends DmlScenarios
     with NestedTypesScenarios
@@ -16,3 +16,9 @@ object Scenarios
     with RtasInteractionScenarios
     with RtasSurfaceScenarios
     with RtasHazardScenarios
+    with MorDmlScenarios
+    with MorMaintScenarios
+    with MorReaderWriterScenarios
+    with MorInteractionScenarios
+    with MorSurfaceScenarios
+    with MorForkScenarios

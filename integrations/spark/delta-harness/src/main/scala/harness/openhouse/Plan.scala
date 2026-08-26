@@ -29,6 +29,7 @@ object Plan {
       List(
         Scenarios.interactionDdlCases(format),
         Scenarios.interactionRtasCases(format),
+        Scenarios.interactionMorCases(format),
         Scenarios.interactionMiscellaneousCases(format)
       ).flatten
     }
@@ -39,8 +40,10 @@ object Plan {
         Scenarios.surfaceMessageCases(format),
         Scenarios.surfaceReaderCases(format),
         Scenarios.surfaceRewriteProcedureCases(format),
+        Scenarios.morSurfaceRewriteProcedureCases(format),
         Scenarios.surfaceSnapshotProcedureCases(format),
         Scenarios.surfaceMetadataCases(format),
+        Scenarios.morSurfaceMetadataCases(format),
         Scenarios.surfaceConcurrencyCases(format),
         Scenarios.surfaceRtasConcurrencyCases(format),
         Scenarios.surfaceSchemaCases(format),
@@ -62,10 +65,15 @@ object Plan {
     crossedFormats.flatMap { format =>
       List(
         Scenarios.readerWriterChangelogAppendCases(format),
+        Scenarios.morReaderWriterChangelogAppendCases(format),
         Scenarios.readerWriterChangelogOverwriteCases(format),
+        Scenarios.morReaderWriterChangelogOverwriteCases(format),
         Scenarios.readerWriterChangelogDeleteCases(format),
+        Scenarios.morReaderWriterChangelogDeleteCases(format),
         Scenarios.readerWriterChangelogUpdateCases(format),
+        Scenarios.morReaderWriterChangelogUpdateCases(format),
         Scenarios.readerWriterChangelogMergeCases(format),
+        Scenarios.morReaderWriterChangelogMergeCases(format),
         Scenarios.readerWriterIncrementalAndStreamCases(format)
       ).flatten
     }
@@ -84,6 +92,8 @@ object Plan {
     List(
       Scenarios.coreDmlCases,
       Scenarios.partitionedDmlCases,
+      Scenarios.morDmlCases,
+      Scenarios.deleteFileModeCases,
       Scenarios.nestedCases,
       Scenarios.typesCases,
       Scenarios.partitionTransformCases,
@@ -94,6 +104,7 @@ object Plan {
       Scenarios.createSchemaCases,
       Scenarios.layoutFormatCases,
       Scenarios.rtasLayoutFormatCases,
+      Scenarios.morReadLayoutFormatCases,
       Scenarios.ddlSchemaCases,
       Scenarios.ddlNegativeCases,
       Scenarios.ddlPropertyCases,
@@ -111,15 +122,22 @@ object Plan {
       Scenarios.hazardContextCases ++
       List(
         Scenarios.rtasDmlCases,
-        Scenarios.rtasPartitionedDmlCases
+        Scenarios.rtasPartitionedDmlCases,
+        Scenarios.rtasMorDmlCases,
+        Scenarios.morReadDmlCases,
+        Scenarios.morCoexistCases
       ).flatten ++
       ddlConsumerContributions ++
       readerWriterContributions ++
       List(
         Scenarios.orderedDmlCases,
         Scenarios.evolvedDmlCases,
+        Scenarios.maintenanceMorFoldCases,
+        Scenarios.maintenanceMorMetaCases,
+        Scenarios.morHazardCases,
         Scenarios.encryptionPinCases,
         Scenarios.forkColumnDefaultAndDistributionCases,
+        Scenarios.forkDeleteFileReplicationCases,
         Scenarios.forkFileAndCompactionCases
       ).flatten
 }
