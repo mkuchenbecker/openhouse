@@ -21,8 +21,8 @@ the risk lives, and this document set establishes four conclusions about them:
    confirmed (the fix ships separately as its own draft pull request). The model also explains why the bug survived
    single-instance testing: the per-JVM retry-dedup cache accidentally serializes
    same-base writers on one replica.
-3. **Nine blocking defects remain beside the commit point.** A three-expert review
-   (architecture, testing, and a blind protocol-correctness expert judging against
+3. **Nine blocking defects remain beside the commit point.** A three-part review
+   (architecture, testing, and a blind protocol-correctness reviewer judging against
    Apache Iceberg's own contract) produced 29 verified findings, 9 blocking. The three
    worst all mutate or misreport *committed* state: a post-commit-point `IOException`
    handler that signals "safe to clean up" for a commit that succeeded, an in-place
@@ -71,5 +71,5 @@ re-run in seconds: the commands are in [Appendix E](appendix-e-tla.md) §8, usin
 spec and configurations in [tla/](tla/). The code-review findings each carry their
 evidence inline, and [Appendix B](appendix-b-code-review.md)'s adjudication log records
 every merge, disagreement, and verification correction, including how much of the
-briefed experts' output the blind expert reproduced independently (~55%, including
+briefed reviewers' output the blind reviewer reproduced independently (~55%, including
 every top-tier defect).
