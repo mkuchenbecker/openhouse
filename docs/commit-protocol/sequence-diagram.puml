@@ -19,9 +19,13 @@ ITO -> HTS : GET /hts/tables
 HTS -> DB : SELECT row
 DB --> ITO : metadataLocation, @Version
 ITO -> ST : read current metadata.json
-TS -> TS : versionCheck\n(base == openhouse.tableLocation)
-TS -> ITO : transaction.commitTransaction()\n-> doCommit(base, metadata)
-ITO -> ITO : abortIfWriterBaseDivergedFromCatalog\nfailIfRetryUpdate
+ITO --> TS : loaded table (base = T_X)
+TS -> TS : versionCheck\n(declared base == T_X)
+TS -> ITO : transaction.commitTransaction()
+ITO -> HTS : re-refresh\n(BaseTransaction.applyUpdates)
+ITO -> ST : re-read current metadata.json
+note over ITO, ST : Silent-rebase window: a concurrent commit\ncan advance T_X -> T_Y here, after versionCheck\nalready passed; applyUpdates rebases the staged\n(stale) payload onto T_Y without error
+ITO -> ITO : doCommit:\nabortIfWriterBaseDivergedFromCatalog\n(#612 CAS: declared base vs refreshed base)\nfailIfRetryUpdate
 ITO -> ITO : merge payload snapshots/refs\ninto TableMetadata (set difference)
 ITO -> ST : write {tableLoc}/00042-{uuid}.metadata.json
 ITO -> HTS : PUT /hts/tables\n{tableVersion=old, metadataLocation=new}

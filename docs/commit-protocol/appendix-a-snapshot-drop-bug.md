@@ -4,7 +4,7 @@ All file references are repo-relative at commit `2a9dac8` unless a specific fix-
 
 ## TL;DR
 
-**Fix commit: `940781958e20c40a5764cda147df9b7613ed2133` — `fix(catalog): abort doCommit on stale-base divergence (#612)`, authored 2026-05-29 by Mike Kuchenbecker.** It adds a catalog-level compare-and-swap (CAS) in `OpenHouseInternalTableOperations.doCommit` that aborts the commit with `CommitFailedException` when the writer's declared base (`COMMIT_KEY` property) does not match the catalog's actual current base. Without it, a stale writer commit that had been silently rebased by Iceberg's `BaseTransaction.applyUpdates` would carry a stale full-snapshot-list payload, and the server's *subtractive* snapshot merge would compute the concurrently-added snapshot as "to remove" and silently expire it — the dropped-snapshot lost update (internal incident-12185, 2026-05-25).
+**Fix commit: `940781958e20c40a5764cda147df9b7613ed2133` — `fix(catalog): abort doCommit on stale-base divergence (#612)`, authored 2026-05-29 by Mike Kuchenbecker.** It adds a catalog-level compare-and-swap (CAS) in `OpenHouseInternalTableOperations.doCommit` that aborts the commit with `CommitFailedException` when the writer's declared base (`COMMIT_KEY` property) does not match the catalog's actual current base. Without it, a stale writer commit that had been silently rebased by Iceberg's `BaseTransaction.applyUpdates` would carry a stale full-snapshot-list payload, and the server's *subtractive* snapshot merge would compute the concurrently-added snapshot as "to remove" and silently expire it — the dropped-snapshot lost update (LinkedIn-internal incident record `incident-12185`, 2026-05-25; the fix's commit message and regression test are its public record).
 
 ---
 
@@ -14,7 +14,7 @@ All file references are repo-relative at commit `2a9dac8` unless a specific fix-
 
 OpenHouse's Tables service commits snapshots via properties smuggled through an Iceberg transaction:
 
-- **Client → server payload staging** — `services/tables/.../repository/impl/OpenHouseInternalRepositoryImpl.java`, `save()` (update branch, current HEAD):
+- **Client → server payload staging** — `services/tables/.../repository/impl/OpenHouseInternalRepositoryImpl.java`, `save()` (update branch, at `2a9dac8`):
   - line 179: `table = catalog.loadTable(tableIdentifier);` then `table.newTransaction()`
   - line 181: `updateEligibilityCheck(table, tableDto)` → `versionCheck` (line 451) compares the client's declared `tableVersion` (path of the base `metadata.json`) against the *loaded* table's `tableLocation`. **This check runs against the writer's own loaded view, at request-validation time — not at commit time.**
   - line 187: `doUpdateSnapshotsIfNeeded(...)` stages `SNAPSHOTS_JSON_KEY` (the client's **entire** snapshot list, serialized) and `SNAPSHOTS_REFS_KEY` as *table properties* on the transaction.
@@ -23,7 +23,7 @@ OpenHouse's Tables service commits snapshots via properties smuggled through an 
 
 - **Server-side apply** — `iceberg/openhouse/internalcatalog/.../OpenHouseInternalTableOperations.java`, `doCommit(base, metadata)`. The snapshot state to persist is reconstructed by a **subtractive merge**: whatever is in the current metadata but *not* in the client's `SNAPSHOTS_JSON_KEY` payload gets **removed**.
 
-### The subtractive merge (current HEAD, `OpenHouseInternalTableOperations.java:314-354`; pre-fix at `9407819^` lines ~305-345 — identical logic)
+### The subtractive merge (at `2a9dac8`, `OpenHouseInternalTableOperations.java:314-354`; pre-fix at `9407819^` lines ~305-345 — identical logic)
 
 ```java
 if (serializedSnapshotsToPut != null) {
@@ -79,7 +79,7 @@ Key point: this is a **server-side** lost update inside the internal catalog's c
 
 ## 3. The fix (`9407819`, present at current HEAD)
 
-Two changes in `iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperations.java`:
+Two changes in `iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperations.java` (line numbers at `2a9dac8`):
 
 **(a) Call site** — HEAD line 269 (fix diff hunk at old line 259):
 
@@ -130,7 +130,7 @@ private void abortIfWriterBaseDivergedFromCatalog(TableMetadata base, TableMetad
 - Commits with **no `COMMIT_KEY`** (replaceTable, stage-create, stage-replace) are not defended — they are wholesale-authoritative over the snapshot set by design.
 - Commits with **no `SNAPSHOTS_JSON_KEY`** (rename, property-only, internal metadata-field writes) are skipped — they carry no stale snapshot list, so the subtractive merge never runs.
 
-### Residual gaps (my assessment)
+### Residual gaps
 
 1. The replace/stage-replace paths can still clobber concurrent snapshots "by design" — a genuinely concurrent RTAS vs. append is resolved replace-wins. Upstream later gated RTAS behind a `replace.enabled` table property (`3faac06`, #640), which narrows this exposure.
 2. The CAS compares metadata.json **paths**. If a base location were ever reused (it isn't in practice — locations are versioned `NNNNN-uuid.metadata.json`), the check would pass a stale base.
@@ -145,9 +145,9 @@ private void abortIfWriterBaseDivergedFromCatalog(TableMetadata base, TableMetad
 - Builds a post-refresh base **T_Y** containing three snapshots (two writer-known + one racing) and **round-trips it through `TableMetadataParser`** so `base.metadataFileLocation()` is non-null — matching a base loaded from disk after `applyUpdates`' silent refresh (and ensuring the CAS actually executes).
 - Sets properties as `applyUpdates` would leave them: stale `SNAPSHOTS_JSON` (racing snapshot omitted), `SNAPSHOTS_REFS` pointing main at the stale head, and `COMMIT_KEY` = a different metadata.json path (T_X).
 - Asserts `doCommit(postRefreshBase, metadata)` throws `CommitFailedException` containing "Cannot commit", and that `houseTableRepository.save` is **never** invoked (the racing snapshot is never persisted out of existence).
-- The javadoc documents it as a deterministic reproduction of incident-12185 (2026-05-25 WAR, snapshot `3635817277608242413` rebased out), and states it fails on the unfixed catalog.
+- The javadoc documents it as a deterministic reproduction of incident-12185 (2026-05-25 incident write-up, snapshot `3635817277608242413` rebased out), and states it fails on the unfixed catalog.
 
-Per the commit message, a black-box Spark concurrent-insert functional test (`SparkConcurrentInsertFunctionalTest`, explored in PR #614) was dropped because it only reproduced against the H2 test fixture, not production MySQL+HTS.
+Per the commit message, a black-box Spark concurrent-insert functional test (`SparkConcurrentInsertFunctionalTest`, from linkedin/openhouse PR #614) was dropped because it only reproduced against the H2 test fixture, not production MySQL+HTS.
 
 ## 5. Timeline
 
@@ -162,15 +162,18 @@ Per the commit message, a black-box Spark concurrent-insert functional test (`Sp
 
 Note: the fix commit is a *child* of the rollback commit `d4fc9fe`, i.e. it was applied to the reverted (v0.5.417) tree and survived the later re-apply — it was never itself reverted.
 
-## 6. Candidate enumeration (runners-up)
+## 6. Related but distinct changes
 
-- **`9407819` (#612)** — the match, with certainty: the commit message and test explicitly describe "silently dropped a racing snapshot" / "prevent snapshot loss".
-- `c9ccbdd` (#509) "Cache iceberg metadata..." — introduces `tableMetadataCache` and refresh caching; staleness-related but a performance change; not a snapshot-loss fix.
-- `d4fc9fe` (#619) / `702a043` (#625) — incident-response rollback/rollforward around the same event; context, not the fix.
-- `isStaleSnapshotError` (`OpenHouseInternalTableOperations.java:670`) — maps concurrent sequence-number `ValidationException` to a retriable 409; same bug *class* (concurrent snapshot commits) but predates the graft boundary locally and addresses a loud failure, not the silent drop.
-- No other commit in the visible history touches snapshot-drop behavior (`git log --all -i --grep` over snapshot/drop/lost/race/concurrent/retry/stale confirms).
+Three nearby changes belong to the same story without being the fix, and are easy to
+confuse with it:
 
-## Key file references (current HEAD)
+| Change | Relationship to the bug |
+|---|---|
+| `c9ccbdd` (#509), internal-catalog metadata caching | Staleness-adjacent performance change; altered refresh behavior but neither caused nor fixed the loss |
+| `d4fc9fe` (#619) / `702a043` (#625), rollback and rollforward | Incident response around the same event; context, not the fix |
+| `isStaleSnapshotError` (`OpenHouseInternalTableOperations.java:670`) | Same bug class — concurrent snapshot commits — but addresses the *loud* failure (a sequence-number `ValidationException`, remapped to a retriable 409), not the silent drop; predates the fix |
+
+## Key file references (at commit `2a9dac8`)
 
 - Fix + merge logic: `iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperations.java` — CAS call site line 269, CAS lines 604-635, subtractive merge lines 314-354, `failIfRetryUpdate` lines 642-664
 - Test: `iceberg/openhouse/internalcatalog/src/test/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperationsTest.java` line 258

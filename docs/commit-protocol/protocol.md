@@ -41,9 +41,14 @@ The happy path, end to end (the diagram below and
    path) and the **entire** serialized snapshot list plus refs.
 2. The Tables service loads the table (refreshing the pointer from HTS), pre-checks the
    declared base, and stages the payload as table properties on an Iceberg transaction.
-3. `OpenHouseInternalTableOperations.doCommit` re-checks the base (the fix-#612 CAS),
-   reconciles the payload's snapshot list against current metadata, and writes a new
-   uniquely-named `metadata.json` to the table root.
+3. `commitTransaction` **re-refreshes the table** — a second HTS read plus a second
+   metadata.json read from storage. This is the silent-rebase window: a concurrent
+   commit landing after `versionCheck` is absorbed here without error.
+   `OpenHouseInternalTableOperations.doCommit` then re-checks the writer's declared
+   base against that refreshed base (a CAS added by fix #612, the subject of
+   [Appendix A](appendix-a-snapshot-drop-bug.md)), reconciles the payload's snapshot
+   list against current metadata, and writes a new uniquely-named `metadata.json` to
+   the table root.
 4. The Tables service asks HTS to update the table's row; HTS verifies the declared
    base a third time and issues `UPDATE ... WHERE version = v` — Hibernate's optimistic
    lock. This single row update is the atomic commit point.
@@ -70,9 +75,13 @@ sequenceDiagram
     HTS->>DB: SELECT row
     DB-->>ITO: metadataLocation, @Version
     ITO->>ST: read current metadata.json
-    TS->>TS: versionCheck (base == current tableLocation)
-    TS->>ITO: transaction.commitTransaction → doCommit
-    ITO->>ITO: abortIfWriterBaseDivergedFromCatalog, failIfRetryUpdate
+    ITO-->>TS: loaded table (base = T_X)
+    TS->>TS: versionCheck (declared base == T_X)
+    TS->>ITO: transaction.commitTransaction
+    ITO->>HTS: re-refresh (BaseTransaction.applyUpdates)
+    ITO->>ST: re-read current metadata.json
+    Note over ITO,ST: Silent-rebase window: a concurrent commit can advance T_X→T_Y here, after versionCheck already passed; applyUpdates rebases the staged (stale) payload onto T_Y without error
+    ITO->>ITO: doCommit — abortIfWriterBaseDivergedFromCatalog (#612 CAS: declared base vs refreshed base), failIfRetryUpdate
     ITO->>ITO: merge payload snapshots/refs into TableMetadata
     ITO->>ST: write {tableLoc}/00042-{uuid}.metadata.json
     ITO->>HTS: PUT /hts/tables {tableVersion=old, metadataLocation=new}
@@ -238,16 +247,14 @@ failure at any step leaves either no change or invisible garbage:
 | S5 | HTS row updated (**the commit point**) | Commit durable. A crash before the HTTP response reaches the client → `CommitStateUnknownException`; a later client retry from the old base gets a clean 409 |
 | S6 | Post-commit extras | Replicated-create rewrites the just-committed metadata.json **in place** (`MetadataUpdateUtils.java:37-59`, `fs.create(path, true)`); a crash mid-rewrite corrupts the committed pointer's target. The one true non-atomic mutation of committed state in the protocol — see [Appendix B](appendix-b-code-review.md) |
 
-Special paths that deviate from the main flow:
+Three paths deviate from the main flow; rename matters most, because it is the one
+that escapes the optimistic lock:
 
-- **Stage-create / stage-replace (write-audit-publish)**: metadata.json is written but
-  HTS is never updated; the "table" exists only as a file until a later real commit
-  (`OpenHouseInternalTableOperations.java:412-419`).
-- **Rename**: routes to a direct JPQL UPDATE that neither checks nor bumps `@Version`
-  (`UserTableHtsJdbcRepository.java:115-125`) — it bypasses the optimistic lock
-  entirely.
-- **Drop**: deletes the HTS row first, then purges files; a crash between the two
-  leaks the data directory but corrupts nothing.
+| Path | Deviation | Consequence |
+|---|---|---|
+| Rename | Direct JPQL UPDATE that neither checks nor bumps `@Version` (`UserTableHtsJdbcRepository.java:115-125`) | Bypasses the optimistic lock entirely |
+| Stage-create / stage-replace (write-audit-publish) | metadata.json is written but HTS is never updated (`OpenHouseInternalTableOperations.java:412-419`) | The "table" exists only as a file until a later real commit |
+| Drop | Deletes the HTS row first, then purges files (`OpenHouseInternalCatalog.java:157-192`) | A crash between the two leaks the data directory but corrupts nothing |
 
 ## 5. Snapshot reconciliation: the subtractive merge
 

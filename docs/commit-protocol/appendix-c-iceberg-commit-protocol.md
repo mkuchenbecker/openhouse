@@ -1,10 +1,20 @@
 # Appendix C: Apache Iceberg's Native Commit Protocol
 
-*All `path:line` references are into an apache/iceberg checkout (version `1.5.2.x` per `version.properties`; line numbers verified against this tree). Repo-relative paths are used throughout.*
+Iceberg's commit protocol rests on one invariant — every metadata.json is immutable
+and a commit is an atomic conditional swap of the catalog's pointer — and two design
+decisions that follow from it: conflicts are detected by explicit assertions scoped to
+what a change actually touches, and retries *re-apply the operation* onto the winner's
+metadata rather than re-sending anything stale. Three conclusions matter for OpenHouse,
+developed in §7 and built on by [Appendix D](appendix-d-rest-native-migration.md): in
+the REST protocol the catalog service is the sole author of metadata content; per-change
+requirements give finer conflict granularity than any whole-table version token; and a
+protocol whose retry unit is an already-built metadata file cannot retry correctly.
+
+*All `path:line` references are repo-relative into Apache Iceberg 1.5.2.x source.*
 
 ---
 
-## 1. The Core Protocol: TableOperations and Compare-and-Swap on Metadata Location
+## 1. The core protocol: TableOperations and compare-and-swap on metadata location
 
 ### 1.1 The contract
 
@@ -64,7 +74,7 @@ Concrete `doCommit` (HiveTableOperations, `hive-metastore/src/main/java/org/apac
 
 ---
 
-## 2. The Retry Loop: Re-Apply, Never Re-Write
+## 2. The retry loop: re-apply, never re-write
 
 This is the piece naive protocols get wrong. When an Iceberg commit conflicts, the client does **not** retry pushing the same (now stale) metadata. Every operation (`AppendFiles`, `RewriteFiles`, `UpdateSchema`, ...) is a `PendingUpdate` (`api/src/main/java/org/apache/iceberg/PendingUpdate.java:30-55`) whose `apply()` **re-derives** the new metadata from the freshest base on every attempt.
 
@@ -108,7 +118,7 @@ The cleanup decision is exactly `SnapshotProducer.java:411-419`: `CommitStateUnk
 
 ---
 
-## 3. TableMetadata Internals Relevant to Commits
+## 3. TableMetadata internals relevant to commits
 
 `core/src/main/java/org/apache/iceberg/TableMetadata.java` — TableMetadata is immutable; the only way to mutate is `TableMetadata.buildFrom(base)` (`TableMetadata.java:856-858`) / `buildFromEmpty()` (`:860`), producing a `Builder` (`:864`).
 
@@ -135,7 +145,7 @@ Refs are first-class: `refs` map of name → `SnapshotRef` in TableMetadata; `Sn
 
 ---
 
-## 4. The REST Catalog Protocol (key for the OpenHouse proposal)
+## 4. The REST catalog protocol (the model [Appendix D](appendix-d-rest-native-migration.md) adopts)
 
 The REST protocol changes *what is shipped* on commit: not a metadata.json pointer, but **(requirements, updates)** — the assertions plus the semantic change list of §3.1. The server owns validation, the retry loop, and the metadata.json write.
 
@@ -202,7 +212,7 @@ Schema at `rest-catalog-open-api.yaml:2566-2704`; server-side implementations in
   ```
   Two distinct conflict classes are separated here (Javadoc `:86-94`, class `ValidationFailureException` `:95-106`):
   - **Client-visible conflict**: a *requirement* fails → wrapped so the server-side loop does **not** retry (`:364-367`, unwrap+rethrow at `:383-385`) → HTTP 409 → the *client* must refresh/reapply.
-  - **Server-internal conflict**: the requirement held, but the backing store's CAS lost to a concurrent writer (`taskOps.commit` threw `CommitFailedException`) → the *server* refreshes (`:358`) , re-validates, re-applies the updates on the new base, and retries — transparently to the client.
+  - **Server-internal conflict**: the requirement held, but the backing store's CAS lost to a concurrent writer (`taskOps.commit` threw `CommitFailedException`) → the *server* refreshes (`:358`), re-validates, re-applies the updates on the new base, and retries — transparently to the client.
   - `taskOps.commit(base, updated)` at `:380` is the backend `TableOperations` (e.g. JDBC/HMS-backed): **it is the server process that runs `writeNewMetadataIfRequired` and the pointer swap** (§1.4). The client's storage credentials are never needed for metadata; the catalog service is the single writer of metadata.json.
 
 ### 4.5 Error codes
@@ -217,7 +227,7 @@ Client mapping, `core/src/main/java/org/apache/iceberg/rest/ErrorHandlers.java` 
 
 ---
 
-## 5. Behavior / Guarantee Comparison Data
+## 5. Behavior and guarantee comparison
 
 | Property | Metastore-pointer commit (§1) | REST catalog commit (§4) |
 |---|---|---|
@@ -235,7 +245,7 @@ Client mapping, `core/src/main/java/org/apache/iceberg/rest/ErrorHandlers.java` 
 
 ---
 
-## 6. Step-Numbered Commit Sequences (for sequence diagrams)
+## 6. Step-numbered commit sequences
 
 ### (a) HadoopCatalog / metastore-style commit (client writes metadata.json)
 
@@ -280,8 +290,8 @@ Conflict paths:
 
 ---
 
-## Appendix: Implications for an OpenHouse-style protocol ("server stores version, client writes metadata.json")
+## 7. Implications for OpenHouse
 
-1. **Writer locus.** In OpenHouse's model the client writes metadata.json and the server CAS-es a version; in REST-native, `CatalogHandlers.java:370-380` makes the *server* both applier and writer. That removes client storage-write access to `metadata/`, removes trust in client-constructed metadata (the server rebuilds it from typed updates and can reject illegal ones via `TableMetadata.Builder` validation, e.g. `TableMetadata.java:1155-1173`), and lets the server absorb store-level races without a client round-trip.
+1. **Authorship locus.** In OpenHouse's model the Tables service writes the metadata.json file, but the client *authors its content*: the full snapshot list the client ships is what gets persisted ([protocol.md](protocol.md) §5). In REST-native, `CatalogHandlers.java:370-380` makes the *server* both applier and writer of that content. That removes trust in client-constructed metadata (the server rebuilds it from typed updates and can reject illegal ones via `TableMetadata.Builder` validation, e.g. `TableMetadata.java:1155-1173`), and lets the server absorb store-level races without a client round-trip.
 2. **Conflict semantics.** A single version-number CAS forces *any* concurrent pair into conflict. Requirements (`UpdateRequirements.java:92-174`) conflict only on what a change actually depends on, and the server's refresh+reapply loop (`CatalogHandlers.java:358-381`) commits logically-independent concurrent changes without bouncing them to clients.
 3. **Retry correctness.** Iceberg never re-submits stale metadata: retries re-derive it (`SnapshotProducer.java:226-234` client-side; `CatalogHandlers.java:370-371` server-side). A protocol whose retry unit is "the metadata.json I already wrote" cannot do this — on conflict the client must rebuild the file from scratch, which is the classic naive-implementation bug the `MetadataUpdate.applyTo` design exists to prevent.
