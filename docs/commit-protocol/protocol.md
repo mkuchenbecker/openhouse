@@ -245,7 +245,7 @@ failure at any step leaves either no change or invisible garbage:
 | S3 | metadata.json written to storage | **Orphan metadata file.** HTS still points at the old file; readers unaffected; maintenance cleans it |
 | S4 | HTS call in flight | *The ambiguous window.* HTS 409 → clean loss, engine retries. HTS 5xx/timeout → `checkCommitStatus` re-reads the pointer: confirmed success → SUCCESS; provably absent → `CommitFailedException`; otherwise `CommitStateUnknownException` → 503 → client keeps files, application decides |
 | S5 | HTS row updated (**the commit point**) | Commit durable. A crash before the HTTP response reaches the client → `CommitStateUnknownException`; a later client retry from the old base gets a clean 409 |
-| S6 | Post-commit extras | Replicated-create rewrites the just-committed metadata.json **in place** (`MetadataUpdateUtils.java:37-59`, `fs.create(path, true)`); a crash mid-rewrite corrupts the committed pointer's target. The one true non-atomic mutation of committed state in the protocol — see [Appendix B](appendix-b-code-review.md) |
+| S6 | Post-commit extras | Replicated-create rewrites the just-committed metadata.json **in place** (`MetadataUpdateUtils.java:36-57`, `fs.create(path, true)`); a crash mid-rewrite corrupts the committed pointer's target. The one true non-atomic mutation of committed state in the protocol — see [Appendix B](appendix-b-code-review.md) |
 
 Three paths deviate from the main flow; rename matters most, because it is the one
 that escapes the optimistic lock:

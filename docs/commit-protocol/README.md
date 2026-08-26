@@ -3,7 +3,8 @@
 OpenHouse's table commit protocol is sound at its core and sharp at its edges. The core
 — one atomic commit point, a single optimistic-locked row update in the House Tables
 service, fed by write-ahead metadata files that are garbage until referenced — gives
-per-table linearizable commits and survived formal model checking. The edges are where
+per-table linearizable commits, and model checking found no violation of its
+invariants in any checked configuration. The edges are where
 the risk lives, and this document set establishes four conclusions about them:
 
 1. **The protocol's structural weakness is client authority over absolute state.** The
@@ -14,9 +15,10 @@ the risk lives, and this document set establishes four conclusions about them:
    traces the incident and fix.
 2. **The fix is verified, and its blind spots are mapped.** A TLA+ model of the
    protocol reproduces the incident as a `NoSnapshotLoss` invariant violation without
-   the fix and proves the invariant holds with it — and predicts the CAS-exempt rename
-   path as the next counterexample of the same class
-   ([Appendix E](appendix-e-tla.md)). The model also explains why the bug survived
+   the fix, and with it TLC completes the checked state spaces with no violation —
+   and [Appendix E](appendix-e-tla.md) names the CAS-exempt rename path as the likely
+   next counterexample of the same class, a prediction an extended model has since
+   confirmed (the fix ships separately as its own draft pull request). The model also explains why the bug survived
    single-instance testing: the per-JVM retry-dedup cache accidentally serializes
    same-base writers on one replica.
 3. **Nine blocking defects remain beside the commit point.** A three-expert review
@@ -34,8 +36,8 @@ the risk lives, and this document set establishes four conclusions about them:
    granularity by construction, at an estimated 15–25 engineering-weeks
    ([Appendix D](appendix-d-rest-native-migration.md), grounded in the Iceberg
    protocol reference of [Appendix C](appendix-c-iceberg-commit-protocol.md)).
-   A working prototype of that commit path ships on this branch
-   (`services/tables/src/main/java/com/linkedin/openhouse/tables/resthandler/`): a
+   A working prototype of that commit path is included in the same change set as
+   this document (`services/tables/src/main/java/com/linkedin/openhouse/tables/resthandler/`): a
    REST commit endpoint that validates requirements against fresh state, rebuilds
    metadata server-side, and commits through the unchanged internal catalog and HTS
    CAS — passing a 35-test matrix that includes a no-snapshot-loss regression
@@ -43,6 +45,8 @@ the risk lives, and this document set establishes four conclusions about them:
    the legacy commit path untouched.
 
 ## Reading guide
+
+[protocol.md](protocol.md) is the place to start; everything else supports it.
 
 | Document | What it answers |
 |---|---|
@@ -54,7 +58,7 @@ the risk lives, and this document set establishes four conclusions about them:
 | [Appendix E](appendix-e-tla.md) | The TLA+ model: invariants, the reproduced violation, the verified fix |
 | [sequence-diagram.puml](sequence-diagram.puml) | PlantUML sources for the happy-path and conflict-path diagrams |
 | [tla/](tla/) | The spec, TLC configurations, and run logs |
-| `services/tables/.../resthandler/` | The REST-native commit prototype and its test matrix (`IcebergRestCommitControllerTest`, `RestNativeCommitOperationsTest`, `RestUpdateValidatorTest`) |
+| `services/tables/.../resthandler/` | The REST-native commit prototype; its test matrix spans the tables-service tests (`IcebergRestCommitControllerTest`, `RestUpdateValidatorTest`) and the internal-catalog tests (`RestNativeCommitOperationsTest`) |
 
 ## How to verify the claims
 
