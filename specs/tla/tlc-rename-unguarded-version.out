@@ -1,0 +1,94 @@
+Picked up JAVA_TOOL_OPTIONS: -Djavax.net.ssl.trustStore=/root/.ccr/java-truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=37709 -Dhttp.nonProxyHosts=localhost|127.0.0.1|::1|127.*|0.*|::|169.254.*|api.anthropic.com|api-staging.anthropic.com|api-pr-preview.anthropic.com|mcp-proxy.anthropic.com|mcp-proxy-staging.anthropic.com|registry.npmjs.org|jsr.io|npm.jsr.io|pypi.org|files.pythonhosted.org|index.crates.io|proxy.golang.org|host.docker.internal|10.*|172.16.*|172.17.*|172.18.*|172.19.*|172.20.*|172.21.*|172.22.*|172.23.*|172.24.*|172.25.*|172.26.*|172.27.*|172.28.*|172.29.*|172.30.*|172.31.*|192.168.*|100.64.0.0/10|*.svc.cluster.local|*.svc.cluster.local -Djdk.http.auth.tunneling.disabledSchemes= -Djdk.http.auth.proxying.disabledSchemes=
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 87 and seed -6320949937111131 with 1 worker on 4 cores with 3416MB heap and 64MB offheap memory [pid: 6039] (Linux 6.18.44-fc-v21 amd64, Ubuntu 21.0.10 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/user/worktrees/tla-fixes/specs/tla/OpenHouseCommitRename.tla
+Parsing file /tmp/Naturals.tla
+Parsing file /tmp/Sequences.tla
+Parsing file /tmp/FiniteSets.tla
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module OpenHouseCommitRename
+Starting... (2026-08-26 01:55:14)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-26 01:55:14.
+Error: Invariant MonotonicVersion is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ rBase = 0
+/\ rstate = "idle"
+/\ wPayload = (w1 :> {} @@ w2 :> {})
+/\ rPendLoc = 0
+/\ nextLoc = 1
+/\ everCommitted = {}
+/\ history = <<>>
+/\ wstate = (w1 :> "idle" @@ w2 :> "idle")
+/\ catVer = 0
+/\ catSnaps = {}
+/\ catLoc = 0
+/\ seenKeys = (w1 :> {} @@ w2 :> {})
+/\ rSnaps = {}
+/\ wPend = ( w1 :> [base |-> 0, snaps |-> {}, loc |-> 0] @@
+  w2 :> [base |-> 0, snaps |-> {}, loc |-> 0] )
+/\ wBase = (w1 :> 0 @@ w2 :> 0)
+
+State 2: <RenameLoad line 232, col 3 to line 238, col 41 of module OpenHouseCommitRename>
+/\ rBase = 0
+/\ rstate = "loaded"
+/\ wPayload = (w1 :> {} @@ w2 :> {})
+/\ rPendLoc = 0
+/\ nextLoc = 1
+/\ everCommitted = {}
+/\ history = <<>>
+/\ wstate = (w1 :> "idle" @@ w2 :> "idle")
+/\ catVer = 0
+/\ catSnaps = {}
+/\ catLoc = 0
+/\ seenKeys = (w1 :> {} @@ w2 :> {})
+/\ rSnaps = {}
+/\ wPend = ( w1 :> [base |-> 0, snaps |-> {}, loc |-> 0] @@
+  w2 :> [base |-> 0, snaps |-> {}, loc |-> 0] )
+/\ wBase = (w1 :> 0 @@ w2 :> 0)
+
+State 3: <RenameWriteMetadata line 248, col 3 to line 255, col 41 of module OpenHouseCommitRename>
+/\ rBase = 0
+/\ rstate = "pending"
+/\ wPayload = (w1 :> {} @@ w2 :> {})
+/\ rPendLoc = 1
+/\ nextLoc = 2
+/\ everCommitted = {}
+/\ history = <<>>
+/\ wstate = (w1 :> "idle" @@ w2 :> "idle")
+/\ catVer = 0
+/\ catSnaps = {}
+/\ catLoc = 0
+/\ seenKeys = (w1 :> {} @@ w2 :> {})
+/\ rSnaps = {}
+/\ wPend = ( w1 :> [base |-> 0, snaps |-> {}, loc |-> 0] @@
+  w2 :> [base |-> 0, snaps |-> {}, loc |-> 0] )
+/\ wBase = (w1 :> 0 @@ w2 :> 0)
+
+State 4: <RenameHtsUnguarded line 268, col 3 to line 276, col 64 of module OpenHouseCommitRename>
+/\ rBase = 0
+/\ rstate = "done"
+/\ wPayload = (w1 :> {} @@ w2 :> {})
+/\ rPendLoc = 1
+/\ nextLoc = 2
+/\ everCommitted = {}
+/\ history = <<[snaps |-> {}, loc |-> 1, ver |-> 0, by |-> "renamer"]>>
+/\ wstate = (w1 :> "idle" @@ w2 :> "idle")
+/\ catVer = 0
+/\ catSnaps = {}
+/\ catLoc = 1
+/\ seenKeys = (w1 :> {} @@ w2 :> {})
+/\ rSnaps = {}
+/\ wPend = ( w1 :> [base |-> 0, snaps |-> {}, loc |-> 0] @@
+  w2 :> [base |-> 0, snaps |-> {}, loc |-> 0] )
+/\ wBase = (w1 :> 0 @@ w2 :> 0)
+
+48 states generated, 28 distinct states found, 15 states left on queue.
+The depth of the complete state graph search is 4.
+The average outdegree of the complete state graph is 2 (minimum is 1, the maximum 4 and the 95th percentile is 4).
+Finished in 00s at (2026-08-26 01:55:14)
