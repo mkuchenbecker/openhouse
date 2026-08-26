@@ -5,9 +5,13 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -25,6 +29,37 @@ import org.springframework.stereotype.Repository;
 public interface HouseTablesH2Repository extends HouseTableRepository {
 
   Map<SoftDeletedTablePrimaryKey, HouseTable> softDeletedTables = new HashMap<>();
+
+  /**
+   * Fault-injection hook for commit-path tests: exceptions queued here are thrown (and consumed) by
+   * the next {@link #save(HouseTable)} calls, one per call, simulating HTS store failures (e.g. a
+   * lost {@code @Version} CAS or an ambiguous 5xx) that the H2-backed repository cannot produce
+   * organically. Tests must drain leftovers in teardown via {@link #clearSaveHooks()}.
+   */
+  Queue<RuntimeException> SAVE_FAILURES = new ConcurrentLinkedQueue<>();
+
+  /** Counts {@link #save(HouseTable)} attempts (including injected failures) for assertions. */
+  AtomicInteger SAVE_ATTEMPTS = new AtomicInteger();
+
+  static void clearSaveHooks() {
+    SAVE_FAILURES.clear();
+    SAVE_ATTEMPTS.set(0);
+  }
+
+  /**
+   * Default-method override of the store-generated save so tests can observe and fail HTS row
+   * writes. Behavior is unchanged when no failure is queued: the row is persisted through the store
+   * implementation via {@link #saveAll(Iterable)}.
+   */
+  @Override
+  default <S extends HouseTable> S save(S entity) {
+    SAVE_ATTEMPTS.incrementAndGet();
+    RuntimeException injected = SAVE_FAILURES.poll();
+    if (injected != null) {
+      throw injected;
+    }
+    return saveAll(Collections.singletonList(entity)).iterator().next();
+  }
 
   @Override
   default void rename(
