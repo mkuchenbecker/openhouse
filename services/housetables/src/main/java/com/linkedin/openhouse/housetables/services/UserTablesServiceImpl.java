@@ -171,7 +171,12 @@ public class UserTablesServiceImpl implements UserTablesService {
               .tableId(fromTableId)
               .build()
               .toString(),
-          new RuntimeException());
+          // The 409 body renders this cause's message (OpenHouseExceptionHandler), so it carries
+          // the observed-vs-actual base the client needs to reconcile its retry.
+          new RuntimeException(
+              String.format(
+                  "Rename declared expectedMetadataLocation %s but the table is at %s",
+                  expectedMetadataLocation, fromUserTableRow.getMetadataLocation())));
     }
     // Renames user table within the same database
     try {
@@ -208,7 +213,13 @@ public class UserTablesServiceImpl implements UserTablesService {
                 .tableId(fromTableId)
                 .build()
                 .toString(),
-            new RuntimeException());
+            // The 409 body renders this cause's message (OpenHouseExceptionHandler), so it names
+            // the row state the conditional update was conditioned on.
+            new RuntimeException(
+                String.format(
+                    "Rename update matched no row at version %s and metadataLocation %s:"
+                        + " the table was modified between the rename's read and its update",
+                    fromUserTableRow.getVersion(), fromUserTableRow.getMetadataLocation())));
       }
     } catch (DataIntegrityViolationException e) {
       throw new AlreadyExistsException("Table", toTableId);
