@@ -1,0 +1,67 @@
+@startuml openhouse-commit-happy-path
+title OpenHouse table commit — happy path (repo commit 2a9dac8)
+
+participant "Engine\n(Spark / Iceberg core)" as ENG
+participant "OpenHouseTableOperations\n(client)" as OHC
+participant "Tables service" as TS
+participant "OpenHouseInternal\nTableOperations" as ITO
+participant "Storage\n(HDFS/blob)" as ST
+participant "House Tables\nservice (HTS)" as HTS
+database "HTS DB" as DB
+
+autonumber
+
+ENG -> ST : write data, manifest,\nmanifest-list files
+ENG -> OHC : commit(base, newMetadata)
+OHC -> TS : PUT /iceberg/v2/snapshots\n{baseTableVersion, jsonSnapshots[], snapshotRefs}
+TS -> ITO : loadTable -> doRefresh
+ITO -> HTS : GET /hts/tables
+HTS -> DB : SELECT row
+DB --> ITO : metadataLocation, @Version
+ITO -> ST : read current metadata.json
+TS -> TS : versionCheck\n(base == openhouse.tableLocation)
+TS -> ITO : transaction.commitTransaction()\n-> doCommit(base, metadata)
+ITO -> ITO : abortIfWriterBaseDivergedFromCatalog\nfailIfRetryUpdate
+ITO -> ITO : merge payload snapshots/refs\ninto TableMetadata (set difference)
+ITO -> ST : write {tableLoc}/00042-{uuid}.metadata.json
+ITO -> HTS : PUT /hts/tables\n{tableVersion=old, metadataLocation=new}
+HTS -> DB : UPDATE ... SET version=v+1\nWHERE pk AND version=v
+note over DB : THE atomic commit point\n(JPA @Version optimistic lock)
+DB --> HTS : 1 row updated
+HTS --> ITO : 200 OK
+ITO --> TS : commit SUCCESS
+TS --> OHC : 200 {tableLocation = new path}
+OHC -> ENG : doRefresh -> table view advances
+@enduml
+
+@startuml openhouse-commit-conflict-path
+title OpenHouse table commit — conflict variant (two writers, same base)
+
+participant "Writer W\n(engine + client)" as W
+participant "Writer R\n(engine + client)" as R
+participant "Tables service\n(+ internal catalog)" as TS
+participant "Storage" as ST
+participant "HTS + DB" as HTS
+
+autonumber
+
+W -> TS : PUT snapshots {base = T_X, snapshots(W)}
+R -> TS : PUT snapshots {base = T_X, snapshots(R)}
+TS -> ST : write metadata.json for W (uuid path A)
+TS -> ST : write metadata.json for R (uuid path B)
+TS -> HTS : save row for R {tableVersion = T_X}
+HTS -> HTS : UPDATE ... WHERE version = v\n(1 row — R wins)
+HTS --> TS : 200 OK
+TS --> R : 200 (commit T_X -> T_Y)
+TS -> HTS : save row for W {tableVersion = T_X}
+HTS -> HTS : UPDATE ... WHERE version = v\n(0 rows — @Version already bumped)
+HTS --> TS : 409 EntityConcurrentModification
+TS --> W : 409 -> CommitFailedException
+note over W : Iceberg engine retry loop:\nrefresh to T_Y, REAPPLY the operation,\nresubmit with base = T_Y
+W -> TS : PUT snapshots {base = T_Y, snapshots(T_Y)+W}
+TS -> ST : write metadata.json (uuid path C)
+TS -> HTS : save row for W {tableVersion = T_Y}
+HTS --> TS : 200 OK
+TS --> W : 200 (commit T_Y -> T_Z)
+note over ST : Path A is an orphan metadata file —\ninvisible garbage, cleaned by maintenance
+@enduml
