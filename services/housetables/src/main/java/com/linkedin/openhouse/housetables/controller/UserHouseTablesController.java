@@ -251,11 +251,7 @@ public class UserHouseTablesController {
           @RequestParam(value = "expectedMetadataLocation", required = false)
           String expectedMetadataLocation) {
     UserTable fromUserTable =
-        UserTable.builder()
-            .databaseId(fromDatabaseId)
-            .tableId(fromTableId)
-            .metadataLocation(expectedMetadataLocation)
-            .build();
+        UserTable.builder().databaseId(fromDatabaseId).tableId(fromTableId).build();
     UserTable toUserTable =
         UserTable.builder()
             .databaseId(toDatabaseId)
@@ -263,7 +259,7 @@ public class UserHouseTablesController {
             .metadataLocation(metadataLocation)
             .build();
     com.linkedin.openhouse.common.api.spec.ApiResponse<Void> apiResponse =
-        tableHtsApiHandler.renameEntity(fromUserTable, toUserTable);
+        tableHtsApiHandler.renameEntity(fromUserTable, toUserTable, expectedMetadataLocation);
     return new ResponseEntity<>(
         apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
   }

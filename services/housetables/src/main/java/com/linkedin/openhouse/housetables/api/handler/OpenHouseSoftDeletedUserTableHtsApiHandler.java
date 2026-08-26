@@ -71,7 +71,8 @@ public class OpenHouseSoftDeletedUserTableHtsApiHandler
   }
 
   @Override
-  public ApiResponse<Void> renameEntity(UserTable fromUserTable, UserTable toUserTable) {
+  public ApiResponse<Void> renameEntity(
+      UserTable fromUserTable, UserTable toUserTable, String expectedMetadataLocation) {
     throw new UnsupportedOperationException("Rename soft deleted user table is unsupported");
   }
 
