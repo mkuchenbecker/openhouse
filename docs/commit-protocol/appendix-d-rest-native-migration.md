@@ -23,12 +23,12 @@ What must not change, and does not change under any option below: HTS remains th
 
 ## 2. Requirements
 
-Four must-requirements decide the choice; each one rejects at least one option in §3, and each is grounded in the problem above rather than in the design that follows.
+Four must-requirements bound the choice, each grounded in the problem above rather than in the design that follows. Three of them discriminate: M1, M3, and M4 each reject at least one option in §3. M2 does not, and that is its point — no option below clears it alone, which is what makes the companion changes named in the non-goals non-optional rather than nice to have.
 
 | # | Must | Where it comes from |
 |---|---|---|
 | M1 | **Deletion requires naming.** No commit may remove a snapshot the request did not explicitly identify, whatever raced it. | The loss mechanism itself: subtractive merge over a client-absolute payload ([Appendix A](appendix-a-snapshot-drop-bug.md) §2, [protocol.md](protocol.md) §5) |
-| M2 | **No exempt write path.** Every operation that moves the table pointer is covered by the same conflict check, at the same point in the flow. | The exclusions that survived fix #612: rename ([Appendix B](appendix-b-code-review.md) finding 3), replace/stage-create ([Appendix B](appendix-b-code-review.md) finding 14, [Appendix A](appendix-a-snapshot-drop-bug.md) §3) |
+| M2 | **No exempt write path**, measured across the program rather than against any one option. Every operation that moves the table pointer must end up covered by an equivalent conflict check. Satisfying it requires this design *and* the companion fixes to rename and to replace/stage-create; the migration alone does not close it, and the exempt flavors are the residue that survived fix #612. | The exclusions that survived fix #612: rename ([Appendix B](appendix-b-code-review.md) finding 3), replace/stage-create ([Appendix B](appendix-b-code-review.md) finding 14, [Appendix A](appendix-a-snapshot-drop-bug.md) §3) |
 | M3 | **Every OpenHouse policy gate keeps its hook at the commit point**: lock state, preserved `openhouse.*` and `policies` keys, authorization classification, per-table feature toggle. | These gates exist only in the Spring service layer today (`TablesServiceImpl.java:125-129`, `PreservedKeyChecker.java:9-34`, `AuthorizationInterceptor`, `toggle/TableFeatureToggle.java:32`); a commit path that bypasses them is a regression regardless of its concurrency properties |
 | M4 | **HTS's `@Version` row CAS stays the single atomic arbiter**, with no HTS schema change, no storage-layout or `metadata.json`-naming change, and no data migration. | [protocol.md](protocol.md) §4: the whole protocol's atomicity argument rests on that one row update, and it is the only part of the system with no known defect |
 
@@ -49,7 +49,7 @@ Won't do / out of scope, declared so that they are not relitigated as oversights
 2. Multi-level namespaces: OpenHouse identifiers are strictly `db.table`, so a multi-level namespace is rejected with 400.
 3. ACL grants and policy DDL expressed as `TableUpdate`s. They are not expressible in that vocabulary and stay on their dedicated endpoints (§5.2).
 4. Multi-table transactions (`POST /v1/{prefix}/transactions/commit`). Single-table commit first; the multi-table route is optional later work.
-5. The HTS rename CAS. It is a pre-existing defect on a path this migration does not touch, and it ships as its own change ([Appendix B](appendix-b-code-review.md) finding 3).
+5. The HTS rename CAS. It is a pre-existing defect on a path this migration does not touch, and it ships as its own change ([Appendix B](appendix-b-code-review.md) finding 3) — one of the two companion fixes M2 depends on. Out of scope here does not mean optional.
 6. OAuth2 credential flow and storage-credential vending. The existing JWT bearer scheme carries the new routes; credential vending is a later, optional win.
 
 ---
