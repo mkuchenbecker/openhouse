@@ -1,6 +1,6 @@
 # Appendix A: The Snapshot-Loss Incident and Fix #612
 
-Repo: `/home/user/openhouse` (fork `mkuchenbecker/openhouse` with upstream `linkedin/openhouse` history; local history is grafted/shallow at ~50 commits).
+All file references are repo-relative at commit `2a9dac8` unless a specific fix-commit sha is named.
 
 ## TL;DR
 
@@ -170,9 +170,9 @@ Note: the fix commit is a *child* of the rollback commit `d4fc9fe`, i.e. it was 
 - `isStaleSnapshotError` (`OpenHouseInternalTableOperations.java:670`) — maps concurrent sequence-number `ValidationException` to a retriable 409; same bug *class* (concurrent snapshot commits) but predates the graft boundary locally and addresses a loud failure, not the silent drop.
 - No other commit in the visible history touches snapshot-drop behavior (`git log --all -i --grep` over snapshot/drop/lost/race/concurrent/retry/stale confirms).
 
-## Key file references (absolute paths, current HEAD)
+## Key file references (current HEAD)
 
-- Fix + merge logic: `/home/user/openhouse/iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperations.java` — CAS call site line 269, CAS lines 604-635, subtractive merge lines 314-354, `failIfRetryUpdate` lines 642-664
-- Test: `/home/user/openhouse/iceberg/openhouse/internalcatalog/src/test/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperationsTest.java` line 258
-- Client-side staging: `/home/user/openhouse/services/tables/src/main/java/com/linkedin/openhouse/tables/repository/impl/OpenHouseInternalRepositoryImpl.java` lines 179-216 (`COMMIT_KEY` at 196), `versionCheck` lines 451-475
-- Constants: `/home/user/openhouse/iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/CatalogConstants.java` line 29 (`COMMIT_KEY = "commitKey"`)
+- Fix + merge logic: `iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperations.java` — CAS call site line 269, CAS lines 604-635, subtractive merge lines 314-354, `failIfRetryUpdate` lines 642-664
+- Test: `iceberg/openhouse/internalcatalog/src/test/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperationsTest.java` line 258
+- Client-side staging: `services/tables/src/main/java/com/linkedin/openhouse/tables/repository/impl/OpenHouseInternalRepositoryImpl.java` lines 179-216 (`COMMIT_KEY` at 196), `versionCheck` lines 451-475
+- Constants: `iceberg/openhouse/internalcatalog/src/main/java/com/linkedin/openhouse/internal/catalog/CatalogConstants.java` line 29 (`COMMIT_KEY = "commitKey"`)

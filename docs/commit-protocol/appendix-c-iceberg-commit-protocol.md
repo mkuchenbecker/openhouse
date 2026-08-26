@@ -1,6 +1,6 @@
 # Appendix C: Apache Iceberg's Native Commit Protocol
 
-*All `path:line` references are into the apache/iceberg checkout at `/home/user/iceberg` (version `1.5.2.x` per `version.properties`; line numbers verified against this tree). Repo-relative paths are used throughout.*
+*All `path:line` references are into an apache/iceberg checkout (version `1.5.2.x` per `version.properties`; line numbers verified against this tree). Repo-relative paths are used throughout.*
 
 ---
 

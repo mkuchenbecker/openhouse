@@ -1,0 +1,113 @@
+# Appendix E: A TLA+ Model of the Commit Protocol
+
+Artifacts (all under [`tla/`](tla/); re-run with `java -cp tla2tools.jar tlc2.TLC -config <cfg> OpenHouseCommit.tla` using [tla2tools](https://github.com/tlaplus/tlaplus/releases)):
+
+| File | Purpose |
+|---|---|
+| `OpenHouseCommit.tla` | The spec (one module; `DivergenceCheck` constant toggles pre/post-fix) |
+| `prefix.cfg` / `tlc-prefix.log` | Pre-fix, 2 writers — **NoSnapshotLoss violated** (bug #612 trace) |
+| `postfix.cfg` / `tlc-postfix.log` | Post-fix, same constants — **all invariants hold** |
+| `prefix_sharedcache.cfg` / `tlc-prefix-sharedcache.log` | Pre-fix but single-JVM dedup cache — holds (artifact; see §6) |
+| `prefix_large.cfg`, `postfix_large.cfg` + logs | 3 writers / 6 commits — violation and pass reproduce |
+|  `tla2tools.jar` (not committed) | TLC (latest release, run under OpenJDK 21.0.10) |
+
+File:line references use the conventions of [protocol.md](protocol.md) and [Appendix A](appendix-a-snapshot-drop-bug.md) (`ITO` = `OpenHouseInternalTableOperations.java`, `REPO` = `OpenHouseInternalRepositoryImpl.java`, all at repo commit `2a9dac8`).
+
+---
+
+## 1. Feasibility verdict: YES — and cheap
+
+The protocol reduces to a textbook optimistic-concurrency model once you notice three things:
+
+1. **There is exactly one atomic commit point** — the HTS single-row `UPDATE ... WHERE version = v` (`UserTablesServiceImpl.java:111`). Everything before it is either read-only or writes to fresh, unreferenced storage paths. So the model needs only one "commit lands" action; file writes need no atomicity modeling at all.
+2. **The snapshot payload is declarative absolute state** (full list + refs, report 01 §5), and the server merge is subtractive (`ITO:314-354`): merged result = payload set, exactly. The whole merge collapses to one set assignment `catSnaps' = wPayload[w]` — no need to model add/remove separately.
+3. **The bug is a pure interleaving property.** The silent rebase (`BaseTransaction.applyUpdates`) is modeled by having the doCommit action capture `base := catalog-current-location` while the payload/COMMIT_KEY keep their load-time values. No storage, JSON, refs, schemas, or HTTP layers required.
+
+**What was abstracted away** (honestly): metadata.json contents beyond the snapshot-ID set; refs/branches; schema/property evolution; snapshot expiration (writers only append — see §5); CommitStateUnknown / ambiguous HTS responses (window S4b); dedup-cache TTL and size eviction; the rename/replace/stage-create paths; multiple tables; the client/engine retry counter (retries bounded only by a global commit budget).
+
+**State space estimate vs. actual**: with 2 writers, 1 snapshot each, ≤4 metadata locations, per-writer state ≈ 4 phases × small base/payload/pending domains, catalog ≤ 5 locations — predicted low thousands of reachable states. Actual: 103 distinct states (pre-fix), 99 (post-fix); 4,197 at 3 writers/6 commits. TLC finishes in under a second. Tractability was never in question.
+
+## 2. The model
+
+Per `OpenHouseCommit.tla`. Metadata.json locations are naturals `0..MaxCommits` (counter replaces the `%05d-UUID` naming; uniqueness is what matters). Snapshot IDs are writer names (each writer appends exactly one snapshot).
+
+**State variables**
+
+| Variable | Real-world counterpart |
+|---|---|
+| `catVer` | HTS `UserTableRow.@Version` (JPA optimistic-lock column) |
+| `catLoc` | HTS `metadataLocation` column (current committed metadata.json) |
+| `catSnaps` | snapshot set inside the metadata.json at `catLoc` |
+| `nextLoc` | storage allocator for new metadata.json paths |
+| `seenKeys[w]` | `failIfRetryUpdate`'s per-JVM Guava cache (`ITO:93-94`) on writer w's replica |
+| `wstate/wBase/wPayload` | writer phase; staged `COMMIT_KEY` (`REPO:196`); staged `SNAPSHOTS_JSON` (`REPO:187`) |
+| `wPend[w]` | doCommit output (rebased base, merged snapshots, new file path) awaiting the HTS save |
+| `everCommitted`, `history` | ghost variables for the invariants and readable traces |
+
+**Actions** (each commented in the spec with its code path):
+
+- `Load(w)` — client + server refresh, advisory `versionCheck` (passes trivially against the writer's own view, `REPO:451-475`), staging of full snapshot list + COMMIT_KEY.
+- `AbortDiverged(w)` — **post-fix only**: `abortIfWriterBaseDivergedFromCatalog` (`ITO:269, 604-635`), guarded by `DivergenceCheck`.
+- `AbortDedup(w)` — `failIfRetryUpdate` (`ITO:642-664`) 409s a repeated commitKey.
+- `WriteMetadata(w)` — the heart: `transaction.commitTransaction()` → **silent rebase** (`wPend.base := catLoc`, current catalog) with **stale payload** (`wPend.snaps := wPayload[w]` — the exact result of the subtractive merge), file written to a fresh path, commitKey burned pre-commit (`ITO:648-654`).
+- `HtsCommit(w)` — the atomic commit point: guard `catLoc = wPend[w].base` models `UserTableVersionMapper` + the `@Version` CAS. Crucially the guard compares the **rebased** base — which is why the HTS CAS cannot catch the bug: after the rebase, the declared base matches the row again.
+- `HtsConflict(w)` — optimistic-lock failure → 409 → engine retry from fresh load (pending file orphaned).
+- `Crash(w)` — writer/service dies pre-commit-point; nothing committed changes (validates report 01 §4's S1–S4 claim that pre-S5 failures leave only orphan files).
+
+**Invariants**
+
+- `NoSnapshotLoss == everCommitted ⊆ catSnaps` — since no expiration is modeled, any committed snapshot must stay reachable in the current committed metadata forever.
+- `MonotonicVersion` — `catVer = Len(history)`, strictly increasing versions, and no metadata-location reuse across committed versions (assumption 2 of the fix's residual-gap analysis in report 02).
+- `TypeOK`.
+
+## 3. TLC result — pre-fix: violation found (bug #612 reproduced)
+
+`prefix.cfg` (2 writers, MaxCommits=4, `DivergenceCheck=FALSE`, per-replica dedup caches): **`Error: Invariant NoSnapshotLoss is violated`** after 223 generated / 103 distinct states. Abridged counterexample (full trace in `tlc-prefix.log`) — this is exactly incident-12185's interleaving with W=w2, R=w1:
+
+```
+1. Init                catalog: ver 0, loc 0, snaps {}
+2. Load(w1)            w1: base 0, payload {w1}
+3. Load(w2)            w2: base 0, payload {w2}          <- both loaded at T_X
+4. WriteMetadata(w1)   w1 pending: base 0, snaps {w1}, file loc 1
+5. HtsCommit(w1)       catalog: ver 1, loc 1, snaps {w1}  <- racing commit R lands (T_Y)
+6. WriteMetadata(w2)   SILENT REBASE: w2 pending base = 1 (current!),
+                       snaps {w2} (stale payload; subtractive merge
+                       expires w1's snapshot); dedup cache on w2's
+                       replica hasn't seen key 0 -> passes
+7. HtsCommit(w2)       guard catLoc(1) = pend.base(1) PASSES -> catalog:
+                       ver 2, loc 2, snaps {w2}
+                       everCommitted {w1,w2} ⊄ catSnaps {w2}  *** VIOLATION ***
+```
+
+Step 6–7 shows why all three pre-fix CAS layers miss it: `versionCheck` ran before the race (step 3), `failIfRetryUpdate` sees key 0 for the first time on w2's replica, and the HTS `@Version`/location CAS compares against the *rebased* base, which matches. Also reproduces at 3 writers/6 commits (`tlc-prefix-large.log`).
+
+## 4. TLC result — post-fix: invariants hold
+
+`postfix.cfg` (identical constants, `DivergenceCheck=TRUE`): **"Model checking completed. No error has been found."** 221 generated / 99 distinct states, complete state graph, depth 11. At 3 writers / 6 commits: 11,536 generated / 4,197 distinct, depth 20, no error. The guard `catLoc = wBase[w]` at `WriteMetadata` (i.e., `abortIfWriterBaseDivergedFromCatalog` running before any file write or HTS save) converts every stale-base doCommit into a retriable abort; the writer reloads and recommits a payload that includes the racing snapshot. `MonotonicVersion` and `TypeOK` hold in every configuration, pre- and post-fix.
+
+## 5. A TLC-verified bonus observation: the dedup cache masks the bug on a single JVM
+
+`prefix_sharedcache.cfg` (pre-fix, but all writers hitting **one** Tables-service JVM, so `failIfRetryUpdate`'s cache is shared): **no violation** (105/45 states). Because the commitKey is just the base metadata path, two writers committing from the same base get serialized by the shared cache (report 01, smell #2) — the second one is 409'd before the stale doCommit can run. This is consistent with the incident requiring multi-replica routing (or the unmodeled 5-min TTL / 1000-entry eviction) to manifest, and it explains why the bug could survive single-instance testing. It must **not** be read as a correctness argument: the model omits eviction, so the shared-cache "pass" is an artifact of these constants, and the honest production topology is the per-replica configuration that violates.
+
+## 6. Limitations / abstractions (what a "pass" here does and does not mean)
+
+1. **No expiration modeled.** Real `putSnapshots` legitimately removes snapshots; the invariant would need a ghost "explicitly expired by a non-diverged writer" set to state the full property. As modeled (append-only writers), any removal is a bug — which is precisely the #612 class, so the simplification is load-bearing in the right direction but means legitimate-expiration-vs-append races are unexplored.
+2. **CommitStateUnknown not modeled.** `HtsCommit`/`HtsConflict` are a clean atomic either/or; the S4b ambiguous window (HTS 5xx/timeout → `checkCommitStatus` → 503) and client-side duplicate-commit hazards after an ambiguous success are out of scope.
+3. **Undefended paths not modeled**: replaceTable/RTAS, stage-create/stage-replace (no `COMMIT_KEY` — intentionally authoritative), rename (which bypasses the `@Version` CAS entirely, report 01 smell #4), property-only commits.
+4. **Dedup cache TTL/eviction not modeled** (see §5); paths compared as atoms, so the scheme-normalization concerns (smell #5) and location-reuse assumption are assumed away (though `MonotonicVersion` checks no committed location is ever reused *within* the model).
+5. Single table, one snapshot per writer, small bounded constants — TLC verifies these bounds only, not the unbounded protocol (no TLAPS proof attempted; for this bug class, small-scope counterexamples are clearly sufficient — the real one needed 2 writers and 2 commits).
+
+## 7. Recommendation on deeper modeling
+
+- **Worth doing (moderate value, small effort):** (a) add an `Expire(w)` action (writer stages a payload omitting a known snapshot) and the refined NoSnapshotLoss with an explicit-expiry ghost set — verifies the fix doesn't break legitimate expiration and sharpens the invariant to the one in the task statement; (b) model the **rename vs. commit race** (smell #4) — the JPQL rename bypasses `@Version`, and the same model skeleton would likely find a lost-update counterexample there, i.e. a *new* bug candidate rather than a regression check.
+- **Worth doing if HTS/client behavior changes are planned:** CommitStateUnknown — split `HtsCommit` into request/ambiguous-response/`checkCommitStatus` steps to verify that "writes never retry" + status re-check never double-applies or mis-reports. This roughly doubles the action count but stays well within TLC range.
+- **Not worth doing:** crash-recovery beyond what `Crash(w)` covers (the protocol has no recovery log — pre-commit-point crashes provably leave only orphans, which the current model already checks), multi-table, or refs/schema modeling — no invariant of interest depends on them.
+- Keep `OpenHouseCommit.tla` in the design-doc appendix as the regression spec for any future change to `doCommit` ordering (the fix's before-`failIfRetryUpdate` ordering is load-bearing and is captured by the model's guard structure).
+
+## 8. Repro commands
+
+```
+cd docs/commit-protocol/tla
+java -cp tla2tools.jar tlc2.TLC -config prefix.cfg  -metadir states_prefix  OpenHouseCommit.tla   # violation
+java -cp tla2tools.jar tlc2.TLC -config postfix.cfg -metadir states_postfix OpenHouseCommit.tla   # pass
+```
