@@ -78,7 +78,7 @@ POST commit → OpenHouseRestCommitService:
 | `ErrorHandlers` semantics (client) | **Free** | stock clients already map 409→`CommitFailedException`, 500/502/504→`CommitStateUnknownException` (`core/.../rest/ErrorHandlers.java:80-99`) |
 | `OpenHouseInternalTableOperations` | **Keep, then shrink** | commit/refresh/HTS plumbing retained; legacy-only branches (§2 rows 1,3,4,5,7) deleted in Phase 4 |
 
-Version note: server modules build against iceberg-core **1.5.2** which contains all of the above (verified present in `/home/user/iceberg` at `version.properties` 1.5.2.901). The fork (`com.linkedin.iceberg`) must be audited for patches touching `rest/`, `UpdateRequirements`, `TableMetadata.Builder` (fork patch risk → §5 R6).
+Version note: server modules build against iceberg-core **1.5.2** which contains all of the above (verified against an apache/iceberg 1.5.2.x checkout). The fork (`com.linkedin.iceberg`) must be audited for patches touching `rest/`, `UpdateRequirements`, `TableMetadata.Builder` (fork patch risk → §5 R6).
 
 ### 1.4 Where OpenHouse policies hook in
 
