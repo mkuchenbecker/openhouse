@@ -29,6 +29,8 @@ object Plan {
       List(
         Scenarios.interactionDdlCases(format),
         Scenarios.interactionRtasCases(format),
+        Scenarios.interactionBranchCases(format),
+        Scenarios.interactionBranchFlagCases(format),
         Scenarios.interactionMorCases(format),
         Scenarios.interactionMiscellaneousCases(format)
       ).flatten
@@ -37,10 +39,13 @@ object Plan {
   private def surfaceContributions: List[Case] =
     crossedFormats.flatMap { format =>
       List(
+        Scenarios.surfaceBranchMaintenanceCases(format),
         Scenarios.surfaceMessageCases(format),
+        Scenarios.surfaceBranchCases(format),
         Scenarios.surfaceReaderCases(format),
         Scenarios.surfaceRewriteProcedureCases(format),
         Scenarios.morSurfaceRewriteProcedureCases(format),
+        Scenarios.surfaceBranchPublishCases(format),
         Scenarios.surfaceSnapshotProcedureCases(format),
         Scenarios.surfaceMetadataCases(format),
         Scenarios.morSurfaceMetadataCases(format),
@@ -48,6 +53,7 @@ object Plan {
         Scenarios.surfaceRtasConcurrencyCases(format),
         Scenarios.surfaceSchemaCases(format),
         Scenarios.surfaceWriteCases(format),
+        Scenarios.surfaceBranchWriteCases(format),
         Scenarios.surfacePinCases(format)
       ).flatten
     }
@@ -57,6 +63,7 @@ object Plan {
       List(
         Scenarios.hazardReaderCases(format),
         Scenarios.hazardRtasCases(format),
+        Scenarios.hazardBranchCases(format),
         Scenarios.hazardWriterCases(format)
       ).flatten
     }
@@ -84,6 +91,7 @@ object Plan {
     Scenarios.ddlConsumerPreparations.flatMap { preparation =>
       List(
         Scenarios.ddlConsumerDataCases(preparation),
+        Scenarios.branchDdlConsumerCases(preparation),
         Scenarios.ddlConsumerCompactionCases(preparation)
       ).flatten
     }
@@ -104,6 +112,7 @@ object Plan {
       Scenarios.createSchemaCases,
       Scenarios.layoutFormatCases,
       Scenarios.rtasLayoutFormatCases,
+      Scenarios.branchLayoutFormatCases,
       Scenarios.morReadLayoutFormatCases,
       Scenarios.ddlSchemaCases,
       Scenarios.ddlNegativeCases,
@@ -113,7 +122,8 @@ object Plan {
       Scenarios.ddlCtasRtasCases,
       Scenarios.ddlTagAclFeatureCases,
       Scenarios.maintenanceCases,
-      Scenarios.controlPlaneCases
+      Scenarios.controlPlaneCases,
+      Scenarios.branchingCases
     ).flatten ++
       interactionContributions ++
       Scenarios.interactionContextCases ++
@@ -121,6 +131,11 @@ object Plan {
       hazardContributions ++
       Scenarios.hazardContextCases ++
       List(
+        Scenarios.branchDmlCases,
+        Scenarios.branchDdlCases,
+        Scenarios.wapStagedCases,
+        Scenarios.branchPartitionedDmlCases,
+        Scenarios.branchMorDmlCases,
         Scenarios.rtasDmlCases,
         Scenarios.rtasPartitionedDmlCases,
         Scenarios.rtasMorDmlCases,
@@ -135,6 +150,7 @@ object Plan {
         Scenarios.maintenanceMorFoldCases,
         Scenarios.maintenanceMorMetaCases,
         Scenarios.morHazardCases,
+        Scenarios.morBranchMergeCases,
         Scenarios.encryptionPinCases,
         Scenarios.forkColumnDefaultAndDistributionCases,
         Scenarios.forkDeleteFileReplicationCases,

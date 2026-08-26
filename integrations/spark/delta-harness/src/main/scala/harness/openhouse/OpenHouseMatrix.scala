@@ -1,6 +1,6 @@
 package harness
 
-/** Mixes the standard, RTAS, and merge-on-read scenario lists into one catalog source. */
+/** Mixes the complete standard, RTAS, merge-on-read, branch, and WAP catalog. */
 object Scenarios
     extends DmlScenarios
     with NestedTypesScenarios
@@ -22,3 +22,9 @@ object Scenarios
     with MorInteractionScenarios
     with MorSurfaceScenarios
     with MorForkScenarios
+    with BranchDmlScenarios
+    with BranchWapScenarios
+    with BranchInteractionScenarios
+    with BranchSurfaceScenarios
+    with BranchHazardScenarios
+    with BranchMorScenarios
