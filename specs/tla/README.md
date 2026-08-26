@@ -13,7 +13,7 @@ The `RenameGuard` constant toggles the rename fix:
 |---|---|---|---|
 | `rename_unguarded.cfg` | `FALSE` | `renameTableId` as an **unconditional** JPQL UPDATE (no `@Version` predicate, no version bump) | **`NoSnapshotLoss` violated** — a snapshot commit landing between the renamer's load and its UPDATE is silently clobbered (`tlc-rename-unguarded.out`) |
 | `rename_unguarded_version.cfg` | `FALSE` | same, checking the version invariant | **`MonotonicVersion` violated** — the row is rewritten without a version bump (`tlc-rename-unguarded-version.out`) |
-| `rename_guarded.cfg` | `TRUE` | rename carries the caller's expected base; the UPDATE is **conditional** on it (expected metadataLocation + `@Version`) and bumps `@Version` atomically; a 0-row match surfaces as a 409 conflict and the renamer retries from a fresh load | **All invariants hold** (`tlc-rename-guarded.out`) |
+| `rename_guarded.cfg` | `TRUE` | rename carries the caller's expected base; HTS checks it against the row at the service read, then issues an UPDATE **conditional** on that row's `@Version` which also bumps `@Version` atomically; a 0-row match surfaces as a 409 conflict and the renamer retries from a fresh load | **All invariants hold** for token-carrying renames (`tlc-rename-guarded.out`; see the scope note below) |
 
 All configs run with the commit-path divergence check enabled
 (`DivergenceCheck = TRUE`, i.e. the post-`abortIfWriterBaseDivergedFromCatalog`
@@ -33,6 +33,24 @@ The corresponding code fix in this repository makes the guarded model real:
 - `OpenHouseInternalTableOperations` passes the renamer's base metadata
   location through `HouseTableRepository.rename`.
 
+Two facts bound what the guarded run proves:
+
+- The model's atomic guard (`catLoc = rBase` inside `RenameHtsGuarded`) maps
+  to the code's two-step check: the expected `metadataLocation` is compared
+  at the service's `findById`, and the JPQL UPDATE conditions on `@Version`
+  only. Collapsing the two steps into one atomic predicate is sound because
+  every `UserTableRow` write bumps `@Version` — `renameTableId` is the only
+  JPQL UPDATE on the row; all other writes are versioned JPA saves. A future
+  unconditional UPDATE on the row would break this refinement even with the
+  guarded model still passing.
+- TLC verifies the token-present mode only. A rename that supplies no
+  `expectedMetadataLocation` — an old client mid-rollout, or the
+  `INITIAL_VERSION` fallback for legacy tables with no persisted
+  `tableLocation` — is guarded only by the `@Version` CAS between the HTS
+  service's own read and UPDATE, so a commit landing before that read can
+  still be overwritten. The internal catalog therefore always sends the
+  token except for the legacy fallback; the null-token mode is not modeled.
+
 ## Running TLC
 
 Requires Java 11+ and `tla2tools.jar`
@@ -51,13 +69,15 @@ second — the state spaces are 183 / 28 / 6130 distinct states.)
 
 The abridged `NoSnapshotLoss` counterexample from `tlc-rename-unguarded.out`:
 
-1. `RenameLoad` — renamer loads the table at location 0, snapshot set `{}`
-2. `Load(w1)` — writer w1 loads at location 0, stages payload `{w1}`
-3. `WriteMetadata(w1)` / `HtsCommit(w1)` — w1 commits: row moves to
-   location 1, version 1, snapshots `{w1}`
-4. `RenameWriteMetadata` — renamer writes metadata file 2 from its stale
+1. `Load(w1)` — writer w1 loads at location 0, stages payload `{w1}`
+2. `WriteMetadata(w1)` — w1 writes metadata file 1, commit pending
+3. `RenameLoad` — renamer loads the table, still at location 0, snapshot
+   set `{}`
+4. `HtsCommit(w1)` — w1's commit lands: row moves to location 1, version 1,
+   snapshots `{w1}`
+5. `RenameWriteMetadata` — renamer writes metadata file 2 from its stale
    loaded state (snapshot set `{}`)
-5. `RenameHtsUnguarded` — the unconditional UPDATE lands: row now points at
+6. `RenameHtsUnguarded` — the unconditional UPDATE lands: row now points at
    location 2, snapshots `{}`, version still 1 — **w1's committed snapshot
    is lost** (`everCommitted = {w1} ⊄ catSnaps = {}`)
 
