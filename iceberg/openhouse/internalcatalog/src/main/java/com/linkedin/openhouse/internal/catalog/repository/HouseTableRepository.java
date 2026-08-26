@@ -2,6 +2,7 @@ package com.linkedin.openhouse.internal.catalog.repository;
 
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -40,6 +41,12 @@ public interface HouseTableRepository
    *     rename (optimistic-concurrency token). When non-null, the rename fails with a concurrent
    *     update conflict if the table has advanced past this location, instead of silently
    *     overwriting the newer metadata. May be null when the caller has no base to declare.
+   * @throws HouseTableConcurrentUpdateException if the table advanced past {@code
+   *     expectedMetadataLocation} before the rename landed. Every implementation must signal the
+   *     conflict with this type: it is what {@code OpenHouseInternalTableOperations.doCommit}
+   *     catches to convert the conflict into a retriable {@code CommitFailedException}. A conflict
+   *     raised as any other unchecked type escapes that catch and surfaces as a non-retriable
+   *     failure.
    */
   void rename(
       String fromDatabaseId,

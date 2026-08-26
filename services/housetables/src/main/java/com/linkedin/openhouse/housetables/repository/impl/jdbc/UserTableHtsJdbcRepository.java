@@ -4,6 +4,7 @@ import com.linkedin.openhouse.housetables.config.db.jdbc.JdbcProviderConfigurati
 import com.linkedin.openhouse.housetables.model.UserTableRow;
 import com.linkedin.openhouse.housetables.model.UserTableRowPrimaryKey;
 import com.linkedin.openhouse.housetables.repository.HtsRepository;
+import edu.umd.cs.findbugs.annotations.CheckReturnValue;
 import java.util.Optional;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.data.domain.Page;
@@ -118,10 +119,13 @@ public interface UserTableHtsJdbcRepository
    * {@literal @}Version column. A concurrent modification (e.g. a table commit) that advances the
    * row between the caller's read and this update makes the update match 0 rows; callers must treat
    * a 0 return value as a concurrent-modification conflict instead of assuming the rename landed.
+   * That obligation is marked with {@link CheckReturnValue}: discarding the result is a static
+   * analysis error, so a caller cannot silently reopen the lost-update window this method closes.
    *
    * @return the number of rows updated: 1 if the rename landed, 0 if the row was concurrently
    *     modified (version mismatch) or no longer exists.
    */
+  @CheckReturnValue
   @Transactional
   @Modifying(clearAutomatically = true)
   @Query(
