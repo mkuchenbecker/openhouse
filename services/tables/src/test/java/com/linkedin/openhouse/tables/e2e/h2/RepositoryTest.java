@@ -13,6 +13,7 @@ import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.History;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
@@ -1236,6 +1237,75 @@ public class RepositoryTest {
     Assertions.assertEquals(
         renamedTable.get().getTableProperties().get("openhouse.tableUri"),
         "local-cluster.d1.t1_renamed");
+  }
+
+  @Test
+  public void testHouseTablesFixtureRenameMirrorsHtsTokenSemantics() {
+    /*
+     * Pins the H2 fixture's rename guard directly, so drift from the real HTS semantics fails here
+     * rather than leaving the e2e suite green while deployments behave differently.
+     */
+    TableDto createdDTO =
+        TABLE_DTO
+            .toBuilder()
+            .tableId("fixtureRenameTokenTbl")
+            .tableVersion(INITIAL_TABLE_VERSION)
+            .build();
+    TableDto returnDTO = openHouseInternalRepository.save(createdDTO);
+    String databaseId = returnDTO.getDatabaseId();
+    String tableId = returnDTO.getTableId();
+    String currentLocation = returnDTO.getTableLocation();
+    String newLocation = currentLocation + "_renamed";
+
+    /* A stale declared base conflicts. */
+    Assertions.assertThrows(
+        HouseTableConcurrentUpdateException.class,
+        () ->
+            houseTablesRepository.rename(
+                databaseId,
+                tableId,
+                databaseId,
+                tableId + "_staleRename",
+                newLocation,
+                currentLocation + "_stale"));
+    Assertions.assertFalse(
+        houseTablesRepository
+            .findById(
+                HouseTablePrimaryKey.builder()
+                    .databaseId(databaseId)
+                    .tableId(tableId + "_staleRename")
+                    .build())
+            .isPresent());
+
+    /* A null declared base is the old-client mode: no caller-side check, so the rename lands. */
+    houseTablesRepository.rename(
+        databaseId, tableId, databaseId, tableId + "_tokenless", newLocation, null);
+    Assertions.assertTrue(
+        houseTablesRepository
+            .findById(
+                HouseTablePrimaryKey.builder()
+                    .databaseId(databaseId)
+                    .tableId(tableId + "_tokenless")
+                    .build())
+            .isPresent());
+
+    /* A matching declared base lands. */
+    houseTablesRepository.rename(
+        databaseId,
+        tableId + "_tokenless",
+        databaseId,
+        tableId + "_guarded",
+        newLocation + "_v2",
+        newLocation);
+    HouseTable renamed =
+        houseTablesRepository
+            .findById(
+                HouseTablePrimaryKey.builder()
+                    .databaseId(databaseId)
+                    .tableId(tableId + "_guarded")
+                    .build())
+            .orElseThrow(NoSuchElementException::new);
+    Assertions.assertEquals(newLocation + "_v2", renamed.getTableLocation());
   }
 
   @Test
