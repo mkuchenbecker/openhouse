@@ -5,9 +5,9 @@ participant "Engine\n(Spark / Iceberg core)" as ENG
 participant "OpenHouseTableOperations\n(client)" as OHC
 participant "Tables service" as TS
 participant "OpenHouseInternal\nTableOperations" as ITO
-participant "Storage\n(HDFS/blob)" as ST
 participant "House Tables\nservice (HTS)" as HTS
 database "HTS DB" as DB
+participant "Storage\n(HDFS/blob)" as ST
 
 autonumber
 
@@ -44,8 +44,8 @@ title OpenHouse table commit — conflict variant (two writers, same base)
 participant "Writer W\n(engine + client)" as W
 participant "Writer R\n(engine + client)" as R
 participant "Tables service\n(+ internal catalog)" as TS
-participant "Storage" as ST
 participant "HTS + DB" as HTS
+participant "Storage" as ST
 
 autonumber
 

@@ -63,9 +63,9 @@ sequenceDiagram
     participant OHC as OpenHouseTableOperations (client)
     participant TS as Tables service
     participant ITO as OpenHouseInternalTableOperations
-    participant ST as Storage (HDFS/blob)
     participant HTS as House Tables service
     participant DB as HTS database
+    participant ST as Storage (HDFS/blob)
 
     ENG->>ST: write data, manifest, manifest-list files
     ENG->>OHC: commit(base, newMetadata)
