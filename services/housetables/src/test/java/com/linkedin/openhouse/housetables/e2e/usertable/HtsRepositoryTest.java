@@ -259,7 +259,7 @@ public class HtsRepositoryTest {
             .tableId(TEST_TUPLE_1_1.getTableId().toUpperCase())
             .databaseId(TEST_TUPLE_1_1.getDatabaseId())
             .build();
-    htsRepository.save(testUpperCaseRow);
+    UserTableRow savedRow = htsRepository.save(testUpperCaseRow);
 
     UserTableRowPrimaryKey key =
         UserTableRowPrimaryKey.builder()
@@ -271,13 +271,18 @@ public class HtsRepositoryTest {
 
     String renamedUpperCaseTableId = TEST_TUPLE_1_1.getTableId() + "_RENAMED";
 
-    htsRepository.renameTableId(
-        TEST_TUPLE_1_1.getDatabaseId(),
-        TEST_TUPLE_1_1.getTableId(),
-        TEST_TUPLE_1_1.getDatabaseId().toUpperCase(),
-        renamedUpperCaseTableId,
-        TEST_TUPLE_1_1.getTableLoc(),
-        0L);
+    // Condition the rename on the version the row actually carries rather than assuming a freshly
+    // saved row starts at 0, and assert it landed: a 0-row result here means the optimistic-lock
+    // guard rejected the update, which must not be mistaken for a case-sensitivity failure.
+    int updatedRows =
+        htsRepository.renameTableId(
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId(),
+            TEST_TUPLE_1_1.getDatabaseId().toUpperCase(),
+            renamedUpperCaseTableId,
+            TEST_TUPLE_1_1.getTableLoc(),
+            savedRow.getVersion());
+    Assertions.assertEquals(1, updatedRows);
 
     // Try fetching with lower case ID, should still work
     UserTableRow result =

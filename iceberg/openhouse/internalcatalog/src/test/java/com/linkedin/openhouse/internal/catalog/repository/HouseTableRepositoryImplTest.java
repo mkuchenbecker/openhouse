@@ -359,10 +359,16 @@ public class HouseTableRepositoryImplTest {
     }
     Assertions.assertNotNull(renameRequest, "the rename request should have been recorded");
     // The rename request must declare the caller's expected base so HTS can apply its
-    // optimistic-concurrency check.
-    Assertions.assertTrue(
-        renameRequest.getPath().contains("expectedMetadataLocation="),
-        "rename request should carry expectedMetadataLocation, got: " + renameRequest.getPath());
+    // optimistic-concurrency check. Assert the decoded value, not just the parameter's presence:
+    // an empty or wrong token disables the HTS check just as effectively as omitting it.
+    okhttp3.HttpUrl renameUrl = renameRequest.getRequestUrl();
+    Assertions.assertNotNull(renameUrl, "the rename request should carry a parseable url");
+    Assertions.assertEquals(
+        HOUSE_TABLE.getTableLocation(),
+        renameUrl.queryParameter("expectedMetadataLocation"),
+        "rename request should carry the caller's observed metadata location as"
+            + " expectedMetadataLocation, got: "
+            + renameRequest.getPath());
   }
 
   @Test
