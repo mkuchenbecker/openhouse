@@ -28,6 +28,7 @@ object Plan {
     crossedFormats.flatMap { format =>
       List(
         Scenarios.interactionDdlCases(format),
+        Scenarios.interactionRtasCases(format),
         Scenarios.interactionMiscellaneousCases(format)
       ).flatten
     }
@@ -35,11 +36,13 @@ object Plan {
   private def surfaceContributions: List[Case] =
     crossedFormats.flatMap { format =>
       List(
+        Scenarios.surfaceMessageCases(format),
         Scenarios.surfaceReaderCases(format),
         Scenarios.surfaceRewriteProcedureCases(format),
         Scenarios.surfaceSnapshotProcedureCases(format),
         Scenarios.surfaceMetadataCases(format),
         Scenarios.surfaceConcurrencyCases(format),
+        Scenarios.surfaceRtasConcurrencyCases(format),
         Scenarios.surfaceSchemaCases(format),
         Scenarios.surfaceWriteCases(format),
         Scenarios.surfacePinCases(format)
@@ -50,6 +53,7 @@ object Plan {
     crossedFormats.flatMap { format =>
       List(
         Scenarios.hazardReaderCases(format),
+        Scenarios.hazardRtasCases(format),
         Scenarios.hazardWriterCases(format)
       ).flatten
     }
@@ -89,19 +93,26 @@ object Plan {
       Scenarios.negativeCases,
       Scenarios.createSchemaCases,
       Scenarios.layoutFormatCases,
+      Scenarios.rtasLayoutFormatCases,
       Scenarios.ddlSchemaCases,
       Scenarios.ddlNegativeCases,
       Scenarios.ddlPropertyCases,
       Scenarios.ddlMiscellaneousCases,
       Scenarios.ddlPolicyCases,
+      Scenarios.ddlCtasRtasCases,
       Scenarios.ddlTagAclFeatureCases,
       Scenarios.maintenanceCases,
       Scenarios.controlPlaneCases
     ).flatten ++
       interactionContributions ++
+      Scenarios.interactionContextCases ++
       surfaceContributions ++
       hazardContributions ++
       Scenarios.hazardContextCases ++
+      List(
+        Scenarios.rtasDmlCases,
+        Scenarios.rtasPartitionedDmlCases
+      ).flatten ++
       ddlConsumerContributions ++
       readerWriterContributions ++
       List(
