@@ -541,6 +541,55 @@ public class UserTablesServiceTest {
   }
 
   @Test
+  public void testUserTableRenameConflictsWithDropAndRecreate() {
+    // The ABA case a version-only condition cannot catch: the table is dropped and recreated at the
+    // same identity after the rename read it, so the new incarnation is a different table whose
+    // version counter has restarted at the value the rename observed. The rename must conflict
+    // rather than adopt that row and overwrite its metadataLocation with the old incarnation's.
+    UserTableRowPrimaryKey key =
+        UserTableRowPrimaryKey.builder()
+            .databaseId(TEST_TUPLE_1_0.getDatabaseId())
+            .tableId(TEST_TUPLE_1_0.getTableId())
+            .build();
+    UserTableRow observedRow = htsRepository.findById(key).orElseThrow(IllegalStateException::new);
+
+    userTablesService.deleteUserTable(
+        TEST_TUPLE_1_0.getDatabaseId(), TEST_TUPLE_1_0.getTableId(), false);
+    String recreatedLocation = TEST_TUPLE_1_0.getTableLoc() + "_recreated";
+    userTablesService.putUserTable(
+        TEST_TUPLE_1_0.get_userTable().toBuilder().metadataLocation(recreatedLocation).build());
+    UserTableRow recreatedRow = htsRepository.findById(key).orElseThrow(IllegalStateException::new);
+    // The premise: same identity, different table, and the version is back where it was observed.
+    Assertions.assertEquals(observedRow.getVersion(), recreatedRow.getVersion());
+
+    // Freeze the rename's read at the previous incarnation, so its conditional UPDATE runs against
+    // the recreated row while carrying the old incarnation's version and metadataLocation.
+    Mockito.doReturn(Optional.of(observedRow)).when(htsRepository).findById(key);
+
+    Assertions.assertThrows(
+        EntityConcurrentModificationException.class,
+        () ->
+            userTablesService.renameUserTable(
+                TEST_TUPLE_1_0.getDatabaseId(),
+                TEST_TUPLE_1_0.getTableId(),
+                TEST_TUPLE_1_0.getDatabaseId(),
+                TEST_TUPLE_1_0.getTableId() + "_newName",
+                TEST_TUPLE_1_0.getTableLoc() + "_new",
+                TEST_TUPLE_1_0.getTableLoc()));
+
+    Mockito.reset(htsRepository);
+    // The new incarnation kept its own metadata and was not renamed away.
+    UserTableDto result =
+        userTablesService.getUserTable(TEST_TUPLE_1_0.getDatabaseId(), TEST_TUPLE_1_0.getTableId());
+    assertThat(result.getMetadataLocation()).isEqualTo(recreatedLocation);
+    Assertions.assertThrows(
+        NoSuchUserTableException.class,
+        () ->
+            userTablesService.getUserTable(
+                TEST_TUPLE_1_0.getDatabaseId(), TEST_TUPLE_1_0.getTableId() + "_newName"));
+  }
+
+  @Test
   public void testUserTableRestore() {
     UserTable searchByTable =
         UserTable.builder().databaseId(TEST_TUPLE_1_0.getDatabaseId()).build();

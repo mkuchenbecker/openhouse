@@ -188,7 +188,8 @@ public class HtsRepositoryTest {
             TEST_TUPLE_1_1.getDatabaseId(),
             TEST_TUPLE_1_1.getTableId() + "_renamed",
             newTableMetadata,
-            savedRow.getVersion());
+            savedRow.getVersion(),
+            savedRow.getMetadataLocation());
     Assertions.assertEquals(1, updatedRows);
 
     UserTableRow result =
@@ -227,7 +228,8 @@ public class HtsRepositoryTest {
             TEST_TUPLE_1_1.getDatabaseId(),
             TEST_TUPLE_1_1.getTableId() + "_renamed",
             TEST_TUPLE_1_1.getTableLoc() + "_renamed",
-            savedRow.getVersion());
+            savedRow.getVersion(),
+            savedRow.getMetadataLocation());
     Assertions.assertEquals(0, updatedRows);
 
     // The winning commit's row is intact: same id, same metadataLocation, same version.
@@ -241,6 +243,62 @@ public class HtsRepositoryTest {
             .orElse(UserTableRow.builder().build());
     assertThat(result.getMetadataLocation()).isEqualTo(TEST_TUPLE_1_1.getTableLoc() + "_v2");
     assertThat(result.getVersion()).isEqualTo(committedRow.getVersion());
+    assertThat(
+            htsRepository.existsById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(TEST_TUPLE_1_1.getDatabaseId())
+                    .tableId(TEST_TUPLE_1_1.getTableId() + "_renamed")
+                    .build()))
+        .isFalse();
+  }
+
+  @Test
+  public void testRenameUserTableAfterDropAndRecreateUpdatesNoRows() {
+    // A version-only condition is vulnerable to ABA, because @Version is a per-row counter that
+    // restarts at 0 when a row is deleted and reinserted. Here the renamer observes the row, the
+    // table is then dropped and recreated at the same identity as a different table with its own
+    // metadata, and the recreated row lands back on the observed version. Conditioning the update
+    // on the observed metadataLocation as well is what keeps the rename from adopting the new
+    // incarnation and overwriting its metadata with the previous incarnation's.
+    UserTableRow observedRow = htsRepository.save(TEST_TUPLE_1_1.get_userTableRow());
+    Long observedVersion = observedRow.getVersion();
+    String observedLocation = observedRow.getMetadataLocation();
+
+    UserTableRowPrimaryKey key =
+        UserTableRowPrimaryKey.builder()
+            .databaseId(TEST_TUPLE_1_1.getDatabaseId())
+            .tableId(TEST_TUPLE_1_1.getTableId())
+            .build();
+    htsRepository.deleteById(key);
+    String recreatedLocation = TEST_TUPLE_1_1.getTableLoc() + "_recreated";
+    UserTableRow recreatedRow =
+        htsRepository.save(
+            TEST_TUPLE_1_1
+                .get_userTableRow()
+                .toBuilder()
+                .version(null)
+                .metadataLocation(recreatedLocation)
+                .build());
+    // The premise of the race: the recreated row is a different table, yet its version counter has
+    // restarted at exactly the value the renamer observed on the previous incarnation.
+    Assertions.assertEquals(observedVersion, recreatedRow.getVersion());
+    Assertions.assertNotEquals(observedLocation, recreatedRow.getMetadataLocation());
+
+    int updatedRows =
+        htsRepository.renameTableId(
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId(),
+            TEST_TUPLE_1_1.getDatabaseId(),
+            TEST_TUPLE_1_1.getTableId() + "_renamed",
+            observedLocation + "_renamed",
+            observedVersion,
+            observedLocation);
+    Assertions.assertEquals(0, updatedRows);
+
+    // The new incarnation is untouched: same identity, its own metadataLocation, its own version.
+    UserTableRow result = htsRepository.findById(key).orElse(UserTableRow.builder().build());
+    assertThat(result.getMetadataLocation()).isEqualTo(recreatedLocation);
+    assertThat(result.getVersion()).isEqualTo(recreatedRow.getVersion());
     assertThat(
             htsRepository.existsById(
                 UserTableRowPrimaryKey.builder()
@@ -281,7 +339,8 @@ public class HtsRepositoryTest {
             TEST_TUPLE_1_1.getDatabaseId().toUpperCase(),
             renamedUpperCaseTableId,
             TEST_TUPLE_1_1.getTableLoc(),
-            savedRow.getVersion());
+            savedRow.getVersion(),
+            savedRow.getMetadataLocation());
     Assertions.assertEquals(1, updatedRows);
 
     // Try fetching with lower case ID, should still work

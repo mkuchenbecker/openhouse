@@ -115,27 +115,45 @@ public interface UserTableHtsJdbcRepository
 
   /**
    * Renames a table row, participating in the optimistic-lock protocol: the update only matches a
-   * row still at {@code expectedVersion} and atomically bumps {@link UserTableRow}'s
-   * {@literal @}Version column. A concurrent modification (e.g. a table commit) that advances the
-   * row between the caller's read and this update makes the update match 0 rows; callers must treat
-   * a 0 return value as a concurrent-modification conflict instead of assuming the rename landed.
-   * That obligation is marked with {@link CheckReturnValue}: discarding the result is a static
-   * analysis error, so a caller cannot silently reopen the lost-update window this method closes.
+   * row still at both {@code expectedVersion} and {@code expectedMetadataLocation}, and it
+   * atomically bumps {@link UserTableRow}'s {@literal @}Version column. A concurrent modification
+   * (e.g. a table commit) that advances the row between the caller's read and this update makes the
+   * update match 0 rows; callers must treat a 0 return value as a concurrent-modification conflict
+   * instead of assuming the rename landed. That obligation is marked with {@link CheckReturnValue}:
+   * discarding the result is a static analysis error, so a caller cannot silently reopen the
+   * lost-update window this method closes.
    *
+   * <p>The metadata location is part of the condition because {@literal @}Version alone cannot
+   * identify a row across incarnations. It is a per-row counter that restarts at 0 when a row is
+   * deleted and reinserted, so a drop and recreate between the caller's read and this update would
+   * present a different table at the same identity and the same version, and a version-only
+   * condition would match it. Metadata locations are {@code NNNNN-<uuid>.metadata.json} files that
+   * are never reused, so conditioning on the observed location makes the guard identify the exact
+   * row state the caller read. It also makes the guard self-contained rather than dependent on
+   * every other writer bumping the version.
+   *
+   * @param expectedVersion the version the caller observed on the row it intends to rename.
+   * @param expectedMetadataLocation the metadata location the caller observed on that same row. A
+   *     user table row always carries one: {@link
+   *     com.linkedin.openhouse.housetables.api.spec.model.UserTable#getMetadataLocation()} is
+   *     {@literal @}NotEmpty and validated on the only path that writes a row, so this is never
+   *     null and the condition never degenerates into a never-matching null comparison.
    * @return the number of rows updated: 1 if the rename landed, 0 if the row was concurrently
-   *     modified (version mismatch) or no longer exists.
+   *     modified (version or metadata location mismatch) or no longer exists.
    */
   @CheckReturnValue
   @Transactional
   @Modifying(clearAutomatically = true)
   @Query(
       "UPDATE UserTableRow table SET table.tableId = :toTableId, table.metadataLocation = :metadataLocation, table.databaseId = :toDatabaseId, table.version = table.version + 1 "
-          + "WHERE lower(table.databaseId) = lower(:fromDatabaseId) AND lower(table.tableId) = lower(:fromTableId) AND table.version = :expectedVersion")
+          + "WHERE lower(table.databaseId) = lower(:fromDatabaseId) AND lower(table.tableId) = lower(:fromTableId) AND table.version = :expectedVersion "
+          + "AND table.metadataLocation = :expectedMetadataLocation")
   int renameTableId(
       @Param("fromDatabaseId") String fromDatabaseId,
       @Param("fromTableId") String fromTableId,
       @Param("toDatabaseId") String toDatabaseId,
       @Param("toTableId") String toTableId,
       @Param("metadataLocation") String metadataLocation,
-      @Param("expectedVersion") Long expectedVersion);
+      @Param("expectedVersion") Long expectedVersion,
+      @Param("expectedMetadataLocation") String expectedMetadataLocation);
 }

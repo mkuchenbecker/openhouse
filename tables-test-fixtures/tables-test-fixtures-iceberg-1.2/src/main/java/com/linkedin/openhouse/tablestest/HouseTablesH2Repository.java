@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
@@ -67,6 +68,20 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
               // been concurrently modified past the caller's declared base.
               if (expectedMetadataLocation != null
                   && !expectedMetadataLocation.equals(houseTable.getTableLocation())) {
+                throw new HouseTableConcurrentUpdateException(
+                    String.format("%s.%s", fromDatabaseId, fromTableId), new RuntimeException());
+              }
+              // Mirror the HTS conditional UPDATE, which matches only a row still carrying the
+              // location observed by the read above. Conditioning on the observed location rather
+              // than on the caller's declared base guards the tokenless mode too, and it rejects a
+              // table that was dropped and recreated at this identity in between: that new
+              // incarnation restarts HTS's version counter at the observed value, so a
+              // version-only condition would rename it onto the previous incarnation's metadata.
+              if (!this.findById(fromKey)
+                  .map(
+                      current ->
+                          Objects.equals(houseTable.getTableLocation(), current.getTableLocation()))
+                  .orElse(false)) {
                 throw new HouseTableConcurrentUpdateException(
                     String.format("%s.%s", fromDatabaseId, fromTableId), new RuntimeException());
               }
