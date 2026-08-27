@@ -77,7 +77,8 @@ public class OpenHouseJobTableHtsApiHandler implements JobTableHtsApiHandler {
   }
 
   @Override
-  public ApiResponse<Void> renameEntity(Job fromEntity, Job toEntity) {
+  public ApiResponse<Void> renameEntity(
+      Job fromEntity, Job toEntity, String expectedMetadataLocation) {
     throw new UnsupportedOperationException("Rename job is unsupported");
   }
 }

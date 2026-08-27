@@ -48,7 +48,8 @@ public class MockUserTableHtsApiHandler implements UserTableHtsApiHandler {
   }
 
   @Override
-  public ApiResponse<Void> renameEntity(UserTable fromUserTable, UserTable toUserTable) {
+  public ApiResponse<Void> renameEntity(
+      UserTable fromUserTable, UserTable toUserTable, String expectedMetadataLocation) {
     return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
   }
 }

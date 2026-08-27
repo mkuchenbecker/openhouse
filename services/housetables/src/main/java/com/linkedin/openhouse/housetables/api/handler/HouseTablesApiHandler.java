@@ -61,8 +61,14 @@ public interface HouseTablesApiHandler<K, V> {
   /**
    * Function to rename a row in a House Table atomically.
    *
-   * @param fromEntity The object to identify the row to rename.
-   * @param toEntity The object to rename the row to.
+   * @param fromEntity The object to identify the row to rename. Identity only: no field on it
+   *     participates in the concurrency check.
+   * @param toEntity The object to rename the row to, carrying the new metadata location.
+   * @param expectedMetadataLocation The metadata location the caller observed for {@code
+   *     fromEntity} when it initiated the rename — its optimistic-concurrency token. When non-null,
+   *     the rename must conflict rather than land if the row has advanced past this location. Null
+   *     means the caller declares no base, which leaves only whatever guard the implementation
+   *     applies between its own read and its update.
    */
-  ApiResponse<Void> renameEntity(V fromEntity, V toEntity);
+  ApiResponse<Void> renameEntity(V fromEntity, V toEntity, String expectedMetadataLocation);
 }

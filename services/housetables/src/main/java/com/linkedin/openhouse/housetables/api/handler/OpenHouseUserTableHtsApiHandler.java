@@ -101,7 +101,8 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
   }
 
   @Override
-  public ApiResponse<Void> renameEntity(UserTable fromUserTable, UserTable toUserTable) {
+  public ApiResponse<Void> renameEntity(
+      UserTable fromUserTable, UserTable toUserTable, String expectedMetadataLocation) {
     UserTableKey fromUserTableKey =
         UserTableKey.builder()
             .databaseId(fromUserTable.getDatabaseId())
@@ -113,15 +114,13 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
             .tableId(toUserTable.getTableId())
             .build();
     userTablesHtsApiValidator.validateRenameEntity(fromUserTableKey, toUserTableKey);
-    // fromUserTable.metadataLocation carries the caller's expected current metadata location
-    // (optimistic-concurrency token); null when the caller did not supply one.
     userTableService.renameUserTable(
         fromUserTable.getDatabaseId(),
         fromUserTable.getTableId(),
         toUserTable.getDatabaseId(),
         toUserTable.getTableId(),
         toUserTable.getMetadataLocation(),
-        fromUserTable.getMetadataLocation());
+        expectedMetadataLocation);
     return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
   }
 }
