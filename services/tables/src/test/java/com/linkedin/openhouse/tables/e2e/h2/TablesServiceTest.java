@@ -18,6 +18,7 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
@@ -600,6 +601,103 @@ public class TablesServiceTest {
             .getTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER)
             .getTableUUID());
     tablesService.deleteTable(tableDtoCopy.getDatabaseId(), TABLE_DTO.getTableId(), TEST_USER);
+  }
+
+  /** A non-creator holding UPDATE_TABLE_METADATA can replace; the creator is preserved. */
+  @Test
+  public void testStageReplaceAllowedForNonCreatorWithUpdatePrivilege() {
+    TableDto tableDtoCopy =
+        TABLE_DTO
+            .toBuilder()
+            .tableProperties(ImmutableMap.of(CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true"))
+            .policies(null)
+            .build();
+    Pair<TableDto, Boolean> createResult =
+        tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
+    try {
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Pair<TableDto, Boolean> replaceResult =
+          tablesService.putTable(replaceRequest, "notTheCreator", true);
+      Assertions.assertFalse(replaceResult.getSecond());
+      Assertions.assertEquals(TEST_USER, replaceResult.getFirst().getTableCreator());
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
+  }
+
+  /**
+   * Replace is denied when the acting principal lacks UPDATE_TABLE_METADATA — even for the table's
+   * creator. This pins the permission-model change: the creator has no implicit replace right, so a
+   * regression back to creator-equality (which would allow this call) fails this test.
+   */
+  @Test
+  public void testStageReplaceDeniedWithoutUpdatePrivilege() {
+    TableDto tableDtoCopy = TABLE_DTO.toBuilder().build();
+    Pair<TableDto, Boolean> createResult =
+        tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
+    try {
+      Mockito.when(
+              authorizationHandler.checkAccessDecision(
+                  Mockito.any(),
+                  Mockito.any(TableDto.class),
+                  Mockito.eq(Privileges.UPDATE_TABLE_METADATA)))
+          .thenReturn(false);
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Assertions.assertThrows(
+          AccessDeniedException.class,
+          () -> tablesService.putTable(replaceRequest, TEST_USER, true));
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
+  }
+
+  /** Replace of a replica table escalates to SYSTEM_ADMIN like every other write. */
+  @Test
+  public void testStageReplaceOnReplicaTableRequiresSystemAdmin() {
+    UUID expectedUUID = UUID.randomUUID();
+    TableDto tableDtoCopy =
+        TABLE_DTO
+            .toBuilder()
+            .tableProperties(
+                ImmutableMap.of(
+                    CatalogConstants.OPENHOUSE_UUID_KEY,
+                    expectedUUID.toString(),
+                    "openhouse.tableId",
+                    TABLE_DTO.getTableId(),
+                    "openhouse.databaseId",
+                    TABLE_DTO.getDatabaseId(),
+                    "openhouse.tableLocation",
+                    String.format(
+                        "/tmp/%s/%s-%s/metadata.json",
+                        TABLE_DTO.getDatabaseId(), TABLE_DTO.getTableId(), expectedUUID)))
+            .tableType(TableType.REPLICA_TABLE)
+            .build();
+    Pair<TableDto, Boolean> createResult =
+        tablesService.putTable(buildCreateUpdateTableRequestBody(tableDtoCopy), TEST_USER, true);
+    try {
+      Mockito.when(
+              authorizationHandler.checkAccessDecision(
+                  Mockito.any(), Mockito.any(TableDto.class), Mockito.eq(Privileges.SYSTEM_ADMIN)))
+          .thenReturn(false);
+      CreateUpdateTableRequestBody replaceRequest =
+          buildCreateUpdateTableRequestBody(createResult.getFirst())
+              .toBuilder()
+              .stageReplace(true)
+              .build();
+      Assertions.assertThrows(
+          AccessDeniedException.class,
+          () -> tablesService.putTable(replaceRequest, TEST_USER, true));
+    } finally {
+      tablesService.deleteTable(tableDtoCopy.getDatabaseId(), tableDtoCopy.getTableId(), TEST_USER);
+    }
   }
 
   /** Test replica table permissions: update requires SYSTEM_ADMIN, delete uses DELETE_TABLE. */
