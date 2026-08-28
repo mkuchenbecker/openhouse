@@ -5,8 +5,12 @@ import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestWire;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
+import com.linkedin.openhouse.tables.exception.ViewCommitConflictException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
+import com.linkedin.openhouse.tables.exception.ViewNameConflictException;
+import com.linkedin.openhouse.tables.model.ViewCreationRequest;
 import com.linkedin.openhouse.tables.model.ViewIdentifiersPage;
+import com.linkedin.openhouse.tables.model.ViewPageRequest;
 import com.linkedin.openhouse.tables.services.ViewsService;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
@@ -19,6 +23,13 @@ import org.springframework.stereotype.Component;
 /**
  * Default Iceberg REST views API handler. The flow is strictly parse, validate, unwrap, delegate to
  * the service, and serialize: no business logic and no feature gating live here.
+ *
+ * <p>This handler is also the adapter between the service's outcome contract and the HTTP error
+ * vocabulary. {@link ViewsService} reports absence as a value and contention as a checked
+ * exception; the Spring advice that writes the response renders unchecked {@link ViewApiException}s
+ * and cannot be changed from here. Converting between the two is this class's job and belongs
+ * nowhere else — a service or a repository that throws {@code ViewApiException} directly has
+ * skipped the seam.
  *
  * <p>Namespace handling: OpenHouse namespaces are single-level. The spec encodes multi-level
  * namespaces with the {@code 0x1F} unit separator in the path segment; a namespace carrying one
@@ -52,10 +63,12 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
     String databaseId = singleLevelNamespace(namespace);
     viewsApiValidator.validateListViews(databaseId, pageToken, pageSize);
     ViewIdentifiersPage page =
-        viewsService.listViews(databaseId, pageToken, pageSize, actingPrincipal);
+        viewsService.listViews(
+            databaseId, ViewPageRequest.of(pageToken, pageSize), actingPrincipal);
     return jsonResponse(
         HttpStatus.OK,
-        IcebergRestWire.toListViewsJson(page.getIdentifiers(), page.getNextPageToken()));
+        IcebergRestWire.toListViewsJson(
+            page.getIdentifiers(), page.getNextPageToken().orElse(null)));
   }
 
   @Override
@@ -64,14 +77,21 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
     String databaseId = singleLevelNamespace(namespace);
     CreateViewRequest request = IcebergRestWire.parseCreateViewRequest(requestJson);
     viewsApiValidator.validateCreateView(databaseId, request);
-    ViewMetadata metadata =
-        viewsService.createView(
-            TableIdentifier.of(databaseId, request.name()),
-            request.schema(),
-            request.viewVersion(),
-            request.location(),
-            request.properties(),
-            actingPrincipal);
+    ViewCreationRequest creation =
+        ViewCreationRequest.builder()
+            .identifier(TableIdentifier.of(databaseId, request.name()))
+            .schema(request.schema())
+            .requestedVersion(request.viewVersion())
+            .location(request.location())
+            .properties(request.properties())
+            .build();
+    ViewMetadata metadata;
+    try {
+      metadata = viewsService.createView(creation, actingPrincipal);
+    } catch (ViewNameConflictException conflict) {
+      throw new ViewApiException(
+          conflict.getKind().getErrorCode(), conflict.getMessage(), conflict);
+    }
     return jsonResponse(HttpStatus.OK, IcebergRestWire.toLoadViewResultJson(metadata));
   }
 
@@ -79,8 +99,11 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
   public ApiResponse<String> loadView(String namespace, String view, String actingPrincipal) {
     String databaseId = singleLevelNamespace(namespace);
     viewsApiValidator.validateViewIdentifier(databaseId, view);
+    TableIdentifier identifier = TableIdentifier.of(databaseId, view);
     ViewMetadata metadata =
-        viewsService.loadView(TableIdentifier.of(databaseId, view), actingPrincipal);
+        viewsService
+            .loadView(identifier, actingPrincipal)
+            .orElseThrow(() -> noSuchView(identifier));
     return jsonResponse(HttpStatus.OK, IcebergRestWire.toLoadViewResultJson(metadata));
   }
 
@@ -90,12 +113,17 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
     String databaseId = singleLevelNamespace(namespace);
     UpdateTableRequest request = IcebergRestWire.parseCommitViewRequest(requestJson);
     viewsApiValidator.validateReplaceView(databaseId, view, request);
-    ViewMetadata metadata =
-        viewsService.replaceView(
-            TableIdentifier.of(databaseId, view),
-            request.requirements(),
-            request.updates(),
-            actingPrincipal);
+    TableIdentifier identifier = TableIdentifier.of(databaseId, view);
+    ViewMetadata metadata;
+    try {
+      metadata =
+          viewsService
+              .replaceView(identifier, request.requirements(), request.updates(), actingPrincipal)
+              .orElseThrow(() -> noSuchView(identifier));
+    } catch (ViewCommitConflictException conflict) {
+      throw new ViewApiException(
+          ViewErrorCode.CONCURRENT_VIEW_MODIFICATION, conflict.getMessage(), conflict);
+    }
     return jsonResponse(HttpStatus.OK, IcebergRestWire.toLoadViewResultJson(metadata));
   }
 
@@ -103,7 +131,10 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
   public ApiResponse<Void> dropView(String namespace, String view, String actingPrincipal) {
     String databaseId = singleLevelNamespace(namespace);
     viewsApiValidator.validateViewIdentifier(databaseId, view);
-    viewsService.dropView(TableIdentifier.of(databaseId, view), actingPrincipal);
+    TableIdentifier identifier = TableIdentifier.of(databaseId, view);
+    if (!viewsService.dropView(identifier, actingPrincipal)) {
+      throw noSuchView(identifier);
+    }
     return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
   }
 
@@ -111,14 +142,29 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
   public ApiResponse<Void> viewExists(String namespace, String view, String actingPrincipal) {
     String databaseId = singleLevelNamespace(namespace);
     viewsApiValidator.validateViewIdentifier(databaseId, view);
-    if (viewsService.viewExists(TableIdentifier.of(databaseId, view), actingPrincipal)) {
+    TableIdentifier identifier = TableIdentifier.of(databaseId, view);
+    if (viewsService.viewExists(identifier, actingPrincipal)) {
       return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
     }
     // Deliberately a throw rather than a 404 return: an absent view goes through the exception
     // path like every other failure, so it gets the same failure-path service audit event (the
     // envelope itself is suppressed for HEAD by the exception handler either way).
-    throw new ViewApiException(
-        ViewErrorCode.NO_SUCH_VIEW, String.format("View %s.%s does not exist", databaseId, view));
+    throw noSuchView(identifier);
+  }
+
+  /**
+   * The 404 for a view this catalog serves but does not have.
+   *
+   * <p>Message shape is a wire contract, not prose: Iceberg's {@code ViewErrorHandler} copies it
+   * verbatim into the {@code NoSuchViewException} it raises, and the conformance suite asserts on
+   * the result. It echoes the identifier only, never request content.
+   *
+   * @param identifier the view that was not found
+   * @return the exception to throw
+   */
+  private static ViewApiException noSuchView(TableIdentifier identifier) {
+    return new ViewApiException(
+        ViewErrorCode.NO_SUCH_VIEW, String.format("View does not exist: %s", identifier));
   }
 
   /**

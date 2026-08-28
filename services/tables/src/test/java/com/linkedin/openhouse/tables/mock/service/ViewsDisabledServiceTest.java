@@ -3,6 +3,8 @@ package com.linkedin.openhouse.tables.mock.service;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import com.linkedin.openhouse.tables.model.IcebergRestViewFixtures;
+import com.linkedin.openhouse.tables.model.ViewCreationRequest;
+import com.linkedin.openhouse.tables.model.ViewPageRequest;
 import com.linkedin.openhouse.tables.services.ViewsDisabledService;
 import java.util.Collections;
 import java.util.stream.Stream;
@@ -35,17 +37,20 @@ public class ViewsDisabledServiceTest {
             (Operation)
                 service ->
                     service.listViews(
-                        IcebergRestViewFixtures.DATABASE_ID, null, null, "principal")),
+                        IcebergRestViewFixtures.DATABASE_ID,
+                        ViewPageRequest.unpaged(),
+                        "principal")),
         Arguments.of(
             "createView",
             (Operation)
                 service ->
                     service.createView(
-                        IDENTIFIER,
-                        IcebergRestViewFixtures.SCHEMA,
-                        IcebergRestViewFixtures.viewVersion(),
-                        null,
-                        Collections.emptyMap(),
+                        ViewCreationRequest.builder()
+                            .identifier(IDENTIFIER)
+                            .schema(IcebergRestViewFixtures.SCHEMA)
+                            .requestedVersion(IcebergRestViewFixtures.viewVersion())
+                            .properties(Collections.emptyMap())
+                            .build(),
                         "principal")),
         Arguments.of(
             "replaceView",
@@ -56,9 +61,15 @@ public class ViewsDisabledServiceTest {
         Arguments.of("dropView", (Operation) service -> service.dropView(IDENTIFIER, "principal")));
   }
 
+  /**
+   * Declares {@code throws Exception} so the operations that now carry checked conflict exceptions
+   * can be written as lambdas here. None of them can actually be thrown by this service, which
+   * refuses before it could reach a conflict; the declaration exists for the compiler, not as a
+   * claim about behavior.
+   */
   @FunctionalInterface
   interface Operation {
-    void run(ViewsDisabledService service);
+    void run(ViewsDisabledService service) throws Exception;
   }
 
   @ParameterizedTest(name = "{0}")

@@ -2,20 +2,19 @@ package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
+import com.linkedin.openhouse.tables.model.ViewCreationRequest;
 import com.linkedin.openhouse.tables.model.ViewIdentifiersPage;
+import com.linkedin.openhouse.tables.model.ViewPageRequest;
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.MetadataUpdate;
-import org.apache.iceberg.Schema;
 import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.view.ViewMetadata;
-import org.apache.iceberg.view.ViewVersion;
-import org.springframework.stereotype.Component;
 
 /**
- * The only {@link ViewsService} bean today. View business logic is intentionally out of scope for
- * this API-only increment, so every operation reports that views are disabled.
+ * The {@link ViewsService} used when view support is switched off for this deployment: every
+ * operation reports that views are disabled.
  *
  * <p>It throws a {@link ViewApiException} carrying {@link ViewErrorCode#VIEWS_DISABLED}, which the
  * views exception handler renders as a spec 404: {@code NoSuchNamespaceException} on the create and
@@ -24,9 +23,14 @@ import org.springframework.stereotype.Component;
  * as absent — Spark's {@code ResolveViews} falls through to {@code loadTable} — which preserves the
  * design's default-off posture with zero client-side special-casing.
  *
- * <p>The later real service replaces this bean and implements the per-database gate.
+ * <p>Note that this class throws rather than answering the "absent" value the contract offers
+ * ({@code Optional.empty()}, {@code false}). That is deliberate and is the one place the
+ * distinction matters: an empty {@code Optional} from {@link #loadView} would mean "this catalog
+ * serves views and has no such view", which renders the same 404 but is a different claim from
+ * "this catalog does not serve views". Only the second is true here, and the disabled posture
+ * depends on it staying true for {@link #viewExists} and {@link #dropView}, whose {@code false}
+ * would otherwise be indistinguishable from a served-but-empty catalog.
  */
-@Component
 public class ViewsDisabledService implements ViewsService {
 
   /**
@@ -36,7 +40,7 @@ public class ViewsDisabledService implements ViewsService {
   static final String VIEWS_DISABLED_MESSAGE = "Views are disabled";
 
   @Override
-  public ViewMetadata loadView(TableIdentifier identifier, String actingPrincipal) {
+  public Optional<ViewMetadata> loadView(TableIdentifier identifier, String actingPrincipal) {
     throw viewsDisabled();
   }
 
@@ -47,23 +51,17 @@ public class ViewsDisabledService implements ViewsService {
 
   @Override
   public ViewIdentifiersPage listViews(
-      String databaseId, String pageToken, Integer pageSize, String actingPrincipal) {
+      String databaseId, ViewPageRequest pageRequest, String actingPrincipal) {
     throw viewsDisabled();
   }
 
   @Override
-  public ViewMetadata createView(
-      TableIdentifier identifier,
-      Schema schema,
-      ViewVersion requestedVersion,
-      String location,
-      Map<String, String> properties,
-      String actingPrincipal) {
+  public ViewMetadata createView(ViewCreationRequest request, String actingPrincipal) {
     throw viewsDisabled();
   }
 
   @Override
-  public ViewMetadata replaceView(
+  public Optional<ViewMetadata> replaceView(
       TableIdentifier identifier,
       List<UpdateRequirement> requirements,
       List<MetadataUpdate> updates,
@@ -72,7 +70,7 @@ public class ViewsDisabledService implements ViewsService {
   }
 
   @Override
-  public void dropView(TableIdentifier identifier, String actingPrincipal) {
+  public boolean dropView(TableIdentifier identifier, String actingPrincipal) {
     throw viewsDisabled();
   }
 
