@@ -2,13 +2,10 @@ package com.linkedin.openhouse.common.exception.handler;
 
 import com.linkedin.openhouse.common.api.spec.ErrorResponseBody;
 import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
-import javax.persistence.PersistenceException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.orm.jpa.JpaSystemException;
 
 public class OpenHouseExceptionHandlerTest {
 
@@ -16,118 +13,66 @@ public class OpenHouseExceptionHandlerTest {
       "Column user_table_row.entity_type holds unrecognized value [TÁBLE]; "
           + "only TABLE, VIEW (in any case) and NULL are valid";
 
-  private static final String HIBERNATE_MSG = "Error attempting to apply AttributeConverter";
-
   private final OpenHouseExceptionHandler handler = new OpenHouseExceptionHandler();
 
+  /**
+   * The corruption response is a stable generic 500: the column, stored value, and converter stack
+   * are operator material that goes to the server log under a correlation id, and the body names
+   * only that id. Persistence detail must not become part of the public error contract.
+   */
   @Test
-  public void testCorruptEntityTypeIsServerErrorWithDiagnostic() {
+  public void testCorruptEntityTypeIsStableServerErrorWithoutDiagnostic() {
     CorruptEntityTypeException corrupt =
         new CorruptEntityTypeException(CORRUPT_MSG, new IllegalArgumentException("TÁBLE"));
 
     ResponseEntity<ErrorResponseBody> response = handler.handleCorruptEntityTypeException(corrupt);
 
-    assertServerErrorCarryingDiagnostic(response);
-    Assertions.assertEquals("TÁBLE", response.getBody().getCause());
-  }
-
-  /** The shape Hibernate produces when the attribute converter fails mid-result-set. */
-  @Test
-  public void testJpaSystemExceptionUnwrapsToCorruptEntityTypeDiagnostic() {
-    JpaSystemException wrapped =
-        new JpaSystemException(
-            new PersistenceException(
-                HIBERNATE_MSG,
-                new CorruptEntityTypeException(
-                    CORRUPT_MSG, new IllegalArgumentException("TÁBLE"))));
-
-    ResponseEntity<ErrorResponseBody> response =
-        handler.handleWrappedCorruptEntityTypeException(wrapped);
-
-    assertServerErrorCarryingDiagnostic(response);
-    Assertions.assertFalse(response.getBody().getMessage().contains(HIBERNATE_MSG));
-  }
-
-  /** The other wrapper the JPA translator can pick, given the exception's IAE ancestry. */
-  @Test
-  public void testInvalidDataAccessApiUsageExceptionUnwrapsToCorruptEntityTypeDiagnostic() {
-    InvalidDataAccessApiUsageException wrapped =
-        new InvalidDataAccessApiUsageException(
-            HIBERNATE_MSG,
-            new CorruptEntityTypeException(CORRUPT_MSG, new IllegalArgumentException("TÁBLE")));
-
-    ResponseEntity<ErrorResponseBody> response =
-        handler.handleWrappedCorruptEntityTypeException(wrapped);
-
-    assertServerErrorCarryingDiagnostic(response);
-  }
-
-  @Test
-  public void testDeeplyNestedCorruptEntityTypeIsStillUnwrapped() {
-    JpaSystemException wrapped =
-        new JpaSystemException(
-            new PersistenceException(
-                HIBERNATE_MSG,
-                new IllegalStateException(
-                    "outer",
-                    new RuntimeException(
-                        "inner",
-                        new CorruptEntityTypeException(
-                            CORRUPT_MSG, new IllegalArgumentException("TÁBLE"))))));
-
-    ResponseEntity<ErrorResponseBody> response =
-        handler.handleWrappedCorruptEntityTypeException(wrapped);
-
-    assertServerErrorCarryingDiagnostic(response);
-  }
-
-  @Test
-  public void testUnrelatedDataAccessExceptionKeepsGenericBody() {
-    JpaSystemException unrelated =
-        new JpaSystemException(new PersistenceException("connection reset"));
-
-    ResponseEntity<ErrorResponseBody> response =
-        handler.handleWrappedCorruptEntityTypeException(unrelated);
-    ResponseEntity<ErrorResponseBody> generic = handler.handleGenericException(unrelated);
-
-    Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
-    Assertions.assertEquals(generic.getBody().getMessage(), response.getBody().getMessage());
-    Assertions.assertEquals(generic.getBody().getCause(), response.getBody().getCause());
-    Assertions.assertFalse(response.getBody().getMessage().contains(CORRUPT_MSG));
-  }
-
-  @Test
-  public void testCyclicCauseChainTerminates() {
-    ResponseEntity<ErrorResponseBody> response =
-        handler.handleWrappedCorruptEntityTypeException(
-            new JpaSystemException(new SelfCausedException("cycle")));
-
-    Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
-    Assertions.assertFalse(response.getBody().getMessage().contains(CORRUPT_MSG));
-  }
-
-  private void assertServerErrorCarryingDiagnostic(ResponseEntity<ErrorResponseBody> response) {
     Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
     ErrorResponseBody body = response.getBody();
     Assertions.assertNotNull(body);
     Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, body.getStatus());
     Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase(), body.getError());
-    Assertions.assertEquals(CORRUPT_MSG, body.getMessage());
-    Assertions.assertNotNull(body.getStacktrace());
+
+    // The stable message points at the log, not at the data.
+    Assertions.assertTrue(body.getMessage().contains("correlationId="));
+    Assertions.assertFalse(body.getMessage().contains("user_table_row.entity_type"));
+    Assertions.assertFalse(body.getMessage().contains("TÁBLE"));
+
+    // No stack trace and no cause detail leave the process.
+    Assertions.assertNull(body.getStacktrace());
+    Assertions.assertEquals("Not Available", body.getCause());
+  }
+
+  /** Each response carries its own correlation id, so two failures are distinguishable in logs. */
+  @Test
+  public void testCorruptEntityTypeCorrelationIdsAreUniquePerResponse() {
+    CorruptEntityTypeException corrupt = new CorruptEntityTypeException(CORRUPT_MSG);
+
+    String first = handler.handleCorruptEntityTypeException(corrupt).getBody().getMessage();
+    String second = handler.handleCorruptEntityTypeException(corrupt).getBody().getMessage();
+
+    Assertions.assertNotEquals(first, second);
   }
 
   /**
-   * {@link Throwable#initCause} forbids a self-referential cause, so the cycle is expressed by
-   * overriding the accessor.
+   * The corruption type deliberately shares no ancestry with {@link IllegalArgumentException}, so
+   * it can never fall through to the 400-shaped client-input advice.
    */
-  private static class SelfCausedException extends RuntimeException {
-    SelfCausedException(String message) {
-      super(message);
-    }
+  @Test
+  public void testCorruptEntityTypeIsNotCatchCompatibleWithClientInputFailures() {
+    Assertions.assertFalse(
+        IllegalArgumentException.class.isAssignableFrom(CorruptEntityTypeException.class));
+  }
 
-    @Override
-    public synchronized Throwable getCause() {
-      return this;
-    }
+  /** The generic path keeps its existing shape; corruption hygiene changes it not at all. */
+  @Test
+  public void testGenericExceptionKeepsItsShape() {
+    RuntimeException unrelated = new RuntimeException("connection reset");
+
+    ResponseEntity<ErrorResponseBody> response = handler.handleGenericException(unrelated);
+
+    Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+    Assertions.assertEquals(unrelated.toString(), response.getBody().getMessage());
+    Assertions.assertNotNull(response.getBody().getStacktrace());
   }
 }

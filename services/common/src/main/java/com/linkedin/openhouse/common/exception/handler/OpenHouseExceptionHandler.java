@@ -20,21 +20,15 @@ import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import io.swagger.v3.oas.annotations.Hidden;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.NoSuchElementException;
-import java.util.Optional;
-import java.util.Set;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.springframework.dao.InvalidDataAccessApiUsageException;
-import org.springframework.dao.NonTransientDataAccessException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
@@ -59,9 +53,12 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
 
   private static final String CAUSE_NOT_AVAILABLE = "Not Available";
 
-  private static final int STACKTRACE_MAX_WIDTH = 6000;
+  private static final String CORRUPT_ENTITY_TYPE_MSG_TMPL =
+      "House Tables could not read the stored entity type occupying the requested key. "
+          + "The offending column, value, and stack trace are in the server log under "
+          + "correlationId=%s";
 
-  private static final int CAUSE_CHAIN_MAX_DEPTH = 20;
+  private static final int STACKTRACE_MAX_WIDTH = 6000;
 
   /**
    * Each method needs to be annotated with {@link Hidden} or every methods in advisee controllers
@@ -390,69 +387,31 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   }
 
   /**
-   * Corrupt stored data is not a client error, so it must not fall through to the {@link
-   * IllegalArgumentException} advice below, which answers 400.
-   *
-   * <p>Kept deliberately, not dead code: the {@code entity_type} attribute converter's exception
-   * arrives wrapped, and the catch-all {@link #handleGenericException} matches that wrapper before
-   * Spring recurses into its cause, so {@link #handleWrappedCorruptEntityTypeException} answers
-   * that path. This one answers a {@link CorruptEntityTypeException} raised outside a JPA
-   * operation.
+   * Storage corruption is a server fault whose diagnostic (the offending column, the stored value,
+   * the converter stack) is operator material, not response material. It is logged here under a
+   * generated correlation id and the client receives a stable generic 500 naming only that id, so
+   * persistence detail never becomes part of the public error contract. The owning service's
+   * persistence boundary translates the ORM wrappers this exception hydrates under before it
+   * crosses into HTTP, so this advice sees the module-owned failure directly and never inspects ORM
+   * vocabulary.
    */
   @Hidden
   @ExceptionHandler(CorruptEntityTypeException.class)
   protected ResponseEntity<ErrorResponseBody> handleCorruptEntityTypeException(
       CorruptEntityTypeException corruptEntityTypeException) {
-    return buildResponseEntity(corruptEntityTypeBody(corruptEntityTypeException));
-  }
-
-  /**
-   * Recovers the diagnostic a corrupt {@code entity_type} row carries: JPA translation wraps the
-   * {@link CorruptEntityTypeException}, and the wrapper's own message names only the converter, so
-   * the offending column and value would be lost to the catch-all advice. A wrapper carrying no
-   * corruption is handed to {@link #handleGenericException}.
-   */
-  @Hidden
-  @ExceptionHandler({JpaSystemException.class, InvalidDataAccessApiUsageException.class})
-  protected ResponseEntity<ErrorResponseBody> handleWrappedCorruptEntityTypeException(
-      NonTransientDataAccessException dataAccessException) {
-    return findCorruptEntityTypeCause(dataAccessException)
-        .map(
-            corruptEntityTypeException -> {
-              log.error("Corrupt entity type read from storage:\n", dataAccessException);
-              return buildResponseEntity(corruptEntityTypeBody(corruptEntityTypeException));
-            })
-        .orElseGet(() -> handleGenericException(dataAccessException));
-  }
-
-  private ErrorResponseBody corruptEntityTypeBody(
-      CorruptEntityTypeException corruptEntityTypeException) {
-    return ErrorResponseBody.builder()
-        .status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .error(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase())
-        .message(corruptEntityTypeException.getMessage())
-        .stacktrace(getAbbreviatedStackTrace(corruptEntityTypeException))
-        .cause(getExceptionCause(corruptEntityTypeException))
-        .build();
-  }
-
-  /**
-   * Bounded by {@link #CAUSE_CHAIN_MAX_DEPTH} and by identity, so a cyclic cause chain terminates
-   * instead of spinning.
-   */
-  private Optional<CorruptEntityTypeException> findCorruptEntityTypeCause(Throwable exception) {
-    Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-    Throwable current = exception;
-    for (int depth = 0; current != null && depth < CAUSE_CHAIN_MAX_DEPTH; depth++) {
-      if (!visited.add(current)) {
-        break;
-      }
-      if (current instanceof CorruptEntityTypeException) {
-        return Optional.of((CorruptEntityTypeException) current);
-      }
-      current = current.getCause();
-    }
-    return Optional.empty();
+    String correlationId = UUID.randomUUID().toString();
+    log.error(
+        "Corrupt entity type read from storage [correlationId={}]:",
+        correlationId,
+        corruptEntityTypeException);
+    ErrorResponseBody errorResponseBody =
+        ErrorResponseBody.builder()
+            .status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .error(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase())
+            .message(String.format(CORRUPT_ENTITY_TYPE_MSG_TMPL, correlationId))
+            .cause(CAUSE_NOT_AVAILABLE)
+            .build();
+    return buildResponseEntity(errorResponseBody);
   }
 
   @Hidden

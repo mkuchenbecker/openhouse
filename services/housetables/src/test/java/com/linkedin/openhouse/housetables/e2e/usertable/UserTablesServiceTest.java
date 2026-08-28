@@ -15,6 +15,7 @@ import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import com.linkedin.openhouse.housetables.e2e.SpringH2HtsApplication;
+import com.linkedin.openhouse.housetables.metrics.ViewMetricsConstant;
 import com.linkedin.openhouse.housetables.model.EntityType;
 import com.linkedin.openhouse.housetables.model.TestHouseTableModelConstants;
 import com.linkedin.openhouse.housetables.model.UserTableRow;
@@ -22,6 +23,7 @@ import com.linkedin.openhouse.housetables.model.UserTableRowPrimaryKey;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.SoftDeletedUserTableHtsJdbcRepository;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.UserTableHtsJdbcRepository;
 import com.linkedin.openhouse.housetables.services.UserTablesService;
+import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
@@ -37,9 +39,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.NullSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -1038,7 +1037,10 @@ public class UserTablesServiceTest {
   public void testGetNeutralEntityAtCorruptKeyFailsLoudly() {
     insertRawEntityType(ENTITY_TYPE_DB, "neutral_corrupt", "UNKNOWN");
 
+    // The service boundary translates the ORM wrapper, so the module-owned corruption type is
+    // what leaves it, still naming the column and value for its internal consumers.
     assertThatThrownBy(() -> userTablesService.getNeutralEntity(ENTITY_TYPE_DB, "neutral_corrupt"))
+        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type")
         .hasStackTraceContaining("UNKNOWN");
 
@@ -1077,7 +1079,7 @@ public class UserTablesServiceTest {
   public void testGetAllUserViewsWithEmptyQueryReturnsEveryView() {
     seedCanonicalRows("");
 
-    List<UserTableDto> views = userTablesService.getAllUserViews(UserTable.builder().build());
+    List<UserTableDto> views = userTablesService.getAllUserViews(UserViewQuery.builder().build());
 
     assertThat(sortedIds(views)).isEqualTo(CANONICAL_VIEW_IDS);
     // Not a database-name projection: every result is a fully identified view.
@@ -1085,7 +1087,7 @@ public class UserTablesServiceTest {
     assertThat(views).allSatisfy(v -> assertThat(v.getEntityType()).isEqualTo(EntityType.VIEW));
 
     Page<UserTableDto> page =
-        userTablesService.getAllUserViews(UserTable.builder().build(), 0, 50, "tableId");
+        userTablesService.getAllUserViews(UserViewQuery.builder().build(), 0, 50, "tableId");
     Assertions.assertEquals(3, page.getTotalElements());
     assertThat(pageIds(page)).containsExactlyElementsOf(CANONICAL_VIEW_IDS);
   }
@@ -1094,7 +1096,7 @@ public class UserTablesServiceTest {
   @Test
   public void testGetAllUserViewsFiltersBeforePagination() {
     seedCanonicalRows("");
-    UserTable searchBy = UserTable.builder().databaseId(ENTITY_TYPE_DB).build();
+    UserViewQuery searchBy = UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).build();
 
     assertThat(sortedIds(userTablesService.getAllUserViews(searchBy)))
         .isEqualTo(CANONICAL_VIEW_IDS);
@@ -1118,7 +1120,8 @@ public class UserTablesServiceTest {
   public void testGetAllUserViewsWithPatternFiltersViews() {
     seedCanonicalRows("match_");
     seedTypedRow(ENTITY_TYPE_DB, "nomatch_view", EntityType.VIEW);
-    UserTable searchBy = UserTable.builder().databaseId(ENTITY_TYPE_DB).tableId("match_%").build();
+    UserViewQuery searchBy =
+        UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).tableIdPattern("match_%").build();
 
     assertThat(sortedIds(userTablesService.getAllUserViews(searchBy)))
         .containsExactly("match_t01_view", "match_t03_view", "match_t05_view");
@@ -1129,67 +1132,50 @@ public class UserTablesServiceTest {
     assertThat(pageIds(page0)).containsExactly("match_t01_view", "match_t03_view");
   }
 
-  /**
-   * The view query is view-scoped by the method that serves it, so an {@code entityType} property
-   * bound onto the request is tolerated and ignored — it can never re-route to tables.
-   */
-  @ParameterizedTest
-  @NullSource
-  @ValueSource(strings = {"TABLE", "table", "VIEW", "ViEw"})
-  public void testEntityTypeOnViewQueryIsIgnoredAndAlwaysReturnsViews(String entityType) {
-    seedCanonicalRows("");
+  // A transport entityType re-routing a view query is now structurally unrepresentable:
+  // UserViewQuery carries only a database id and an optional pattern, and the handler drops
+  // everything else at its boundary. HtsControllerTest's
+  // testEntityTypeQueryParameterIsIgnoredOnViewQuery pins the HTTP-level behavior.
 
-    assertThat(
-            sortedIds(
-                userTablesService.getAllUserViews(
-                    UserTable.builder().databaseId(ENTITY_TYPE_DB).entityType(entityType).build())))
-        .as("entityType=%s must still resolve to the three views", entityType)
-        .isEqualTo(CANONICAL_VIEW_IDS);
-  }
-
-  /** The paged view call site is equally type-blind. */
+  /** A pattern with no database to scope it is rejected, mirroring the API validator's rule. */
   @Test
-  public void testEntityTypeOnPagedViewQueryIsIgnoredAndAlwaysReturnsViews() {
-    seedCanonicalRows("");
+  public void testViewPatternWithoutDatabaseIsRejected() {
+    UserViewQuery patternOnly = UserViewQuery.builder().tableIdPattern("t0%").build();
 
-    Page<UserTableDto> page0 =
-        userTablesService.getAllUserViews(
-            UserTable.builder().databaseId(ENTITY_TYPE_DB).entityType("TABLE").build(),
-            0,
-            2,
-            "tableId");
-    Assertions.assertEquals(3, page0.getTotalElements());
-    assertThat(pageIds(page0)).containsExactly("t01_view", "t03_view");
+    Assertions.assertThrows(
+        IllegalArgumentException.class, () -> userTablesService.getAllUserViews(patternOnly));
+    Assertions.assertThrows(
+        IllegalArgumentException.class,
+        () -> userTablesService.getAllUserViews(patternOnly, 0, 2, "tableId"));
   }
 
   /** Every view read path is instrumented the same way its table sibling is. */
   @Test
   public void testViewListAndSearchMetricsAreReported() {
     seedCanonicalRows("");
-    UserTable byDatabase = UserTable.builder().databaseId(ENTITY_TYPE_DB).build();
+    UserViewQuery byDatabase = UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).build();
+    UserViewQuery byPattern =
+        UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).tableIdPattern("t0%").build();
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_LIST_VIEWS_REQUEST,
-        MetricsConstant.HTS_LIST_VIEWS_TIME,
+        ViewMetricsConstant.HTS_LIST_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_LIST_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byDatabase));
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_PAGE_VIEWS_REQUEST,
-        MetricsConstant.HTS_PAGE_VIEWS_TIME,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byDatabase, 0, 2, "tableId"));
 
-    // A non-key filter falls through to the general search branch.
-    UserTable generalFilter = UserTable.builder().creationTime(TEST_CREATION_TIME).build();
+    assertMetricsAdvance(
+        ViewMetricsConstant.HTS_LIST_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_LIST_VIEWS_TIME,
+        () -> userTablesService.getAllUserViews(byPattern));
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_GENERAL_SEARCH_VIEWS_REQUEST,
-        MetricsConstant.HTS_SEARCH_VIEWS_TIME,
-        () -> userTablesService.getAllUserViews(generalFilter));
-
-    assertMetricsAdvance(
-        MetricsConstant.HTS_PAGE_SEARCH_VIEWS_REQUEST,
-        MetricsConstant.HTS_PAGE_SEARCH_VIEWS_TIME,
-        () -> userTablesService.getAllUserViews(generalFilter, 0, 2, "tableId"));
+        ViewMetricsConstant.HTS_PAGE_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_TIME,
+        () -> userTablesService.getAllUserViews(byPattern, 0, 2, "tableId"));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1306,7 +1292,7 @@ public class UserTablesServiceTest {
     Assertions.assertThrows(
         AlreadyExistsException.class,
         () ->
-            userTablesService.putUserTable(
+            userTablesService.putUserView(
                 UserTable.builder()
                     .databaseId(ENTITY_TYPE_DB)
                     .tableId("guard_table")
@@ -1318,7 +1304,7 @@ public class UserTablesServiceTest {
     Assertions.assertThrows(
         AlreadyExistsException.class,
         () ->
-            userTablesService.putUserTable(
+            userTablesService.putUserView(
                 UserTable.builder()
                     .databaseId(ENTITY_TYPE_DB)
                     .tableId("guard_legacy")
@@ -1332,6 +1318,61 @@ public class UserTablesServiceTest {
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "guard_table")).hasValue("TABLE");
     // A rejected write must not migrate the legacy occupant either.
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "guard_legacy")).isEmpty();
+  }
+
+  /**
+   * The typed entry points supply their own type, so a payload contradicting the method is rejected
+   * outright: putUserView with a TABLE payload can never persist a table, even for a caller that
+   * bypasses the controller's wire mismatch check.
+   */
+  @Test
+  public void testTypedPutEntryPointsRejectContradictoryPayloads() {
+    UserTable tablePayload =
+        UserTable.builder()
+            .databaseId(ENTITY_TYPE_DB)
+            .tableId("typed_entry_guard")
+            .tableVersion("INITIAL_VERSION")
+            .metadataLocation("/openhouse/entity_type_db/typed_entry_guard/v1_metadata.json")
+            .entityType(EntityType.TABLE.name())
+            .build();
+
+    Assertions.assertThrows(
+        com.linkedin.openhouse.common.exception.RequestValidationFailureException.class,
+        () -> userTablesService.putUserView(tablePayload));
+
+    Assertions.assertThrows(
+        com.linkedin.openhouse.common.exception.RequestValidationFailureException.class,
+        () ->
+            userTablesService.putUserTable(
+                tablePayload.toBuilder().entityType(EntityType.VIEW.name()).build()));
+
+    // Nothing was persisted by either rejected write.
+    assertThat(
+            htsRepository.findById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(ENTITY_TYPE_DB)
+                    .tableId("typed_entry_guard")
+                    .build()))
+        .isEmpty();
+  }
+
+  /**
+   * A silent payload is stamped by the entry point: putUserView persists VIEW without being told.
+   */
+  @Test
+  public void testPutUserViewStampsViewWhenThePayloadIsSilent() {
+    Pair<UserTableDto, Boolean> created =
+        userTablesService.putUserView(
+            UserTable.builder()
+                .databaseId(ENTITY_TYPE_DB)
+                .tableId("silent_view")
+                .tableVersion("INITIAL_VERSION")
+                .metadataLocation("/openhouse/entity_type_db/silent_view/v1_metadata.json")
+                .build());
+
+    assertThat(created.getSecond()).isFalse();
+    assertThat(created.getFirst().getEntityType()).isEqualTo(EntityType.VIEW);
+    assertThat(readRawEntityType(ENTITY_TYPE_DB, "silent_view")).hasValue("VIEW");
   }
 
   /** If both the type and the version are wrong, the type collision is the one that is reported. */
@@ -1407,6 +1448,7 @@ public class UserTablesServiceTest {
                         .metadataLocation("/openhouse/entity_type_db/put_corrupt/v1_metadata.json")
                         .entityType(EntityType.TABLE.name())
                         .build()))
+        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type");
 
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "put_corrupt")).hasValue("UNKNOWN");
@@ -1589,7 +1631,7 @@ public class UserTablesServiceTest {
 
     Assertions.assertThrows(
         EntityConcurrentModificationException.class,
-        () -> userTablesService.putUserTable(viewCreate));
+        () -> userTablesService.putUserView(viewCreate));
 
     // Exactly one row, and it is the winner's, untouched.
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "race_key")).hasValue("TABLE");
@@ -1602,6 +1644,57 @@ public class UserTablesServiceTest {
                 String.class,
                 ENTITY_TYPE_DB,
                 "race_key"));
+  }
+
+  /**
+   * A 409 promises the caller a retry can win. An integrity violation that is not a duplicate key —
+   * a null column, an over-length value the ingress bound somehow missed — is a server failure a
+   * retry cannot fix, so it must escape as itself rather than wear the concurrent-modification
+   * label.
+   */
+  @Test
+  public void testNonDuplicateIntegrityViolationOnPutIsNotReportedAsConcurrentModification() {
+    org.springframework.dao.DataIntegrityViolationException notADuplicate =
+        new org.springframework.dao.DataIntegrityViolationException(
+            "could not execute statement",
+            new java.sql.SQLException("Data too long for column 'table_id'", "22001", 1406));
+    doThrow(notADuplicate).when(htsRepository).save(any(UserTableRow.class));
+
+    assertThatThrownBy(
+            () ->
+                userTablesService.putUserTable(
+                    UserTable.builder()
+                        .databaseId(ENTITY_TYPE_DB)
+                        .tableId("integrity_violation")
+                        .tableVersion("INITIAL_VERSION")
+                        .metadataLocation(
+                            "/openhouse/entity_type_db/integrity_violation/v1_metadata.json")
+                        .entityType(EntityType.TABLE.name())
+                        .build()))
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+        .isNotInstanceOf(EntityConcurrentModificationException.class);
+  }
+
+  /** The JPA dialect's generic wrapper around a real duplicate key still reads as the 409 race. */
+  @Test
+  public void testDuplicateKeyUnderGenericWrapperOnPutIsConcurrentModification() {
+    org.springframework.dao.DataIntegrityViolationException duplicate =
+        new org.springframework.dao.DataIntegrityViolationException(
+            "could not execute statement",
+            new java.sql.SQLException("Unique index or primary key violation", "23505"));
+    doThrow(duplicate).when(htsRepository).save(any(UserTableRow.class));
+
+    Assertions.assertThrows(
+        EntityConcurrentModificationException.class,
+        () ->
+            userTablesService.putUserTable(
+                UserTable.builder()
+                    .databaseId(ENTITY_TYPE_DB)
+                    .tableId("duplicate_key")
+                    .tableVersion("INITIAL_VERSION")
+                    .metadataLocation("/openhouse/entity_type_db/duplicate_key/v1_metadata.json")
+                    .entityType(EntityType.TABLE.name())
+                    .build()));
   }
 
   /** Reads the counter and timer deltas a single instrumented call must produce. */

@@ -245,7 +245,90 @@ public class OpenHouseUserTablesValidatorTest {
         () -> userTablesHtsApiValidator.validateGetEntities(byDatabase, 0, 50, "tableId"));
   }
 
-  /** Even an unrecognized value is inert here: it is never a filter, so it is never validated. */
+  // -------------------------------------------------------------------------------------------
+  // Storage length bounds are enforced at ingress: an over-length identifier is the client's 400,
+  // never a database integrity violation dressed up as a 409 or a bare 500. The bounds mirror the
+  // DDL: identifiers are VARCHAR(128), metadata_location is VARCHAR(512).
+  // -------------------------------------------------------------------------------------------
+
+  private static String repeated(int length) {
+    StringBuilder builder = new StringBuilder(length);
+    for (int i = 0; i < length; i++) {
+      builder.append('a');
+    }
+    return builder.toString();
+  }
+
+  @Test
+  public void validateGetEntityAcceptsIdentifiersAtTheBound() {
+    UserTableKey key =
+        UserTableKey.builder().databaseId(repeated(128)).tableId(repeated(128)).build();
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validateGetEntity(key));
+  }
+
+  @Test
+  public void validateGetEntityRejectsOverLengthIdentifiers() {
+    UserTableKey longDatabase =
+        UserTableKey.builder().databaseId(repeated(129)).tableId("t1").build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateGetEntity(longDatabase));
+
+    UserTableKey longTable =
+        UserTableKey.builder().databaseId("db1").tableId(repeated(129)).build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateGetEntity(longTable));
+  }
+
+  @Test
+  public void validateGetEntitiesRejectsOverLengthFilterIdentifiers() {
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId(repeated(129)).build()));
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId("db1").tableId(repeated(129)).build()));
+  }
+
+  @Test
+  public void validatePutEntityRejectsOverLengthFields() {
+    UserTable longIds =
+        UserTable.builder()
+            .databaseId(repeated(129))
+            .tableId(repeated(129))
+            .metadataLocation("/tmp/db1/t1")
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(longIds));
+
+    UserTable longLocation =
+        UserTable.builder()
+            .databaseId("db1")
+            .tableId("t1")
+            .metadataLocation("/" + repeated(512))
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(longLocation));
+  }
+
+  @Test
+  public void validatePutEntityAcceptsFieldsAtTheBound() {
+    UserTable atBound =
+        UserTable.builder()
+            .databaseId(repeated(128))
+            .tableId(repeated(128))
+            .metadataLocation("/" + repeated(511))
+            .build();
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validatePutEntity(atBound));
+  }
+
   @Test
   public void validateGetEntitiesToleratesAnUnrecognizedEntityType() {
     UserTable garbageFilter =
