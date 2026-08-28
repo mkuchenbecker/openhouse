@@ -80,8 +80,9 @@ initialization eagerly fetches `/v1/config`, so doing it in `initialize()` would
 views-endpoint bootstrap/config failure break **table** operations; done lazily, a bootstrap
 failure fails only that view operation, nothing is cached, and the next view op retries).
 Consequences: with the gate off, zero cost and zero `/v1/config` call — and even with the
-gate on, nothing crosses the wire until a view operation actually happens. The five
-`ViewCatalog` methods and `buildView` delegate to it on the enabled path:
+gate on, nothing crosses the wire until a view operation actually happens. On the enabled
+path `loadView`/`viewExists`/`listViews`/`dropView` and `buildView` delegate to it;
+`renameView` stays unsupported in both gate states (§4.4):
 
 - `loadView` → REST `GET .../views/{view}` (`LoadViewResult` carries full metadata inline —
   no FileIO needed for views)
@@ -123,7 +124,7 @@ new user-facing keys beyond the existing gate:
 |---|---|
 | `uri` | the existing `uri` property (same service; REST paths mount alongside `/v1/databases/...`) |
 | `header.Authorization` = `Bearer <token>` | the existing `auth-token` property. Use `header.*` passthrough, **not** the REST `token` property — the OAuth2 session machinery (token refresh, `/v1/oauth/tokens`) must stay out of the loop |
-| `header.` client-name/version/session headers | mirror what `TablesApiClientFactory` sets, so audit/telemetry sees the same identity on view calls |
+| `header.` client-name/version/session headers | mirror what `TablesApiClientFactory` sets, so audit/telemetry sees the same identity on view calls. Actual semantics: `User-Agent` is set **unconditionally** (`openhouse-java-client/` + the `client-version` property, else the jar manifest's Implementation-Version, else `unknown`); `X-Client-Name` only when `client-name` is set; `session-id` **only when `app-id` is set** — tables calls otherwise synthesize a random UUID session that view calls deliberately don't get, since a fabricated UUID would break correlation |
 | `prefix` | unset (server serves un-prefixed paths; `/v1/config` returns no override) |
 
 TLS/truststore (**resolved**): Iceberg 1.5.2.17's `HTTPClient` builds its Apache
@@ -139,10 +140,15 @@ the asymmetry visible.
 
 Token refresh (**resolved**): `updateAuthToken()` propagates by **recreate, not header
 mutation** — the embedded catalog's headers are captured immutably at its initialization, so
-the hook closes and discards the embedded catalog and lets the next view operation lazily
-rebuild it from the updated `auth-token` property (a no-op when the gate is off or no view
-op ever ran). `OpenHouseCatalog` now implements `Closeable` and `close()` closes the
-embedded catalog.
+the hook displaces the embedded catalog and lets the next view operation lazily rebuild it
+from the updated `auth-token` property (a no-op when the gate is off or no view op ever
+ran). The displaced instance is NOT closed at refresh time: an in-flight view operation may
+still hold it from the lazy accessor's fast path, and closing under it would leak an
+`IllegalStateException` into Spark's table resolution. Displaced instances are parked and
+reclaimed by `close()` — a bounded leak of one idle HTTP client per refresh, reclaimed at
+close()/JVM exit. `OpenHouseCatalog` now implements `Closeable`; `close()` drains the parked
+instances and the current one, and a later view operation re-initializes a fresh embedded
+catalog (accepted resurrection semantics).
 
 ### 4.3 Both gates stay, and compose
 
@@ -154,6 +160,11 @@ embedded catalog.
   path, with zero mock backend.
 - **Client gate on, server enabled (future milestone):** works with no further client change
   — that is the point of the thin glue.
+
+One composition to know: with the gate on against a server that does not serve `/v1/config`
+(e.g. an older deployment), unqualified-identifier resolution fails with a REST bootstrap
+error on the first view probe until the gate is turned off — correct, loud behavior for a
+misconfigured pairing, deliberately not masked as `NoSuchViewException`.
 
 ### 4.4 Rename
 
@@ -207,9 +218,16 @@ shading analysis), nothing user-facing beyond the existing gate.
   `Authorization: Bearer` present on every view call including `/v1/config` (and no OAuth
   route is ever called); lazy-init property (zero HTTP traffic with the gate off, and none
   before the first view op with it on); `updateAuthToken` rebuilds the embedded catalog with
-  the new token; `renameView` stays wire-silent; `newViewOps` unreachable. Per disposition
-  F2 there is **no pagination test** (1.5.2.17 does no `next-page-token` paging) and no
-  `HEAD` fixture (`viewExists` issues GET).
+  the new token; `renameView` stays wire-silent; `newViewOps` unreachable. The review round
+  added: F4 fault-injection (a failed `/v1/config` bootstrap fails only that view op, caches
+  nothing, and the next view op re-bootstraps); list-route **500 propagates** as an
+  exception (F1's negative space — only 404s become an empty listing); `viewExists`
+  enabled-path true/false with the recorded request pinned as `GET` on the view path;
+  `close()` discard-and-rebuild contract; identity headers asserted on the recorded config
+  request (unconditional `User-Agent` included); a malformed (non-JSON) 404 body pinned as
+  still surfacing `NoSuchViewException`. Per disposition F2 there is **no pagination test**
+  (1.5.2.17 does no `next-page-token` paging) and no `HEAD` fixture (`viewExists` issues
+  GET).
 - **ITest (embedded service via `tables-test-fixtures-iceberg-1.5`), Spark 3.5:**
   - Gate off (default): `SHOW VIEWS` empty/analysis-safe, `CREATE VIEW` →
     `AnalysisException`, table reads/writes unaffected — the kept disabled-parity
