@@ -93,13 +93,12 @@ public class IcebergRestViewsExceptionHandler implements AuditedResponseRenderer
   /**
    * A request parameter that could not be bound to its declared type (e.g. a non-numeric {@code
    * pageSize}) never reaches the handler, so it cannot be reported through validation; it is the
-   * same client mistake and gets the same 400. The message is fixed: binding failures echo the
-   * offending value.
+   * same client mistake and gets the same 400. The message is fixed: a binding failure's own
+   * message echoes the offending value.
    */
   @Hidden
   @ExceptionHandler(TypeMismatchException.class)
-  public ResponseEntity<String> handleParameterBindingFailure(
-      TypeMismatchException exception, HttpServletRequest request) {
+  public ResponseEntity<String> handleParameterBindingFailure(HttpServletRequest request) {
     return envelope(
         request,
         HttpStatus.BAD_REQUEST,

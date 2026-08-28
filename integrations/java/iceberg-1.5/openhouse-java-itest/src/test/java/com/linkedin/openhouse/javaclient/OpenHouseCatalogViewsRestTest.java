@@ -91,20 +91,19 @@ public class OpenHouseCatalogViewsRestTest {
     server.shutdown();
   }
 
-  private OpenHouseCatalog newViewsEnabledCatalog(String token) {
-    return newViewsEnabledCatalog(token, Collections.emptyMap());
+  private void initViewsEnabledCatalog(String token) {
+    initViewsEnabledCatalog(token, Collections.emptyMap());
   }
 
-  private OpenHouseCatalog newViewsEnabledCatalog(String token, Map<String, String> extraProps) {
-    return newCatalog(true, token, extraProps);
+  private void initViewsEnabledCatalog(String token, Map<String, String> extraProps) {
+    initCatalog(true, token, extraProps);
   }
 
-  private OpenHouseCatalog newViewsDisabledCatalog(String token) {
-    return newCatalog(false, token, Collections.emptyMap());
+  private void initViewsDisabledCatalog(String token) {
+    initCatalog(false, token, Collections.emptyMap());
   }
 
-  private OpenHouseCatalog newCatalog(
-      boolean viewsEnabled, String token, Map<String, String> extraProps) {
+  private void initCatalog(boolean viewsEnabled, String token, Map<String, String> extraProps) {
     OpenHouseCatalog newCatalog = new OpenHouseCatalog();
     Map<String, String> properties = new HashMap<>();
     properties.put(CatalogProperties.URI, url);
@@ -115,7 +114,6 @@ public class OpenHouseCatalogViewsRestTest {
     properties.putAll(extraProps);
     newCatalog.initialize("openhouse", properties);
     this.catalog = newCatalog;
-    return newCatalog;
   }
 
   private void enqueueJson(int code, String body) {
@@ -177,7 +175,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testDisabledGateMakesNoRestCalls() {
-    newViewsDisabledCatalog("token");
+    initViewsDisabledCatalog("token");
     TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
 
     Assertions.assertThrows(NoSuchViewException.class, () -> catalog.loadView(viewId));
@@ -199,7 +197,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testEnabledGateIsLazyUntilFirstViewOperation() throws InterruptedException {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     Assertions.assertEquals(
         0, server.getRequestCount(), "initialize() must not touch the views REST surface");
 
@@ -226,7 +224,7 @@ public class OpenHouseCatalogViewsRestTest {
   @Test
   public void testEmbeddedCatalogBootstrapFailureIsContainedAndRetried()
       throws InterruptedException {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
 
     enqueueJson(500, SERVICE_FAILURE_ENVELOPE);
@@ -252,7 +250,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testLoadViewParsesFullLoadViewResult() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, loadViewResultJson("fa6506c3-7681-40c8-86dc-e36561f83385", "SELECT 1 AS id"));
 
@@ -274,7 +272,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testViewsDisabledEnvelopeSurfacesAsNoSuchViewException() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
 
@@ -294,7 +292,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testListViews404ReturnsEmptyList() throws InterruptedException {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, NO_SUCH_NAMESPACE_ENVELOPE);
     Assertions.assertTrue(catalog.listViews(Namespace.of("db")).isEmpty());
@@ -316,7 +314,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testListViews500Propagates() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(500, SERVICE_FAILURE_ENVELOPE);
 
@@ -327,7 +325,7 @@ public class OpenHouseCatalogViewsRestTest {
   /** A populated list response parses into identifiers (single GET; no paging in 1.5.2.17). */
   @Test
   public void testListViewsParsesIdentifiers() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, "{\"identifiers\":[{\"namespace\":[\"db\"],\"name\":\"v_wire\"}]}");
 
@@ -344,7 +342,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testViewExistsDelegatesGet() throws InterruptedException {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
@@ -366,7 +364,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testCreateSendsSpecShapedCreateViewRequest() throws Exception {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, loadViewResultJson("fa6506c3-7681-40c8-86dc-e36561f83385", "SELECT 1 AS id"));
 
@@ -416,7 +414,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testCreateRoute404SurfacesAsNoSuchNamespaceException() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, NO_SUCH_NAMESPACE_ENVELOPE);
 
@@ -438,7 +436,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testReplaceSendsRequirementsAndUpdates() throws Exception {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     String uuid = "fa6506c3-7681-40c8-86dc-e36561f83385";
     enqueueConfig();
     // RESTViewBuilder.replace first probes tableExists (view name must not be a table): 404 = no.
@@ -484,7 +482,7 @@ public class OpenHouseCatalogViewsRestTest {
   /** {@code dropView} delegates to the REST {@code DELETE}; a 404 answers {@code false}. */
   @Test
   public void testDropViewDelegatesDelete() throws Exception {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     server.enqueue(new MockResponse().setResponseCode(204));
     Assertions.assertTrue(catalog.dropView(TableIdentifier.of("db", "v_wire")));
@@ -504,7 +502,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testRenameViewUnsupportedEvenWhenEnabledAndMakesNoRestCall() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     Assertions.assertThrows(
         UnsupportedOperationException.class,
         () ->
@@ -521,7 +519,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testAuthorizationHeaderPresentOnEveryViewCall() throws Exception {
-    newViewsEnabledCatalog("the-token");
+    initViewsEnabledCatalog("the-token");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -549,7 +547,7 @@ public class OpenHouseCatalogViewsRestTest {
     identity.put(OpenHouseCatalog.CLIENT_NAME, "my-client");
     identity.put(OpenHouseCatalog.CLIENT_VERSION, "1.2.3");
     identity.put(CatalogProperties.APP_ID, "my-session");
-    newViewsEnabledCatalog("token", identity);
+    initViewsEnabledCatalog("token", identity);
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -570,7 +568,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testDefaultUserAgentAlwaysAdvertisesClientProduct() throws Exception {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -592,7 +590,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testUpdateAuthTokenPropagatesToEmbeddedCatalog() throws Exception {
-    newViewsEnabledCatalog("token-1");
+    initViewsEnabledCatalog("token-1");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -621,7 +619,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testCloseDiscardsEmbeddedCatalogAndNextViewOpRebuilds() throws Exception {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
@@ -651,7 +649,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testMalformed404BodySurfacesAsNoSuchViewException() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     enqueueConfig();
     server.enqueue(
         new MockResponse()
@@ -666,7 +664,7 @@ public class OpenHouseCatalogViewsRestTest {
   /** {@code newViewOps} is unreachable now that view operations delegate to the REST catalog. */
   @Test
   public void testNewViewOpsIsUnreachable() {
-    newViewsEnabledCatalog("token");
+    initViewsEnabledCatalog("token");
     Assertions.assertThrows(
         IllegalStateException.class, () -> catalog.newViewOps(TableIdentifier.of("db", "v_wire")));
     Assertions.assertEquals(0, server.getRequestCount());

@@ -1,15 +1,19 @@
 package com.linkedin.openhouse.tables.mock.controller;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_SQL_BYTES;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.common.audit.CachingRequestBodyFilter;
 import com.linkedin.openhouse.common.audit.ServiceAuditPayloadRedactor;
 import com.linkedin.openhouse.common.audit.model.ServiceAuditEvent;
+import com.linkedin.openhouse.common.audit.model.ServiceName;
 import com.linkedin.openhouse.common.exception.handler.OpenHouseExceptionHandler;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
@@ -21,8 +25,11 @@ import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
 import com.linkedin.openhouse.tables.model.IcebergRestViewFixtures;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
+import java.util.Arrays;
 import java.util.stream.Stream;
+import org.apache.iceberg.rest.requests.ImmutableCreateViewRequest;
 import org.codehaus.jettison.json.JSONException;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Assertions;
@@ -332,11 +339,9 @@ public class IcebergRestViewsControllerTest {
    */
   @Test
   public void sparkStructTypeSchemaInCreateBodyIsA400WithTheFixedPrefix() throws Exception {
-    com.fasterxml.jackson.databind.ObjectMapper jackson =
-        new com.fasterxml.jackson.databind.ObjectMapper();
-    com.fasterxml.jackson.databind.node.ObjectNode root =
-        (com.fasterxml.jackson.databind.node.ObjectNode)
-            jackson.readTree(IcebergRestViewFixtures.createViewRequestJson());
+    ObjectMapper jackson = new ObjectMapper();
+    ObjectNode root =
+        (ObjectNode) jackson.readTree(IcebergRestViewFixtures.createViewRequestJson());
     root.set(
         "schema",
         jackson.readTree(
@@ -384,13 +389,11 @@ public class IcebergRestViewsControllerTest {
    */
   @Test
   public void multibyteSqlIsDecodedAsUtf8OnTheWire() throws Exception {
-    char[] sql =
-        new char
-            [com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_SQL_BYTES / 2];
-    java.util.Arrays.fill(sql, 'é');
+    char[] sql = new char[MAX_VIEW_SQL_BYTES / 2];
+    Arrays.fill(sql, 'é');
     String body =
         IcebergRestViewFixtures.createViewRequestJson(
-            org.apache.iceberg.rest.requests.ImmutableCreateViewRequest.builder()
+            ImmutableCreateViewRequest.builder()
                 .from(IcebergRestViewFixtures.createViewRequest())
                 .viewVersion(
                     IcebergRestViewFixtures.viewVersionWithRepresentations(
@@ -400,7 +403,7 @@ public class IcebergRestViewsControllerTest {
     mvc.perform(
             authed(MockMvcRequestBuilders.post(VIEWS_PATH))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .content(body.getBytes(StandardCharsets.UTF_8)))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.error.type", Matchers.is(NO_SUCH_NAMESPACE_TYPE)))
         .andExpect(jsonPath("$.error.message", Matchers.is(VIEWS_DISABLED_MESSAGE)));
@@ -413,7 +416,7 @@ public class IcebergRestViewsControllerTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
         .andExpect(jsonPath("$.error.code", Matchers.is(400)))
-        // Fixed message: binding failures echo the offending value.
+        // Fixed message: the binding failure's own message would echo the offending value.
         .andExpect(jsonPath("$.error.message", Matchers.not(Matchers.containsString("abc"))));
   }
 
@@ -528,7 +531,7 @@ public class IcebergRestViewsControllerTest {
     Assertions.assertEquals(404, event.getStatusCode());
     Assertions.assertEquals("Route does not exist", event.getResponseErrorMessage());
     Assertions.assertEquals(
-        com.linkedin.openhouse.common.audit.model.ServiceName.TABLES_SERVICE,
+        ServiceName.TABLES_SERVICE,
         event.getServiceName(),
         "The Iceberg REST paths must attribute to the tables service in audit events.");
   }
@@ -638,7 +641,7 @@ public class IcebergRestViewsControllerTest {
             org.apache.iceberg.types.Types.NestedField.required(
                 1, SECRET_SCHEMA_MARKER, org.apache.iceberg.types.Types.StringType.get()));
     return IcebergRestViewFixtures.createViewRequestJson(
-        org.apache.iceberg.rest.requests.ImmutableCreateViewRequest.builder()
+        ImmutableCreateViewRequest.builder()
             .from(IcebergRestViewFixtures.createViewRequest())
             .schema(secretSchema)
             .viewVersion(
@@ -667,9 +670,7 @@ public class IcebergRestViewsControllerTest {
         VIEWS_DISABLED_MESSAGE,
         event.getResponseErrorMessage(),
         "The audited failure message is extracted from the Iceberg envelope.");
-    Assertions.assertEquals(
-        com.linkedin.openhouse.common.audit.model.ServiceName.TABLES_SERVICE,
-        event.getServiceName());
+    Assertions.assertEquals(ServiceName.TABLES_SERVICE, event.getServiceName());
     JsonElement payload = event.getRequestPayload();
     Assertions.assertNotNull(payload);
     JsonObject payloadObject = payload.getAsJsonObject();
@@ -704,7 +705,7 @@ public class IcebergRestViewsControllerTest {
             java.util.Collections.singletonList(
                 new org.apache.iceberg.UpdateRequirement.AssertViewUUID(
                     IcebergRestViewFixtures.VIEW_UUID)),
-            java.util.Arrays.asList(
+            Arrays.asList(
                 new org.apache.iceberg.MetadataUpdate.AddViewVersion(
                     IcebergRestViewFixtures.viewVersionWithRepresentations(
                         IcebergRestViewFixtures.representation(
