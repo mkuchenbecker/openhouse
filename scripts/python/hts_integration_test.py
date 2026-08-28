@@ -91,8 +91,9 @@ def database_connection():
     latin1_swedish_ci compares under PAD SPACE semantics, so an ad hoc
     ``SELECT 'TABLE ' = 'TABLE'`` reports true there and false under utf8mb4.
     Queries below compare the column against a literal, and MySQL's coercibility
-    rules make the column's own utf8mb4_0900_ai_ci govern that shape, so they are
-    not actually sensitive to it -- but a bare ``docker exec ... mysql`` session
+    rules make the column's own collation (utf8mb4_0900_as_ci, pinned by
+    ddl/0002) govern that shape, so they are not actually sensitive to it -- but
+    a bare ``docker exec ... mysql`` session
     used to check the same thing by hand very much is, and that has already
     produced a confidently wrong answer twice. Pinning here keeps the script
     honest if a future check is ever written literal against literal.
@@ -211,17 +212,32 @@ def assert_message_contains(response: requests.Response, fragments, what: str) -
             f"{describe(response)}"
 
 
-def assert_corrupt_value_diagnostic(response: requests.Response, stored: str,
-                                    what: str) -> None:
-    """The converter's 500 must name the column and quote the offending value.
+def assert_corrupt_value_response_is_stable(response: requests.Response, stored: str,
+                                            what: str) -> None:
+    """The corruption 500 is a stable generic body that leaks no storage detail.
 
-    The quoting is asserted rather than treated as incidental formatting. An
-    unquoted rendering collapses ``''`` to ``[]`` and ``'TABLE '`` to
-    ``[TABLE ]``, which is exactly the information an operator needs and exactly
-    what is impossible to read without the quotes.
+    The offending column, the stored value, and the converter stack are operator
+    material: the service logs them under a correlation id, and the response
+    names only that id. Both halves are asserted -- the stable message with its
+    correlation pointer must be present, and the column name, the stored value,
+    and any stack trace must be absent -- because either half regressing on its
+    own would silently reopen the leak or orphan the log line.
     """
     assert_message_contains(
-        response, ('user_table_row.entity_type', f"'{stored}'"), what)
+        response, ('could not read the stored entity type', 'correlationId='), what)
+    body = response.json()
+    message = body.get('message') or ''
+    assert 'user_table_row.entity_type' not in message, \
+        f"{what}: the column name must not leak into the response. {describe(response)}"
+    if stored:
+        assert stored not in message, \
+            f"{what}: the stored value {stored!r} must not leak into the response. " \
+            f"{describe(response)}"
+        assert stored not in (body.get('cause') or ''), \
+            f"{what}: the stored value {stored!r} must not leak through the cause. " \
+            f"{describe(response)}"
+    assert not body.get('stacktrace'), \
+        f"{what}: the corruption 500 must carry no stack trace. {describe(response)}"
 
 
 def put_entity(kind: str, database: str, table: str, table_version: str = INITIAL_VERSION,
@@ -1024,32 +1040,30 @@ def test_legacy_null_entity_type_resolves_as_table() -> None:
 
 
 def test_corrupt_entity_type_values_split_into_two_failure_modes() -> None:
-    """A corrupt discriminator fails in one of two quite different ways.
+    """A corrupt discriminator is invisible to typed routes and a 500 on the neutral one.
 
-    The read predicate compares against 'TABLE' under the column's collation, so
-    the collation decides which corrupt values are even seen:
+    The read predicate compares against 'TABLE' under the column's collation.
+    ddl/0002__pin_entity_type_collation.sql pins that collation to
+    utf8mb4_0900_as_ci -- case-insensitive, accent-SENSITIVE, NO PAD -- whose
+    equality classes are exactly the spellings ``EntityType.fromName`` accepts.
+    The taxonomy is therefore clean:
 
-    * Values the collation calls *equal* to 'TABLE' pass the predicate and reach
-      ``EntityTypeConverter``, which rejects them and produces a 500. Under
-      utf8mb4_0900_ai_ci that includes accented forms such as 'TABLE' with an
-      acute accent, because the collation is accent insensitive.
-    * Everything else fails the predicate, so the row is never selected and the
-      typed API reports 404. Trailing and leading spaces land here because
-      utf8mb4_0900_ai_ci is a NO PAD collation; so do the empty string and an
-      all-spaces value. Such a row is invisible to the typed routes, but it is
-      not benign: the neutral /hts/entities read carries no type predicate, so
-      it hydrates the row and fails the same way an accented value does.
+    * No corrupt value can pass a typed predicate. Accented forms such as
+      'TABLE' with an acute accent miss because the collation is accent
+      sensitive; padded forms, the empty string, and all-spaces values miss
+      because it is NO PAD. Every corrupt row is 404-invisible to the typed
+      routes, and, crucially, cannot poison a typed read with a hydration 500.
+    * Invisible is not benign: the neutral /hts/entities read carries no type
+      predicate, so it hydrates any corrupt row and answers the stable
+      corruption 500.
 
-    Invisible and broken are very different operationally, and neither is
-    obvious from reading the converter alone, so both are pinned here.
+    Under the pre-pin server default utf8mb4_0900_ai_ci the accented spelling
+    used to pass the predicate and turn a typed read into a 500; the collation
+    assertions below fail loudly if the pin ever rots back.
 
-    The 500 body is asserted on both routes, not just one. They reach the
-    converter by different paths -- the typed route only for a value the
-    predicate matches, the neutral route for any value at all because it carries
-    no type predicate -- so one carrying the diagnostic does not imply the other
-    does. The assertion matches the parts that carry meaning (the column name and
-    the quoted offending value) rather than the exact string, so rewording the
-    prose around them does not break it.
+    The 500 body is asserted as the stable, non-leaking shape: the diagnostic
+    (column, stored value, stack) goes to the server log under a correlation id
+    the body names.
     """
     connection = require_database()
     database = database_id('corrupt')
@@ -1067,14 +1081,14 @@ def test_corrupt_entity_type_values_split_into_two_failure_modes() -> None:
         "SELECT collation_name FROM information_schema.columns "
         "WHERE table_schema = DATABASE() AND table_name = 'user_table_row' "
         "AND column_name = 'entity_type'", ())[0]
-    assert column_collation == 'utf8mb4_0900_ai_ci', \
-        f"this test's expectations assume an accent insensitive NO PAD column " \
-        f"collation, got {column_collation}. The taxonomy below changes with it."
+    assert column_collation == 'utf8mb4_0900_as_ci', \
+        f"expected the collation pinned by ddl/0002 (utf8mb4_0900_as_ci), got " \
+        f"{column_collation}. The taxonomy below changes with it."
 
-    # table id, stored value, expected status, what the case demonstrates
+    # table id, stored value, expected typed-route status, what the case demonstrates
     cases = [
         ('t_clean', 'TABLE', 200, "the valid control"),
-        ('t_accented', 'T\u00c1BLE', 500, "accent insensitive match reaches the converter"),
+        ('t_accented', 'T\u00c1BLE', 404, "accent sensitive, so the accented form does not match"),
         ('t_trailing', 'TABLE ', 404, "NO PAD collation, so a trailing space does not match"),
         ('t_leading', ' TABLE', 404, "a leading space does not match"),
         ('t_empty', '', 404, "the empty string does not match"),
@@ -1099,23 +1113,16 @@ def test_corrupt_entity_type_values_split_into_two_failure_modes() -> None:
             response = get_entity('tables', database, table)
             assert_status(response, expected_status,
                           f"GET /hts/tables on entity_type {stored!r}: {rationale}")
-            if expected_status == 500:
-                # Predicate-matched path: the typed route selected the row and
-                # the converter rejected it.
-                assert_corrupt_value_diagnostic(
-                    response, stored,
-                    f"GET /hts/tables on entity_type {stored!r}")
 
             # The neutral route carries no type predicate, so every corrupt value
-            # reaches the converter here, including the ones the typed route
-            # never selects. This is the predicate-missed path into the same
-            # failure, and it is asserted separately because a fix to one
-            # unwrapping path does not imply the other.
+            # reaches the converter here even though no typed route ever selects
+            # one. This is the only route that reports the corruption, so both
+            # its status and its stable, non-leaking body are pinned.
             if stored != 'TABLE':
                 response = get_entity('entities', database, table)
                 assert_status(response, 500,
                               f"GET /hts/entities on entity_type {stored!r}: {rationale}")
-                assert_corrupt_value_diagnostic(
+                assert_corrupt_value_response_is_stable(
                     response, stored,
                     f"GET /hts/entities on entity_type {stored!r}")
 
@@ -1126,39 +1133,35 @@ def test_corrupt_entity_type_values_split_into_two_failure_modes() -> None:
         # and so a fix that makes the routes agree fails here loudly instead of
         # passing silently.
         #
-        # Collation limitation: this disagreement exists because
-        # utf8mb4_0900_ai_ci is NO PAD, so 'TABLE ' fails the typed route's
-        # predicate (404) while the neutral route still hydrates it (500). Under
-        # a PAD SPACE collation the same row would answer 200/200 and agree. The
-        # column collation is pinned at the top of this test, so if that ever
-        # changes this assertion fails and says so rather than quietly inverting.
-        agree, neutral_state, typed_state, neutral, typed = endpoints_agree_on_existence(
-            database, 't_trailing', 'tables')
-        assert not agree and typed_state == ABSENT and neutral_state == ERROR, \
-            f"expected the known NO PAD disagreement on a trailing-space " \
-            f"discriminator: /hts/tables {ABSENT} vs /hts/entities {ERROR}, got " \
-            f"{typed_state} vs {neutral_state}. If the routes now agree, the " \
-            f"underlying bug may be fixed -- update this and the invariant test " \
-            f"together. {describe(typed)} || {describe(neutral)}"
+        # Under the pinned utf8mb4_0900_as_ci every corrupt value lands in the
+        # same disagreement: the typed route reports absence (the predicate
+        # misses) while the neutral route hydrates and answers the corruption
+        # 500. Before the pin, an accented value used to agree on ERROR/ERROR
+        # by failing hydration on both routes; the pin turned that into the
+        # same absence-vs-error split as the padded values.
+        for table in ('t_trailing', 't_accented'):
+            agree, neutral_state, typed_state, neutral, typed = endpoints_agree_on_existence(
+                database, table, 'tables')
+            assert not agree and typed_state == ABSENT and neutral_state == ERROR, \
+                f"expected the known corrupt-row disagreement on {table}: " \
+                f"/hts/tables {ABSENT} vs /hts/entities {ERROR}, got " \
+                f"{typed_state} vs {neutral_state}. If the routes now agree, the " \
+                f"underlying bug may be fixed -- update this and the invariant test " \
+                f"together. {describe(typed)} || {describe(neutral)}"
 
-        # By contrast an accented value fails the same way on both routes, so it
-        # agrees (both ERROR). That is the honest reading: there is no Java/SQL
-        # disagreement here, just a row neither route can convert.
-        agree, neutral_state, typed_state, _, _ = endpoints_agree_on_existence(
-            database, 't_accented', 'tables')
-        assert agree and neutral_state == typed_state == ERROR, \
-            f"an accent-insensitive match should reach the converter on both " \
-            f"routes and agree on {ERROR}, got {typed_state} vs {neutral_state}"
-
-        # Blast radius: one unconvertible row fails the whole database listing,
-        # not just its own key, and carries the same diagnostic.
+        # Blast radius: with the pinned collation no corrupt value passes the
+        # typed predicate, so a corrupt row can no longer poison the whole
+        # database listing -- the listing succeeds and returns exactly the
+        # healthy rows. Before the pin, the accent-insensitive match dragged
+        # 'T\u00c1BLE' into hydration and failed the entire query with a 500.
         response = requests.get(f'{HOST}/hts/tables/query', params={'databaseId': database})
-        assert_status(response, 500,
-                      "GET /hts/tables/query over a database holding one unconvertible row")
-        assert_message_contains(
-            response, ('user_table_row.entity_type',),
-            "GET /hts/tables/query over a database holding one unconvertible row")
-        print("corrupt entity_type values split into 500 (reaches converter) and 404 (invisible)")
+        assert_status(response, 200,
+                      "GET /hts/tables/query over a database holding corrupt rows")
+        listed = table_ids(response.json().get('results', []))
+        assert listed == {'t_clean'}, \
+            f"the listing must contain exactly the healthy row, got {listed}"
+        print("corrupt entity_type values are 404-invisible to typed routes and a "
+              "stable 500 on the neutral one")
     finally:
         purge_database_rows(connection, database)
         connection.close()
