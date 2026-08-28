@@ -91,10 +91,13 @@ public class ViewApiExceptionTest {
         expected,
         Arrays.stream(ViewErrorCode.values())
             .filter(code -> code.getHttpStatus() == HttpStatus.BAD_REQUEST)
+            .filter(code -> "BadRequestException".equals(code.getErrorType()))
             .map(Enum::name)
             .collect(Collectors.toCollection(LinkedHashSet::new)),
-        "The validation subset must stay exhaustive: every BAD_REQUEST ViewErrorCode is"
-            + " expressible as a validation failure.");
+        "The validation subset must stay exhaustive over the BadRequestException-typed codes."
+            + " Admission codes are also 400 (422 is not spec vocabulary) but carry the distinct"
+            + " ValidationException type and are not expressible as structural validation"
+            + " failures.");
   }
 
   /** Reasons are joined the way the tables API joins them, so both APIs read identically. */

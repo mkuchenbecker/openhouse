@@ -1,10 +1,14 @@
 package com.linkedin.openhouse.tables.api.validator;
 
-import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
+import org.apache.iceberg.rest.requests.CreateViewRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
 
 /**
- * Structural validation for the /v2 views API. No SQL is parsed, translated or validated against an
- * engine here: view SQL stays opaque and semantic rejection belongs to a later admission step.
+ * Structural validation for the Iceberg REST views API. No SQL is parsed, translated or validated
+ * against an engine here: view SQL stays opaque and semantic rejection belongs to a later admission
+ * step. Wire-level shape (required fields, kebab-case naming, update/requirement polymorphism) is
+ * already enforced by Iceberg's parsers before these methods run; what is validated here are the
+ * OpenHouse deployment rules layered on top.
  *
  * <p>Every method throws {@link
  * com.linkedin.openhouse.tables.exception.ViewRequestValidationFailureException} carrying all
@@ -13,49 +17,36 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequest
 public interface ViewsApiValidator {
 
   /**
-   * Validate a request to read a single view.
+   * Validate the path identifiers of a per-view route (load, replace, drop, exists).
    *
-   * @param databaseId path database identifier
-   * @param viewId path view identifier
+   * @param databaseId decoded single-level namespace from the path
+   * @param viewId view name from the path
    */
-  void validateGetView(String databaseId, String viewId);
+  void validateViewIdentifier(String databaseId, String viewId);
 
   /**
    * Validate a request to list views in a database.
    *
-   * @param databaseId path database identifier
-   * @param page zero-based page index
-   * @param size page size
-   * @param sortBy optional single sort field
+   * @param databaseId decoded single-level namespace from the path
+   * @param pageToken opaque continuation token, or {@code null}; never shape-validated
+   * @param pageSize requested page size, or {@code null}
    */
-  void validateGetAllViews(String databaseId, int page, int size, String sortBy);
+  void validateListViews(String databaseId, String pageToken, Integer pageSize);
 
   /**
-   * Validate a POST request to create a view.
+   * Validate a parsed create-view request.
    *
-   * @param clusterId name of the serving cluster
-   * @param databaseId path database identifier
-   * @param requestBody the create request
+   * @param databaseId decoded single-level namespace from the path
+   * @param request the parsed request; parser-required fields are already present
    */
-  void validateCreateView(
-      String clusterId, String databaseId, CreateUpdateViewRequestBody requestBody);
+  void validateCreateView(String databaseId, CreateViewRequest request);
 
   /**
-   * Validate a PUT request to replace or create a view.
+   * Validate a parsed commit-view (replace) request.
    *
-   * @param clusterId name of the serving cluster
-   * @param databaseId path database identifier
-   * @param viewId path view identifier
-   * @param requestBody the update request
+   * @param databaseId decoded single-level namespace from the path
+   * @param viewId view name from the path
+   * @param request the parsed commit envelope
    */
-  void validateUpdateView(
-      String clusterId, String databaseId, String viewId, CreateUpdateViewRequestBody requestBody);
-
-  /**
-   * Validate a request to delete a view.
-   *
-   * @param databaseId path database identifier
-   * @param viewId path view identifier
-   */
-  void validateDeleteView(String databaseId, String viewId);
+  void validateReplaceView(String databaseId, String viewId, UpdateTableRequest request);
 }

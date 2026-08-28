@@ -134,21 +134,30 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   @Override
   protected ResponseEntity<Object> handleNoHandlerFoundException(
       NoHandlerFoundException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+    ErrorResponseBody errorResponseBody = unresolvedRouteErrorResponseBody(ex, request);
+    return new ResponseEntity<>(errorResponseBody, errorResponseBody.getStatus());
+  }
 
+  /**
+   * The legacy rendering of an unresolved route: a 400 {@link ErrorResponseBody}. Public and static
+   * so a service-local advice that takes precedence for a subset of paths (e.g. the tables
+   * service's Iceberg REST {@code /v1/**} surface) can fall back to the exact same body for every
+   * other path instead of duplicating this template.
+   */
+  public static ErrorResponseBody unresolvedRouteErrorResponseBody(
+      NoHandlerFoundException ex, WebRequest request) {
     String errorMsg =
         String.format(
             "The combination of the method [%s] and Path [%s] cannot be resolved by server. "
                 + "Please check and making sure you are using the right version of API.",
             ((ServletWebRequest) request).getHttpMethod(), request.getDescription(false));
-    ErrorResponseBody errorResponseBody =
-        ErrorResponseBody.builder()
-            .status(HttpStatus.BAD_REQUEST)
-            .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
-            .message(errorMsg)
-            .stacktrace(getAbbreviatedStackTrace(ex))
-            .cause(getExceptionCause(ex))
-            .build();
-    return new ResponseEntity<>(errorResponseBody, errorResponseBody.getStatus());
+    return ErrorResponseBody.builder()
+        .status(HttpStatus.BAD_REQUEST)
+        .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+        .message(errorMsg)
+        .stacktrace(getAbbreviatedStackTrace(ex))
+        .cause(getExceptionCause(ex))
+        .build();
   }
 
   @Hidden
@@ -451,7 +460,7 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
    * @param exception
    * @return String
    */
-  private String getAbbreviatedStackTrace(Throwable exception) {
+  private static String getAbbreviatedStackTrace(Throwable exception) {
     String stackTrace = ExceptionUtils.getStackTrace(exception);
     if (StringUtils.isEmpty(stackTrace)) {
       return null;
@@ -503,7 +512,7 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
     return builder.toString();
   }
 
-  private String getExceptionCause(Throwable exception) {
+  private static String getExceptionCause(Throwable exception) {
     return exception.getCause() != null ? exception.getCause().getMessage() : CAUSE_NOT_AVAILABLE;
   }
 }

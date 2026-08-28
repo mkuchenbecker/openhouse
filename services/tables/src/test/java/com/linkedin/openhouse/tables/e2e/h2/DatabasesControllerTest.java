@@ -159,8 +159,10 @@ public class DatabasesControllerTest {
         .andExpect(status().is(204));
   }
 
-  // The same request other than making the URL wrong on purpose
-  // Should expect BAD_REQUEST instead of RESOURCE_NOT_FOUND
+  // The same request other than making the URL wrong on purpose. Since the Iceberg REST views
+  // surface took ownership of the /v1/** unresolved-path contract, an unknown /v1 path is a spec
+  // 404 in the IcebergErrorResponse envelope rather than the legacy OpenHouse-envelope 400 (which
+  // non-/v1 paths keep).
   @Test
   public void testIncorrectPathThrowsSpecificException() throws Exception {
     mvc.perform(
@@ -168,7 +170,8 @@ public class DatabasesControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(RequestConstants.TEST_UPDATE_ACL_POLICIES_REQUEST_BODY.toJson())
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().is(400));
+        .andExpect(status().is(404))
+        .andExpect(jsonPath("$.error.type", org.hamcrest.Matchers.is("NotFoundException")));
   }
 
   @AfterEach

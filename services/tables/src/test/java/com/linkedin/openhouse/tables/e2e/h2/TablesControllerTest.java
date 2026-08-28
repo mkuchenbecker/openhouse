@@ -370,12 +370,16 @@ public class TablesControllerTest {
 
   @Test
   public void testInvalidURLNotThrow404() throws Exception {
+    // Since the Iceberg REST views surface took ownership of the /v1/** unresolved-path
+    // contract, an unknown /v1 path is a spec 404 in the IcebergErrorResponse envelope rather
+    // than the legacy OpenHouse-envelope 400; non-/v1 paths keep the legacy rendering.
     mvc.perform(
             MockMvcRequestBuilders.get(
                     ValidationUtilities.CURRENT_MAJOR_VERSION_PREFIX
                         + "/databases/not_found/tabless/not_found") /* tabless is a deliberate typo */
                 .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.type", org.hamcrest.Matchers.is("NotFoundException")));
   }
 
   @Test

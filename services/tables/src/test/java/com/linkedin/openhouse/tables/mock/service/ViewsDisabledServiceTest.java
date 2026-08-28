@@ -2,10 +2,11 @@ package com.linkedin.openhouse.tables.mock.service;
 
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
-import com.linkedin.openhouse.tables.model.ViewModelConstants;
+import com.linkedin.openhouse.tables.model.IcebergRestViewFixtures;
 import com.linkedin.openhouse.tables.services.ViewsDisabledService;
-import com.linkedin.openhouse.tables.services.ViewsService;
+import java.util.Collections;
 import java.util.stream.Stream;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -13,77 +14,64 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.http.HttpStatus;
 
 /**
- * Freezes the only behaviour the stub service has: every operation reports that views are disabled.
- *
- * <p>Plain instantiation rather than a Spring context: the bean has no collaborators, so a context
- * would only slow the test down without exercising anything extra.
+ * The stubbed default-off posture: every {@code ViewsService} operation reports {@code
+ * VIEWS_DISABLED} with the fixed redacted message and a 404 status. Runs as a plain JUnit test: the
+ * bean has no dependencies.
  */
 public class ViewsDisabledServiceTest {
 
-  /**
-   * Deliberately duplicated rather than referenced from the production constant, which is
-   * package-private. Restating the literal is the point: this is the frozen, redacted message that
-   * reaches the error body and the service audit event, so a change to it must break a test.
-   */
-  private static final String EXPECTED_MESSAGE = "Views are disabled";
+  private final ViewsDisabledService service = new ViewsDisabledService();
 
-  private static final String ACTING_PRINCIPAL = "DUMMY_ANONYMOUS_USER";
+  private static final TableIdentifier IDENTIFIER =
+      TableIdentifier.of(IcebergRestViewFixtures.DATABASE_ID, IcebergRestViewFixtures.VIEW_ID);
 
-  /** One entry per {@link ViewsService} method, so a new method cannot silently skip the gate. */
-  private static Stream<Arguments> allServiceOperations() {
+  private static Stream<Arguments> allOperations() {
     return Stream.of(
+        Arguments.of("loadView", (Operation) service -> service.loadView(IDENTIFIER, "principal")),
         Arguments.of(
-            "getView",
-            (ServiceOperation)
-                service ->
-                    service.getView(
-                        ViewModelConstants.DATABASE_ID,
-                        ViewModelConstants.VIEW_ID,
-                        ACTING_PRINCIPAL)),
+            "viewExists", (Operation) service -> service.viewExists(IDENTIFIER, "principal")),
         Arguments.of(
-            "getAllViews",
-            (ServiceOperation)
+            "listViews",
+            (Operation)
                 service ->
-                    service.getAllViews(
-                        ViewModelConstants.DATABASE_ID, 0, 50, null, ACTING_PRINCIPAL)),
+                    service.listViews(
+                        IcebergRestViewFixtures.DATABASE_ID, null, null, "principal")),
         Arguments.of(
-            "putView",
-            (ServiceOperation)
+            "createView",
+            (Operation)
                 service ->
-                    service.putView(
-                        ViewModelConstants.createRequestWithoutBaseVersion(),
-                        ACTING_PRINCIPAL,
-                        true)),
+                    service.createView(
+                        IDENTIFIER,
+                        IcebergRestViewFixtures.SCHEMA,
+                        IcebergRestViewFixtures.viewVersion(),
+                        null,
+                        Collections.emptyMap(),
+                        "principal")),
         Arguments.of(
-            "deleteView",
-            (ServiceOperation)
+            "replaceView",
+            (Operation)
                 service ->
-                    service.deleteView(
-                        ViewModelConstants.DATABASE_ID,
-                        ViewModelConstants.VIEW_ID,
-                        ACTING_PRINCIPAL)));
+                    service.replaceView(
+                        IDENTIFIER, Collections.emptyList(), Collections.emptyList(), "principal")),
+        Arguments.of("dropView", (Operation) service -> service.dropView(IDENTIFIER, "principal")));
+  }
+
+  @FunctionalInterface
+  interface Operation {
+    void run(ViewsDisabledService service);
   }
 
   @ParameterizedTest(name = "{0}")
-  @MethodSource("allServiceOperations")
-  public void everyOperationReportsViewsDisabled(String operationName, ServiceOperation operation) {
-    ViewsDisabledService service = new ViewsDisabledService();
-
+  @MethodSource("allOperations")
+  public void everyOperationReportsViewsDisabled(String operationName, Operation operation) {
     ViewApiException exception =
         Assertions.assertThrows(ViewApiException.class, () -> operation.run(service));
 
-    Assertions.assertEquals(
-        ViewErrorCode.VIEWS_DISABLED,
-        exception.getErrorCode(),
-        "The stub must report the designed disabled code, not a generic failure: an uncoded"
-            + " unchecked exception would surface as a 500 with a stack trace instead.");
+    Assertions.assertEquals(ViewErrorCode.VIEWS_DISABLED, exception.getErrorCode());
     Assertions.assertEquals(HttpStatus.NOT_FOUND, exception.getHttpStatus());
-    Assertions.assertEquals(EXPECTED_MESSAGE, exception.getMessage());
-  }
-
-  /** Invokes one {@link ViewsService} method; needed because the four have different shapes. */
-  @FunctionalInterface
-  interface ServiceOperation {
-    void run(ViewsService service);
+    Assertions.assertEquals(
+        "Views are disabled",
+        exception.getMessage(),
+        "The message is fixed and redacted: it is copied into the error body and audit events.");
   }
 }
