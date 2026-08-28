@@ -13,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -337,7 +338,7 @@ public class IcebergRestViewsContractTest {
    */
   @Test
   public void taxonomyMatchesThePlanDocumentLiterally() {
-    Map<String, Object[]> golden = new LinkedHashMap<>();
+    Map<String, Rendering> golden = new LinkedHashMap<>();
     golden.put("NO_SUCH_VIEW", pair(404, "NoSuchViewException"));
     golden.put("VIEW_ALREADY_EXISTS", pair(409, "AlreadyExistsException"));
     golden.put("NAME_ALREADY_EXISTS_AS_TABLE", pair(409, "AlreadyExistsException"));
@@ -355,25 +356,39 @@ public class IcebergRestViewsContractTest {
 
     Assertions.assertEquals(
         golden.keySet(),
-        java.util.Arrays.stream(ViewErrorCode.values())
+        Arrays.stream(ViewErrorCode.values())
             .map(Enum::name)
-            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)),
+            .collect(Collectors.toCollection(LinkedHashSet::new)),
         "The enum and the golden table must name exactly the same codes.");
     for (ViewErrorCode code : ViewErrorCode.values()) {
-      Object[] expected = golden.get(code.name());
+      Rendering expected = golden.get(code.name());
       Assertions.assertEquals(
-          expected[0],
+          expected.status,
           code.getHttpStatus().value(),
           code.name() + " drifted from the plan document's status.");
       Assertions.assertEquals(
-          expected[1],
+          expected.type,
           code.getErrorType(),
           code.name() + " drifted from the plan document's type.");
     }
   }
 
-  private static Object[] pair(int status, String type) {
-    return new Object[] {status, type};
+  private static Rendering pair(int status, String type) {
+    return new Rendering(status, type);
+  }
+
+  /**
+   * The (status, type) rendering of one error code. Typed rather than a two-element array so that
+   * swapping the arguments of a {@link #pair(int, String)} call cannot compile.
+   */
+  private static final class Rendering {
+    final int status;
+    final String type;
+
+    Rendering(int status, String type) {
+      this.status = status;
+      this.type = type;
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
