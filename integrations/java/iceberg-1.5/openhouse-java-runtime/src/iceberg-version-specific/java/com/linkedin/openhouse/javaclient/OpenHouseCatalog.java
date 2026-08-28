@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -172,8 +173,8 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    * operation may already hold the old reference from the fast-path read, and closing it under the
    * operation would surface an {@code IllegalStateException} from the closed HTTP client into
    * Spark's table resolution (which probes {@code loadView}). Instead the displaced instance is
-   * parked here and reclaimed in {@link #close()} — a bounded leak of one idle HTTP client per
-   * token refresh, reclaimed at close()/JVM exit. Guarded by {@link #viewsRestCatalogLock}.
+   * parked here and closed at the next displacement or by {@link #close()}, whichever comes first,
+   * so at most one idle HTTP client is retained. Guarded by {@link #viewsRestCatalogLock}.
    */
   private final List<RESTCatalog> displacedViewsRestCatalogs = new ArrayList<>();
 
@@ -246,9 +247,13 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    */
   protected void updateAuthToken(String token) {
     if (token != null && !token.isEmpty()) {
-      this.properties.put(AUTH_TOKEN, token);
       this.apiClient.addDefaultHeader(HttpHeaders.AUTHORIZATION, bearerValue(token));
-      displaceViewsRestCatalog();
+      // The property write joins the monitor that guards every read of it in
+      // buildViewsRestCatalog; synchronized is reentrant, so the nested displacement is fine.
+      synchronized (viewsRestCatalogLock) {
+        this.properties.put(AUTH_TOKEN, token);
+        displaceViewsRestCatalog();
+      }
     }
   }
 
@@ -692,22 +697,22 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     String uri = properties.get(CatalogProperties.URI);
     restProperties.put(CatalogProperties.URI, uri);
     String token = properties.get(AUTH_TOKEN);
-    if (hasText(token)) {
+    if (isNotEmpty(token)) {
       restProperties.put(REST_HEADER_PREFIX + HttpHeaders.AUTHORIZATION, bearerValue(token));
     }
     String clientName = properties.get(CLIENT_NAME);
-    if (hasText(clientName)) {
+    if (isNotEmpty(clientName)) {
       restProperties.put(REST_HEADER_PREFIX + WebClientFactory.HTTP_HEADER_CLIENT_NAME, clientName);
     }
     String sessionId = properties.get(CatalogProperties.APP_ID);
-    if (hasText(sessionId)) {
+    if (isNotEmpty(sessionId)) {
       restProperties.put(REST_HEADER_PREFIX + WebClientFactory.SESSION_ID, sessionId);
     }
     restProperties.put(
         REST_HEADER_PREFIX + HttpHeaders.USER_AGENT,
         WebClientFactory.USER_AGENT_CLIENT_PRODUCT + "/" + resolveClientVersion());
     String truststore = properties.get(TRUST_STORE);
-    if (hasText(truststore) && uri != null && uri.startsWith("https://")) {
+    if (isNotEmpty(truststore) && uri != null && uri.toLowerCase(Locale.ROOT).startsWith("https://")) {
       // May re-fire on each rebuild (token refresh / close-then-reuse); accepted — the asymmetry
       // is worth re-surfacing whenever a fresh embedded client is about to dial out over https.
       log.warn(
@@ -733,7 +738,7 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   }
 
   /** True when the value is present and non-empty (the uniform absence test for properties). */
-  private static boolean hasText(String value) {
+  private static boolean isNotEmpty(String value) {
     return value != null && !value.isEmpty();
   }
 
@@ -750,12 +755,12 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    */
   private String resolveClientVersion() {
     String clientVersion = properties.get(CLIENT_VERSION);
-    if (hasText(clientVersion)) {
+    if (isNotEmpty(clientVersion)) {
       return clientVersion;
     }
     Package pkg = OpenHouseCatalog.class.getPackage();
     String manifestVersion = pkg == null ? null : pkg.getImplementationVersion();
-    return hasText(manifestVersion) ? manifestVersion : CLIENT_VERSION_UNKNOWN;
+    return isNotEmpty(manifestVersion) ? manifestVersion : CLIENT_VERSION_UNKNOWN;
   }
 
   /**
@@ -767,34 +772,46 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    */
   private void displaceViewsRestCatalog() {
     synchronized (viewsRestCatalogLock) {
-      if (viewsRestCatalog != null) {
-        displacedViewsRestCatalogs.add(viewsRestCatalog);
-        viewsRestCatalog = null;
+      if (viewsRestCatalog == null) {
+        return;
+      }
+      // Reclaim the previous generation before parking this one: it was displaced at least one
+      // token-refresh interval ago, so no operation that read it from the fast path is still in
+      // flight. Without this the list grows once per refresh for the life of the catalog.
+      closeDisplacedViewsRestCatalogs();
+      displacedViewsRestCatalogs.add(viewsRestCatalog);
+      viewsRestCatalog = null;
+    }
+  }
+
+  /** Closes and forgets every parked instance. Caller holds {@link #viewsRestCatalogLock}. */
+  private void closeDisplacedViewsRestCatalogs() {
+    for (RESTCatalog displaced : displacedViewsRestCatalogs) {
+      try {
+        displaced.close();
+      } catch (IOException | RuntimeException e) {
+        log.warn("Failed to close a displaced embedded views REST catalog", e);
       }
     }
+    displacedViewsRestCatalogs.clear();
   }
 
   /**
    * Closes client-side resources; today that is the embedded views {@link RESTCatalog} plus any
-   * instances displaced by token refreshes. Not terminal for view support: a subsequent view
+   * instance displaced by a token refresh. Not terminal for view support: a subsequent view
    * operation lazily re-initializes a fresh embedded catalog (accepted resurrection semantics — the
    * catalog object itself stays usable).
+   *
+   * <p>Unlike a token refresh, this does close the live instance, so it must not overlap a view
+   * operation on another thread: a concurrent operation holding the reference from the lock-free
+   * fast path would see an {@code IllegalStateException} from the closed HTTP client. Callers close
+   * a catalog they are done using.
    */
   @Override
   public void close() {
     synchronized (viewsRestCatalogLock) {
-      if (viewsRestCatalog != null) {
-        displacedViewsRestCatalogs.add(viewsRestCatalog);
-        viewsRestCatalog = null;
-      }
-      for (RESTCatalog displaced : displacedViewsRestCatalogs) {
-        try {
-          displaced.close();
-        } catch (IOException | RuntimeException e) {
-          log.warn("Failed to close a displaced embedded views REST catalog", e);
-        }
-      }
-      displacedViewsRestCatalogs.clear();
+      displaceViewsRestCatalog();
+      closeDisplacedViewsRestCatalogs();
     }
   }
 
