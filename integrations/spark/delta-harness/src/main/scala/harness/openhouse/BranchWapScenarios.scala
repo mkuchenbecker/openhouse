@@ -10,27 +10,34 @@ import scala.annotation.tailrec
 import scala.reflect.{ClassTag, classTag}
 import scala.util.control.NonFatal
 
+// The branch and write-audit-publish behavior families. Each bucket runs on parquet and orc and
+// pins one edge of branch routing: what a staged write.wap.id commit keeps off main until it is
+// published, how a branch-routed DDL statement changes table-global metadata, and how direct
+// branch, tag, and negative branch operations behave.
 trait BranchWapScenarios extends BranchScenarioKit {
   import Rows._
 
-  val wapStagedCases: List[Plan.Case] =
-    List("parquet", "orc").flatMap { format =>
-      val preparation = TablePreparation(
-        format,
-        TableTest(Core)
-          .sql("create")(table =>
-            s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
-              s"TBLPROPERTIES ('write.format.default'='$format')")()
-          .insert(3)()
-          .sql("enableWap")(table =>
-            s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")(),
-        description = s"Three seed rows in a $format table with write.wap.enabled set to true.")
+  /**
+   * Three seed rows in a table with write.wap.enabled set to true. `format` sets the file format.
+   */
+  private def wapStagedPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
+      format,
+      TableTest(Core)
+        .sql("create")(table =>
+          s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
+            s"TBLPROPERTIES ('write.format.default'='$format')")()
+        .insert(3)()
+        .sql("enableWap")(table =>
+          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")())
 
-      List(
-        preparation.test(
-          "wapStaged.insert",
-          "A staged INSERT under spark.wap.id does not change main until its snapshot is " +
-            "cherry-picked, after which main includes the inserted row.") { table =>
+  /**
+   * A staged INSERT under spark.wap.id does not change main until its snapshot is cherry-picked,
+   * after which main includes the inserted row.
+   */
+  private def wapStagedInsertCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.insert") { table =>
           table.spark.conf.set("spark.wap.id", "wS")
           try {
             table.spark.sql(
@@ -70,11 +77,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
               .collect()(0)
               .getLong(0) == 4,
             "publishing the staged insert did not advance main")
-        },
-        preparation.test(
-          "wapStaged.overwrite",
-          "A staged INSERT OVERWRITE under spark.wap.id does not change main until its snapshot " +
-            "is cherry-picked, after which main is replaced by the overwritten rows.") { table =>
+    }
+
+  /**
+   * A staged INSERT OVERWRITE under spark.wap.id does not change main until its snapshot is
+   * cherry-picked, after which main is replaced by the overwritten rows.
+   */
+  private def wapStagedOverwriteCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.overwrite") { table =>
           table.spark.conf.set("spark.wap.id", "wS")
           try {
             table.spark.sql(
@@ -114,11 +125,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
               .collect()(0)
               .getLong(0) == 1,
             "publishing the staged overwrite did not replace main")
-        },
-        preparation.test(
-          "wapStaged.delete.bypassesWap",
-          "A DELETE issued under spark.wap.id commits directly to main with no staged snapshot, " +
-            "unlike INSERT, OVERWRITE, and MERGE.") { table =>
+    }
+
+  /**
+   * A DELETE issued under spark.wap.id commits directly to main with no staged snapshot, unlike
+   * INSERT, OVERWRITE, and MERGE.
+   */
+  private def wapStagedDeleteBypassesWapCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.delete.bypassesWap") { table =>
           table.spark.conf.set("spark.wap.id", "wD")
           try {
             table.spark.sql(
@@ -144,11 +159,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             mainRowCount == 2 && stagedSnapshotCount == 0,
             "staged DELETE should commit directly to main without a WAP snapshot")
-        },
-        preparation.test(
-          "wapStaged.merge",
-          "A staged MERGE INSERT under spark.wap.id does not change main until its snapshot is " +
-            "cherry-picked, after which main includes the merged row.") { table =>
+    }
+
+  /**
+   * A staged MERGE INSERT under spark.wap.id does not change main until its snapshot is
+   * cherry-picked, after which main includes the merged row.
+   */
+  private def wapStagedMergeCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.merge") { table =>
           table.spark.conf.set("spark.wap.id", "wS")
           try {
             table.spark.sql(
@@ -193,11 +212,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
               .collect()(0)
               .getLong(0) == 4,
             "publishing the staged merge did not advance main")
-        },
-        preparation.test(
-          "wapStaged.update.valueVisibleOnlyAfterPublish",
-          "A staged UPDATE under spark.wap.id leaves the old value visible on main until its " +
-            "snapshot is cherry-picked, after which main reads the updated value.") { table =>
+    }
+
+  /**
+   * A staged UPDATE under spark.wap.id leaves the old value visible on main until its snapshot is
+   * cherry-picked, after which main reads the updated value.
+   */
+  private def wapStagedUpdateVisibleAfterPublishCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.update.valueVisibleOnlyAfterPublish") { table =>
           table.spark.conf.set("spark.wap.id", "wU")
           try {
             table.spark.sql(
@@ -237,12 +260,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             valueAfterPublish == "staged-upd",
             s"published update returned $valueAfterPublish")
-        },
-        preparation.test(
-          "wapStaged.twoIdsIndependent",
-          "Two inserts staged under different spark.wap.id values publish independently: " +
-            "cherry-picking one advances main without exposing the other's row until it too is " +
-            "cherry-picked.") { table =>
+    }
+
+  /**
+   * Two inserts staged under different spark.wap.id values publish independently: cherry-picking
+   * one advances main without exposing the other's row until it too is cherry-picked.
+   */
+  private def wapStagedTwoIdsIndependentCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.twoIdsIndependent") { table =>
           def stageInsert(wapId: String, key: Int): Unit = {
             table.spark.conf.set("spark.wap.id", wapId)
             try {
@@ -297,11 +323,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
               .collect()(0)
               .getLong(0) == 5,
             "publishing wb did not advance main")
-        },
-        preparation.test(
-          "wapStaged.expireVsStaged",
-          "Expiring snapshots with retain_last=1 removes an unreferenced staged WAP snapshot, and " +
-            "cherry-picking it afterward fails because the snapshot is gone.") { table =>
+    }
+
+  /**
+   * Expiring snapshots with retain_last=1 removes an unreferenced staged WAP snapshot, and
+   * cherry-picking it afterward fails because the snapshot is gone.
+   */
+  private def wapStagedExpireVsStagedCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wapStaged.expireVsStaged") { table =>
           table.spark.conf.set("spark.wap.id", "wE")
           try {
             table.spark.sql(
@@ -345,30 +375,49 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             survivedExpiration == 0 && publishOutcome.startsWith("stranded"),
             "expiration should remove and strand the unreferenced staged snapshot")
-        })
     }
 
-  val branchDdlCases: List[Plan.Case] =
+  /**
+   * The write-audit-publish staged bucket on parquet and orc: each case stages a mutation under
+   * spark.wap.id and pins whether that mutation stays invisible on main until it is published.
+   */
+  val wapStagedCases: List[Plan.Case] =
     List("parquet", "orc").flatMap { format =>
-      val preparation = TablePreparation(
-        format,
-        TableTest(Core)
-          .sql("create")(table =>
-            s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
-              s"TBLPROPERTIES ('write.format.default'='$format')")()
-          .insert(3)()
-          .sql("enableWap")(table =>
-            s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")()
-          .sql("createBranch")(table =>
-            s"ALTER TABLE $table CREATE BRANCH bddl")(),
-        description = s"Three seed rows in a $format table with write.wap.enabled set to true and " +
-          "branch bddl created.")
-
+      val preparation = wapStagedPreparation(format)
       List(
-        preparation.test(
-          "branchDdl.addColumn.leaksToMain",
-          "ALTER TABLE ADD COLUMN issued while spark.wap.branch selects a branch is accepted and " +
-            "adds the column to the table's global schema, visible on main.") { table =>
+        wapStagedInsertCase(preparation),
+        wapStagedOverwriteCase(preparation),
+        wapStagedDeleteBypassesWapCase(preparation),
+        wapStagedMergeCase(preparation),
+        wapStagedUpdateVisibleAfterPublishCase(preparation),
+        wapStagedTwoIdsIndependentCase(preparation),
+        wapStagedExpireVsStagedCase(preparation))
+    }
+
+  /**
+   * Three seed rows in a table with write.wap.enabled set to true and branch bddl created.
+   * `format` sets the file format.
+   */
+  private def branchDdlPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
+      format,
+      TableTest(Core)
+        .sql("create")(table =>
+          s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
+            s"TBLPROPERTIES ('write.format.default'='$format')")()
+        .insert(3)()
+        .sql("enableWap")(table =>
+          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")()
+        .sql("createBranch")(table =>
+          s"ALTER TABLE $table CREATE BRANCH bddl")())
+
+  /**
+   * ALTER TABLE ADD COLUMN issued while spark.wap.branch selects a branch is accepted and adds the
+   * column to the table's global schema, visible on main.
+   */
+  private def branchDdlAddColumnLeaksToMainCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branchDdl.addColumn.leaksToMain") { table =>
           table.spark.conf.set("spark.wap.branch", "bddl")
           val outcome =
             try {
@@ -393,11 +442,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             columnNames.contains("br_added"),
             "ADD COLUMN on a branch should change the table-global schema")
-        },
-        preparation.test(
-          "branchDdl.setTblProp.leaksToMain",
-          "ALTER TABLE SET TBLPROPERTIES issued while spark.wap.branch selects a branch is accepted " +
-            "and changes the table's global properties, visible on main.") { table =>
+    }
+
+  /**
+   * ALTER TABLE SET TBLPROPERTIES issued while spark.wap.branch selects a branch is accepted and
+   * changes the table's global properties, visible on main.
+   */
+  private def branchDdlSetTblPropLeaksToMainCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branchDdl.setTblProp.leaksToMain") { table =>
           table.spark.conf.set("spark.wap.branch", "bddl")
           val outcome =
             try {
@@ -423,11 +476,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             properties.get("user.branchkey").contains("v1"),
             "SET TBLPROPERTIES on a branch should change table-global properties")
-        },
-        preparation.test(
-          "branchDdl.alterColumnComment.leaksToMain",
-          "ALTER TABLE ALTER COLUMN COMMENT issued while spark.wap.branch selects a branch is " +
-            "accepted and changes the table's global column comment, visible on main.") { table =>
+    }
+
+  /**
+   * ALTER TABLE ALTER COLUMN COMMENT issued while spark.wap.branch selects a branch is accepted and
+   * changes the table's global column comment, visible on main.
+   */
+  private def branchDdlAlterColumnCommentLeaksToMainCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branchDdl.alterColumnComment.leaksToMain") { table =>
           table.spark.conf.set("spark.wap.branch", "bddl")
           val outcome =
             try {
@@ -454,11 +511,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             Option(comment).getOrElse("").contains("br-comment"),
             "ALTER COLUMN COMMENT on a branch should change table-global metadata")
-        },
-        preparation.test(
-          "branchDdl.dropColumn.rejected",
-          "ALTER TABLE DROP COLUMN issued while spark.wap.branch selects a branch is rejected, and " +
-            "the column remains present.") { table =>
+    }
+
+  /**
+   * ALTER TABLE DROP COLUMN issued while spark.wap.branch selects a branch is rejected, and the
+   * column remains present.
+   */
+  private def branchDdlDropColumnRejectedCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branchDdl.dropColumn.rejected") { table =>
           table.spark.conf.set("spark.wap.branch", "bddl")
           val outcome =
             try {
@@ -487,25 +548,43 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             columnNames.contains(Core.string0.columnName),
             "DROP COLUMN should remain rejected while a branch is selected")
-        })
     }
 
-  val branchingCases: List[Plan.Case] =
+  /**
+   * The branch DDL bucket on parquet and orc: each case issues a DDL statement while
+   * spark.wap.branch selects branch bddl and pins whether that statement changes the table-global
+   * metadata visible on main or is rejected.
+   */
+  val branchDdlCases: List[Plan.Case] =
     List("parquet", "orc").flatMap { format =>
-      val preparation = TablePreparation(
-        format,
-        TableTest(Core)
-          .sql("create")(table =>
-            s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
-              s"TBLPROPERTIES ('write.format.default'='$format')")()
-          .insert(3)(),
-        description = s"Three seed rows in a $format table with no branches or WAP configuration.")
-
+      val preparation = branchDdlPreparation(format)
       List(
-        preparation.test(
-          "branch.direct.isolation",
-          "Inserting directly into a created branch adds a row visible only when reading that " +
-            "branch, and main keeps its original 3 rows.") { table =>
+        branchDdlAddColumnLeaksToMainCase(preparation),
+        branchDdlSetTblPropLeaksToMainCase(preparation),
+        branchDdlAlterColumnCommentLeaksToMainCase(preparation),
+        branchDdlDropColumnRejectedCase(preparation))
+    }
+
+  /**
+   * Three seed rows in a table with no branches or WAP configuration. `format` sets the file
+   * format.
+   */
+  private def branchingPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
+      format,
+      TableTest(Core)
+        .sql("create")(table =>
+          s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
+            s"TBLPROPERTIES ('write.format.default'='$format')")()
+        .insert(3)())
+
+  /**
+   * Inserting directly into a created branch adds a row visible only when reading that branch, and
+   * main keeps its original 3 rows.
+   */
+  private def branchDirectIsolationCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.direct.isolation") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} CREATE BRANCH b")
           table.spark.sql(
@@ -527,11 +606,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             mainRowCount == 3,
             s"main should be unchanged at 3 rows, got $mainRowCount")
-        },
-        preparation.test(
-          "branch.wapConf.routing",
-          "With write.wap.enabled set and spark.wap.branch selecting a branch, an INSERT and the " +
-            "following read both route to that branch, leaving main at its original 3 rows.") { table =>
+    }
+
+  /**
+   * With write.wap.enabled set and spark.wap.branch selecting a branch, an INSERT and the following
+   * read both route to that branch, leaving main at its original 3 rows.
+   */
+  private def branchWapConfRoutingCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.wapConf.routing") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
               "('write.wap.enabled'='true')")
@@ -560,11 +643,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             mainRowCount == 3,
             s"branch-routed write changed main to $mainRowCount rows")
-        },
-        preparation.test(
-          "wap.stagePublish",
-          "A staged INSERT under spark.wap.id leaves main at its original 3 rows until its " +
-            "snapshot is cherry-picked, after which main includes the inserted row.") { table =>
+    }
+
+  /**
+   * A staged INSERT under spark.wap.id leaves main at its original 3 rows until its snapshot is
+   * cherry-picked, after which main includes the inserted row.
+   */
+  private def wapStagePublishCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wap.stagePublish") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
               "('write.wap.enabled'='true')")
@@ -600,11 +687,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             mainAfterPublish == 4,
             s"publishing the staged write left main at $mainAfterPublish rows")
-        },
-        preparation.test(
-          "branch.ddlLeak.addColumn",
-          "ALTER TABLE ADD COLUMN issued while spark.wap.branch selects a branch changes the " +
-            "table's global schema, visible on main.") { table =>
+    }
+
+  /**
+   * ALTER TABLE ADD COLUMN issued while spark.wap.branch selects a branch changes the table's
+   * global schema, visible on main.
+   */
+  private def branchDdlLeakAddColumnCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.ddlLeak.addColumn") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
               "('write.wap.enabled'='true')")
@@ -623,11 +714,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             mainColumnNames.contains("leaked_col"),
             "ADD COLUMN on a branch should change the table-global schema")
-        },
-        preparation.test(
-          "branch.dml.updateDelete",
-          "UPDATE and DELETE issued while spark.wap.branch selects a branch change only that " +
-            "branch's rows and leave main at its original 3 rows.") { table =>
+    }
+
+  /**
+   * UPDATE and DELETE issued while spark.wap.branch selects a branch change only that branch's rows
+   * and leave main at its original 3 rows.
+   */
+  private def branchDmlUpdateDeleteCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.dml.updateDelete") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
               "('write.wap.enabled'='true')")
@@ -671,12 +766,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             branchValue == "br-upd",
             s"branch update returned $branchValue")
-        },
-        preparation.test(
-          "branch.lifecycle.tag",
-          "A tag pins its snapshot through a later insert and snapshot expiration: the tag still " +
-            "reads 3 rows, main reads 4 rows including the new one, and the tagged snapshot is not " +
-            "expired.") { table =>
+    }
+
+  /**
+   * A tag pins its snapshot through a later insert and snapshot expiration: the tag still reads 3
+   * rows, main reads 4 rows including the new one, and the tagged snapshot is not expired.
+   */
+  private def branchLifecycleTagCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.lifecycle.tag") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} CREATE TAG mytag")
           val taggedSnapshotId = table.spark
@@ -717,10 +815,14 @@ trait BranchWapScenarios extends BranchScenarioKit {
               .collect()(0)
               .getLong(0) == 1,
             "snapshot expiration should retain the snapshot referenced by the tag")
-        },
-        preparation.test(
-          "branch.lifecycle.dropBranch",
-          "CREATE BRANCH adds a ref that DROP BRANCH then removes.") { table =>
+    }
+
+  /**
+   * CREATE BRANCH adds a ref that DROP BRANCH then removes.
+   */
+  private def branchLifecycleDropBranchCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.lifecycle.dropBranch") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} CREATE BRANCH tmpbr")
           val branchCountBeforeDrop = table.spark
@@ -745,11 +847,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             branchCountAfterDrop == 0,
             "DROP BRANCH did not remove the branch ref")
-        },
-        preparation.test(
-          "branch.neg.wapIdAndBranch",
-          "Setting both spark.wap.id and spark.wap.branch on a write is rejected with a validation " +
-            "error naming the conflict.") { table =>
+    }
+
+  /**
+   * Setting both spark.wap.id and spark.wap.branch on a write is rejected with a validation error
+   * naming the conflict.
+   */
+  private def branchNegWapIdAndBranchCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.neg.wapIdAndBranch") { table =>
           table.spark.sql(
             s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
               "('write.wap.enabled'='true')")
@@ -768,11 +874,15 @@ trait BranchWapScenarios extends BranchScenarioKit {
             table.spark.conf.unset("spark.wap.id")
             table.spark.conf.unset("spark.wap.branch")
           }
-        },
-        preparation.test(
-          "branch.neg.insertNonexistentBranch",
-          "Inserting into a branch name that was never created is rejected with a validation error " +
-            "saying the branch does not exist.") { table =>
+    }
+
+  /**
+   * Inserting into a branch name that was never created is rejected with a validation error saying
+   * the branch does not exist.
+   */
+  private def branchNegInsertNonexistentBranchCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.neg.insertNonexistentBranch") { table =>
           val exception = Check.intercept[ValidationException](
             table.spark.sql(
               s"INSERT INTO ${table.name}.branch_nope VALUES " +
@@ -781,10 +891,25 @@ trait BranchWapScenarios extends BranchScenarioKit {
           assert(
             exception.getMessage.contains("does not exist"),
             s"unexpected validation message: ${exception.getMessage.take(140)}")
-        })
     }
 
-
-
-
+  /**
+   * The direct branching bucket on parquet and orc: each case exercises a branch, a
+   * write-audit-publish staged commit, a tag, or a negative branch write against a plain table with
+   * no branches or WAP configuration at the start.
+   */
+  val branchingCases: List[Plan.Case] =
+    List("parquet", "orc").flatMap { format =>
+      val preparation = branchingPreparation(format)
+      List(
+        branchDirectIsolationCase(preparation),
+        branchWapConfRoutingCase(preparation),
+        wapStagePublishCase(preparation),
+        branchDdlLeakAddColumnCase(preparation),
+        branchDmlUpdateDeleteCase(preparation),
+        branchLifecycleTagCase(preparation),
+        branchLifecycleDropBranchCase(preparation),
+        branchNegWapIdAndBranchCase(preparation),
+        branchNegInsertNonexistentBranchCase(preparation))
+    }
 }

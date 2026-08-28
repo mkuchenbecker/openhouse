@@ -6,30 +6,44 @@ package harness
 // isolation check confirms main kept its three seed rows.
 trait BranchDmlScenarios extends BranchScenarioKit { this: DmlScenarios =>
 
+  /**
+   * The branch DML bucket: every branch core preparation crossed with the shared DML cases, plus
+   * the branch null-string preparations crossed with the null-string case. Each case captures its
+   * before state from the branch it is routed at, so the same body holds on a branch and on main.
+   */
   lazy val branchDmlCases: List[Plan.Case] =
     preparedBranchCoreTables.flatMap(preparation => allDmlTestCases.map(_.runOn(preparation))) ++
       preparedNullStringBranchCoreTables.flatMap(preparation =>
         nullStringRowTestCases.map(_.runOn(preparation)))
 
+  /**
+   * The branch partitioned DML bucket: every partitioned branch preparation crossed with the shared
+   * partitioned-table cases.
+   */
   lazy val branchPartitionedDmlCases: List[Plan.Case] =
     preparedPartitionedBranchCoreTables.flatMap(preparation =>
       partitionedTableTestCases.map(_.runOn(preparation)))
 
+  /**
+   * The branch merge-on-read DML bucket: every branch merge-on-read preparation crossed with the
+   * shared row-mutation cases, plus the branch merge-on-read null-string preparations crossed with
+   * the null-string case.
+   */
   lazy val branchMorDmlCases: List[Plan.Case] =
     preparedBranchMorCoreTables.flatMap(preparation =>
       rowMutationTestCases.map(_.runOn(preparation))) ++
       preparedNullStringBranchMorCoreTables.flatMap(preparation =>
         nullStringRowTestCases.map(_.runOn(preparation)))
 
-  // The branch a consumer creates after the DDL. It runs against each of the standard DDL-consumer
-  // preparations, so Plan places it inside that walk.
+  /**
+   * A write to a branch created after the DDL takes the branch to four rows and leaves main on its
+   * three rows. It runs against each standard DDL-consumer preparation, so Plan places it inside
+   * that walk.
+   */
   def branchDdlConsumerCases(
       preparation: TablePreparation[CoreTable.type]): List[Plan.Case] =
     List(
-      preparation.test(
-        "branch",
-        "A write to a branch created after the DDL takes the branch to four rows and leaves " +
-          "main on its three rows.") { table =>
+      preparation.test("branch") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH cb")
         table.spark.sql(

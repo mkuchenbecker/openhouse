@@ -17,7 +17,9 @@ import scala.util.control.NonFatal
 trait BranchSurfaceScenarios extends BranchScenarioKit {
   import Rows._
 
-  // Each surface family builds the starting states it needs, so a family reads on its own.
+  /**
+   * Three seed rows with keys 1, 2 and 3 in an unpartitioned table. `format` sets the file format.
+   */
   private def surfaceBasePreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
@@ -25,9 +27,12 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
         .sql("create")(table =>
           s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
             s"TBLPROPERTIES ('write.format.default'='$format')")()
-        .insert(3)(),
-      description = s"Three seed rows with keys 1, 2 and 3 in an unpartitioned $format table.")
+        .insert(3)())
 
+  /**
+   * Five rows across two snapshots, a 3-row seed then a 2-row insert, in an unpartitioned table.
+   * `format` sets the file format.
+   */
   private def surfaceTwoSnapshotPreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
@@ -39,10 +44,12 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
         .sql("insertMore")(table =>
           s"INSERT INTO $table VALUES " +
             "(CAST(4 AS BIGINT), 4, 'row-4', 4.5, true, '2024-01-04-03'), " +
-            "(CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")(),
-      description = s"Five rows across two snapshots (a 3-row seed then a 2-row insert) in an " +
-        s"unpartitioned $format table.")
+            "(CAST(5 AS BIGINT), 5, 'row-5', 5.5, false, '2024-01-05-04')")())
 
+  /**
+   * Three seed rows in an unpartitioned table with write.wap.enabled set to true. `format` sets the
+   * file format.
+   */
   private def surfaceWapPreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
@@ -52,18 +59,18 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             s"TBLPROPERTIES ('write.format.default'='$format')")()
         .insert(3)()
         .sql("enableWap")(table =>
-          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")(),
-      description = s"Three seed rows in an unpartitioned $format table with " +
-        "write.wap.enabled=true.")
+          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")())
 
-  // Compaction run against a table that carries a branch.
+  /**
+   * Compacting main while a branch exists preserves both main's and the branch's 6 rows; a
+   * follow-up compaction attempt routed at the branch via spark.wap.branch may run or throw. The
+   * procedure outcome is diagnostic; the case asserts that main and the branch both remain at 6
+   * rows. `format` sets the file format.
+   */
   def surfaceBranchMaintenanceCases(format: String): List[Plan.Case] =
     List(
       surfaceTwoSnapshotPreparation(format).test(
-        "surface.maint.compactWithBranch",
-        "Compacting main while a branch exists preserves both main's and the branch's 6 rows; " +
-          "a follow-up compaction attempt routed at the branch via spark.wap.branch still leaves " +
-          "main and the branch at 6 rows, whichever way that routed attempt resolves.") { table =>
+        "surface.maint.compactWithBranch") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
             "('write.wap.enabled'='true')")
@@ -128,13 +135,13 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
           "branch-routed compaction attempt should preserve the branch")
       })
 
-  // What a branch keeps to itself and what it leaks to main, plus the branch merge and retarget procedures.
-  def surfaceBranchCases(format: String): List[Plan.Case] =
-    List(
-      surfaceBasePreparation(format).test(
-        "branch.leak.setProps",
-        "SET TBLPROPERTIES issued while spark.wap.branch is set changes table-global metadata: " +
-          "the user property is visible on the table's own properties.") { table =>
+  /**
+   * SET TBLPROPERTIES issued while spark.wap.branch is set changes table-global metadata: the user
+   * property is visible on the table's own properties.
+   */
+  private def branchLeakSetPropsCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.leak.setProps") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
             "('write.wap.enabled'='true')")
@@ -154,11 +161,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             .get("user.leaked")
             .contains("yes"),
           "branch-routed property update should change table-global metadata")
-      },
-      surfaceBasePreparation(format).test(
-        "branch.leak.writeOrderedBy",
-        "WRITE ORDERED BY issued while spark.wap.branch is set changes table-global metadata: " +
-          "write.distribution-mode becomes range on the table itself.") { table =>
+    }
+
+  /**
+   * WRITE ORDERED BY issued while spark.wap.branch is set changes table-global metadata:
+   * write.distribution-mode becomes range on the table itself.
+   */
+  private def branchLeakWriteOrderedByCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.leak.writeOrderedBy") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
             "('write.wap.enabled'='true')")
@@ -178,12 +189,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             .get("write.distribution-mode")
             .contains("range"),
           "branch-routed ordering should change table-global metadata")
-      },
-      surfaceWapPreparation(format).test(
-        "branch.wapToggle.noGuard",
-        "A spark.wap.id-tagged insert produces exactly one staged snapshot carrying that " +
-          "wap.id, and that snapshot is unaffected by later disabling write.wap.enabled on the " +
-          "table.") { table =>
+    }
+
+  /**
+   * A spark.wap.id-tagged insert produces exactly one staged snapshot carrying that wap.id, and
+   * that snapshot is unaffected by later disabling write.wap.enabled on the table.
+   */
+  private def branchWapToggleNoGuardCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.wapToggle.noGuard") { table =>
         table.spark.conf.set("spark.wap.id", "w9")
         try {
           table.spark.sql(
@@ -212,11 +226,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
           stagedAfterToggle == "1",
           "disabling write.wap.enabled should not remove an already-staged snapshot, " +
             s"got $stagedAfterToggle")
-      },
-      surfaceWapPreparation(format).test(
-        "wap.neg.doubleCherrypick",
-        "Cherry-picking a WAP-staged snapshot publishes its row (row count goes from 3 to 4); " +
-          "cherry-picking that same snapshot a second time is rejected as a duplicate.") { table =>
+    }
+
+  /**
+   * Cherry-picking a WAP-staged snapshot publishes its row, taking the row count from 3 to 4;
+   * cherry-picking that same snapshot a second time is rejected as a duplicate.
+   */
+  private def wapNegDoubleCherrypickCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wap.neg.doubleCherrypick") { table =>
         table.spark.conf.set("spark.wap.id", "w1")
         try {
           table.spark.sql(
@@ -253,11 +271,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             message.toLowerCase.contains("duplicate") ||
               message.toLowerCase.contains("already")),
           "second cherry-pick should reject the duplicate WAP commit")
-      },
-      surfaceBasePreparation(format).test(
-        "wap.neg.expireRefTarget",
-        "Expiring the snapshot a branch currently points to is rejected with an exception, and " +
-          "the branch ref still points at its original snapshot afterward.") { table =>
+    }
+
+  /**
+   * Expiring the snapshot a branch currently points to is rejected with an exception, and the
+   * branch ref still points at its original snapshot afterward.
+   */
+  private def wapNegExpireRefTargetCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("wap.neg.expireRefTarget") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH eb2")
         val branchHeadSnapshotId = table.spark
@@ -281,11 +303,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
         assert(
           branchHeadSnapshotIdAfter == branchHeadSnapshotId,
           "rejected expiration should leave the branch ref pointing at its original snapshot")
-      },
-      surfaceBasePreparation(format).test(
-        "branch.fastForward.merge",
-        "fast_forward moves main to a branch's head after two branch-only inserts, growing " +
-          "main from 3 rows to 5.") { table =>
+    }
+
+  /**
+   * fast_forward moves main to a branch's head after two branch-only inserts, growing main from 3
+   * rows to 5.
+   */
+  private def branchFastForwardMergeCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.fastForward.merge") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH fb")
         table.spark.sql(
@@ -308,11 +334,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             table.spark,
             s"SELECT count(*) FROM ${table.name}") == "5",
           "fast_forward should move main to the branch head")
-      },
-      surfaceBasePreparation(format).test(
-        "branch.fastForward.divergent",
-        "fast_forward is rejected with an ancestry error when main and the branch have both " +
-          "advanced independently since they diverged.") { table =>
+    }
+
+  /**
+   * fast_forward is rejected with an ancestry error when main and the branch have both advanced
+   * independently since they diverged.
+   */
+  private def branchFastForwardDivergentCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.fastForward.divergent") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH db")
         table.spark.sql(
@@ -335,11 +365,15 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             message.toLowerCase.contains("ancestor") ||
               message.toLowerCase.contains("fast-forward")),
           "divergent fast_forward should report an ancestry error")
-      },
-      surfaceTwoSnapshotPreparation(format).test(
-        "branch.replaceBranch",
-        "A new branch starts pointing at the current 5-row head; REPLACE BRANCH AS OF the " +
-          "earlier snapshot retargets it back to the 3-row seed state.") { table =>
+    }
+
+  /**
+   * A new branch starts pointing at the current 5-row head; REPLACE BRANCH AS OF the earlier
+   * snapshot retargets it back to the 3-row seed state.
+   */
+  private def branchReplaceBranchCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("branch.replaceBranch") { table =>
         val snapshots = snapshotIds(table.spark, table.name)
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH rb2")
@@ -357,15 +391,31 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
             table.spark,
             s"SELECT count(*) FROM ${table.name} VERSION AS OF 'rb2'") == "3",
           "REPLACE BRANCH should retarget the branch to the older snapshot")
-      })
+    }
 
-  // Publishing a write-audit-publish staged commit onto main.
+  /**
+   * What a branch keeps to itself and what it leaks to main, plus the branch merge and retarget
+   * procedures. `format` sets the file format.
+   */
+  def surfaceBranchCases(format: String): List[Plan.Case] =
+    List(
+      branchLeakSetPropsCase(surfaceBasePreparation(format)),
+      branchLeakWriteOrderedByCase(surfaceBasePreparation(format)),
+      branchWapToggleNoGuardCase(surfaceWapPreparation(format)),
+      wapNegDoubleCherrypickCase(surfaceWapPreparation(format)),
+      wapNegExpireRefTargetCase(surfaceBasePreparation(format)),
+      branchFastForwardMergeCase(surfaceBasePreparation(format)),
+      branchFastForwardDivergentCase(surfaceBasePreparation(format)),
+      branchReplaceBranchCase(surfaceTwoSnapshotPreparation(format)))
+
+  /**
+   * A WAP-staged insert stays invisible on main (still 3 rows) until publish_changes publishes it,
+   * growing main to 4 rows. `format` sets the file format.
+   */
   def surfaceBranchPublishCases(format: String): List[Plan.Case] =
     List(
       surfaceWapPreparation(format).test(
-        "surface.proc.publishChanges",
-        "A WAP-staged insert stays invisible on main (still 3 rows) until publish_changes " +
-          "publishes it, growing main to 4 rows.") { table =>
+        "surface.proc.publishChanges") { table =>
         table.spark.conf.set("spark.wap.id", "pw1")
         try {
           table.spark.sql(
@@ -390,13 +440,14 @@ trait BranchSurfaceScenarios extends BranchScenarioKit {
           "publish_changes should publish the staged row")
       })
 
-  // The DataFrame writer targeting a branch.
+  /**
+   * A DataFrame writeTo(...).append() targeting a branch adds the row to that branch, taking it to
+   * 4 rows, while leaving main unchanged at 3 rows. `format` sets the file format.
+   */
   def surfaceBranchWriteCases(format: String): List[Plan.Case] =
     List(
       surfaceBasePreparation(format).test(
-        "surface.write.dfToBranch",
-        "A DataFrame writeTo(...).append() targeting a branch adds the row to that branch " +
-          "(4 rows) while leaving main unchanged at 3 rows.") { table =>
+        "surface.write.dfToBranch") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH wb")
         val row = table.spark.sql(

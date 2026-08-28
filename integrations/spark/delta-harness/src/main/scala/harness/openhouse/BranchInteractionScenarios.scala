@@ -16,20 +16,31 @@ import scala.util.control.NonFatal
 trait BranchInteractionScenarios extends BranchScenarioKit {
   import Rows._
 
-  def interactionBranchCases(format: String): List[Plan.Case] = {
-    val basePreparation = TablePreparation(
+  /**
+   * Three seed rows in a table. `format` sets the file format.
+   */
+  private def interactionBasePreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
       format,
       TableTest(Core)
         .sql("create")(table =>
           s"CREATE TABLE $table ($columnDefinitions) USING $dataSource " +
             s"TBLPROPERTIES ('write.format.default'='$format')")()
-        .insert(3)(),
-      description = s"Three seed rows in a $format table.")
-    val twoSnapshotPreparation = TablePreparation(
+        .insert(3)())
+
+  /**
+   * Five seed rows across two snapshots in a table. `format` sets the file format.
+   */
+  private def interactionTwoSnapshotPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
       format,
-      coreTwoSnapshots(format),
-      description = s"Five seed rows across two snapshots in a $format table.")
-    val wapPreparation = TablePreparation(
+      coreTwoSnapshots(format))
+
+  /**
+   * Three seed rows in a table with write.wap.enabled set to true. `format` sets the file format.
+   */
+  private def interactionWapPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
       format,
       TableTest(Core)
         .sql("create")(table =>
@@ -37,15 +48,16 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             s"TBLPROPERTIES ('write.format.default'='$format')")()
         .insert(3)()
         .sql("enableWap")(table =>
-          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")(),
-      description = s"Three seed rows in a $format table with write.wap.enabled set to true.")
+          s"ALTER TABLE $table SET TBLPROPERTIES ('write.wap.enabled'='true')")())
 
-    List(
-      twoSnapshotPreparation.test(
-        "interact.branch.ttBeforeBranchPoint",
-        "After branching and writing to the branch, a snapshot ID or timestamp from before the " +
-          "branch point still resolves to the pre-branch 3 rows, both on main and while " +
-          "spark.wap.branch selects the branch.") { table =>
+  /**
+   * After branching and writing to the branch, a snapshot ID or timestamp from before the branch
+   * point still resolves to the pre-branch 3 rows, both on main and while spark.wap.branch selects
+   * the branch.
+   */
+  private def interactionTtBeforeBranchPointCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.ttBeforeBranchPoint") { table =>
         val snapshots = snapshotIds(table.spark, table.name)
         val firstCommitTimestamp = table.spark
           .sql(
@@ -99,12 +111,15 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
         } finally {
           table.spark.conf.unset("spark.wap.branch")
         }
-      },
-      basePreparation.test(
-        "interact.branch.mainDdlImmediate",
-        "ALTER TABLE ADD COLUMN changes the schema seen from a branch immediately, an old-arity " +
-          "insert into the branch fails afterward, and a new-arity insert matching the added " +
-          "column succeeds.") { table =>
+    }
+
+  /**
+   * ALTER TABLE ADD COLUMN changes the schema seen from a branch immediately, an old-arity insert
+   * into the branch fails afterward, and a new-arity insert matching the added column succeeds.
+   */
+  private def interactionMainDdlImmediateCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.mainDdlImmediate") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
             "('write.wap.enabled'='true')")
@@ -144,11 +159,15 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             .collect()(0)
             .getLong(0) == 5,
           "new-arity branch write should succeed after main DDL")
-      },
-      twoSnapshotPreparation.test(
-        "interact.branch.expireProtectsRefs",
-        "Snapshot expiration after writes on both main and a branch keeps both ref heads, drops " +
-          "the intermediate snapshots, and leaves both main and the branch fully readable.") { table =>
+    }
+
+  /**
+   * Snapshot expiration after writes on both main and a branch keeps both ref heads, drops the
+   * intermediate snapshots, and leaves both main and the branch fully readable.
+   */
+  private def interactionExpireProtectsRefsCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.expireProtectsRefs") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
             "('write.wap.enabled'='true')")
@@ -201,11 +220,15 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
         assert(
           mainRowCount == 6,
           s"main should remain readable with 6 rows, got $mainRowCount")
-      },
-      twoSnapshotPreparation.test(
-        "interact.branch.rollbackWhileWapConf",
-        "Calling rollback_to_snapshot while spark.wap.branch selects a branch still rolls back " +
-          "main, leaving the branch's own rows unaffected.") { table =>
+    }
+
+  /**
+   * Calling rollback_to_snapshot while spark.wap.branch selects a branch still rolls back main,
+   * leaving the branch's own rows unaffected.
+   */
+  private def interactionRollbackWhileWapConfCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.rollbackWhileWapConf") { table =>
         val firstSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
@@ -239,12 +262,15 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
         assert(
           branchRowCount == 6,
           s"rollback should leave branch at 6 rows, got $branchRowCount")
-      },
-      twoSnapshotPreparation.test(
-        "interact.restore.expireAfterRollback",
-        "After rolling back to the first snapshot, expiring snapshots removes the rolled-past " +
-          "snapshot and keeps the current 3 rows readable, but time travel to that expired " +
-          "snapshot now fails.") { table =>
+    }
+
+  /**
+   * After rolling back to the first snapshot, expiring snapshots removes the rolled-past snapshot
+   * and keeps the current 3 rows readable, but time travel to that expired snapshot now fails.
+   */
+  private def interactionExpireAfterRollbackCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.restore.expireAfterRollback") { table =>
         val snapshots = snapshotIds(table.spark, table.name)
         table.spark.sql(
           "CALL openhouse.system.rollback_to_snapshot(" +
@@ -281,13 +307,16 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             Option(error.getMessage)
               .exists(_.toLowerCase.contains("snapshot"))),
           "time travel to the expired rolled-past snapshot should fail")
-      },
-      basePreparation.test(
-        "interact.branch.expireMerge.spuriousReject",
-        "Expiring snapshots after two writes to a branch removes the intermediate branch " +
-          "snapshot but keeps the branch fully readable; fast_forward onto that punctured " +
-          "ancestry is rejected, and main stays consistent whether or not a cherry-pick recovery " +
-          "succeeds.") { table =>
+    }
+
+  /**
+   * Characterizes punctured branch ancestry after snapshot expiration: the branch keeps its five
+   * rows, fast_forward rejects the branch head as a non-ancestor, and cherry-pick recovery may
+   * succeed or reject. Main remains consistent at three or four rows in either outcome.
+   */
+  private def interactionExpireMergeSpuriousRejectCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.expireMerge.spuriousReject") { table =>
         table.spark.sql(
           s"ALTER TABLE ${table.name} CREATE BRANCH mb")
         table.spark.sql(
@@ -365,11 +394,15 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             table.spark,
             s"SELECT count(*) FROM ${table.name} VERSION AS OF 'mb'") == "5",
           "branch data should remain available for copy-out recovery")
-      },
-      wapPreparation.test(
-        "interact.branch.expireMerge.stagedWapLoss",
-        "Snapshot expiration removes an unreferenced staged WAP snapshot, and publishing that " +
-          "wap_id afterward fails while main remains at its original 3 rows.") { table =>
+    }
+
+  /**
+   * Snapshot expiration removes an unreferenced staged WAP snapshot, and publishing that wap_id
+   * afterward fails while main remains at its original 3 rows.
+   */
+  private def interactionExpireMergeStagedWapLossCase(
+      preparation: TablePreparation[CoreTable.type]): Plan.Case =
+    preparation.test("interact.branch.expireMerge.stagedWapLoss") { table =>
         table.spark.conf.set("spark.wap.id", "w2")
         try {
           table.spark.sql(
@@ -410,13 +443,29 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             table.spark,
             s"SELECT count(*) FROM ${table.name}") == "3",
           "main should remain unchanged after staged snapshot loss")
-      })
-  }
+    }
 
-  // A table created with write.wap.enabled and replace.enabled both set. The case reads those flags
-  // back, then creates a branch and confirms the replace path is refused while the branch exists.
-  def interactionBranchFlagCases(format: String): List[Plan.Case] = {
-    val flagPreparation = TablePreparation(
+  /**
+   * The branch interaction bucket: each case composes a branch or a write-audit-publish staged
+   * commit with another table state or another operation, so the cases show how branch routing
+   * behaves alongside DDL, snapshot references and maintenance. `format` sets the file format.
+   */
+  def interactionBranchCases(format: String): List[Plan.Case] =
+    List(
+      interactionTtBeforeBranchPointCase(interactionTwoSnapshotPreparation(format)),
+      interactionMainDdlImmediateCase(interactionBasePreparation(format)),
+      interactionExpireProtectsRefsCase(interactionTwoSnapshotPreparation(format)),
+      interactionRollbackWhileWapConfCase(interactionTwoSnapshotPreparation(format)),
+      interactionExpireAfterRollbackCase(interactionTwoSnapshotPreparation(format)),
+      interactionExpireMergeSpuriousRejectCase(interactionBasePreparation(format)),
+      interactionExpireMergeStagedWapLossCase(interactionWapPreparation(format)))
+
+  /**
+   * Three seed rows in a table with write.wap.enabled and replace.enabled both set to true at
+   * create time. `format` sets the file format.
+   */
+  private def interactionFlagPreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
       format,
       TableTest(Core)
         .sql("create")(table =>
@@ -424,15 +473,16 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
             "TBLPROPERTIES (" +
             s"'write.format.default'='$format', " +
             "'write.wap.enabled'='true', 'replace.enabled'='true')")()
-        .insert(3)(),
-      description = s"Three seed rows in a $format table with write.wap.enabled and " +
-        "replace.enabled both set to true at create time.")
+        .insert(3)())
 
+  /**
+   * WAP and replace flags set at CREATE time are active, and a subsequent RTAS is rejected while a
+   * branch exists and WAP is enabled. `format` sets the file format.
+   */
+  def interactionBranchFlagCases(format: String): List[Plan.Case] =
     List(
-      flagPreparation.test(
-        "interact.flags.wapReplaceAtCreate",
-        "WAP and replace flags set at CREATE time are active, and a subsequent RTAS is rejected " +
-          "while a branch exists and WAP is enabled.") { table =>
+      interactionFlagPreparation(format).test(
+        "interact.flags.wapReplaceAtCreate") { table =>
         val properties = tableProps(table.spark, table.name)
         assert(
           properties.get("write.wap.enabled").contains("true") &&
@@ -449,5 +499,4 @@ trait BranchInteractionScenarios extends BranchScenarioKit {
           exception.getMessage.contains("while WAP"),
           "RTAS should reject a table with WAP enabled at CREATE")
       })
-  }
 }

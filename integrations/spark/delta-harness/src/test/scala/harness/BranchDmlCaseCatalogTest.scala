@@ -1,12 +1,12 @@
 package harness
 
-import org.junit.jupiter.api.Assertions.{assertEquals, assertTrue}
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
  * Pins the shape of the branch DML buckets: each one is a branch-routed preparation list crossed
- * with a DML test-case list the standard layer names. Reading these lists does not execute a case
- * or start Spark.
+ * with a DML test-case list named by the standard layer. Reading these lists does not execute a
+ * case or start Spark.
  */
 final class BranchDmlCaseCatalogTest {
 
@@ -29,17 +29,60 @@ final class BranchDmlCaseCatalogTest {
   }
 
   @Test
-  def everyBranchPreparationDescribesTheRoutingItSetsUp(): Unit = {
-    val describedPreparations =
+  def theBranchPreparationsCarryTheRoutingTheySetUp(): Unit = {
+    val branchPreparations =
       Scenarios.preparedBranchCoreTables ++
         Scenarios.preparedPartitionedBranchCoreTables ++
         Scenarios.preparedBranchMorCoreTables
 
-    describedPreparations.foreach { preparation =>
-      assertTrue(
-        preparation.description.contains("spark.wap.branch"),
-        s"${preparation.label} does not describe the branch routing it sets up")
+    assertEquals(
+      Scenarios.layouts.map(_.label),
+      Scenarios.preparedBranchCoreTables.map(_.label))
+    assertEquals(
+      Scenarios.partitionedLayouts.map(_.label),
+      Scenarios.preparedPartitionedBranchCoreTables.map(_.label))
+    assertEquals(
+      Scenarios.unpartitionedMorLayouts.map(_.label),
+      Scenarios.preparedBranchMorCoreTables.map(_.label))
+
+    branchPreparations.foreach { preparation =>
+      assertEquals(
+        "branchWap:",
+        preparation.casePrefix,
+        s"${preparation.label} is not marked as a branch-routed preparation")
+      assertEquals(
+        List("prep.enableWap", "prep.routeToBranch"),
+        preparation.preparation.steps.map(_.label).toList.takeRight(2),
+        s"${preparation.label} does not end by enabling WAP and routing to the branch")
     }
+  }
+
+  @Test
+  def theNullStringPreparationsExtendTheBranchPreparations(): Unit = {
+    assertEquals(
+      Scenarios.preparedBranchCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)),
+      Scenarios.preparedNullStringBranchCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)))
+    assertEquals(
+      Scenarios.preparedBranchCoreTables.map(_.preparation.steps.size + 1),
+      Scenarios.preparedNullStringBranchCoreTables.map(_.preparation.steps.size))
+    assertEquals(
+      List("prep.nullStringRow"),
+      Scenarios.preparedNullStringBranchCoreTables.head.preparation.steps
+        .map(_.label).toList.takeRight(1))
+    assertEquals(
+      Scenarios.preparedBranchMorCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)),
+      Scenarios.preparedNullStringBranchMorCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)))
+    assertEquals(
+      Scenarios.preparedBranchMorCoreTables.map(_.preparation.steps.size + 1),
+      Scenarios.preparedNullStringBranchMorCoreTables.map(_.preparation.steps.size))
+    assertEquals(
+      List("prep.nullStringRow"),
+      Scenarios.preparedNullStringBranchMorCoreTables.head.preparation.steps
+        .map(_.label).toList.takeRight(1))
   }
 
   @Test
@@ -47,24 +90,6 @@ final class BranchDmlCaseCatalogTest {
     assertEquals(
       caseIds(Scenarios.branchLayoutFormatPreparations, "format.materialization"),
       Scenarios.branchLayoutFormatCases.map(_.id))
-
-  @Test
-  def everyBranchCaseCarriesItsOwnDescriptionAndItsPreparationDescription(): Unit = {
-    val describedBuckets = List(
-      Scenarios.branchDmlCases,
-      Scenarios.branchPartitionedDmlCases,
-      Scenarios.branchMorDmlCases,
-      Scenarios.branchLayoutFormatCases).flatten
-
-    describedBuckets.foreach { testCase =>
-      assertTrue(
-        testCase.description.trim.nonEmpty,
-        s"${testCase.id} has no description of the operation it runs")
-      assertTrue(
-        testCase.preparationDescription.trim.nonEmpty,
-        s"${testCase.id} has no description of the state it starts from")
-    }
-  }
 
   private def caseIds(
       preparations: List[TablePreparation[CoreTable.type]],

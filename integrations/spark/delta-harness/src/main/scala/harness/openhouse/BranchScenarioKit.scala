@@ -8,10 +8,14 @@ package harness
 // constructed.
 trait BranchScenarioKit extends MorScenarioKit {
 
-  // Seed on main, create a branch, then set spark.wap.branch so every later read and write in the
-  // case lands on the branch. A case captures its own before state from the branch and asserts
-  // against it, so the same case body holds on a branch and on main. Each case runs in its own
-  // spark.newSession(), which keeps the setting scoped to that case.
+  /**
+   * Creates and seeds the table under `layout`, enables write.wap.enabled, creates branch b, then
+   * sets spark.wap.branch to b, so every later read and write in the case lands on the branch. A
+   * case captures its own before state from the branch and asserts against it, so the same case
+   * body holds on a branch and on main. Each case runs in its own spark.newSession(), which keeps
+   * the setting scoped to that case. `layout` sets the starting table shape and `numberOfRows` sets
+   * the seed row count.
+   */
   def createAndSeedOnBranch(layout: Layout, numberOfRows: Int): TableTest[CoreTable.type] =
     createAndSeed(layout, numberOfRows)
       .sql("prep.enableWap")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('write.wap.enabled'='true')")()
@@ -20,6 +24,11 @@ trait BranchScenarioKit extends MorScenarioKit {
         spark.conf.set("spark.wap.branch", "b")
       }()
 
+  /**
+   * The afterTest check every branch preparation carries: it clears spark.wap.branch and confirms
+   * main still holds exactly the three seed rows, so the case's branch-routed writes did not leak
+   * to main.
+   */
   private def assertBranchMainIsolation(table: PreparedTable[CoreTable.type]): Unit = {
     table.spark.conf.unset("spark.wap.branch")
     val mainCount = table.spark
@@ -31,50 +40,60 @@ trait BranchScenarioKit extends MorScenarioKit {
       s"branch operation leaked to main: expected 3 rows, got $mainCount")
   }
 
-  private def branchPreparationDescription(layout: Layout): String =
-    s"Three seed rows with keys 1, 2 and 3 in ${layout.description}, with write.wap.enabled set, " +
-      "branch b created, and spark.wap.branch set to b, so every read and write in the case lands " +
-      "on branch b while main keeps its three seed rows."
-
+  /**
+   * One branch preparation per core layout: three seed rows with keys 1, 2 and 3 on main,
+   * write.wap.enabled set, branch b created, and spark.wap.branch set to b, so every read and write
+   * in the case lands on branch b while main keeps its three seed rows.
+   */
   lazy val preparedBranchCoreTables: List[TablePreparation[CoreTable.type]] =
     layouts.map { layout =>
       TablePreparation(
         layout.label,
         createAndSeedOnBranch(layout, 3),
         "branchWap:",
-        assertBranchMainIsolation,
-        branchPreparationDescription(layout))
+        assertBranchMainIsolation)
     }
 
+  /**
+   * One branch preparation per datepartition-partitioned core layout, otherwise the same starting
+   * state as `preparedBranchCoreTables`: three seed rows routed onto branch b while main keeps them.
+   */
   lazy val preparedPartitionedBranchCoreTables: List[TablePreparation[CoreTable.type]] =
     partitionedLayouts.map { layout =>
       TablePreparation(
         layout.label,
         createAndSeedOnBranch(layout, 3),
         "branchWap:",
-        assertBranchMainIsolation,
-        branchPreparationDescription(layout))
+        assertBranchMainIsolation)
     }
 
+  /**
+   * One branch preparation per unpartitioned merge-on-read layout: three seed rows routed onto
+   * branch b of a merge-on-read table while main keeps them, so a branch mutation records
+   * position-delete files on the branch.
+   */
   lazy val preparedBranchMorCoreTables: List[TablePreparation[CoreTable.type]] =
     unpartitionedMorLayouts.map { layout =>
       TablePreparation(
         layout.label,
         createAndSeedOnBranch(layout, 3),
         "branchWap:",
-        assertBranchMainIsolation,
-        branchPreparationDescription(layout))
+        assertBranchMainIsolation)
     }
 
+  /** The branch core preparations, each carrying one row whose string column is null. */
   lazy val preparedNullStringBranchCoreTables: List[TablePreparation[CoreTable.type]] =
     preparedBranchCoreTables.map(withNullStringRow)
 
+  /** The branch merge-on-read preparations, each carrying one row whose string column is null. */
   lazy val preparedNullStringBranchMorCoreTables: List[TablePreparation[CoreTable.type]] =
     preparedBranchMorCoreTables.map(withNullStringRow)
 
+  /** Uses the branch core preparations because each writes data files for format inspection. */
   lazy val branchLayoutFormatPreparations: List[TablePreparation[CoreTable.type]] =
     preparedBranchCoreTables
 
+  /** Runs format materialization on every branch preparation that writes data files. */
   def branchLayoutFormatCases: List[Plan.Case] =
     layoutFormatCasesFor(branchLayoutFormatPreparations)
 }
