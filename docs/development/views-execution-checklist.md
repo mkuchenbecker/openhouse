@@ -92,11 +92,11 @@ plan doc to match as part of implementation.
 - [x] Findings→commit disposition table appended to [#46](https://github.com/mkuchenbecker/openhouse/pull/46)
 - [x] housetables 308/308, common 13/13; MySQL E2E on merged 698 head 23/23 (collation pin exercised via initdb)
 
-### Lane S — server implementation
-- [ ] Phases 1–9 of the server plan with §2 dispositions folded in
-- [ ] Plan doc amended (F1, F2-obligation, F3, F5, F6, F7, F8/F9)
-- [ ] `:services:common:test` + `:services:tables:test` green; spotless clean on touched files
-- [ ] Draft PR into `claude/iceberg-rest-spec-compliance-l0s2ju`
+### Lane S — server implementation ✅ (2026-08-28)
+- [x] All seven §3.1 routes with §2 dispositions folded in; `/v2` views surface removed; backend stubbed per plan; serialization via `IcebergRestWire` + Iceberg parsers
+- [x] Plan doc amended (F1, F2-obligation, F3, F5, F6, F7, F8/F9); `docs/specs/catalog.md` regen deferred (needs bootable service + widdershins)
+- [x] tables 641/641, common 25/25; spotless clean on touched files
+- [x] Draft PR [#49](https://github.com/mkuchenbecker/openhouse/pull/49); noted deviations: two pre-existing e2e tests re-pinned to F3's unknown-`/v1`-path contract; services/common audit seam widened (`AuditedResponseRenderer`) so view failures keep producing audit events
 
 ### Lane C — client implementation
 - [ ] Client plan phases with §2 dispositions (F1 catch, F2 corrections, F4 lazy init)
