@@ -9,8 +9,7 @@ and reach every view route; a hand-written `/v2` client cannot reach anything at
 gets an unresolved-route error, and on the retired `/v2` paths that error is still the
 legacy `400`, not a `404`.
 
-Two consequences deserve to be stated up front, because they are easy to miss when
-reading only the class list.
+Two consequences reach past the views routes themselves.
 
 **The error surface grew a blast radius the old one did not have.** The bespoke views
 error rendering was confined to the views controller. The replacement includes a second,
@@ -26,11 +25,19 @@ answers a `404`. The success paths described below are the contract the routes w
 today the only reachable success is the config document. The `409` conflict paths are not
 reachable at all.
 
-This document describes the differences a client sees. It is written against the two
-implementations directly: the bespoke `/v2` surface as it stood in the views carbon copy
-(fork PR #43, a byte-faithful copy of upstream `linkedin/openhouse#694`), and the Iceberg
-REST rework that replaced it (fork PR #44). Where the two disagree, the behaviour
-described is the one the code produces, not the one either design note claims.
+The differences below are read off the two implementations directly: the bespoke `/v2`
+surface as it stood in the views carbon copy, and the Iceberg REST rework that replaced it.
+Where the two disagree, the behaviour described is the one the code produces, not the one
+either design note claims.
+
+**References:** [Iceberg REST Catalog OpenAPI](https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml) ·
+[Iceberg View Spec](https://iceberg.apache.org/view-spec/) ·
+fork PRs [#43](https://github.com/mkuchenbecker/openhouse/pull/43) (the carbon copy, a
+byte-faithful copy of upstream
+[linkedin/openhouse#694](https://github.com/linkedin/openhouse/pull/694)) and
+[#44](https://github.com/mkuchenbecker/openhouse/pull/44) (the rework).
+"The spec" throughout means the first of these; route descriptions and status vocabulary are
+quoted from it. Client-side behaviour is Iceberg `1.5.2.17`, the version this server bundles.
 
 ## 1. Route surface
 
@@ -55,7 +62,8 @@ Every route declared `400/401/403/404/503`; `POST` and `PUT` additionally declar
 and `422`.
 
 The current surface serves seven routes. Six are the spec's view operations; the seventh,
-`GET /v1/config`, is client bootstrap and has no predecessor. Paths are served
+`GET /v1/config`, is client bootstrap, has no predecessor, and is the row that matters most —
+without it nothing else is reachable. Paths are served
 un-prefixed — the config document returns no `prefix` override — and collide with nothing
 in the tables API, whose routes live under `/v1/databases/...`.
 
@@ -69,7 +77,7 @@ in the tables API, whose routes live under `/v1/databases/...`.
 | `DELETE /v1/namespaces/{namespace}/views/{view}` | — | `204`, no body | `DELETE_VIEW` |
 | `HEAD /v1/namespaces/{namespace}/views/{view}` | — | `204`, no body | `SELECT` |
 
-Four route-level differences are worth naming explicitly.
+Four route-level differences change how a client is written.
 
 **Create is `200`, not `201`, and replace is always `200`.** The spec's views surface uses
 `200` for create and replace and `204` for delete and exists, and never uses `201`. A
@@ -81,11 +89,12 @@ routes, so the question does not arise.
 `POST` to a view that does not exist is a `404`, not a create. Creation happens only
 through `POST` on the collection path.
 
-**`HEAD` is new.** Existence is now a first-class operation returning `204` or `404` with
-no body on either. The old surface had no existence check; a client had to `GET` the view
-and catch the `404`. Note that the Iceberg 1.5.2.17 client still does exactly that — its
-`viewExists` is a load-and-catch, not a `HEAD` — so the route is served for spec
-conformance and for newer clients rather than because the bundled client exercises it.
+**`HEAD` is new.** Existence is a first-class operation in the new contract, returning `204`
+when the view exists and `404` when it does not, with no body on either. The old surface had
+no existence check; a client had to `GET` the view and catch the `404`. The Iceberg 1.5.2.17
+client still does exactly that — its `viewExists` is a load-and-catch, not a `HEAD` — so the
+route is served for spec conformance and for newer clients rather than because the bundled
+client exercises it.
 
 **`GET /v1/config` is new and is the load-bearing route.** Without it a stock `RESTCatalog`
 cannot bootstrap, so nothing else is reachable. It is deliberately served even while views
@@ -94,9 +103,21 @@ route with no `@Secured` privilege — it requires an authenticated principal an
 more. Its body is `{"defaults": {}, "overrides": {}, "endpoints": [...]}`, where
 `endpoints` lists the seven implemented routes in the spec's capability-advertisement
 format (`"GET /v1/{prefix}/namespaces/{namespace}/views"`, and so on). Advertising them
-explicitly is not cosmetic: the spec defines a default endpoint set for servers that omit
+explicitly is load-bearing: the spec defines a default endpoint set for servers that omit
 the field, and that default set contains every table route and no view route — wrong in
 both directions for this server.
+
+Call for call, the mapping is:
+
+| `/v2` call | `/v1` successor |
+|---|---|
+| `GET /v2/databases/{d}/views/{v}` | `GET /v1/namespaces/{d}/views/{v}` |
+| `GET /v2/databases/{d}/views?page&size&sortBy` | `GET /v1/namespaces/{d}/views?pageToken&pageSize` (§2.4) |
+| `POST /v2/databases/{d}/views` | `POST /v1/namespaces/{d}/views`, success `200` not `201` |
+| `PUT /v2/databases/{d}/views/{v}` | split in two: `POST /v1/namespaces/{d}/views` to create, `POST /v1/namespaces/{d}/views/{v}` to commit. A `POST` to the item path of a view that does not exist is a `404` |
+| `DELETE /v2/databases/{d}/views/{v}` | `DELETE /v1/namespaces/{d}/views/{v}` |
+| — | `HEAD /v1/namespaces/{d}/views/{v}` |
+| — | `GET /v1/config`, which must be called first |
 
 Finally, what a `/v2` client gets today: `GET /v2/databases/d/views/v` no longer resolves,
 and because the `/v1`-scoped advice does not claim it, it renders through the unchanged
@@ -119,7 +140,7 @@ entry).
 |---|---|
 | `viewId` (required) | `name` (required) |
 | `databaseId` (required, had to match the path) | path `{namespace}` only — no body field |
-| `clusterId` (required, had to match the server) | no body field; the server is the cluster |
+| `clusterId` (required, had to match the server) | no body field and, today, no wire home at all; the server is the cluster. `GET /v1/config` returns empty `overrides`, so a client that needs the value must carry it out of band (§6) |
 | `schema` (required, escaped Iceberg schema JSON *string*) | `schema` (required, structured `Schema` object) |
 | `representations[]` (required, top level) | `view-version.representations[]` (same `{type, sql, dialect}` shape, spec location) |
 | `sourceDialect` (required) | `view-version.summary["openhouse.source-dialect"]`, optional with one representation |
@@ -254,8 +275,8 @@ the dispatcher's matched-pattern attribute when one was recorded — the authori
 answer — with a trailing-slash-tolerant URI match as the fallback, so URL normalization
 cannot flip the vocabulary.
 
-This split is not pedantry; it is the mechanism that makes the views-disabled posture
-invisible to a stock client. Because `loadView` against a disabled server returns a plain
+This split is the mechanism that makes the views-disabled posture invisible to a stock
+client. Because `loadView` against a disabled server returns a plain
 `NoSuchViewException`, Spark's view resolution concludes the view is simply not there and
 falls through to `loadTable`, and table behaviour is unchanged. Because `listViews`
 returns `NoSuchNamespaceException`, `SHOW VIEWS` answers with an empty list rather than an
@@ -267,9 +288,12 @@ the gate-on behaviour is indistinguishable from gate-off.
 
 ### 3.3 Status and shape, condition by condition
 
-The table below is the migration map for a client's error handling. The rows to read first
-are the last five: they are the conditions whose *status* changed, not merely the body
-shape.
+Ten conditions keep their status and change only their envelope; five change more than
+that, and those five are what a client's error handling has to be rewritten around. Of the
+fifteen, only the two `409` rows need a working backend — every other row is reachable
+against the server as it stands today (§6).
+
+The envelope-only swaps:
 
 | Condition | Old status and shape | New status and shape |
 |---|---|---|
@@ -283,11 +307,18 @@ shape.
 | Access denied | `403` OpenHouse envelope | `403` `ForbiddenException` |
 | Authorization service unavailable | `503` OpenHouse envelope | `503` `ServiceUnavailableException` |
 | Unexpected server fault | `500` OpenHouse envelope carrying `exception.toString()` and a stack | `500` `InternalServerError`, fixed message "Internal Server Error", no stack |
-| **Admission-control refusal** | `422` OpenHouse envelope | **`400`** `ValidationException` |
-| **Malformed or missing request body** | `400`, message beginning "Unacceptable JSON" | `400` `BadRequestException`, fixed message "Malformed CreateViewRequest…" / "Malformed CommitViewRequest…" |
-| **Unbindable query parameter** (e.g. `pageSize=abc`) | framework default: bare `400`, no body | `400` `BadRequestException`, fixed message, offending value not echoed |
-| **Unresolved path under `/v1`** | `400` OpenHouse envelope | **`404`** `NotFoundException`, message "Route does not exist" |
-| **Wrong method / content type on a `/v1` path** | bare `405` / `415` with `Allow` / `Accept` | `405` `MethodNotAllowedException` / `415` `UnsupportedMediaTypeException` envelope, headers retained |
+
+The five that changed further. The first two moved status; the last three keep their status
+and gain a body the old surface did not send, which breaks any client that reads the
+presence of a body as a signal:
+
+| Condition | Old status and shape | New status and shape |
+|---|---|---|
+| Admission-control refusal | `422` OpenHouse envelope | **`400`** `ValidationException` |
+| Unresolved path under `/v1` | `400` OpenHouse envelope | **`404`** `NotFoundException`, message "Route does not exist" |
+| Malformed or missing request body | `400`, message beginning "Unacceptable JSON" | `400` `BadRequestException`, fixed message "Malformed CreateViewRequest…" / "Malformed CommitViewRequest…" |
+| Unbindable query parameter (e.g. `pageSize=abc`) | framework default: bare `400`, no body | `400` `BadRequestException`, fixed message, offending value not echoed |
+| Wrong method / content type on a `/v1` path | bare `405` / `415` with `Allow` / `Accept` | `405` `MethodNotAllowedException` / `415` `UnsupportedMediaTypeException` envelope, headers retained |
 
 The `422` removal is a spec-conformance change: `422` appears nowhere in the spec's views
 surface, so the four admission codes (`VIEW_ADMISSION_FAILED`,
@@ -326,16 +357,15 @@ same template rather than duplicating it.
 
 **The blast radius.** The `/v1` prefix test is a plain `uri.startsWith("/v1/")`, and the
 OpenHouse tables and databases routes all live under `/v1/databases/...`. So for the
-*tables* API, which the carbon copy left entirely alone:
+*tables* API, which the carbon copy left entirely alone, three request-mapping failures now
+render differently. The first row is the one that will break a client: it is the only status
+change.
 
-- a mistyped or retired path under `/v1/databases/...` now returns `404` with
-  `{"error":{"message":"Route does not exist","type":"NotFoundException","code":404}}`,
-  where it previously returned `400` with the OpenHouse envelope and a message naming the
-  method and path;
-- a wrong method on a known tables route now returns `405` with the Iceberg envelope
-  (the `Allow` header is still set) instead of a bare `405`;
-- a wrong content type returns `415` with the Iceberg envelope (the `Accept` header is
-  still set) instead of a bare `415`.
+| Request | Before | Now |
+|---|---|---|
+| A mistyped or retired path under `/v1/databases/...` | `400`, OpenHouse envelope naming the method and path | `404`, `{"error":{"message":"Route does not exist","type":"NotFoundException","code":404}}` |
+| A wrong method on a known tables route | bare `405`, `Allow` set | `405`, Iceberg envelope, `Allow` still set |
+| A wrong content type on a known tables route | bare `415`, `Accept` set | `415`, Iceberg envelope, `Accept` still set |
 
 Only paths *outside* `/v1/` keep the old behaviour byte for byte — which is why a probe of
 the retired `/v2` views routes still renders the legacy `400`. The message hygiene rule
@@ -355,8 +385,7 @@ The same suppression is applied by the `/v1` advice to an unresolved `HEAD` prob
 `HEAD` that hits a method-not-allowed. The success path is bodyless by construction: the
 controller builds `HEAD` and `DELETE` responses through a `ResponseEntity<Void>`.
 
-One implementation detail is worth knowing because it affects auditing rather than the
-wire: when a view does not exist, `viewExists` *throws* rather than returning a `404`
+One detail affects auditing rather than the wire: when a view does not exist, `viewExists` *throws* rather than returning a `404`
 directly, so the absent-view case travels the same exception path as every other failure
 and produces the same failure-path audit event. The client cannot tell the difference,
 since the envelope is suppressed for `HEAD` either way.
@@ -377,49 +406,24 @@ an authentication failure regardless, so the deviation is tolerable; it is nonet
 deviation, and the one place on the views surface where the response shape is not the
 spec's.
 
-## 4. The service-layer contract
+## 4. Where the wire contract is decided
 
-This is internal API — no client observes it — so it is covered briefly. The interface
-changed in three ways beyond the obvious retyping from OpenHouse DTOs to Iceberg
-catalog-domain types (`ViewMetadata`, `MetadataUpdate`, `UpdateRequirement`,
-`TableIdentifier`, `Schema`, `ViewVersion`).
+Every status and envelope in §3 is produced in one place. `OpenHouseViewsApiHandler` is the
+only code that converts a service outcome into the vocabulary the Spring advice renders: the
+service reports absence as a return value and contention as a checked exception, and the
+handler turns both into the unchecked `ViewApiException` the advice knows how to write. A
+service or repository that threw that exception directly would bypass the seam and could
+render a status the tables in §3 do not list.
 
-**Absence became a value.** The carbon copy's `getView` returned a `ViewDto` and signalled
-a missing view by throwing an unchecked `ViewApiException(NO_SUCH_VIEW)`; `deleteView`
-returned `void`. Now `loadView` returns `Optional<ViewMetadata>`, `dropView` returns
-`boolean`, `viewExists` returns `boolean`, and `replaceView` returns
-`Optional<ViewMetadata>`. A view that is not there is half of what these methods are for,
-so it is no longer signalled by unwinding the stack.
-
-**Contention became checked.** `ViewNameConflictException` (carrying a `Kind` of `VIEW` or
-`TABLE`) and `ViewCommitConflictException` are checked exceptions. Two clients racing to
-create the same view, or a commit losing a compare-and-swap, are ordinary outcomes of those
-paths, so the compiler now makes every caller state what it does about them.
-
-**Nullable parameters were replaced by types that model absence.** The old
-`getAllViews(databaseId, page, size, sortBy, principal)` and
-`putView(requestBody, principal, failOnExist)` gave way to `listViews(databaseId,
-ViewPageRequest, principal)` and `createView(ViewCreationRequest, principal)`.
-`ViewPageRequest` exists because a pair of nulls cannot distinguish "no paging was
-requested" — which carries a spec obligation, §5.1 — from "the first page of some size".
-`ViewCreationRequest` removes the create path's one nullable parameter (the caller-requested
-`location`) and stops the signature from growing an argument each time
-`CreateViewRequest` gains a field.
-
-**The boundary is deliberate.** The Spring advice that writes responses renders *unchecked*
-`ViewApiException`s and cannot be changed from the service layer. So `OpenHouseViewsApiHandler`
-is the adapter: it converts `Optional.empty()` and `false` into
-`ViewApiException(NO_SUCH_VIEW)`, and catches the two checked conflicts and rethrows them
-as their `ViewApiException` equivalents. That conversion belongs in exactly one place — a
-service or repository that throws `ViewApiException` directly has skipped the seam. The
-handler is also where the wire envelopes are unwrapped, so the service seam stays reusable
-by a future non-REST caller and wire-shape churn stays out of the service contract.
-
-`ViewsDisabledService` is the one implementation, and it is the single place where throwing
-rather than answering "absent" is correct: an empty `Optional` would claim "this catalog
-serves views and has none", which is a different and false statement.
+That matters to a client only as a guarantee — the status set is closed and enumerable, and
+§3.3 is complete rather than indicative. Appendix A has the interface itself, which no
+client observes.
 
 ## 5. Behaviour that changed without a signature changing
+
+Validation runs before the service is called, so the `400`s in this section are reachable
+against the server as it stands. Nothing behind them is: a request that clears validation
+still ends at the views-disabled `404` (§6).
 
 ### 5.1 Pagination
 
@@ -428,9 +432,9 @@ A client that sent no parameters got at most fifty views and had to page for the
 
 The new contract inverts that default. The spec requires that a request carrying no
 `pageToken` be answered with **all** results in a single page, with no continuation token.
-This is not a nicety: the Iceberg 1.5.2.17 client's `listViews` issues one `GET` and follows
-no `next-page-token`, so a server that paginated an un-tokened request would silently
-truncate that client's listing. The obligation is carried in the type system —
+The obligation is concrete: the Iceberg 1.5.2.17 client's `listViews` issues one `GET` and
+follows no `next-page-token`, so a server that paginated an un-tokened request would
+silently truncate that client's listing. The obligation is carried in the type system —
 `ViewPageRequest.isUnpaged()` keys on the *token* alone, so a caller who sends only a
 `pageSize` is still making a first request that must be answered completely — and it is
 stated as a contract on `ViewsService.listViews`. `pageToken` is opaque and never
@@ -445,7 +449,7 @@ Three changes a client can observe.
 **Dialect comparison became case-insensitive.** The old validator compared the raw
 representation dialect against a lowercase set (`supportedDialects.contains(dialect)`), so
 a representation declaring `SPARK` was a `400`. The new validator lowercases before the
-membership test, so `SPARK` is accepted. Duplicate detection was already case-insensitive
+membership test, so `SPARK` clears validation. Duplicate detection was already case-insensitive
 in both, and still is: two representations claiming `SPARK` and `spark` are rejected as
 duplicates.
 
@@ -454,8 +458,8 @@ duplicates.
 `view-version.summary` under the key `openhouse.source-dialect`, and is required only when
 a request supplies more than one representation. With a single representation the
 unique-dialect rule makes the server-side default well defined, so a stock client's create
-passes unmodified. When present it must still name a supported dialect and a supplied
-representation.
+needs no OpenHouse-specific field to clear validation. When present it must still name a
+supported dialect and a supplied representation.
 
 **Non-SQL representations are still rejected, and the branch is still reachable.** Iceberg
 1.5.2.17 parses a representation with an unrecognized `type` into an
@@ -463,7 +467,8 @@ representation.
 is rejected with `representations[i].type : must be 'sql'`, exactly as the old string
 comparison did.
 
-Two smaller validation differences are worth recording. The old validator size-capped the
+Two smaller differences change what the validator accepts, and when it rejects. The old
+validator size-capped the
 schema *before* parsing it, so an oversized document was never fed to the parser; the new
 one receives an already-parsed schema and measures the canonical re-serialized form, so an
 oversized schema is parsed before it is rejected. And the old validator rejected an
@@ -515,51 +520,78 @@ condition degrades to the safe posture instead of failing context startup. There
 coherent behaviour for a catalog that claims view support and cannot store a view; there is
 one for a catalog that has no views.
 
-## 6. Where the current surface is not yet conformant
+## 6. Where the current surface is not conformant
 
-None of the following is a defect in the sense of being unnoticed; they are the known
-boundaries of what has been implemented.
+No view can be stored, so most of this document describes a contract rather than observable
+behaviour. `ViewsDisabledService` is the only `ViewsService` the tables service contributes:
+every route except `GET /v1/config` answers `404` "Views are disabled", and no view can be
+created, loaded, listed, replaced or dropped. Everything §1, §2, §3.3 and §5 describe about
+success responses is the contract the routes will serve, not behaviour that can be exercised
+today, and the `409` paths — `AlreadyExistsException` and `CommitFailedException` — are
+unreachable because only a real service can raise the checked conflicts that produce them.
 
-**No persistence.** `ViewsDisabledService` is the only `ViewsService` the tables service
-contributes. Every route except `GET /v1/config` answers `404` "Views are disabled". No
-view can be created, loaded, listed, replaced or dropped. Everything §1 and §2 describe
-about success responses is the contract the routes will serve, not behaviour that can be
-exercised today, and the `409` paths — `AlreadyExistsException` and `CommitFailedException`
-— are unreachable because only a real service can raise the checked conflicts that produce
-them.
+Eight further gaps are known and bounded. The `401` body and the multi-level-namespace
+handling are the two where this server's behaviour contradicts the spec; the rest are
+unimplemented options or vocabulary the spec never fixed.
 
-**`401` sends no body**, where the spec documents an `IcebergErrorResponse` (§3.6).
+| Gap | What this server does | What the spec expects |
+|---|---|---|
+| `401` body (§3.6) | bare `401`, no body | an `IcebergErrorResponse` body |
+| Multi-level namespaces (§5.3) | reports the namespace as absent | servers decode the `0x1F` separator; OpenHouse cannot represent such a namespace |
+| `419` | not implemented | every view route references `AuthenticationTimeoutResponse` |
+| Commit-state-unknown | an unexpected failure on replace renders `500` `InternalServerError`, so a client cannot distinguish "the commit definitely did not happen" from "the outcome is unknown" | `500`, `502` and `504` carrying `type: CommitStateUnknownException`. Matters only once commits can be applied |
+| `405` / `415` type strings | `MethodNotAllowedException`, `UnsupportedMediaTypeException` — self-describing names chosen here | no examples for those statuses on any route |
+| Unclaimed protocol surface | `rename-view`, `register-view`, the tables and namespaces REST routes and the OAuth token endpoint land on the `/v1` unresolved-path `404`; `GET /v1/config` advertises exactly the seven routes served | out of scope, and the `404` is the correct signal — the server never advertises surface it does not serve |
+| Optional protocol features | `LoadViewResult.config` never populated; `GET /v1/config` returns empty `defaults` and `overrides` and ignores the `warehouse` parameter; no `prefix` served; `ETag`, `Idempotency-Key` and `referenced-by` unsupported | all optional |
+| `clusterId` | no wire home at present | no spec field; the natural homes are a `GET /v1/config` override or an `openhouse.`-prefixed view property |
 
-**`419` is not implemented.** Every view route in the spec references an
-`AuthenticationTimeoutResponse`; this server has no such response.
+One documentation item is outstanding but is not a conformance gap: `docs/specs/catalog.md`
+has not been regenerated. It requires a booted service plus the external `widdershins` tool,
+and it predates the views surface entirely — the retired `/v2` routes were never folded into
+it either.
 
-**Commit-state-unknown is not modeled.** The spec's replace route documents `500`, `502`
-and `504` carrying `type: CommitStateUnknownException` for a commit whose outcome is
-unknown. An unexpected failure on replace currently renders `500` with
-`type: InternalServerError`, so a client cannot distinguish "the commit definitely did not
-happen" from "the commit outcome is unknown". This matters only once commits can actually
-be applied.
+## Appendix A. The service-layer contract
 
-**The `405` and `415` types are not Iceberg vocabulary.** `MethodNotAllowedException` and
-`UnsupportedMediaTypeException` are self-describing names chosen here; the spec has no
-examples for those statuses on any route.
+No client observes this interface. It is here because it constrains what the routes above
+can report: the service reports absence as a value and contention as a checked exception,
+and something has to convert both into the unchecked exceptions the Spring advice renders.
 
-**Unclaimed protocol surface returns `404` rather than being served.** `rename-view`,
-`register-view`, the tables and namespaces REST routes and the OAuth token endpoint are
-out of scope. Probing them lands on the `/v1` unresolved-path `404`, which is the correct
-signal — the server never advertises surface it does not serve, and the `endpoints` list in
-`GET /v1/config` names exactly the seven routes it does.
+The interface
+changed in three ways beyond the obvious retyping from OpenHouse DTOs to Iceberg
+catalog-domain types (`ViewMetadata`, `MetadataUpdate`, `UpdateRequirement`,
+`TableIdentifier`, `Schema`, `ViewVersion`).
 
-**Multi-level namespaces are rejected rather than decoded** (§5.3). The spec expects
-servers to decode the separator; OpenHouse cannot represent such a namespace and reports it
-as absent.
+**Absence became a value.** The carbon copy's `getView` returned a `ViewDto` and signalled
+a missing view by throwing an unchecked `ViewApiException(NO_SUCH_VIEW)`; `deleteView`
+returned `void`. Now `loadView` returns `Optional<ViewMetadata>`, `dropView` returns
+`boolean`, `viewExists` returns `boolean`, and `replaceView` returns
+`Optional<ViewMetadata>`. A view that is not there is half of what these methods are for,
+so it is no longer signalled by unwinding the stack.
 
-**Optional protocol features are absent.** `LoadViewResult.config` is never populated;
-`GET /v1/config` returns empty `defaults` and `overrides` (so `clusterId`, which the old
-request body carried, has no wire home at present) and ignores the `warehouse` query
-parameter; no `prefix` is served; `ETag`, `Idempotency-Key` and the `referenced-by`
-parameter are unsupported.
+**Contention became checked.** `ViewNameConflictException` (carrying a `Kind` of `VIEW` or
+`TABLE`) and `ViewCommitConflictException` are checked exceptions. Two clients racing to
+create the same view, or a commit losing a compare-and-swap, are ordinary outcomes of those
+paths, so the compiler now makes every caller state what it does about them.
 
-**`docs/specs/catalog.md` has not been regenerated.** It requires a booted service plus an
-external tool, and it predates the views surface entirely — the retired `/v2` routes were
-never folded into it either.
+**Nullable parameters were replaced by types that model absence.** The old
+`getAllViews(databaseId, page, size, sortBy, principal)` and
+`putView(requestBody, principal, failOnExist)` gave way to `listViews(databaseId,
+ViewPageRequest, principal)` and `createView(ViewCreationRequest, principal)`.
+`ViewPageRequest` exists because a pair of nulls cannot distinguish "no paging was
+requested" — which carries a spec obligation, §5.1 — from "the first page of some size".
+`ViewCreationRequest` removes the create path's one nullable parameter (the caller-requested
+`location`) and stops the signature from growing an argument each time
+`CreateViewRequest` gains a field.
+
+**The boundary is deliberate.** The Spring advice that writes responses renders *unchecked*
+`ViewApiException`s and cannot be changed from the service layer. So `OpenHouseViewsApiHandler`
+is the adapter: it converts `Optional.empty()` and `false` into
+`ViewApiException(NO_SUCH_VIEW)`, and catches the two checked conflicts and rethrows them
+as their `ViewApiException` equivalents. That conversion belongs in exactly one place — a
+service or repository that throws `ViewApiException` directly has skipped the seam. The
+handler is also where the wire envelopes are unwrapped, so the service seam stays reusable
+by a future non-REST caller and wire-shape churn stays out of the service contract.
+
+`ViewsDisabledService` is the one implementation, and it is the single place where throwing
+rather than answering "absent" is correct: an empty `Optional` would claim "this catalog
+serves views and has none", which is a different and false statement.
