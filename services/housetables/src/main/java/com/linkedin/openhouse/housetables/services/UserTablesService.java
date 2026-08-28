@@ -4,7 +4,6 @@ import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import java.util.List;
 import org.springframework.data.domain.Page;
-import org.springframework.data.util.Pair;
 
 /** Service Interface for Implementing /hts/tables endpoint. */
 public interface UserTablesService {
@@ -81,14 +80,14 @@ public interface UserTablesService {
    * payload may agree with the type or omit it, and a contradiction is rejected.
    *
    * @param userTable The object attempted to be used for update/creation.
-   * @return A pair of object: The first {@link UserTableDto} is the actual saved object. The second
-   *     boolean is set to true if overwritten occurred. This is to differentiate between creation
-   *     and update of {@link UserTableDto}. (Pre-existing signature; the view twin returns the
-   *     named {@link PutResult} instead.)
+   * @return the row as persisted, together with whether the write replaced an existing occupant or
+   *     created the key.
    * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
    *     payload's {@code entityType} contradicts this entry point's {@code TABLE}.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the write
+   *     breaks a storage constraint other than the row key.
    */
-  Pair<UserTableDto, Boolean> putUserTable(UserTable userTable);
+  PutResult putUserTable(UserTable userTable);
 
   /**
    * The view-typed twin of {@link #putUserTable}: supplies {@code VIEW} itself, so the method
@@ -97,6 +96,8 @@ public interface UserTablesService {
    *
    * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
    *     payload's {@code entityType} contradicts this entry point's {@code VIEW}.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the write
+   *     breaks a storage constraint other than the row key.
    */
   PutResult putUserView(UserTable userView);
 
@@ -110,6 +111,8 @@ public interface UserTablesService {
    * @param toTableId The new tableId of the renamed row.
    * @param metadataLocation The new metadata file of the table with updated table properties for
    *     updated ids.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the
+   *     rename breaks a storage constraint other than the destination key.
    */
   void renameUserTable(
       String fromDatabaseId,
@@ -124,6 +127,8 @@ public interface UserTablesService {
    * @param databaseId
    * @param tableId
    * @param deletedAtMs
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the
+   *     restoring write breaks a storage constraint other than the row key.
    */
   UserTableDto restoreUserTable(String databaseId, String tableId, Long deletedAtMs);
 

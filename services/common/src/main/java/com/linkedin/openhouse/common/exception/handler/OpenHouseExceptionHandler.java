@@ -54,16 +54,6 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
 
   private static final String CAUSE_NOT_AVAILABLE = "Not Available";
 
-  private static final String CORRUPT_ENTITY_TYPE_MSG_TMPL =
-      "House Tables could not read the stored entity type occupying the requested key. "
-          + "The offending column, value, and stack trace are in the server log under "
-          + "correlationId=%s";
-
-  private static final String STORAGE_INTEGRITY_MSG_TMPL =
-      "House Tables could not persist the requested change: the write broke a storage "
-          + "constraint. The constraint detail and stack trace are in the server log under "
-          + "correlationId=%s";
-
   private static final int STACKTRACE_MAX_WIDTH = 6000;
 
   /**
@@ -405,10 +395,7 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(CorruptEntityTypeException.class)
   protected ResponseEntity<ErrorResponseBody> handleCorruptEntityTypeException(
       CorruptEntityTypeException corruptEntityTypeException) {
-    return sealedServerError(
-        CORRUPT_ENTITY_TYPE_MSG_TMPL,
-        "Corrupt entity type read from storage",
-        corruptEntityTypeException);
+    return sealedServerError(SealedServerFault.CORRUPT_ENTITY_TYPE, corruptEntityTypeException);
   }
 
   /**
@@ -422,9 +409,44 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   protected ResponseEntity<ErrorResponseBody> handleStorageIntegrityViolationException(
       StorageIntegrityViolationException storageIntegrityViolationException) {
     return sealedServerError(
-        STORAGE_INTEGRITY_MSG_TMPL,
-        "Storage integrity violation on write",
-        storageIntegrityViolationException);
+        SealedServerFault.STORAGE_INTEGRITY_VIOLATION, storageIntegrityViolationException);
+  }
+
+  /**
+   * The faults rendered as a sealed 500, each pairing the client-facing message template with the
+   * server-log note that accompanies the same correlation id. Keeping the two halves in one value
+   * means a caller names the fault rather than passing two adjacent strings whose roles depend on
+   * their order — only the template carries the {@code %s} the id fills.
+   */
+  private enum SealedServerFault {
+    CORRUPT_ENTITY_TYPE(
+        "House Tables could not read the stored entity type occupying the requested key. "
+            + "The offending column, value, and stack trace are in the server log under "
+            + "correlationId=%s",
+        "Corrupt entity type read from storage"),
+
+    STORAGE_INTEGRITY_VIOLATION(
+        "House Tables could not persist the requested change: the write broke a storage "
+            + "constraint. The constraint detail and stack trace are in the server log under "
+            + "correlationId=%s",
+        "Storage integrity violation on write");
+
+    private final String messageTemplate;
+    private final String logNote;
+
+    SealedServerFault(String messageTemplate, String logNote) {
+      this.messageTemplate = messageTemplate;
+      this.logNote = logNote;
+    }
+
+    /** The client-facing message, naming the correlation id the log note carries. */
+    String messageNaming(String correlationId) {
+      return String.format(messageTemplate, correlationId);
+    }
+
+    String logNote() {
+      return logNote;
+    }
   }
 
   /**
@@ -433,14 +455,14 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
    * only that id, with no stack trace and no cause detail.
    */
   private ResponseEntity<ErrorResponseBody> sealedServerError(
-      String messageTemplate, String logNote, Throwable exception) {
+      SealedServerFault fault, Throwable exception) {
     String correlationId = UUID.randomUUID().toString();
-    log.error("{} [correlationId={}]:", logNote, correlationId, exception);
+    log.error("{} [correlationId={}]:", fault.logNote(), correlationId, exception);
     ErrorResponseBody errorResponseBody =
         ErrorResponseBody.builder()
             .status(HttpStatus.INTERNAL_SERVER_ERROR)
             .error(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase())
-            .message(String.format(messageTemplate, correlationId))
+            .message(fault.messageNaming(correlationId))
             .cause(CAUSE_NOT_AVAILABLE)
             .build();
     return buildResponseEntity(errorResponseBody);

@@ -2,6 +2,7 @@ package com.linkedin.openhouse.housetables.services;
 
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import lombok.Builder;
+import lombok.NonNull;
 import lombok.Value;
 
 /**
@@ -13,7 +14,10 @@ import lombok.Value;
 @Value
 public class PutResult {
 
-  UserTableDto entity;
+  /**
+   * The persisted row. A put that reached a result always has one, so this is never {@code null}.
+   */
+  @NonNull UserTableDto entity;
 
   /** {@code true} when the write replaced an existing row; {@code false} when it created one. */
   boolean replacedExisting;

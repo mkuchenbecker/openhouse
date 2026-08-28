@@ -24,10 +24,13 @@ import org.springframework.http.ResponseEntity;
  * find the diagnostic in the server log. An orphaned correlation id would be a worse failure mode
  * than the leak the sealing fixed, so this half is pinned as hard as the response half.
  *
- * <p>Lives in housetables, not {@code services:common}: common's own test runtime carries no SLF4J
- * binding (the NOP logger swallows everything), while this module — the handler's consumer — runs
- * the log4j2 binding the contract holds under in deployment. It sits in the handler's package (from
- * this module's test tree) because the advice methods are protected.
+ * <p>Lives in housetables, not {@code services:common}: the capture reads log4j2's own {@code
+ * LogEvent}s, which requires SLF4J bound to log4j2. {@code openhouse.springboot-conventions} gives
+ * this module that binding — it swaps Boot's logback stack for {@code spring-boot-starter-log4j2}
+ * plus {@code log4j-slf4j2-impl} — while {@code services:common} applies only {@code
+ * openhouse.java-conventions} and gets logback transitively through its webflux and data-jpa
+ * starters, under which this appender would never see an event. It sits in the handler's package
+ * (from this module's test tree) because the advice methods are protected.
  */
 public class CorruptionLogContractTest {
 
@@ -64,11 +67,7 @@ public class CorruptionLogContractTest {
     ResponseEntity<ErrorResponseBody> response = handler.handleCorruptEntityTypeException(corrupt);
     String correlationId = correlationIdOf(response);
 
-    List<LogEvent> matching =
-        appender.events.stream()
-            .filter(event -> event.getLevel() == Level.ERROR)
-            .filter(event -> event.getMessage().getFormattedMessage().contains(correlationId))
-            .collect(Collectors.toList());
+    List<LogEvent> matching = appender.errorsNaming(correlationId);
     Assertions.assertEquals(
         1, matching.size(), "exactly one ERROR event must carry the returned correlation id");
 
@@ -91,23 +90,22 @@ public class CorruptionLogContractTest {
     String second = correlationIdOf(handler.handleCorruptEntityTypeException(corrupt));
 
     Assertions.assertNotEquals(first, second);
-    Assertions.assertEquals(1, eventsNaming(first));
-    Assertions.assertEquals(1, eventsNaming(second));
-  }
-
-  private long eventsNaming(String correlationId) {
-    return appender.events.stream()
-        .filter(event -> event.getMessage().getFormattedMessage().contains(correlationId))
-        .count();
+    Assertions.assertEquals(1, appender.countNaming(first));
+    Assertions.assertEquals(1, appender.countNaming(second));
   }
 
   private static String correlationIdOf(ResponseEntity<ErrorResponseBody> response) {
-    Matcher matcher = CORRELATION_ID.matcher(response.getBody().getMessage());
+    ErrorResponseBody body = response.getBody();
+    Assertions.assertNotNull(body, "the sealed 500 must carry a response body");
+    Matcher matcher = CORRELATION_ID.matcher(body.getMessage());
     Assertions.assertTrue(matcher.find(), "the body must name a correlation id");
     return matcher.group(1);
   }
 
-  /** Collects immutable copies of every event the handler's logger emits. */
+  /**
+   * Collects immutable copies of every event the handler's logger emits, and answers the two
+   * questions this contract asks of them, so no test reaches into the captured list itself.
+   */
   private static final class CapturingAppender extends AbstractAppender {
 
     private final List<LogEvent> events = new ArrayList<>();
@@ -119,6 +117,23 @@ public class CorruptionLogContractTest {
     @Override
     public void append(LogEvent event) {
       events.add(event.toImmutable());
+    }
+
+    /** How many captured events, at any level, name {@code correlationId}. */
+    long countNaming(String correlationId) {
+      return events.stream().filter(event -> names(event, correlationId)).count();
+    }
+
+    /** The captured ERROR events naming {@code correlationId}, in emission order. */
+    List<LogEvent> errorsNaming(String correlationId) {
+      return events.stream()
+          .filter(event -> event.getLevel() == Level.ERROR)
+          .filter(event -> names(event, correlationId))
+          .collect(Collectors.toList());
+    }
+
+    private static boolean names(LogEvent event, String correlationId) {
+      return event.getMessage().getFormattedMessage().contains(correlationId);
     }
   }
 }

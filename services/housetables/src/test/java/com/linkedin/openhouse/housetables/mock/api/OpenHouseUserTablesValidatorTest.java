@@ -124,7 +124,7 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because it's the same table name (case-insensitive)
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
   }
 
   @Test
@@ -136,7 +136,7 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because cross-database rename is not supported
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
   }
 
   @Test
@@ -148,7 +148,7 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because of invalid table name format
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
   }
 
   /**

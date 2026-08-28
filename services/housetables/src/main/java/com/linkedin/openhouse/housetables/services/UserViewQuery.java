@@ -7,8 +7,9 @@ import lombok.Value;
  * table-id pattern, nothing else. The handler parses a validated transport request into this value
  * at its boundary, so wire nullability, ignored transport fields, and the inert {@code entityType}
  * property never become part of the service contract — a view query that filters by anything else
- * is structurally unrepresentable here, and so is a pattern with no database to scope it: the
- * factory methods are the only constructors, and {@link #matching} requires both parts.
+ * is structurally unrepresentable here, since no field exists to hold such a filter. A pattern with
+ * no database to scope it is rejected rather than unrepresentable: the factory methods are the only
+ * constructors, and {@link #matching} rejects that combination at construction.
  */
 @Value
 public class UserViewQuery {
@@ -27,14 +28,9 @@ public class UserViewQuery {
     this.tableIdPattern = tableIdPattern;
   }
 
-  /** Every view across every database. */
-  public static UserViewQuery allViews() {
-    return new UserViewQuery(null, null);
-  }
-
   /**
-   * Every view in one database; {@code null} keeps the all-databases semantics of {@link
-   * #allViews()}.
+   * Every view in one database, unpatterned; a {@code null} {@code databaseId} widens the query to
+   * every view across every database.
    */
   public static UserViewQuery allViews(String databaseId) {
     return new UserViewQuery(databaseId, null);
@@ -42,8 +38,9 @@ public class UserViewQuery {
 
   /**
    * Views in {@code databaseId} whose table id matches the {@code LIKE} pattern. Both parts are
-   * required: a pattern has no scope without a database (the API validator rejects that request
-   * shape at ingress, and this factory makes it unrepresentable for direct callers too).
+   * required: a pattern has no scope without a database. The API validator rejects that request
+   * shape at ingress, and this factory rejects it for direct callers too, with an {@link
+   * IllegalArgumentException}.
    */
   public static UserViewQuery matching(String databaseId, String tableIdPattern) {
     if (databaseId == null) {
