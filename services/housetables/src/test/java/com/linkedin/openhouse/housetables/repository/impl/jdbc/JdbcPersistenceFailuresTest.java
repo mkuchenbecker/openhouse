@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.housetables.repository.impl.jdbc;
 
 import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.util.function.Supplier;
@@ -37,6 +38,32 @@ public class JdbcPersistenceFailuresTest {
     Assertions.assertTrue(
         JdbcPersistenceFailures.isDuplicateKey(
             new DataIntegrityViolationException("could not execute statement", duplicateEntry)));
+  }
+
+  /** ER_DUP_ENTRY_WITH_KEY_NAME (1586) is the same duplicate reported with the key's name. */
+  @Test
+  public void mysqlDuplicateEntryWithKeyNameVendorCodeIsDuplicate() {
+    SQLException duplicateWithKeyName =
+        new SQLIntegrityConstraintViolationException(
+            "Duplicate entry 'db1-t1' for key 'user_table_row.PRIMARY'", "23000", 1586);
+    Assertions.assertTrue(
+        JdbcPersistenceFailures.isDuplicateKey(
+            new DataIntegrityViolationException(
+                "could not execute statement", duplicateWithKeyName)));
+  }
+
+  /** The disclaimed violation is translated to the module-owned type with its cause preserved. */
+  @Test
+  public void serverFailureWrapsTheViolationInModuleOwnedVocabulary() {
+    DataIntegrityViolationException notADuplicate =
+        new DataIntegrityViolationException(
+            "could not execute statement",
+            new SQLException("Column 'metadata_location' cannot be null", "23000", 1048));
+
+    StorageIntegrityViolationException translated =
+        JdbcPersistenceFailures.serverFailure(notADuplicate);
+
+    Assertions.assertSame(notADuplicate, translated.getCause());
   }
 
   /** MySQL's generic 23000 covers every integrity violation; only ER_DUP_ENTRY is a duplicate. */

@@ -221,7 +221,7 @@ public class UserTablesServiceImpl implements UserTablesService {
       // is a server-side failure, not a race, so mislabeling it a 409 would send the caller into
       // a futile retry loop; it propagates as the 500 it is.
       if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
-        throw e;
+        throw JdbcPersistenceFailures.serverFailure(e);
       }
       throw concurrentModification(targetUserTableRow, userTable, e);
     } catch (CommitFailedException | ObjectOptimisticLockingFailureException e) {
@@ -282,7 +282,7 @@ public class UserTablesServiceImpl implements UserTablesService {
       // A duplicate key means the destination is occupied; anything else broke a different
       // constraint and must not masquerade as an occupied destination.
       if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
-        throw e;
+        throw JdbcPersistenceFailures.serverFailure(e);
       }
       throw new AlreadyExistsException("Table", toTableId, e);
     }
@@ -365,7 +365,7 @@ public class UserTablesServiceImpl implements UserTablesService {
     } catch (DataIntegrityViolationException e) {
       // Same discrimination as the put path: only a duplicate key is a lost restore race.
       if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
-        throw e;
+        throw JdbcPersistenceFailures.serverFailure(e);
       }
       throw new AlreadyExistsException("Table", existingSoftDeletedTable.getTableId(), e);
     }

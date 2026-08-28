@@ -8,9 +8,12 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 
 import com.linkedin.openhouse.common.exception.AlreadyExistsException;
+import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.NoSuchEntityException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
@@ -27,6 +30,7 @@ import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -44,6 +48,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.util.Pair;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -1040,7 +1045,7 @@ public class UserTablesServiceTest {
     // The service boundary translates the ORM wrapper, so the module-owned corruption type is
     // what leaves it, still naming the column and value for its internal consumers.
     assertThatThrownBy(() -> userTablesService.getNeutralEntity(ENTITY_TYPE_DB, "neutral_corrupt"))
-        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
+        .isInstanceOf(CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type")
         .hasStackTraceContaining("UNKNOWN");
 
@@ -1337,11 +1342,10 @@ public class UserTablesServiceTest {
             .build();
 
     Assertions.assertThrows(
-        com.linkedin.openhouse.common.exception.RequestValidationFailureException.class,
-        () -> userTablesService.putUserView(tablePayload));
+        RequestValidationFailureException.class, () -> userTablesService.putUserView(tablePayload));
 
     Assertions.assertThrows(
-        com.linkedin.openhouse.common.exception.RequestValidationFailureException.class,
+        RequestValidationFailureException.class,
         () ->
             userTablesService.putUserTable(
                 tablePayload.toBuilder().entityType(EntityType.VIEW.name()).build()));
@@ -1448,7 +1452,7 @@ public class UserTablesServiceTest {
                         .metadataLocation("/openhouse/entity_type_db/put_corrupt/v1_metadata.json")
                         .entityType(EntityType.TABLE.name())
                         .build()))
-        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
+        .isInstanceOf(CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type");
 
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "put_corrupt")).hasValue("UNKNOWN");
@@ -1649,15 +1653,16 @@ public class UserTablesServiceTest {
   /**
    * A 409 promises the caller a retry can win. An integrity violation that is not a duplicate key —
    * a null column, an over-length value the ingress bound somehow missed — is a server failure a
-   * retry cannot fix, so it must escape as itself rather than wear the concurrent-modification
-   * label.
+   * retry cannot fix, so it leaves the service as the module-owned {@link
+   * StorageIntegrityViolationException} (never the raw Spring type, never the
+   * concurrent-modification label), with the original violation preserved as its cause.
    */
   @Test
   public void testNonDuplicateIntegrityViolationOnPutIsNotReportedAsConcurrentModification() {
-    org.springframework.dao.DataIntegrityViolationException notADuplicate =
-        new org.springframework.dao.DataIntegrityViolationException(
+    DataIntegrityViolationException notADuplicate =
+        new DataIntegrityViolationException(
             "could not execute statement",
-            new java.sql.SQLException("Data too long for column 'table_id'", "22001", 1406));
+            new SQLException("Data too long for column 'table_id'", "22001", 1406));
     doThrow(notADuplicate).when(htsRepository).save(any(UserTableRow.class));
 
     assertThatThrownBy(
@@ -1671,17 +1676,18 @@ public class UserTablesServiceTest {
                             "/openhouse/entity_type_db/integrity_violation/v1_metadata.json")
                         .entityType(EntityType.TABLE.name())
                         .build()))
-        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
-        .isNotInstanceOf(EntityConcurrentModificationException.class);
+        .isInstanceOf(StorageIntegrityViolationException.class)
+        .isNotInstanceOf(EntityConcurrentModificationException.class)
+        .hasCause(notADuplicate);
   }
 
   /** The JPA dialect's generic wrapper around a real duplicate key still reads as the 409 race. */
   @Test
   public void testDuplicateKeyUnderGenericWrapperOnPutIsConcurrentModification() {
-    org.springframework.dao.DataIntegrityViolationException duplicate =
-        new org.springframework.dao.DataIntegrityViolationException(
+    DataIntegrityViolationException duplicate =
+        new DataIntegrityViolationException(
             "could not execute statement",
-            new java.sql.SQLException("Unique index or primary key violation", "23505"));
+            new SQLException("Unique index or primary key violation", "23505"));
     doThrow(duplicate).when(htsRepository).save(any(UserTableRow.class));
 
     Assertions.assertThrows(
