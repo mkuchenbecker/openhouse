@@ -1,9 +1,12 @@
 package com.linkedin.openhouse.housetables.repository.impl.jdbc;
 
 import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -33,8 +36,14 @@ public final class JdbcPersistenceFailures {
   /** MySQL reports duplicates under the generic integrity-violation SQLSTATE ... */
   private static final String SQLSTATE_INTEGRITY_VIOLATION = "23000";
 
-  /** ... distinguished by its vendor code, ER_DUP_ENTRY. */
-  private static final int MYSQL_ER_DUP_ENTRY = 1062;
+  /**
+   * ... distinguished by vendor code: {@code ER_DUP_ENTRY} (1062) and {@code
+   * ER_DUP_ENTRY_WITH_KEY_NAME} (1586). Spring 5.3's own {@code sql-error-codes.xml} classifies
+   * only 1062 as a duplicate key for MySQL; 1586 is the same duplicate reported with the key's
+   * name, which newer Spring generations added to the same bucket, so both are recognized here.
+   */
+  private static final Set<Integer> MYSQL_DUPLICATE_ENTRY_CODES =
+      Collections.unmodifiableSet(new java.util.HashSet<>(java.util.Arrays.asList(1062, 1586)));
 
   private JdbcPersistenceFailures() {}
 
@@ -47,24 +56,30 @@ public final class JdbcPersistenceFailures {
    * <p>Spring translates plain JDBC duplicates to {@link DuplicateKeyException}, but through the
    * JPA dialect a duplicate arrives as the generic {@link DataIntegrityViolationException}, so the
    * SQL exception underneath is consulted: SQLSTATE {@code 23505} (H2, PostgreSQL) or MySQL's
-   * {@code ER_DUP_ENTRY} vendor code under SQLSTATE {@code 23000}.
+   * duplicate-entry vendor codes under SQLSTATE {@code 23000}.
    */
   public static boolean isDuplicateKey(DataIntegrityViolationException exception) {
     if (exception instanceof DuplicateKeyException) {
       return true;
     }
-    Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
-    Throwable current = exception;
-    for (int depth = 0; current != null && depth < CAUSE_CHAIN_MAX_DEPTH; depth++) {
-      if (!visited.add(current)) {
-        break;
-      }
-      if (current instanceof SQLException && isDuplicateKeySqlException((SQLException) current)) {
+    for (Throwable cause : boundedCauseChain(exception)) {
+      if (cause instanceof SQLException && isDuplicateKeySqlException((SQLException) cause)) {
         return true;
       }
-      current = current.getCause();
     }
     return false;
+  }
+
+  /**
+   * The module-owned rendering of an integrity violation that {@link #isDuplicateKey} disclaimed:
+   * not a concurrent writer, not the caller's input (ingress bounds those), so a server-side
+   * storage failure. Translating here keeps the raw Spring type from leaving the service layer; the
+   * advice renders the result as a sealed 500 whose detail lives in the server log.
+   */
+  public static StorageIntegrityViolationException serverFailure(
+      DataIntegrityViolationException exception) {
+    return new StorageIntegrityViolationException(
+        "A House Tables write broke a storage constraint other than the row key", exception);
   }
 
   /**
@@ -101,18 +116,30 @@ public final class JdbcPersistenceFailures {
   }
 
   private static Optional<CorruptEntityTypeException> findCorruptCause(Throwable exception) {
+    for (Throwable cause : boundedCauseChain(exception)) {
+      if (cause instanceof CorruptEntityTypeException) {
+        return Optional.of((CorruptEntityTypeException) cause);
+      }
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * The cause chain from {@code exception} inclusive, bounded by {@link #CAUSE_CHAIN_MAX_DEPTH} and
+   * by identity so a cyclic chain terminates instead of spinning.
+   */
+  private static List<Throwable> boundedCauseChain(Throwable exception) {
+    List<Throwable> chain = new ArrayList<>();
     Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
     Throwable current = exception;
     for (int depth = 0; current != null && depth < CAUSE_CHAIN_MAX_DEPTH; depth++) {
       if (!visited.add(current)) {
         break;
       }
-      if (current instanceof CorruptEntityTypeException) {
-        return Optional.of((CorruptEntityTypeException) current);
-      }
+      chain.add(current);
       current = current.getCause();
     }
-    return Optional.empty();
+    return chain;
   }
 
   private static boolean isDuplicateKeySqlException(SQLException sqlException) {
@@ -121,6 +148,6 @@ public final class JdbcPersistenceFailures {
       return true;
     }
     return SQLSTATE_INTEGRITY_VIOLATION.equals(sqlState)
-        && sqlException.getErrorCode() == MYSQL_ER_DUP_ENTRY;
+        && MYSQL_DUPLICATE_ENTRY_CODES.contains(sqlException.getErrorCode());
   }
 }

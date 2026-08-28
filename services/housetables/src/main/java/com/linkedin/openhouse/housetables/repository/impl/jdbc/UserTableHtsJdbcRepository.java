@@ -57,13 +57,18 @@ public interface UserTableHtsJdbcRepository
    *
    * <p>Collation contract, shared with {@link #VIEW_ROW_PREDICATE}: {@code
    * ddl/0002__pin_entity_type_collation.sql} pins the column to {@code utf8mb4_0900_as_ci}
-   * (case-insensitive, accent-sensitive, NO PAD), under which this comparison matches exactly the
-   * spellings {@link EntityType#fromName} accepts. Under the MySQL 8 server default {@code
-   * utf8mb4_0900_ai_ci} a stored {@code 'TÁBLE'} would match here yet fail hydration, and a PAD
-   * SPACE collation would do the same for {@code 'TABLE '}; the pin removes both divergences, and
-   * the oh-only-mysql E2E suite asserts the pinned collation and the resulting taxonomy. H2 in
-   * tests compares case-sensitively with NO PAD, which the explicit {@code upper()} folds into the
-   * same contract, so the test and deployed engines agree.
+   * (case-insensitive, accent-sensitive, NO PAD), under which the ASCII, accented, and padded
+   * spellings classify the same way here as in {@link EntityType#fromName}: case variants match,
+   * accents and padding do not. Under the MySQL 8 server default {@code utf8mb4_0900_ai_ci} a
+   * stored {@code 'TÁBLE'} would match here yet fail hydration, and a PAD SPACE collation would do
+   * the same for {@code 'TABLE '}; the pin removes both divergences. It is a narrowing, not an
+   * equivalence: {@code _as_ci} is strength-2 and still ignores tertiary-only distinctions, so a
+   * width variant like a fullwidth spelling would compare equal in SQL while {@code fromName}
+   * rejects it — no writer of this column produces such values. H2 in tests compares
+   * case-sensitively with NO PAD, which the explicit {@code upper()} folds into the same contract,
+   * so the test and deployed engines agree; the pinned collation and the resulting corrupt-value
+   * taxonomy are verified against a deployed MySQL by the E2E suite introduced alongside this
+   * stack.
    */
   String TABLE_ROW_PREDICATE = "(u.entityType IS NULL OR upper(u.entityType) = '" + TABLE + "')";
 

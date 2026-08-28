@@ -21,10 +21,17 @@ public class OpenHouseUserTableHtsApiValidator
 
   /**
    * Storage bounds, from the DDL this service persists into ({@code
-   * services/housetables/ddl/0000__baseline.sql}: {@code database_id} and {@code table_id} are
-   * {@code VARCHAR(128)}, {@code metadata_location} is {@code VARCHAR(512)}). Enforced at ingress
-   * so an over-length identifier is the client's 400, not a database integrity violation
-   * misreported as a concurrent modification or a bare server failure.
+   * services/housetables/ddl/0000__baseline.sql}: {@code database_id}, {@code table_id} and {@code
+   * storage_type} are {@code VARCHAR(128)}, {@code metadata_location} is {@code VARCHAR(512)}).
+   * Enforced at ingress on every field a write persists — and on the {@code databaseId} query
+   * filter, which addresses the same key column — so an over-length value is the client's 400, not
+   * a database integrity violation misreported as a concurrent modification or a bare server
+   * failure. A read-side {@code tableId} LIKE pattern is deliberately not bounded here: it is a
+   * predicate, not a stored value, so the write bound does not apply to it.
+   *
+   * <p>Lengths are compared in Java's UTF-16 code units while MySQL counts characters; a
+   * supplementary character costs two units here and one there, so this check is deliberately the
+   * conservative side of the column bound, never the permissive one.
    */
   static final int MAX_IDENTIFIER_LENGTH = 128;
 
@@ -107,7 +114,22 @@ public class OpenHouseUserTableHtsApiValidator
         userTable.getMetadataLocation(),
         MAX_METADATA_LOCATION_LENGTH,
         validationFailures);
+    validateLength(
+        "storageType", userTable.getStorageType(), MAX_IDENTIFIER_LENGTH, validationFailures);
 
+    if (!validationFailures.isEmpty()) {
+      throw new RequestValidationFailureException(validationFailures);
+    }
+  }
+
+  /** The rename writes exactly one non-key field, bounded like every other persisted field. */
+  @Override
+  public void validateRenameEntity(
+      UserTableKey fromUserTableKey, UserTableKey toUserTableKey, String metadataLocation) {
+    validateRenameEntity(fromUserTableKey, toUserTableKey);
+    List<String> validationFailures = new ArrayList<>();
+    validateLength(
+        "metadataLocation", metadataLocation, MAX_METADATA_LOCATION_LENGTH, validationFailures);
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
     }
@@ -153,9 +175,11 @@ public class OpenHouseUserTableHtsApiValidator
               "databaseId provided: %s, %s",
               userTable.getDatabaseId(), ALPHA_NUM_UNDERSCORE_ERROR_MSG));
     }
+    // databaseId addresses the key column exactly, so it carries the storage bound; the tableId
+    // filter is a LIKE pattern (a predicate, not a stored value) and is deliberately unbounded
+    // here — the search regex above still governs its shape.
     validateLength(
         "databaseId", userTable.getDatabaseId(), MAX_IDENTIFIER_LENGTH, validationFailures);
-    validateLength("tableId", userTable.getTableId(), MAX_IDENTIFIER_LENGTH, validationFailures);
 
     if (userTable.getTableId() != null) {
       if (userTable.getDatabaseId() == null) {

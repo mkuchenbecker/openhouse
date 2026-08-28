@@ -2,6 +2,7 @@ package com.linkedin.openhouse.common.exception.handler;
 
 import com.linkedin.openhouse.common.api.spec.ErrorResponseBody;
 import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -62,6 +63,30 @@ public class OpenHouseExceptionHandlerTest {
   public void testCorruptEntityTypeIsNotCatchCompatibleWithClientInputFailures() {
     Assertions.assertFalse(
         IllegalArgumentException.class.isAssignableFrom(CorruptEntityTypeException.class));
+  }
+
+  /**
+   * The write-path sibling seals identically: a non-duplicate integrity violation renders as a
+   * stable generic 500 naming only a correlation id, with the constraint detail (schema vocabulary,
+   * SQL state, stack) kept out of the body.
+   */
+  @Test
+  public void testStorageIntegrityViolationIsStableServerErrorWithoutDiagnostic() {
+    StorageIntegrityViolationException storageFailure =
+        new StorageIntegrityViolationException(
+            "A House Tables write broke a storage constraint other than the row key",
+            new RuntimeException("Data too long for column 'table_id'"));
+
+    ResponseEntity<ErrorResponseBody> response =
+        handler.handleStorageIntegrityViolationException(storageFailure);
+
+    Assertions.assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+    ErrorResponseBody body = response.getBody();
+    Assertions.assertNotNull(body);
+    Assertions.assertTrue(body.getMessage().contains("correlationId="));
+    Assertions.assertFalse(body.getMessage().contains("table_id"));
+    Assertions.assertNull(body.getStacktrace());
+    Assertions.assertEquals("Not Available", body.getCause());
   }
 
   /** The generic path keeps its existing shape; corruption hygiene changes it not at all. */

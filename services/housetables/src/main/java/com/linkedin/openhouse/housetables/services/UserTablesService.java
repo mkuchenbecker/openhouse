@@ -83,7 +83,10 @@ public interface UserTablesService {
    * @param userTable The object attempted to be used for update/creation.
    * @return A pair of object: The first {@link UserTableDto} is the actual saved object. The second
    *     boolean is set to true if overwritten occurred. This is to differentiate between creation
-   *     and update of {@link UserTableDto}.
+   *     and update of {@link UserTableDto}. (Pre-existing signature; the view twin returns the
+   *     named {@link PutResult} instead.)
+   * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
+   *     payload's {@code entityType} contradicts this entry point's {@code TABLE}.
    */
   Pair<UserTableDto, Boolean> putUserTable(UserTable userTable);
 
@@ -91,8 +94,11 @@ public interface UserTablesService {
    * The view-typed twin of {@link #putUserTable}: supplies {@code VIEW} itself, so the method
    * establishes the invariant its name promises even for a caller that bypasses the controller's
    * wire mismatch check.
+   *
+   * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
+   *     payload's {@code entityType} contradicts this entry point's {@code VIEW}.
    */
-  Pair<UserTableDto, Boolean> putUserView(UserTable userView);
+  PutResult putUserView(UserTable userView);
 
   /**
    * Rename a {@link UserTable} row in House table. Table-only: views are not renameable, so there

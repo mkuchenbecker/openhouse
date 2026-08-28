@@ -60,4 +60,19 @@ public interface HouseTablesApiValidator<K, V> {
    *     request is invalid.
    */
   void validateRenameEntity(K fromKey, K toKey);
+
+  /**
+   * Rename variant that also sees the request's replacement metadata location, so implementations
+   * can bound the one non-key field the rename writes. Defaults to the key-only validation for
+   * implementations whose rename carries no such field.
+   *
+   * @param fromKey The key object to identify the row to rename.
+   * @param toKey The key object to rename the row to.
+   * @param metadataLocation The replacement metadata location the rename persists.
+   * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
+   *     request is invalid.
+   */
+  default void validateRenameEntity(K fromKey, K toKey, String metadataLocation) {
+    validateRenameEntity(fromKey, toKey);
+  }
 }

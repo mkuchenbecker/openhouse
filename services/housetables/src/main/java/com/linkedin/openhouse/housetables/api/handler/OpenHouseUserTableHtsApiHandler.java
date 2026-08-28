@@ -8,6 +8,7 @@ import com.linkedin.openhouse.housetables.api.spec.response.GetAllEntityResponse
 import com.linkedin.openhouse.housetables.api.validator.HouseTablesApiValidator;
 import com.linkedin.openhouse.housetables.dto.mapper.UserTablesMapper;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
+import com.linkedin.openhouse.housetables.services.PutResult;
 import com.linkedin.openhouse.housetables.services.UserTablesService;
 import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import java.util.stream.Collectors;
@@ -107,10 +108,12 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
    * layer.
    */
   private static UserViewQuery toUserViewQuery(UserTable userView) {
-    return UserViewQuery.builder()
-        .databaseId(userView.getDatabaseId())
-        .tableIdPattern(userView.getTableId())
-        .build();
+    // The validator has already rejected a tableId filter without a databaseId, so the
+    // pattern factory's requirement is satisfied by construction here.
+    if (userView.getTableId() == null) {
+      return UserViewQuery.allViews(userView.getDatabaseId());
+    }
+    return UserViewQuery.matching(userView.getDatabaseId(), userView.getTableId());
   }
 
   @Override
@@ -181,17 +184,23 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
   @Override
   public ApiResponse<EntityResponseBody<UserTable>> putView(UserTable userView) {
     userTablesHtsApiValidator.validatePutEntity(userView);
-    return putResponse(userTableService.putUserView(userView));
+    PutResult putResult = userTableService.putUserView(userView);
+    return putResponse(putResult.getEntity(), putResult.isReplacedExisting());
   }
 
   private ApiResponse<EntityResponseBody<UserTable>> putResponse(
       Pair<UserTableDto, Boolean> putResult) {
-    HttpStatus statusCode = putResult.getSecond() ? HttpStatus.OK : HttpStatus.CREATED;
+    return putResponse(putResult.getFirst(), putResult.getSecond());
+  }
+
+  private ApiResponse<EntityResponseBody<UserTable>> putResponse(
+      UserTableDto entity, boolean replacedExisting) {
+    HttpStatus statusCode = replacedExisting ? HttpStatus.OK : HttpStatus.CREATED;
     return ApiResponse.<EntityResponseBody<UserTable>>builder()
         .httpStatus(statusCode)
         .responseBody(
             EntityResponseBody.<UserTable>builder()
-                .entity(userTablesMapper.toUserTable(putResult.getFirst()))
+                .entity(userTablesMapper.toUserTable(entity))
                 .build())
         .build();
   }
@@ -208,7 +217,8 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
             .databaseId(toUserTable.getDatabaseId())
             .tableId(toUserTable.getTableId())
             .build();
-    userTablesHtsApiValidator.validateRenameEntity(fromUserTableKey, toUserTableKey);
+    userTablesHtsApiValidator.validateRenameEntity(
+        fromUserTableKey, toUserTableKey, toUserTable.getMetadataLocation());
     userTableService.renameUserTable(
         fromUserTable.getDatabaseId(),
         fromUserTable.getTableId(),

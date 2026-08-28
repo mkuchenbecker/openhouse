@@ -16,6 +16,7 @@ import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.ResourceGatedByToggledOnFeatureException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -56,6 +57,11 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   private static final String CORRUPT_ENTITY_TYPE_MSG_TMPL =
       "House Tables could not read the stored entity type occupying the requested key. "
           + "The offending column, value, and stack trace are in the server log under "
+          + "correlationId=%s";
+
+  private static final String STORAGE_INTEGRITY_MSG_TMPL =
+      "House Tables could not persist the requested change: the write broke a storage "
+          + "constraint. The constraint detail and stack trace are in the server log under "
           + "correlationId=%s";
 
   private static final int STACKTRACE_MAX_WIDTH = 6000;
@@ -399,16 +405,42 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   @ExceptionHandler(CorruptEntityTypeException.class)
   protected ResponseEntity<ErrorResponseBody> handleCorruptEntityTypeException(
       CorruptEntityTypeException corruptEntityTypeException) {
-    String correlationId = UUID.randomUUID().toString();
-    log.error(
-        "Corrupt entity type read from storage [correlationId={}]:",
-        correlationId,
+    return sealedServerError(
+        CORRUPT_ENTITY_TYPE_MSG_TMPL,
+        "Corrupt entity type read from storage",
         corruptEntityTypeException);
+  }
+
+  /**
+   * The write-path sibling of the corruption arm: an integrity violation the persistence boundary
+   * classified as neither a duplicate key (that is a 409) nor the caller's input (ingress bounds
+   * those). Same sealed shape — constraint detail and stack are logged under the correlation id the
+   * stable body names.
+   */
+  @Hidden
+  @ExceptionHandler(StorageIntegrityViolationException.class)
+  protected ResponseEntity<ErrorResponseBody> handleStorageIntegrityViolationException(
+      StorageIntegrityViolationException storageIntegrityViolationException) {
+    return sealedServerError(
+        STORAGE_INTEGRITY_MSG_TMPL,
+        "Storage integrity violation on write",
+        storageIntegrityViolationException);
+  }
+
+  /**
+   * A server fault whose diagnostic is operator material, not response material: the detail is
+   * logged under a generated correlation id and the client receives a stable generic 500 naming
+   * only that id, with no stack trace and no cause detail.
+   */
+  private ResponseEntity<ErrorResponseBody> sealedServerError(
+      String messageTemplate, String logNote, Throwable exception) {
+    String correlationId = UUID.randomUUID().toString();
+    log.error("{} [correlationId={}]:", logNote, correlationId, exception);
     ErrorResponseBody errorResponseBody =
         ErrorResponseBody.builder()
             .status(HttpStatus.INTERNAL_SERVER_ERROR)
             .error(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase())
-            .message(String.format(CORRUPT_ENTITY_TYPE_MSG_TMPL, correlationId))
+            .message(String.format(messageTemplate, correlationId))
             .cause(CAUSE_NOT_AVAILABLE)
             .build();
     return buildResponseEntity(errorResponseBody);
