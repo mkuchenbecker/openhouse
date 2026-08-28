@@ -4,6 +4,7 @@ import static com.linkedin.openhouse.javaclient.OpenHouseTableOperations.*;
 
 import com.linkedin.openhouse.client.ssl.HttpConnectionStrategy;
 import com.linkedin.openhouse.client.ssl.TablesApiClientFactory;
+import com.linkedin.openhouse.client.ssl.WebClientFactory;
 import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
 import com.linkedin.openhouse.javaclient.builder.ClusteringSpecBuilder;
 import com.linkedin.openhouse.javaclient.builder.TimePartitionSpecBuilder;
@@ -21,12 +22,14 @@ import com.linkedin.openhouse.tables.client.model.GetAllDatabasesResponseBody;
 import com.linkedin.openhouse.tables.client.model.GetAllTablesResponseBody;
 import com.linkedin.openhouse.tables.client.model.GetTableResponseBody;
 import com.linkedin.openhouse.tables.client.model.UpdateAclPoliciesRequestBody;
+import java.io.Closeable;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import javax.net.ssl.SSLException;
 import lombok.extern.slf4j.Slf4j;
@@ -58,10 +61,10 @@ import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.view.BaseMetastoreViewCatalog;
 import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewBuilder;
-import org.apache.iceberg.view.ViewMetadata;
 import org.apache.iceberg.view.ViewOperations;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -77,19 +80,23 @@ import reactor.core.publisher.Mono;
  *
  * <p>This is the iceberg-1.5 / Spark-3.5 copy of {@code OpenHouseCatalog}. It extends {@link
  * BaseMetastoreViewCatalog} (instead of {@link BaseMetastoreCatalog}) so a single catalog object
- * serves both tables (inherited, unchanged) and views. This is the first increment of OpenHouse
- * view support: production code, gated and off by default. View operations are active only when
- * {@code spark.sql.catalog.<name>.iceberg-views-enabled=true}, and are backed by an in-memory MOCK
- * store ({@code mockViewStore}) so {@code buildView} -> {@code loadView} round-trips without a
- * persistence service. Evolution: replace {@code mockViewStore} and the inline {@link
- * ViewOperations} in {@link #newViewOps} with a Views-service-backed {@code
- * OpenHouseViewOperations} calling a generated {@code ViewApi}, mirroring how {@link #newTableOps}
- * returns {@code OpenHouseTableOperations} calling {@code TableApi}. The iceberg-1.2 / Spark-3.1
- * copy stays table-only ({@code extends BaseMetastoreCatalog}).
+ * serves both tables (inherited, unchanged) and views. View support is production code, gated and
+ * off by default: view operations are active only when {@code
+ * spark.sql.catalog.<name>.iceberg-views-enabled=true}, and are thin REST glue — they delegate to
+ * an embedded Iceberg {@link RESTCatalog} speaking the Iceberg REST catalog protocol against the
+ * same OpenHouse service URI ({@code /v1/config}, {@code /v1/namespaces/{ns}/views...}). The
+ * embedded catalog is constructed lazily on the FIRST view operation (never in {@link
+ * #initialize}), so with the gate off — and, with the gate on, before any view operation — no view
+ * REST call, including the {@code /v1/config} bootstrap, is ever made and a views-endpoint
+ * bootstrap failure can only fail a view operation, not table operations. Error translation comes
+ * from iceberg-core's {@code ErrorHandlers} parsing the spec's {@code IcebergErrorResponse}
+ * envelope, so the server's views-disabled {@code 404 NoSuchViewException} arrives as {@link
+ * NoSuchViewException} with no OpenHouse-specific mapping code. The iceberg-1.2 / Spark-3.1 copy
+ * stays table-only ({@code extends BaseMetastoreCatalog}).
  *
  * <p>Because extending {@link BaseMetastoreViewCatalog} makes this an Iceberg {@code ViewCatalog},
- * Spark's {@code SparkCatalog} routes view probes to this instance instead of short-circuiting
- * them (it only calls a catalog's view methods when the catalog is {@code instanceof ViewCatalog};
+ * Spark's {@code SparkCatalog} routes view probes to this instance instead of short-circuiting them
+ * (it only calls a catalog's view methods when the catalog is {@code instanceof ViewCatalog};
  * otherwise it answers view ops itself). Notably {@code SparkCatalog.loadView} is invoked while
  * resolving every unqualified identifier. So when views are disabled we mirror, method-for-method,
  * how {@code SparkCatalog} behaves for a non-{@code ViewCatalog} (table-only) catalog, making the
@@ -101,7 +108,7 @@ import reactor.core.publisher.Mono;
  */
 @Slf4j
 public class OpenHouseCatalog extends BaseMetastoreViewCatalog
-    implements Configurable, SupportsNamespaces, SupportsGrantRevoke {
+    implements Configurable, SupportsNamespaces, SupportsGrantRevoke, Closeable {
 
   private TableApi tableApi;
 
@@ -141,12 +148,26 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   /** Whether view operations are enabled for this catalog instance (set in {@link #initialize}). */
   private boolean viewsEnabled = false;
 
+  /** Prefix for {@link RESTCatalog} properties passed through verbatim as HTTP request headers. */
+  private static final String REST_HEADER_PREFIX = "header.";
+
   /**
-   * In-memory MOCK view store standing in for the OpenHouse Views service until its API and client
-   * exist. Holds committed {@link ViewMetadata} by identifier so create/load round-trips work.
+   * Session header name set by {@code WebClientFactory} on the tables WebClient; mirrored on the
+   * embedded REST catalog so audit/telemetry sees the same session identity on view calls. (The
+   * constant is private in {@code WebClientFactory}.)
    */
-  private final ConcurrentHashMap<TableIdentifier, ViewMetadata> mockViewStore =
-      new ConcurrentHashMap<>();
+  private static final String SESSION_ID_HEADER = "session-id";
+
+  /**
+   * Embedded Iceberg REST catalog backing the enabled view operations. Constructed and initialized
+   * lazily by {@link #viewsRestCatalog()} on the first view operation — never in {@link
+   * #initialize} — so its {@code GET /v1/config} bootstrap cannot run, or fail, unless a view
+   * operation actually happens. Guarded by {@link #viewsRestCatalogLock}; volatile for the
+   * double-checked read.
+   */
+  private volatile RESTCatalog viewsRestCatalog;
+
+  private final Object viewsRestCatalogLock = new Object();
 
   @Override
   public void initialize(String name, Map<String, String> properties) {
@@ -183,9 +204,13 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     this.viewsEnabled =
         Boolean.parseBoolean(properties.getOrDefault(VIEWS_ENABLED_PROPERTY, "false"));
     if (viewsEnabled) {
-      log.warn(
-          "OpenHouse view support is ENABLED (in-memory MOCK backend). Views are not "
-              + "persisted to any service and are visible only within this catalog instance.");
+      // NOTE: the embedded REST catalog is intentionally NOT constructed here. It is built lazily
+      // on the first view operation (see viewsRestCatalog()) so that a views-endpoint bootstrap
+      // failure cannot break table operations.
+      log.info(
+          "OpenHouse view support is ENABLED. View operations delegate to the Iceberg REST "
+              + "catalog protocol at {} (initialized lazily on first view operation).",
+          uri);
     }
   }
 
@@ -200,12 +225,19 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    * updates the auth token in ApiClient's default header which gets added to every request from
    * ApiClient
    *
+   * <p>Also propagates the new token to the embedded views {@link RESTCatalog}: its {@code
+   * header.Authorization} is captured immutably at initialization, so the cheapest correct
+   * mechanism is to close and discard the embedded catalog here and let the next view operation
+   * lazily rebuild it from the updated {@code auth-token} property. With views disabled (or no
+   * embedded catalog built yet) this is a no-op.
+   *
    * @param token
    */
   protected void updateAuthToken(String token) {
     if (token != null && !token.isEmpty()) {
       this.properties.put(AUTH_TOKEN, token);
       this.apiClient.addDefaultHeader(HttpHeaders.AUTHORIZATION, String.format("Bearer %s", token));
+      closeViewsRestCatalog();
     }
   }
 
@@ -591,10 +623,11 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     return new OpenHouseTableBuilder(identifier, schema);
   }
 
-  // ============================= OpenHouse Views (gated, off by default) =============================
-  // Gated by VIEWS_ENABLED_PROPERTY: view operations delegate to an in-memory MOCK
-  // backend (mockViewStore). loadView/buildView reuse the BaseMetastoreViewCatalog machinery via
-  // newViewOps; listViews/dropView/renameView are backed directly by the store.
+  // ========================== OpenHouse Views (gated, off by default) ==========================
+  // Gated by VIEWS_ENABLED_PROPERTY: when enabled, view operations delegate to an embedded
+  // Iceberg RESTCatalog (thin REST glue over the spec's /v1/namespaces/{ns}/views endpoints),
+  // built lazily on the first view operation. When disabled, each method mirrors how Spark's
+  // SparkCatalog treats a non-ViewCatalog (table-only) catalog — no view REST call is ever made.
 
   /**
    * Guard for the view rename operation ({@link #renameView}). When views are disabled this throws
@@ -612,27 +645,131 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     }
   }
 
+  /**
+   * Lazily builds (and caches) the embedded {@link RESTCatalog} that backs enabled view operations.
+   * The first call performs the Iceberg REST {@code GET /v1/config} bootstrap; a bootstrap or
+   * configuration failure therefore surfaces as that view operation's failure and leaves nothing
+   * cached (the next view operation retries), while table operations are untouched.
+   */
+  private RESTCatalog viewsRestCatalog() {
+    RESTCatalog current = viewsRestCatalog;
+    if (current != null) {
+      return current;
+    }
+    synchronized (viewsRestCatalogLock) {
+      if (viewsRestCatalog == null) {
+        viewsRestCatalog = buildViewsRestCatalog();
+      }
+      return viewsRestCatalog;
+    }
+  }
+
+  /**
+   * Derives the embedded {@link RESTCatalog}'s configuration from the existing catalog properties —
+   * no new user-facing keys beyond the {@code iceberg-views-enabled} gate:
+   *
+   * <ul>
+   *   <li>{@code uri}: the existing {@code uri} property (same service; the REST view routes mount
+   *       alongside {@code /v1/databases/...}).
+   *   <li>{@code header.Authorization: Bearer <token>}: the existing {@code auth-token} property,
+   *       passed through as a plain header. Iceberg's OAuth2 {@code token}/{@code credential}
+   *       machinery (token refresh, {@code /v1/oauth/tokens}) is deliberately kept out of the loop.
+   *   <li>{@code header.X-Client-Name}/{@code header.session-id}/{@code header.User-Agent}: mirror
+   *       the identity headers {@code TablesApiClientFactory} sets on the tables WebClient, so
+   *       audit/telemetry sees the same client identity on view calls.
+   *   <li>{@code prefix}: unset — the server serves un-prefixed paths and its {@code /v1/config}
+   *       returns no override.
+   * </ul>
+   *
+   * <p>TLS: Iceberg's {@code HTTPClient} builds its connection manager with {@code
+   * useSystemProperties()}, so the embedded catalog trusts the JVM's default trust material (and
+   * honors the standard {@code javax.net.ssl.trustStore*} system properties). The OpenHouse {@code
+   * trust-store} catalog property only configures the tables WebClient; when it is set, the
+   * server's certificate must also chain from the JVM trust material for view calls to work over
+   * https, and a warning is logged here to make that visible.
+   */
+  private RESTCatalog buildViewsRestCatalog() {
+    Map<String, String> restProperties = new HashMap<>();
+    restProperties.put(CatalogProperties.URI, properties.get(CatalogProperties.URI));
+    String token = properties.getOrDefault(AUTH_TOKEN, null);
+    if (token != null && !token.isEmpty()) {
+      restProperties.put(
+          REST_HEADER_PREFIX + HttpHeaders.AUTHORIZATION, String.format("Bearer %s", token));
+    }
+    String clientName = properties.getOrDefault(CLIENT_NAME, null);
+    if (clientName != null) {
+      restProperties.put(REST_HEADER_PREFIX + WebClientFactory.HTTP_HEADER_CLIENT_NAME, clientName);
+    }
+    if (properties.containsKey(CatalogProperties.APP_ID)) {
+      restProperties.put(
+          REST_HEADER_PREFIX + SESSION_ID_HEADER, properties.get(CatalogProperties.APP_ID));
+    }
+    String clientVersion = properties.getOrDefault(CLIENT_VERSION, null);
+    if (clientVersion != null) {
+      restProperties.put(
+          REST_HEADER_PREFIX + HttpHeaders.USER_AGENT,
+          WebClientFactory.USER_AGENT_CLIENT_PRODUCT + "/" + clientVersion);
+    }
+    String truststore = properties.getOrDefault(TRUST_STORE, "");
+    if (!truststore.isEmpty()) {
+      log.warn(
+          "Catalog property '{}' configures the tables WebClient only; the embedded views REST "
+              + "catalog trusts the JVM default trust store (javax.net.ssl.trustStore* system "
+              + "properties). Ensure the service certificate chains from the JVM trust material.",
+          TRUST_STORE);
+    }
+    log.info(
+        "Initializing embedded Iceberg REST catalog for OpenHouse views at {}",
+        restProperties.get(CatalogProperties.URI));
+    RESTCatalog restCatalog = new RESTCatalog();
+    restCatalog.setConf(conf);
+    try {
+      restCatalog.initialize(name, restProperties);
+      return restCatalog;
+    } catch (RuntimeException e) {
+      try {
+        restCatalog.close();
+      } catch (IOException | RuntimeException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Closes and discards the embedded views {@link RESTCatalog}, if one was ever built. The next
+   * enabled view operation lazily rebuilds it from the current catalog properties (see {@link
+   * #updateAuthToken}).
+   */
+  private void closeViewsRestCatalog() {
+    synchronized (viewsRestCatalogLock) {
+      if (viewsRestCatalog != null) {
+        try {
+          viewsRestCatalog.close();
+        } catch (IOException | RuntimeException e) {
+          log.warn("Failed to close the embedded views REST catalog", e);
+        }
+        viewsRestCatalog = null;
+      }
+    }
+  }
+
+  /** Closes client-side resources; today that is only the embedded views {@link RESTCatalog}. */
+  @Override
+  public void close() {
+    closeViewsRestCatalog();
+  }
+
+  /**
+   * Unreachable: every view operation delegates to the embedded {@link RESTCatalog} (or answers
+   * directly in the disabled state), so the {@link BaseMetastoreViewCatalog} builder machinery that
+   * would call this is bypassed.
+   */
   @Override
   protected ViewOperations newViewOps(TableIdentifier identifier) {
-    return new ViewOperations() {
-      @Override
-      public ViewMetadata current() {
-        return mockViewStore.get(identifier);
-      }
-
-      @Override
-      public ViewMetadata refresh() {
-        return mockViewStore.get(identifier);
-      }
-
-      @Override
-      public void commit(ViewMetadata base, ViewMetadata metadata) {
-        log.warn(
-            "OpenHouse MOCK view commit for {} (in-memory only, not persisted to any service)",
-            identifier);
-        mockViewStore.put(identifier, metadata);
-      }
-    };
+    throw new IllegalStateException(
+        "newViewOps is unreachable: OpenHouse view operations delegate to an embedded Iceberg "
+            + "RESTCatalog instead of the BaseMetastoreViewCatalog machinery");
   }
 
   /**
@@ -640,9 +777,10 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *
    * <p>When views are disabled, throws {@link NoSuchViewException} rather than {@link
    * UnsupportedOperationException}. Spark's {@code SparkCatalog.loadView} probes this method while
-   * resolving every unqualified identifier and catches only {@code NoSuchViewException} to fall back
-   * to table resolution; any other exception propagates and breaks table reads. Throwing {@code
-   * NoSuchViewException} here therefore reproduces the table-only (non-{@code ViewCatalog}) behavior.
+   * resolving every unqualified identifier and catches only {@code NoSuchViewException} to fall
+   * back to table resolution; any other exception propagates and breaks table reads. Throwing
+   * {@code NoSuchViewException} here therefore reproduces the table-only (non-{@code ViewCatalog})
+   * behavior.
    */
   @Override
   public View loadView(TableIdentifier identifier) {
@@ -650,7 +788,25 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       throw new NoSuchViewException("View does not exist: %s", identifier);
     }
     log.info("Calling loadView with identifier: {}", identifier);
-    return super.loadView(identifier);
+    return viewsRestCatalog().loadView(identifier);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>When views are disabled, returns {@code false} without any REST call, matching the
+   * table-only (non-{@code ViewCatalog}) behavior. When enabled, delegates to the embedded REST
+   * catalog. NOTE: iceberg 1.5.2.17's {@code RESTSessionCatalog} implements {@code viewExists} via
+   * the {@code ViewCatalog} default (a {@code GET} load-and-catch), not the spec's {@code HEAD}
+   * route — the server's {@code HEAD} endpoint is simply unused by this client version.
+   */
+  @Override
+  public boolean viewExists(TableIdentifier identifier) {
+    if (!viewsEnabled) {
+      return false;
+    }
+    log.info("Calling viewExists with identifier: {}", identifier);
+    return viewsRestCatalog().viewExists(identifier);
   }
 
   /**
@@ -661,10 +817,10 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    * SparkCatalog.createView}, which calls {@code buildView(...).create()} and catches only {@code
    * NoSuchNamespaceException} / {@code AlreadyExistsException} (rethrowing them as Spark {@code
    * AnalysisException}s); any other exception — e.g. {@link UnsupportedOperationException} — would
-   * leak as a raw runtime error and break callers that expect an {@code AnalysisException}. Throwing
-   * {@code NoSuchNamespaceException} is therefore the signal that normalizes {@code CREATE VIEW}
-   * rejection to a Spark {@code AnalysisException}, matching how a table-only catalog (Iceberg 1.2 /
-   * Spark 3.1) rejects it. See {@code OpenHouseViewSparkITest}.
+   * leak as a raw runtime error and break callers that expect an {@code AnalysisException}.
+   * Throwing {@code NoSuchNamespaceException} is therefore the signal that normalizes {@code CREATE
+   * VIEW} rejection to a Spark {@code AnalysisException}, matching how a table-only catalog
+   * (Iceberg 1.2 / Spark 3.1) rejects it. See {@code OpenHouseViewSparkITest}.
    */
   @Override
   public ViewBuilder buildView(TableIdentifier identifier) {
@@ -673,11 +829,11 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
           "OpenHouse views are not enabled; cannot create view: %s", identifier);
     }
     log.info("Calling buildView with identifier: {}", identifier);
-    // OpenHouse tables have no client-side warehouse location (defaultWarehouseLocation returns
-    // null), but Iceberg's ViewMetadata requires a non-null location. Supply a mock default so a
-    // bare buildView().create() works; an explicit non-null withLocation(...) overrides it.
-    return super.buildView(identifier)
-        .withLocation("mock://openhouse/views/" + identifier.toString().replace('.', '/'));
+    // Delegates to the REST view builder: create -> POST CreateViewRequest;
+    // replace/createOrReplace -> load + commit POST with assert-view-uuid requirements + typed
+    // updates. The REST client owns commit semantics; location assignment is the server's job (no
+    // client-side default location).
+    return viewsRestCatalog().buildView(identifier);
   }
 
   /**
@@ -685,6 +841,14 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *
    * <p>When views are disabled, returns an empty list, matching how {@code SparkCatalog} answers
    * {@code SHOW VIEWS} for a non-{@code ViewCatalog} catalog (no views, rather than an error).
+   *
+   * <p>When enabled, delegates a single {@code GET .../views} to the embedded REST catalog —
+   * iceberg 1.5.2.17's {@code RESTSessionCatalog.listViews} does no {@code next-page-token} paging
+   * (the server must return all results when {@code pageToken} is absent). A {@code 404} from the
+   * list route ({@code NoSuchNamespaceException} per the spec, or a {@code NoSuchViewException}
+   * views-disabled envelope) is caught here and answered as an empty list: {@code
+   * SparkCatalog.listViews} catches nothing, so without this {@code SHOW VIEWS} would leak a raw
+   * error instead of showing no views.
    */
   @Override
   public List<TableIdentifier> listViews(Namespace namespace) {
@@ -692,17 +856,20 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       return Collections.emptyList();
     }
     log.info("Calling listViews with namespace: {}", namespace.toString());
-    return mockViewStore.keySet().stream()
-        .filter(identifier -> identifier.namespace().equals(namespace))
-        .collect(Collectors.toList());
+    try {
+      return viewsRestCatalog().listViews(namespace);
+    } catch (NoSuchNamespaceException | NoSuchViewException e) {
+      log.debug("listViews for namespace {} answered 404; returning empty list", namespace, e);
+      return Collections.emptyList();
+    }
   }
 
   /**
    * {@inheritDoc}
    *
    * <p>When views are disabled, returns {@code false} (nothing to drop), matching how {@code
-   * SparkCatalog} answers {@code DROP VIEW} for a non-{@code ViewCatalog} catalog; this keeps {@code
-   * DROP VIEW ... IF EXISTS} a no-op rather than an error.
+   * SparkCatalog} answers {@code DROP VIEW} for a non-{@code ViewCatalog} catalog; this keeps
+   * {@code DROP VIEW ... IF EXISTS} a no-op rather than an error.
    */
   @Override
   public boolean dropView(TableIdentifier identifier) {
@@ -710,25 +877,24 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       return false;
     }
     log.info("Calling dropView with identifier: {}", identifier);
-    return mockViewStore.remove(identifier) != null;
+    return viewsRestCatalog().dropView(identifier);
   }
 
   /**
    * {@inheritDoc}
    *
-   * <p>A modify operation: when views are disabled this throws {@link UnsupportedOperationException}
-   * via {@link #requireViewsEnabled()}, matching how {@code SparkCatalog} fails {@code ALTER VIEW
-   * ... RENAME} for a non-{@code ViewCatalog} catalog.
+   * <p>A modify operation: when views are disabled this throws {@link
+   * UnsupportedOperationException} via {@link #requireViewsEnabled()}, matching how {@code
+   * SparkCatalog} fails {@code ALTER VIEW ... RENAME} for a non-{@code ViewCatalog} catalog.
+   *
+   * <p>When views are enabled this still throws {@link UnsupportedOperationException}: the server
+   * deliberately does not claim the spec's {@code rename-view} route (a plain 404), and delegating
+   * would turn that 404 into a misleading {@link NoSuchViewException}.
    */
   @Override
   public void renameView(TableIdentifier from, TableIdentifier to) {
     requireViewsEnabled();
-    log.info("Calling renameView from view identifier: {}, to view identifier: {}", from, to);
-    ViewMetadata metadata = mockViewStore.remove(from);
-    if (metadata == null) {
-      throw new NoSuchViewException("View does not exist: %s", from);
-    }
-    mockViewStore.put(to, metadata);
+    throw new UnsupportedOperationException("Renaming views is not supported");
   }
 
   /**
