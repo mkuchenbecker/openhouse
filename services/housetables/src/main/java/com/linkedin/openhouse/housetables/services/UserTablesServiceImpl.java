@@ -8,6 +8,7 @@ import com.linkedin.openhouse.common.exception.EntityConcurrentModificationExcep
 import com.linkedin.openhouse.common.exception.NoSuchEntityException;
 import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.mapper.SoftDeletedUserTablesMapper;
@@ -136,57 +137,80 @@ public class UserTablesServiceImpl implements UserTablesService {
   }
 
   @Override
-  public List<UserTableDto> getAllUserViews(UserTable userView) {
+  public List<UserTableDto> getAllUserViews(UserViewQuery userViewQuery) {
     return JdbcPersistenceFailures.surfacingCorruption(
         () -> {
-          if (isListViews(userView)) {
-            return listViews(userView);
-          } else if (isListViewsWithPattern(userView)) {
-            return listViewsWithPattern(userView);
-          } else {
-            return searchViews(userView);
+          if (userViewQuery.getTableIdPattern() == null) {
+            return listViews(userViewQuery.getDatabaseId());
           }
+          return listViewsWithPattern(requireDatabaseId(userViewQuery));
         });
   }
 
   @Override
-  public Page<UserTableDto> getAllUserViews(UserTable userView, int page, int size, String sortBy) {
+  public Page<UserTableDto> getAllUserViews(
+      UserViewQuery userViewQuery, int page, int size, String sortBy) {
     return JdbcPersistenceFailures.surfacingCorruption(
         () -> {
-          if (isListViews(userView)) {
-            return listViews(userView, page, size, sortBy);
-          } else if (isListViewsWithPattern(userView)) {
-            return listViewsWithPattern(userView, page, size, sortBy);
-          } else {
-            return searchViews(userView, page, size, sortBy);
+          if (userViewQuery.getTableIdPattern() == null) {
+            return listViews(userViewQuery.getDatabaseId(), page, size, sortBy);
           }
+          return listViewsWithPattern(requireDatabaseId(userViewQuery), page, size, sortBy);
         });
+  }
+
+  /** The API validator enforces the same rule at ingress; this repeats it for direct callers. */
+  private static UserViewQuery requireDatabaseId(UserViewQuery userViewQuery) {
+    if (userViewQuery.getDatabaseId() == null) {
+      throw new IllegalArgumentException(
+          "A view query with a tableIdPattern requires a databaseId");
+    }
+    return userViewQuery;
   }
 
   @Override
   public Pair<UserTableDto, Boolean> putUserTable(UserTable userTable) {
-    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable));
+    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable, EntityType.TABLE));
   }
 
-  private Pair<UserTableDto, Boolean> put(UserTable userTable) {
+  @Override
+  public Pair<UserTableDto, Boolean> putUserView(UserTable userView) {
+    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userView, EntityType.VIEW));
+  }
+
+  /**
+   * The one persistence primitive behind both typed entry points. The entry point supplies {@code
+   * entityType}; the payload's wire field may agree with it or stay silent, and a contradiction is
+   * rejected here so the typed methods establish the invariant their names promise even for callers
+   * that bypass the controller's own mismatch check.
+   */
+  private Pair<UserTableDto, Boolean> put(UserTable userTable, EntityType entityType) {
+    if (userTable.getEntityType() != null
+        && userTablesMapper.toEntityType(userTable.getEntityType()) != entityType) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "entityType provided: %s, but this operation writes %s only",
+              userTable.getEntityType(), entityType.name()));
+    }
+    UserTable stampedUserTable = userTable.toBuilder().entityType(entityType.name()).build();
+
     Optional<UserTableRow> existingUserTableRow =
         htsJdbcRepository.findById(
             UserTableRowPrimaryKey.builder()
-                .databaseId(userTable.getDatabaseId())
-                .tableId(userTable.getTableId())
+                .databaseId(stampedUserTable.getDatabaseId())
+                .tableId(stampedUserTable.getTableId())
                 .build());
 
     // Compared before any version mapping runs: a wrong-type collision is not a stale write.
-    EntityType requestedEntityType = userTablesMapper.toEntityType(userTable.getEntityType());
     if (existingUserTableRow.isPresent()
-        && existingUserTableRow.get().getEntityType() != requestedEntityType) {
+        && existingUserTableRow.get().getEntityType() != entityType) {
       throw new AlreadyExistsException(
           existingUserTableRow.get().getEntityType().name(),
-          userTable.getDatabaseId() + "." + userTable.getTableId());
+          stampedUserTable.getDatabaseId() + "." + stampedUserTable.getTableId());
     }
 
     UserTableRow targetUserTableRow =
-        userTablesMapper.toUserTableRow(userTable, existingUserTableRow);
+        userTablesMapper.toUserTableRow(stampedUserTable, existingUserTableRow);
     UserTableDto returnedDto;
 
     try {
@@ -504,14 +528,13 @@ public class UserTablesServiceImpl implements UserTablesService {
         MetricsConstant.HTS_SEARCH_TABLES_TIME);
   }
 
-  private List<UserTableDto> listViews(UserTable userView) {
+  private List<UserTableDto> listViews(String databaseId) {
     METRICS_REPORTER.count(MetricsConstant.HTS_LIST_VIEWS_REQUEST);
     return METRICS_REPORTER.executeWithStats(
         () ->
             StreamSupport.stream(
                     htsJdbcRepository
-                        .findAllViewsByFilters(
-                            userView.getDatabaseId(), null, null, null, null, null)
+                        .findAllViewsByFilters(databaseId, null, null, null, null, null)
                         .spliterator(),
                     false)
                 .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow))
@@ -519,26 +542,25 @@ public class UserTablesServiceImpl implements UserTablesService {
         MetricsConstant.HTS_LIST_VIEWS_TIME);
   }
 
-  private Page<UserTableDto> listViews(UserTable userView, int page, int size, String sortBy) {
+  private Page<UserTableDto> listViews(String databaseId, int page, int size, String sortBy) {
     METRICS_REPORTER.count(MetricsConstant.HTS_PAGE_VIEWS_REQUEST);
     Pageable pageable = createPageable(page, size, sortBy, "tableId");
     return METRICS_REPORTER.executeWithStats(
         () ->
             htsJdbcRepository
-                .findAllViewsByFilters(
-                    userView.getDatabaseId(), null, null, null, null, null, pageable)
+                .findAllViewsByFilters(databaseId, null, null, null, null, null, pageable)
                 .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow)),
         MetricsConstant.HTS_PAGE_VIEWS_TIME);
   }
 
-  private List<UserTableDto> listViewsWithPattern(UserTable userView) {
+  private List<UserTableDto> listViewsWithPattern(UserViewQuery userViewQuery) {
     METRICS_REPORTER.count(MetricsConstant.HTS_LIST_VIEWS_REQUEST);
     return METRICS_REPORTER.executeWithStats(
         () ->
             StreamSupport.stream(
                     htsJdbcRepository
                         .findAllViewsByDatabaseIdAndTableIdLikeAllIgnoreCase(
-                            userView.getDatabaseId(), userView.getTableId())
+                            userViewQuery.getDatabaseId(), userViewQuery.getTableIdPattern())
                         .spliterator(),
                     false)
                 .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow))
@@ -547,56 +569,16 @@ public class UserTablesServiceImpl implements UserTablesService {
   }
 
   private Page<UserTableDto> listViewsWithPattern(
-      UserTable userView, int page, int size, String sortBy) {
+      UserViewQuery userViewQuery, int page, int size, String sortBy) {
     METRICS_REPORTER.count(MetricsConstant.HTS_PAGE_VIEWS_REQUEST);
     Pageable pageable = createPageable(page, size, sortBy, "tableId");
     return METRICS_REPORTER.executeWithStats(
         () ->
             htsJdbcRepository
                 .findAllViewsByDatabaseIdAndTableIdLikeAllIgnoreCase(
-                    userView.getDatabaseId(), userView.getTableId(), pageable)
+                    userViewQuery.getDatabaseId(), userViewQuery.getTableIdPattern(), pageable)
                 .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow)),
         MetricsConstant.HTS_PAGE_VIEWS_TIME);
-  }
-
-  private List<UserTableDto> searchViews(UserTable userView) {
-    METRICS_REPORTER.count(MetricsConstant.HTS_GENERAL_SEARCH_VIEWS_REQUEST);
-    log.warn("Reaching general search for user view which is not expected: {}", userView.toJson());
-    return METRICS_REPORTER.executeWithStats(
-        () ->
-            StreamSupport.stream(
-                    htsJdbcRepository
-                        .findAllViewsByFilters(
-                            userView.getDatabaseId(),
-                            userView.getTableId(),
-                            userView.getTableVersion(),
-                            userView.getMetadataLocation(),
-                            userView.getStorageType(),
-                            userView.getCreationTime())
-                        .spliterator(),
-                    false)
-                .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow))
-                .collect(Collectors.toList()),
-        MetricsConstant.HTS_SEARCH_VIEWS_TIME);
-  }
-
-  private Page<UserTableDto> searchViews(UserTable userView, int page, int size, String sortBy) {
-    METRICS_REPORTER.count(MetricsConstant.HTS_PAGE_SEARCH_VIEWS_REQUEST);
-    Pageable pageable = createPageable(page, size, sortBy, "tableId");
-    log.warn("Reaching general search for user view which is not expected: {}", userView.toJson());
-    return METRICS_REPORTER.executeWithStats(
-        () ->
-            htsJdbcRepository
-                .findAllViewsByFilters(
-                    userView.getDatabaseId(),
-                    userView.getTableId(),
-                    userView.getTableVersion(),
-                    userView.getMetadataLocation(),
-                    userView.getStorageType(),
-                    userView.getCreationTime(),
-                    pageable)
-                .map(userTableRow -> userTablesMapper.toUserTableDto(userTableRow)),
-        MetricsConstant.HTS_PAGE_SEARCH_VIEWS_TIME);
   }
 
   private boolean isListDatabases(UserTable userTable) {
@@ -615,17 +597,6 @@ public class UserTablesServiceImpl implements UserTablesService {
     return isNonKeyFieldsNullForUserTable(userTable)
         && userTable.getDatabaseId() != null
         && userTable.getTableId() != null;
-  }
-
-  /** Also covers the empty filter: an empty view query lists views, not database names. */
-  private boolean isListViews(UserTable userView) {
-    return isNonKeyFieldsNullForUserTable(userView) && userView.getTableId() == null;
-  }
-
-  private boolean isListViewsWithPattern(UserTable userView) {
-    return isNonKeyFieldsNullForUserTable(userView)
-        && userView.getDatabaseId() != null
-        && userView.getTableId() != null;
   }
 
   private boolean isNonKeyFieldsNullForUserTable(UserTable userTable) {

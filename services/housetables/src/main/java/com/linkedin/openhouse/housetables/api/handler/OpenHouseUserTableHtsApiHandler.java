@@ -9,6 +9,7 @@ import com.linkedin.openhouse.housetables.api.validator.HouseTablesApiValidator;
 import com.linkedin.openhouse.housetables.dto.mapper.UserTablesMapper;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import com.linkedin.openhouse.housetables.services.UserTablesService;
+import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
@@ -76,7 +77,7 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
         .responseBody(
             GetAllEntityResponseBody.<UserTable>builder()
                 .results(
-                    userTableService.getAllUserViews(userView).stream()
+                    userTableService.getAllUserViews(toUserViewQuery(userView)).stream()
                         .map(userTableDto -> userTablesMapper.toUserTable(userTableDto))
                         .collect(Collectors.toList()))
                 .build())
@@ -93,9 +94,22 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
             GetAllEntityResponseBody.<UserTable>builder()
                 .pageResults(
                     userTableService
-                        .getAllUserViews(userView, page, size, sortBy)
+                        .getAllUserViews(toUserViewQuery(userView), page, size, sortBy)
                         .map(userTableDto -> userTablesMapper.toUserTable(userTableDto)))
                 .build())
+        .build();
+  }
+
+  /**
+   * The one place a validated view-query request becomes the service-owned {@link UserViewQuery}:
+   * only the accepted database id and optional table pattern cross the boundary, so wire
+   * nullability, ignored transport fields, and an inert {@code entityType} stay in the transport
+   * layer.
+   */
+  private static UserViewQuery toUserViewQuery(UserTable userView) {
+    return UserViewQuery.builder()
+        .databaseId(userView.getDatabaseId())
+        .tableIdPattern(userView.getTableId())
         .build();
   }
 
@@ -155,18 +169,23 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
 
   @Override
   public ApiResponse<EntityResponseBody<UserTable>> putEntity(UserTable userTable) {
-    return put(userTable);
+    userTablesHtsApiValidator.validatePutEntity(userTable);
+    return putResponse(userTableService.putUserTable(userTable));
   }
 
+  /**
+   * Forwards to the view-typed service entry point, which supplies its own {@code VIEW} type: the
+   * invariant this method names no longer depends on the controller having stamped the payload. The
+   * controller's wire mismatch check stays, answering the contradiction as a 400 at ingress.
+   */
   @Override
   public ApiResponse<EntityResponseBody<UserTable>> putView(UserTable userView) {
-    return put(userView);
+    userTablesHtsApiValidator.validatePutEntity(userView);
+    return putResponse(userTableService.putUserView(userView));
   }
 
-  /** Both typed writes share one primitive: the controller has already stamped the type. */
-  private ApiResponse<EntityResponseBody<UserTable>> put(UserTable userTable) {
-    userTablesHtsApiValidator.validatePutEntity(userTable);
-    Pair<UserTableDto, Boolean> putResult = userTableService.putUserTable(userTable);
+  private ApiResponse<EntityResponseBody<UserTable>> putResponse(
+      Pair<UserTableDto, Boolean> putResult) {
     HttpStatus statusCode = putResult.getSecond() ? HttpStatus.OK : HttpStatus.CREATED;
     return ApiResponse.<EntityResponseBody<UserTable>>builder()
         .httpStatus(statusCode)

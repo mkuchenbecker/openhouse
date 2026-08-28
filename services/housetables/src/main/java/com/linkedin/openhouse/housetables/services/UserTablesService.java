@@ -50,12 +50,18 @@ public interface UserTablesService {
   Page<UserTableDto> getAllUserTables(UserTable userTable, int page, int size, String sortBy);
 
   /**
-   * Unlike {@link #getAllUserTables(UserTable)}, an empty filter returns every view rather than a
+   * Unlike {@link #getAllUserTables(UserTable)}, an empty query returns every view rather than a
    * projection of database names; database enumeration stays type-agnostic on the table query.
+   *
+   * <p>Takes the service-owned {@link UserViewQuery} rather than the transport {@link UserTable}:
+   * the handler maps a validated request into it at the boundary, so the view read contract admits
+   * exactly a database id and an optional table pattern. The table-query methods still accept the
+   * transport type; changing them uniformly is a service-wide refactor tracked separately.
    */
-  List<UserTableDto> getAllUserViews(UserTable userView);
+  List<UserTableDto> getAllUserViews(UserViewQuery userViewQuery);
 
-  Page<UserTableDto> getAllUserViews(UserTable userView, int page, int size, String sortBy);
+  Page<UserTableDto> getAllUserViews(
+      UserViewQuery userViewQuery, int page, int size, String sortBy);
 
   /**
    * Given a databaseId and tableId, delete the user table entry from the House Table. The {@code
@@ -70,7 +76,9 @@ public interface UserTablesService {
   void deleteUserView(String databaseId, String tableId);
 
   /**
-   * Create or update a {@link UserTable} row in House table.
+   * Create or update a table row in House table. This entry point supplies its own {@code TABLE}
+   * type to the shared persistence primitive, so a caller cannot persist a view through it: a
+   * payload may agree with the type or omit it, and a contradiction is rejected.
    *
    * @param userTable The object attempted to be used for update/creation.
    * @return A pair of object: The first {@link UserTableDto} is the actual saved object. The second
@@ -78,6 +86,13 @@ public interface UserTablesService {
    *     and update of {@link UserTableDto}.
    */
   Pair<UserTableDto, Boolean> putUserTable(UserTable userTable);
+
+  /**
+   * The view-typed twin of {@link #putUserTable}: supplies {@code VIEW} itself, so the method
+   * establishes the invariant its name promises even for a caller that bypasses the controller's
+   * wire mismatch check.
+   */
+  Pair<UserTableDto, Boolean> putUserView(UserTable userView);
 
   /**
    * Rename a {@link UserTable} row in House table. Table-only: views are not renameable, so there
