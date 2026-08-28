@@ -63,11 +63,14 @@ The harness separates starting state from behavior under test.
 
 ### Layout
 
-A `Layout` describes one table shape:
+A `Layout` contains the executable parts of one table shape:
 
 - A stable label used in the case ID.
-- A human description of the resulting table.
 - The complete `CREATE TABLE` statement.
+
+Scaladoc above the layout generator and each layout collection explains the resulting table shape.
+Source documentation stays beside the definitions, while runtime layout values carry executable
+data.
 
 The standard layouts cross `parquet`, `orc`, and `avro` with unpartitioned and date-partitioned
 tables.
@@ -75,8 +78,9 @@ tables.
 ### Table preparation
 
 A `TablePreparation` is an immutable recipe that creates one fresh table. It has a stable label and
-a required human description. Its `TableTest` pipeline keeps table creation, seeding, and any
-additional starting-state transition visible as separate steps.
+a `TableTest` pipeline that keeps table creation, seeding, and any additional starting-state
+transition visible as separate steps. Scaladoc immediately above each named preparation definition
+explains the state that the test receives.
 
 Examples include:
 
@@ -86,17 +90,19 @@ Examples include:
 - The same rows plus a row whose string value is null.
 - An empty table for insert and merge cases that require that starting state.
 
-The description explains the state the test receives. A reviewer should not need to infer that state
-from a case prefix.
+The case prefix identifies the preparation in the runtime ID. The adjacent Scaladoc explains the
+state in source, where a reviewer can read it beside the preparation steps.
 
 ### DML test case
 
-A `DmlTestCase` describes one operation. It owns:
+A named `DmlTestCase` definition owns:
 
 - A stable operation ID.
-- A required human description.
 - The operation and every assertion about its effect.
 - An optional explicit known-bug reason.
+
+Scaladoc immediately above the definition describes the operation and its observable result.
+Runtime output identifies each case by its stable ID.
 
 Matrix assembly names the compatible preparation and test lists directly:
 
@@ -106,33 +112,37 @@ preparedCoreTables.flatMap { preparation =>
 }
 ```
 
-The test body remains readable without opening `Plan.scala`:
+The documentation, operation, and assertions stay together:
 
 ```scala
-import org.apache.spark.sql.Row
+/**
+ * SELECT of foo_col_string alone returns that column for every prepared row in key order and
+ * leaves the table state unchanged.
+ */
+private val readProjection: DmlTestCase[CoreTable.type] =
+  DmlTestCase(
+    "read.projection",
+    table => {
+      val before = table.state
+      val projected = table.spark
+        .sql(
+          s"SELECT ${Core.string0.columnName} FROM ${table.name} " +
+            s"ORDER BY ${Core.long0.columnName}")
+        .collect()
+        .toSeq
+        .map(_.get(Core.string0))
+      val after = table.state
 
-DmlTestCase(
-  "insert.into",
-  "INSERT appends one row and commits one snapshot.",
-  table => {
-    val before = table.state
-
-    table.spark.sql(
-      s"INSERT INTO ${table.name} VALUES " +
-        "(4L, 4, 'row-4', 4.5, true, '2024-01-04-03')")
-
-    val after = table.state
-    val expectedRows =
-      (before.rows :+ Row(4L, 4, "row-4", 4.5, true, "2024-01-04-03"))
-        .sortBy(_.getLong(0))
-    assert(after.rows == expectedRows)
-    assert(after.snapshotCount == before.snapshotCount + 1)
-  })
+      assert(
+        projected == before.rows
+          .sortBy(_.get(Core.long0))
+          .map(_.get(Core.string0)))
+      assert(after == before)
+    })
 ```
 
-The exact test implementations use typed column handles and complete expected row sets. The example
-shows the required flow: capture the starting state, execute one operation, capture the resulting
-state, and assert the delta.
+Mutation cases follow the same flow: capture the starting state, execute one operation, capture the
+resulting state, and assert complete expected rows plus the relative snapshot delta.
 
 ### Bespoke cases
 
@@ -140,9 +150,31 @@ DDL, maintenance, reader/writer, control-plane, interaction, surface, and hazard
 bespoke. Their table construction is part of the behavior being tested, or their state transition
 does not fit a reusable DML cross product cleanly.
 
-Direct bespoke `Plan.Case` values require one human test description. A bespoke case built through
-`TablePreparation.test` also carries the preparation description. Their assertions follow the
-contract of the family instead of the reusable DML matrix contract.
+Every direct bespoke `Plan.Case` or preparation-backed case is a named definition with Scaladoc
+immediately above it. A preparation-backed case reads like this:
+
+```scala
+/**
+ * ALTER TABLE RENAME TO moves the table to the new name with its 3 rows intact, and the old name
+ * stops resolving. A second rename restores the original name for teardown.
+ */
+private def ddlRenameTableCase(
+    preparation: TablePreparation[CoreTable.type]): Plan.Case =
+  preparation.test("ddl.renameTable") { table =>
+    val renamedTable = s"${table.name}_ren"
+
+    table.spark.sql(s"ALTER TABLE ${table.name} RENAME TO $renamedTable")
+    assert(
+      table.spark.sql(s"SELECT count(*) FROM $renamedTable")
+        .collect()(0)
+        .getLong(0) == 3)
+    Check.intercept[Exception](
+      table.spark.sql(s"SELECT 1 FROM ${table.name} LIMIT 1"))
+    table.spark.sql(s"ALTER TABLE $renamedTable RENAME TO ${table.name}")
+  }
+```
+
+Its assertions follow the contract of the family instead of the reusable DML matrix contract.
 
 All bespoke cases keep the action and assertions together. They assert the relevant rows, snapshots,
 metadata, or rejection state for the transition under test.
@@ -151,15 +183,18 @@ metadata, or rejection state for the transition under test.
 
 `TablePreparation.test` creates one `Plan.Case`. When that case runs:
 
-1. `TableTest` allocates a unique table name.
-2. Each preparation step runs. A step with a validator checks its immediate result.
-3. `PreparedTable` captures the prepared rows and snapshot count.
-4. The localized test body runs.
-5. Any preparation-level postcondition runs.
-6. The table is dropped in `finally`.
+1. `TableTest` generates a namespace-scoped table name from a fresh UUID and the atomic counter.
+2. The first preparation step creates the table. The harness records ownership only after that step
+   succeeds.
+3. Each remaining preparation step runs. A step with a validator checks its immediate result.
+4. `PreparedTable` captures the prepared rows and snapshot count.
+5. The localized test body runs.
+6. Any preparation-level postcondition runs.
+7. The exact owned table is dropped in `finally`.
 
-A test failure remains the primary failure. Cleanup or postcondition failures are attached as
-suppressed exceptions when another failure is already in flight.
+A conflicting create leaves the existing table intact because the harness records ownership only
+after creation succeeds. A test failure remains the primary failure. Cleanup or postcondition
+failures are attached as suppressed exceptions when another failure is already in flight.
 
 Every case attempt receives a fresh `spark.newSession()`. The worker pool controls how many attempts
 run concurrently, and the result report remains in deterministic catalog order.
@@ -210,9 +245,10 @@ The source map separates reusable DML structure from the bespoke standard famili
 - SHA-256 of ordered case IDs:
   `377f65959e3034c51e078fea72491444b06a6055f37c051184bdc379234b3d57`
 
-`DmlCaseCatalogTest` pins the readable DML structure, compatibility lists, preparation descriptions,
-and matrix order. `TablePreparationTest` pins case-ID formatting and the propagation of test and
-preparation descriptions into `Plan.Case`.
+`DmlCaseCatalogTest` pins the DML definitions, compatibility lists, preparation membership, and
+matrix order. `TablePreparationTest` pins case-ID formatting, deferred execution, post-test hooks,
+and known-bug propagation. `TableTestTest` pins namespace-scoped table-name uniqueness even when the
+counter is reset.
 
 Run the catalog tests with:
 
@@ -227,7 +263,7 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 
 For a new reusable DML operation:
 
-1. Add one described `DmlTestCase`.
+1. Add one named `DmlTestCase` with adjacent Scaladoc describing the operation and result.
 2. Capture `before` and `after` in the body.
 3. Assert complete expected rows and the relative snapshot delta.
 4. Add the case to plainly named compatibility lists.
@@ -236,15 +272,15 @@ For a new reusable DML operation:
 
 For a new preparation:
 
-1. Describe the resulting table state.
+1. Put Scaladoc describing the resulting table state immediately above the named preparation.
 2. Keep creation and seeding as separate visible steps.
 3. Add the preparation to the applicable matrix lists.
-4. Add a focused test that pins its description and compatibility.
+4. Add a focused structural test that pins its membership, steps, and compatibility.
 
 For bespoke DDL or interaction coverage:
 
 1. Keep setup, action, and assertions in one localized case.
-2. Give every case a human test description. Add a preparation description when the case uses
-   `TablePreparation.test`.
+2. Put Scaladoc describing the operation and observable result immediately above the named case
+   definition.
 3. Add the case through its owning scenario list.
 4. Preserve the deterministic order in `Plan.scala`.

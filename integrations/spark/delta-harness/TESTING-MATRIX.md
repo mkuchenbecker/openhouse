@@ -106,7 +106,8 @@ The layout collections decide which format and partitioning combinations each fa
 | Nested layouts | Nested schema crossed with the applicable formats | Nested DML and schema behavior. |
 | Type layouts | Type-edge schema crossed with the applicable formats | Scalar, binary, decimal, date, and timestamp behavior. |
 
-Each layout has a stable label, a human description, and the complete `CREATE TABLE` statement.
+Each layout has a stable label and the complete `CREATE TABLE` statement. Scaladoc above its
+generator and collection describes the resulting table shape.
 
 ## Preparation collections
 
@@ -125,12 +126,14 @@ The preparation collections state the exact table state available before a reusa
 | `layoutFormatPreparations` | Base and ordered preparations whose written file extensions are verified. |
 | `ddlConsumerPreparations` | Evolved table states used by the DDL consumer battery. |
 
-A preparation description states this resulting state directly. The test case does not repeat or hide
-the preparation logic.
+Scaladoc above each named preparation states this resulting state directly. Test documentation can
+therefore focus on the operation and observable result.
 
 ## Reusable DML operations
 
-The standard DML catalog contains 51 reusable `DmlTestCase` definitions.
+The standard source contains 54 reusable `DmlTestCase` definitions. `allDmlTestCases` contains the
+51 operations compatible with any three-row seed-shape preparation. One null-string delete and two
+partition-scoped writes run only on their matching preparations.
 
 | Family | Representative cases | Contract |
 |--------|----------------------|----------|
@@ -139,6 +142,8 @@ The standard DML catalog contains 51 reusable `DmlTestCase` definitions.
 | Update | Predicate, subquery, alias, multiple columns, expressions, partition movement, null assignment | Assert the complete row set with exactly the selected values changed, plus the relative snapshot delta. |
 | Merge | Insert, update, delete, upsert, conditional clauses, stars, explicit columns, source CTE, set operation, empty target, null join, by-name resolution | Assert the complete target rows after all matched and unmatched clauses, plus the relative snapshot delta. |
 | Insert and overwrite | SQL insert, explicit columns, insert-select, DataFrame append, SQL overwrite, DataFrame overwrite | Assert the complete appended or replaced row set and the relative snapshot delta. |
+| Null handling | `delete.byNullCondition` | Remove exactly the rows whose string value is null. |
+| Partitioned writes | `insert.dynamicOverwrite`, `overwrite.partitions` | Replace only the partitions carried by the write and preserve every other partition. |
 
 `delete.byNullCondition` runs only on null-string preparations. Additional partitioned-table operations
 run only on `preparedPartitionedCoreTables`.
@@ -149,15 +154,15 @@ The compatibility lists are part of the readable contract:
 
 | Collection | Members |
 |------------|---------|
-| `allDmlTestCases` | The complete reusable standard DML order. |
+| `allDmlTestCases` | The 51 operations compatible with any three-row seed-shape preparation. |
 | `rowMutationTestCases` | Deletes, updates, and merges. |
 | `testCasesCompatibleWithAnAddedColumn` | Reads, deletes, and updates. |
 | `readTestCases` | The two non-mutating read cases. |
 | `nullStringRowTestCases` | The null-condition delete. |
 | `orderedDmlTestCases` | The standard DML order with explicit known-bug metadata on the affected ordered-table cell. |
 
-The matrix builders cross these named lists with named preparation collections. They never infer
-compatibility from a case ID.
+The matrix builders declare compatibility by crossing these named lists with named preparation
+collections.
 
 ## Preparation validation
 
@@ -207,8 +212,8 @@ Additional rules:
 - Embedded-only limitations stay explicit on the exact `Plan.Case`.
 
 Bespoke cases assert the rows, snapshots, metadata, or rejection state relevant to their family.
-Direct `Plan.Case` values require one human test description. Cases built through
-`TablePreparation.test` also propagate the human preparation description.
+Scaladoc immediately above each named `Plan.Case` or `TablePreparation.test` builder describes the
+operation and observable result. Preparation Scaladoc separately describes the starting table state.
 
 ## Ordered catalog
 
@@ -220,4 +225,4 @@ count=1181
 sha256=377f65959e3034c51e078fea72491444b06a6055f37c051184bdc379234b3d57
 ```
 
-`CaseCatalogTest` also requires unique case IDs and a non-empty human description for every case.
+`CaseCatalogTest` also requires unique case IDs and pins the exact count and ordered hash.
