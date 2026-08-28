@@ -1,6 +1,9 @@
 # Views API: Iceberg REST Spec Compliance — Review Notes & Implementation Plan
 
-**Status:** Plan (no implementation yet)
+**Status:** Implemented (server surface, backend still stubbed) on
+`claude/views-rest-server-impl`, folding in the binding dispositions F1–F9 from the blind
+architecture review recorded in
+[views-execution-checklist.md §2](views-execution-checklist.md).
 **Branch:** `claude/iceberg-rest-spec-compliance-l0s2ju`, branched off PR
 [mkuchenbecker/openhouse#43](https://github.com/mkuchenbecker/openhouse/pull/43)
 (carbon copy of upstream [linkedin/openhouse#694](https://github.com/linkedin/openhouse/pull/694)).
@@ -42,7 +45,7 @@ register-view, table routes, OAuth endpoints) is out of scope. The backend stays
 | 8 | Existence check | none | `HEAD .../views/{view}` → `204`/`404` |
 | 9 | Client bootstrap | none | `GET /v1/config` → `{defaults, overrides}`; required for a stock `RESTCatalog` client to connect |
 | 10 | Field naming | camelCase | kebab-case (`metadata-location`, `view-uuid`, `version-id`, `timestamp-ms`) |
-| 11 | Status vocabulary | `422` for admission failures; `201` create | Views surface uses `200` for create/replace, `204` for delete/exists; no `422` anywhere in the spec |
+| 11 | Status vocabulary | `422` for admission failures; `201` create | Views surface uses `200` for create/replace, `204` for delete/exists; no `422` anywhere in the spec's views surface (F8: the claim is scoped to views — other spec areas are not asserted) |
 
 ### 2.2 Judgment on the upstream dispute
 
@@ -100,28 +103,63 @@ structures without custom wire extensions:
 | `DELETE /v1/namespaces/{namespace}/views/{view}` | — | `204` | `DELETE_VIEW` |
 | `HEAD /v1/namespaces/{namespace}/views/{view}` | — | `204` | `SELECT` |
 
-Out of scope: `rename-view`, `register-view` (absent; if probed, plain 404 — deliberate, not
-`406`, to avoid claiming protocol surface we don't serve), tables/namespaces REST routes,
+Out of scope: `rename-view`, `register-view` (absent; if probed, a plain spec 404 — deliberate,
+not `406`, to avoid claiming protocol surface we don't serve), tables/namespaces REST routes,
 OAuth token endpoint.
 
-Errors on these routes only: `IcebergErrorResponse` envelope. `ViewErrorCode` gains a spec
-`type` string per value, e.g. `NO_SUCH_VIEW → NoSuchViewException/404`,
-`DATABASE_NOT_FOUND → NoSuchNamespaceException/404`,
+**`GET /v1/config` declares `endpoints` (F5):** the body is
+`{"defaults": {}, "overrides": {}, "endpoints": [...]}` where `endpoints` explicitly lists the
+seven implemented routes in the spec's capability-advertisement format
+(`"GET /v1/{prefix}/namespaces/{namespace}/views"`, …). An empty config would make a ≥1.6
+client assume the default endpoint set, which is wrong in both directions for this server.
+
+**List pagination obligation (F2, server side):** when `pageToken` is absent the service must
+return **all** results in one page — the 1.5.2.17 client's `listViews` issues a single GET and
+follows no `next-page-token`, so an eagerly paginating server would silently truncate that
+client's listing. A `null` continuation token serializes as an omitted `next-page-token` field,
+the spec's termination signal. (1.5.2.17's `ListTablesResponse` model predates the pagination
+fields, so the list document is assembled field-by-field around Iceberg's own `TableIdentifier`
+serializer.)
+
+Errors on these routes only: `IcebergErrorResponse` envelope, never the OpenHouse
+`ErrorResponseBody`, and never with a serialized stack. `ViewErrorCode` carries a spec `type`
+string per value: `NO_SUCH_VIEW → NoSuchViewException/404`,
 `VIEW_ALREADY_EXISTS`/`NAME_ALREADY_EXISTS_AS_TABLE → AlreadyExistsException/409`,
-`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`,
-`VIEWS_DISABLED → NoSuchViewException/404` (message "Views are disabled") — a stock client
-treats it as absent and Spark falls through to `loadTable`, preserving the design's default-off
-posture. Admission codes move off `422` (not spec vocabulary) onto `400`/`409` with distinct
-`type` strings. Validation failures: `400 BadRequestException`-typed envelope listing all
-accumulated violations in `message` (multi-failure accumulation from the PR is kept).
+`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`. **Per-route 404 vocabulary (F1):**
+`DATABASE_NOT_FOUND` and `VIEWS_DISABLED` (message "Views are disabled") render as
+`NoSuchNamespaceException` on the create and list routes and as `NoSuchViewException` on
+load/replace/drop/`HEAD` — matching the spec's own per-route 404 types, so a stock client
+treats the surface as absent and Spark's `ResolveViews` falls through to `loadTable`,
+preserving the design's default-off posture. A multi-level namespace (`%1F` separator) is that
+same 404: OpenHouse namespaces are single-level. `HEAD` failures carry no body at any status,
+per the spec. Admission codes move off `422` (not part of the spec's views vocabulary — F8)
+onto `400` with the distinct `ValidationException` type. Validation failures: `400
+BadRequestException`-typed envelope listing all accumulated violations in `message`
+(multi-failure accumulation from the PR is kept). Malformed or missing request bodies are also
+views-surface `400 BadRequestException` envelopes with fixed messages (parser messages may echo
+the submitted document, and every error message is copied into audit events).
+
+**The `/v1/**` unresolved-path surface (F3):** the tables service runs with
+`throw-exception-if-no-handler-found`, and the global handler renders unknown paths as
+OpenHouse-envelope 400s. The views error rendering owns `/v1/**`:
+`NoHandlerFoundException` under `/v1/**` → `404 NotFoundException` Iceberg envelope (this is
+the "plain 404" for `rename-view`/`register-view` probes); `AccessDeniedException` on the view
+routes → `403 ForbiddenException` envelope with no stacktrace leakage; uncoded infrastructure
+failures → `503 ServiceUnavailableException`; unexpected server faults → `500
+InternalServerError` with a fixed message. 401 stays a bare status: authentication is rejected
+by the token interceptor before dispatch. Non-`/v1` unknown paths keep the legacy
+OpenHouse-envelope 400 byte-for-byte. Advice ordering (`@Order(HIGHEST_PRECEDENCE)` on the
+views-scoped advice, `+1` on the `/v1` unresolved-path advice) beats the un-ordered global
+handler.
 
 ### 3.2 Serialization strategy — use Iceberg's own models and parsers
 
-`com.linkedin.iceberg:iceberg-core:1.5.2` is already an `api` dependency of
-`services/tables` (via `openhouse.iceberg-conventions-1.5.2`). Iceberg 1.5.x ships the REST
-view protocol classes with their canonical JSON parsers:
-`o.a.i.rest.requests.CreateViewRequest(Parser)`, `UpdateTableRequest` (the commit envelope,
-shared with views), `o.a.i.rest.responses.LoadViewResponse(Parser)`, `ListTablesResponse`,
+`com.linkedin.iceberg:iceberg-core:1.5.2.17` is already an `api` dependency of
+`services/tables` (via `openhouse.iceberg-conventions-1.5.2`). It ships the REST view protocol
+classes with their canonical JSON parsers:
+`o.a.i.rest.requests.CreateViewRequest(Parser)`, `UpdateTableRequest(Parser)` (the commit
+envelope, shared with views — there is no separate `CommitViewRequest` class in 1.5.2.17),
+`o.a.i.rest.responses.LoadViewResponse(Parser)`, `ListTablesResponse`,
 `ErrorResponse(Parser)`, `o.a.i.view.ViewMetadata(Parser)`, `ViewVersion`,
 `SQLViewRepresentation`, `o.a.i.UpdateRequirement.AssertViewUUID`, and
 `o.a.i.rest.RESTSerializers` to register them all on a Jackson `ObjectMapper`.
@@ -129,14 +167,20 @@ shared with views), `o.a.i.rest.responses.LoadViewResponse(Parser)`, `ListTables
 Using these instead of hand-rolled Lombok models makes wire compliance a property of the
 dependency, not of our tests: kebab-case naming, required-field enforcement, update/requirement
 polymorphism, and single-`SQL`-representation rules come from the reference implementation.
-The controller uses a dedicated `ObjectMapper` (configured via `RESTSerializers.registerAll`)
-scoped to these routes, so the global Spring mapper and every other service's wire shape are
-untouched.
 
-**Step 0 (de-risk):** verify the LinkedIn iceberg fork 1.5.2 jar actually contains these
-classes (`javap` after dependency resolve). Fallback if absent/stripped: keep the spec shapes
-but hand-model them, with the contract test pinning serialized JSON byte-for-byte to spec
-examples.
+**Decided mechanism (checklist §2):** the controllers consume and produce `String` bodies
+parsed/serialized with Iceberg's own parsers (`RESTCatalogAdapter` style) — no custom Jackson
+`HttpMessageConverter`s, and the global Spring mapper plays no part in these routes. Bodies are
+received as raw bytes and decoded as UTF-8 explicitly (RFC 8259), sidestepping
+`StringHttpMessageConverter`'s ISO-8859-1 default. Malformed-JSON errors therefore belong to
+the views error surface, not the global handler. The serialization helpers live in
+`IcebergRestWire` (`services/tables .../api/icebergrest/`), including a dedicated
+`RESTSerializers`-registered mapper for the two documents 1.5.2.17 has no parser entry point
+for (the list-views and config bodies).
+
+**Step 0 result (F9, answered affirmative):** the class-presence check against the resolved
+`iceberg-core-1.5.2.17` jar found every class listed above present; the hand-modeling fallback
+is retired.
 
 ### 3.3 What happens to the PR's surface (this branch replaces, not coexists)
 
@@ -157,57 +201,92 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
 ### 3.4 Validation (structural only, as before)
 
 `OpenHouseViewsApiValidator` reworked to the new shapes, still accumulating all violations:
-- namespace: single level, identifier charset/length rules; view name: same rules.
-- `CreateViewRequest`: parser-enforced required fields, plus: schema round-trips through
-  Iceberg `SchemaParser`; ≥1 representation, unique normalized dialects, every dialect in the
-  configured supported set; `summary` source-dialect key references a present representation;
-  UTF-8 size caps; reserved property keys rejected.
-- `CommitViewRequest`: requirements limited to `assert-view-uuid`; update actions limited to
-  the view-update set; structurally valid `AddViewVersion` payloads (same representation rules
-  as create).
+- namespace: identifier charset/length rules (single-level enforcement is not a validation 400:
+  a multi-level namespace is the spec's 404, decided at the handler); view name: same rules.
+- `CreateViewRequest`: parser-enforced required fields and schema parsing, plus: ≥1
+  representation, SQL-typed representations only, unique normalized dialects, every dialect in
+  the configured supported set; UTF-8 size caps (measured on the canonical serialized schema
+  and on each representation's SQL); reserved property keys rejected.
+- **`openhouse.source-dialect` summary key is optional (F7):** with a single representation the
+  server defaults it to that representation's dialect (the unique-dialect rule makes this well
+  defined), so a stock client's create passes unmodified; it is required exactly when
+  representations are plural, and when present must name a supported dialect and a supplied
+  representation.
+- `CommitViewRequest` (`UpdateTableRequest`): requirements limited to `assert-view-uuid`;
+  update actions limited to the view-update set (`assign-uuid`, `upgrade-format-version`,
+  `add-schema`, `set-location`, `set-properties`, `remove-properties`, `add-view-version`,
+  `set-current-view-version`); `add-view-version` payloads held to the same representation
+  rules as create; `set-properties` to the same reserved-key rules; an `identifier` in the
+  body, when present, must match the path.
 - `pageSize` ≥ 1 if present; `pageToken` opaque (no shape validation).
 
-## 4. Implementation plan (phases, each independently green)
+## 4. Implementation (phases as landed)
 
-1. **Dependency check (step 0):** resolve `:services:tables` compile classpath; confirm the
-   REST view classes above exist in the LinkedIn 1.5.2 fork. Record result here.
-2. **Error envelope:** views-scoped `@RestControllerAdvice` producing
-   `ErrorResponse`-serialized bodies; `ViewErrorCode` type mapping; tests for every code.
-3. **Wire plumbing:** dedicated `ObjectMapper` bean + `RESTSerializers` registration;
-   request-parsing helpers.
+1. **Dependency check (step 0):** done, affirmative — see §3.2.
+2. **Error envelope:** `IcebergRestViewsExceptionHandler` (views-scoped
+   `@RestControllerAdvice`, `@Order(HIGHEST_PRECEDENCE)`) renders `ViewApiException`,
+   `AccessDeniedException`, `AuthorizationServiceException` and unexpected faults as
+   `ErrorResponse`-serialized envelopes with the F1 per-route 404 types;
+   `V1RestUnresolvedPathExceptionHandler` owns `NoHandlerFoundException` for `/v1/**` (F3) and
+   falls back to `OpenHouseExceptionHandler.unresolvedRouteErrorResponseBody` (extracted for
+   reuse) everywhere else. Both advices implement the new `AuditedResponseRenderer` marker so
+   `ServiceAuditAspect` still audits failures they render (the aspect's failed-request pointcut
+   was widened to the marker and made tolerant of pre-serialized `String` envelope bodies).
+   `ViewErrorCode` carries the type strings, derived from Iceberg's exception classes at
+   compile time.
+3. **Wire plumbing:** `IcebergRestWire` — static Iceberg parsers for
+   create/commit/load-result/error documents; a dedicated `RESTSerializers`-registered mapper
+   for the list-views and config documents; fixed redacted messages for parse failures.
 4. **Controller:** `IcebergRestViewsController` with the seven routes (§3.1), `@Secured` as
-   today, delegating to a reshaped `ViewsApiHandler` (validate → service → map). Handler/service
-   interfaces move to Iceberg types (`CreateViewRequest`, `UpdateTableRequest`,
-   `ViewMetadata`, identifier lists + page token).
-5. **Validator rework** per §3.4 (delete obsolete checks, keep shared utils).
+   today (`LIST_VIEW`, `CREATE_VIEW`, `SELECT` for load and `HEAD`, `UPDATE_VIEW_METADATA`,
+   `DELETE_VIEW`; `/v1/config` authenticated-only), `String`/`byte[]` bodies per §3.2,
+   delegating to the reshaped `ViewsApiHandler` (parse → validate → unwrap → service →
+   serialize). **Wire envelopes are unwrapped at the handler (F6):** `ViewsService` speaks
+   `ViewMetadata`, `List<MetadataUpdate>`, `List<UpdateRequirement>`, `TableIdentifier`,
+   `Schema`, `ViewVersion` and page tokens (`ViewIdentifiersPage`) — never
+   `CreateViewRequest`/`UpdateTableRequest`.
+5. **Validator rework** per §3.4 (`OpenHouseViewsApiValidator` on Iceberg types; shared
+   `ApiValidatorUtil` identifier rules kept).
 6. **Stub service:** `ViewsDisabledService` unchanged in posture; throws
-   `ViewApiException(VIEWS_DISABLED)` from the new interface methods. `GET /v1/config` returns
-   static empty defaults/overrides (served even while views are disabled — bootstrap must
-   precede the 404s).
-7. **Audit redaction:** `ViewRequestPayloadRedactor` reworked for the new request JSON
-   (redact `sql`, `schema` subtrees).
-8. **Remove `/v2` surface** and its tests; migrate the test intent:
-   - `ViewApiContractTest` → freezes the REST wire surface instead: exact serialized key sets
-     (kebab-case) for `LoadViewResult`, `ListTablesResponse`, error envelope; round-trips
-     through Iceberg parsers; spec-example fixtures.
-   - Validator/controller/handler/redactor/privilege tests reworked to the new shapes;
-     multi-dialect test kept (spark+trino config accepts two representations).
-   - New: `HEAD` semantics, `/v1/config`, commit-request structural tests,
-     `VIEWS_DISABLED → NoSuchViewException` envelope test (the Spark fall-through guarantee).
-9. **Docs:** regenerate `docs/specs/catalog.md` per `docs/specs/README.md`; update this file's
-   status.
+   `ViewApiException(VIEWS_DISABLED)` from the new interface methods. `GET /v1/config` is
+   served by the handler even while views are disabled — bootstrap precedes the 404s — and
+   declares the endpoints list (F5).
+7. **Audit redaction:** `ViewRequestPayloadRedactor` scoped to the `/v1` view write routes,
+   recursively replacing every `schema` and `sql` value in both request shapes (create and
+   commit, including `add-schema` and `add-view-version` nestings).
+8. **`/v2` surface removed** with its tests; test intent migrated:
+   - `IcebergRestViewsContractTest` freezes the wire surface: exact serialized key sets
+     (kebab-case) for `LoadViewResult`, `ListTablesResponse` and the error envelope,
+     round-trips through Iceberg parsers, a spec-example create document, the `/v1/config`
+     body, and the error-taxonomy/type-vocabulary pins (no 422 on this surface).
+   - `IcebergRestViewsControllerTest` (MockMvc): per-route views-disabled envelope (F1),
+     `HEAD` 404 with empty body, 401s, malformed/missing bodies, multi-level namespaces,
+     `/v1/**` vs legacy unresolved paths (F3), the full error-code matrix on item and
+     collection routes, 403/503/500 envelopes, and audit redaction on the failure path.
+   - `IcebergRestViewsValidatorTest` / `...MultiDialectTest` (F7 and the spark+trino shape),
+     `ViewRequestPayloadRedactorTest`, `ViewsDisabledServiceTest`,
+     `IcebergRestViewsPrivilegeTest` reworked to the new shapes.
+9. **Docs:** this file's status updated. `docs/specs/catalog.md` regeneration is deferred: it
+   requires booting the service plus the external `widdershins` tool, and the document
+   predates the views surface entirely (the retired `/v2` routes were never folded in either);
+   regenerate on the next scheduled spec refresh.
 
-## 5. Verification
+## 5. Verification (results)
 
-- `./gradlew :services:common:test :services:tables:test` — full green (907+ existing tests
-  must stay green; view tests reworked as above).
-- `./gradlew spotlessCheck` on touched modules. Known pre-existing red on three files synced
-  from upstream (`OpenHouseCatalog.java` iceberg-1.5, `OpenHouseViewEnabledTestSpark3_5.java`,
-  `OpenHouseViewSparkITest.java`) — out of scope here, must not widen.
-- Contract test compares serialized JSON against fixtures lifted verbatim from the spec's
-  examples (kebab-case keys, envelope nesting).
-- Manual/MockMvc smoke: `GET /v1/config` 200; `GET .../views/x` 404 with
+- `./gradlew :services:common:test :services:tables:test` — green, including every reworked
+  view test (counts recorded in the lane PR).
+- `./gradlew :services:common:spotlessCheck :services:tables:spotlessCheck` — clean. The three
+  known spotless-red files synced from upstream (`OpenHouseCatalog.java` iceberg-1.5,
+  `OpenHouseViewEnabledTestSpark3_5.java`, `OpenHouseViewSparkITest.java`) belong to lane C and
+  were not touched.
+- Contract tests pin serialized key sets and round-trips as described in §4.8; the
+  views-disabled MockMvc pins are exactly the §2.2 smoke shapes: `GET /v1/config` 200;
+  `GET .../views/x` 404 with
   `{"error":{"message":"Views are disabled","type":"NoSuchViewException","code":404}}`;
   `HEAD` 404 with empty body.
+- Two pre-existing e2e tests pinned the legacy unknown-`/v1`-path 400; they now pin the F3
+  contract (Iceberg 404 envelope) instead, with the non-`/v1` legacy rendering pinned
+  separately.
 - Stretch (documented, not gating): point a stock `RESTCatalog` at a running instance and
-  confirm bootstrap + `loadView` 404 fall-through.
+  confirm bootstrap + `loadView` 404 fall-through — this is lane C's gate-on integration
+  itest, deferred to orchestrator integration.
