@@ -1,7 +1,7 @@
 -- This file is an operations record of a schema change applied out of band by the
--- MySQL/DDS team. The service does not execute it. The oh-only-mysql compose recipe
--- mounts this directory into the MySQL image's initialisation directory, so every run
--- of that recipe applies it in filename order and verifies the migration path.
+-- MySQL/DDS team. The service does not execute it. Deployment recipes that mount this
+-- directory into a MySQL image's initialisation directory apply it in filename order,
+-- which makes every such run a check that the recorded DDL is a working migration path.
 --
 -- Pins the discriminator column's collation to utf8mb4_0900_as_ci: case-insensitive,
 -- accent-sensitive, NO PAD. EntityType.fromName accepts any case of TABLE or VIEW and
@@ -10,11 +10,20 @@
 -- default utf8mb4_0900_ai_ci the two vocabularies diverge: that collation calls an
 -- accented 'TÁBLE' equal to 'TABLE', so a typed predicate selects a row whose
 -- hydration then fails, turning a typed read into a 500. Under utf8mb4_0900_as_ci the
--- set of stored values the predicates match is exactly the set fromName accepts, so a
--- corrupt value is invisible to every typed route and only the neutral /hts/entities
--- read, which deliberately carries no type predicate, reports the corruption. This
--- also matches how the H2 test schema behaves (case-sensitive comparison, NO PAD,
--- folded through the explicit upper()), so the test and deployed engines agree.
+-- ASCII, accented and padded spellings all classify the same way in SQL and in Java:
+-- case variants match, accented and padded values do not, so a corrupt value in that
+-- family is invisible to every typed route and only the neutral /hts/entities read,
+-- which deliberately carries no type predicate, reports the corruption. This also
+-- matches how the H2 test schema behaves (case-sensitive comparison, NO PAD, folded
+-- through the explicit upper()), so the test and deployed engines agree.
+--
+-- Scope of the alignment: utf8mb4_0900_as_ci is a UCA strength-2 collation, so it
+-- ignores every tertiary-level distinction, not only case -- a width or variant form
+-- such as a fullwidth 'ＴＡＢＬＥ' still compares equal to 'TABLE' in SQL while
+-- EntityType.fromName rejects it. Such a value would pass a typed predicate and fail
+-- hydration, exactly like the accented family did before this pin. No writer of this
+-- column produces such values (the service stamps the plain ASCII constants), so the
+-- residual divergence is theoretical, but it is a narrowing, not an equivalence.
 --
 -- No ALGORITHM=INSTANT here: changing a column's collation is not instant-eligible
 -- and rebuilds the table under ALGORITHM=COPY. The column is short and unindexed, but
@@ -22,6 +31,8 @@
 --
 -- schema.sql stays engine-neutral (H2 executes it in tests) and therefore names no
 -- collation; this pin is MySQL-only, which is the engine where the divergence exists.
+-- The pinned collation and the resulting corrupt-value taxonomy are verified against a
+-- deployed MySQL by the E2E suite introduced alongside this stack.
 
 ALTER TABLE user_table_row
     MODIFY COLUMN entity_type VARCHAR (128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_as_ci DEFAULT NULL;
