@@ -4,7 +4,9 @@ import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
 import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Optional;
@@ -36,14 +38,24 @@ public final class JdbcPersistenceFailures {
   /** MySQL reports duplicates under the generic integrity-violation SQLSTATE ... */
   private static final String SQLSTATE_INTEGRITY_VIOLATION = "23000";
 
+  /** MySQL {@code ER_DUP_ENTRY}: a duplicate reported without naming the key it collided on. */
+  private static final int MYSQL_ER_DUP_ENTRY = 1062;
+
+  /** MySQL {@code ER_DUP_ENTRY_WITH_KEY_NAME}: the same duplicate, reported with the key's name. */
+  private static final int MYSQL_ER_DUP_ENTRY_WITH_KEY_NAME = 1586;
+
   /**
-   * ... distinguished by vendor code: {@code ER_DUP_ENTRY} (1062) and {@code
-   * ER_DUP_ENTRY_WITH_KEY_NAME} (1586). Spring 5.3's own {@code sql-error-codes.xml} classifies
-   * only 1062 as a duplicate key for MySQL; 1586 is the same duplicate reported with the key's
-   * name, which newer Spring generations added to the same bucket, so both are recognized here.
+   * ... distinguished by vendor code. The MySQL Server Error Message Reference lists both {@link
+   * #MYSQL_ER_DUP_ENTRY} and {@link #MYSQL_ER_DUP_ENTRY_WITH_KEY_NAME} under SQLSTATE {@code 23000}
+   * as the same duplicate-key outcome, differing only in whether the message names the offending
+   * key. Spring recognizes only the first: its MySQL {@code duplicateKeyCodes} is 1062 alone in
+   * {@code sql-error-codes.xml} and still 1062 alone in spring-jdbc 6.1.x and 7.0.x, and {@code
+   * SQLStateSQLExceptionTranslator}'s duplicate-key error codes are {@code {1, 301, 1062, 2601,
+   * 2627}}. No Spring generation added 1586, so this module recognizes it itself.
    */
   private static final Set<Integer> MYSQL_DUPLICATE_ENTRY_CODES =
-      Collections.unmodifiableSet(new java.util.HashSet<>(java.util.Arrays.asList(1062, 1586)));
+      Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(MYSQL_ER_DUP_ENTRY, MYSQL_ER_DUP_ENTRY_WITH_KEY_NAME)));
 
   private JdbcPersistenceFailures() {}
 
@@ -73,8 +85,9 @@ public final class JdbcPersistenceFailures {
   /**
    * The module-owned rendering of an integrity violation that {@link #isDuplicateKey} disclaimed:
    * not a concurrent writer, not the caller's input (ingress bounds those), so a server-side
-   * storage failure. Translating here keeps the raw Spring type from leaving the service layer; the
-   * advice renders the result as a sealed 500 whose detail lives in the server log.
+   * storage failure. Translating here keeps the raw Spring type from leaving the write paths that
+   * catch it — the two puts, rename, and restore — rather than from the service layer as a whole;
+   * the advice renders the result as a sealed 500 whose detail lives in the server log.
    */
   public static StorageIntegrityViolationException serverFailure(
       DataIntegrityViolationException exception) {

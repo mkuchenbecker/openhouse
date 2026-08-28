@@ -1353,7 +1353,6 @@ public class HtsControllerTest {
         .andExpect(status().isBadRequest());
   }
 
-  /** Unlike the table query, an empty filter returns every view, not database names. */
   /**
    * The pattern must actually narrow: a seeded view the pattern excludes stays out of the patterned
    * result while remaining in the unpatterned one. This is what pins the handler's
@@ -1396,6 +1395,7 @@ public class HtsControllerTest {
         .andExpect(jsonPath("$.pageResults.content[*].tableId", not(hasItem("excluded_view"))));
   }
 
+  /** Unlike the table query, an empty filter returns every view, not database names. */
   @Test
   public void testViewQueriesExcludeTablesAndLegacyRows() throws Exception {
     seedCanonicalRows("");

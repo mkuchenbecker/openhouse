@@ -13,7 +13,6 @@ import com.linkedin.openhouse.housetables.services.UserTablesService;
 import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -173,7 +172,8 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
   @Override
   public ApiResponse<EntityResponseBody<UserTable>> putEntity(UserTable userTable) {
     userTablesHtsApiValidator.validatePutEntity(userTable);
-    return putResponse(userTableService.putUserTable(userTable));
+    PutResult putResult = userTableService.putUserTable(userTable);
+    return putResponse(putResult.getEntity(), putResult.isReplacedExisting());
   }
 
   /**
@@ -186,11 +186,6 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
     userTablesHtsApiValidator.validatePutEntity(userView);
     PutResult putResult = userTableService.putUserView(userView);
     return putResponse(putResult.getEntity(), putResult.isReplacedExisting());
-  }
-
-  private ApiResponse<EntityResponseBody<UserTable>> putResponse(
-      Pair<UserTableDto, Boolean> putResult) {
-    return putResponse(putResult.getFirst(), putResult.getSecond());
   }
 
   private ApiResponse<EntityResponseBody<UserTable>> putResponse(

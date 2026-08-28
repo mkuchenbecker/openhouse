@@ -66,7 +66,9 @@ public class JdbcPersistenceFailuresTest {
     Assertions.assertSame(notADuplicate, translated.getCause());
   }
 
-  /** MySQL's generic 23000 covers every integrity violation; only ER_DUP_ENTRY is a duplicate. */
+  /**
+   * MySQL's generic 23000 covers every integrity violation; only the duplicate-entry codes match.
+   */
   @Test
   public void otherIntegrityViolationsAreNotDuplicates() {
     SQLException notNull =

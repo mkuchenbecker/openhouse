@@ -51,7 +51,6 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
-import org.springframework.data.util.Pair;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 @SpringBootTest(classes = SpringH2HtsApplication.class)
@@ -387,10 +386,10 @@ public class UserTablesServiceTest {
             .tableVersion(atVersion)
             .entityType(EntityType.TABLE.name())
             .build();
-    Pair<UserTableDto, Boolean> result = userTablesService.putUserTable(updated_1_0);
-    assertThat(result.getSecond()).isTrue();
-    assertThat(result.getFirst().getMetadataLocation()).isEqualTo(modifiedLocation);
-    assertThat(result.getFirst().getTableVersion()).isEqualTo(modifiedLocation);
+    PutResult result = userTablesService.putUserTable(updated_1_0);
+    assertThat(result.isReplacedExisting()).isTrue();
+    assertThat(result.getEntity().getMetadataLocation()).isEqualTo(modifiedLocation);
+    assertThat(result.getEntity().getTableVersion()).isEqualTo(modifiedLocation);
   }
 
   @Test
@@ -1085,7 +1084,7 @@ public class UserTablesServiceTest {
   public void testGetAllUserViewsWithEmptyQueryReturnsEveryView() {
     seedCanonicalRows("");
 
-    List<UserTableDto> views = userTablesService.getAllUserViews(UserViewQuery.allViews());
+    List<UserTableDto> views = userTablesService.getAllUserViews(UserViewQuery.allViews(null));
 
     assertThat(sortedIds(views)).isEqualTo(CANONICAL_VIEW_IDS);
     // Not a database-name projection: every result is a fully identified view.
@@ -1093,7 +1092,7 @@ public class UserTablesServiceTest {
     assertThat(views).allSatisfy(v -> assertThat(v.getEntityType()).isEqualTo(EntityType.VIEW));
 
     Page<UserTableDto> page =
-        userTablesService.getAllUserViews(UserViewQuery.allViews(), 0, 50, "tableId");
+        userTablesService.getAllUserViews(UserViewQuery.allViews(null), 0, 50, "tableId");
     Assertions.assertEquals(3, page.getTotalElements());
     assertThat(pageIds(page)).containsExactlyElementsOf(CANONICAL_VIEW_IDS);
   }
@@ -1142,11 +1141,11 @@ public class UserTablesServiceTest {
   // everything else at its boundary. HtsControllerTest's
   // testEntityTypeQueryParameterIsIgnoredOnViewQuery pins the HTTP-level behavior.
 
-  /** A pattern with no database to scope it cannot exist, mirroring the API validator's rule. */
+  /** A pattern with no database to scope it is rejected, mirroring the API validator's rule. */
   @Test
-  public void testViewPatternWithoutDatabaseIsUnrepresentable() {
+  public void testViewPatternWithoutDatabaseIsRejectedByTheFactory() {
     // The factory methods are the type's only constructors, so a pattern with no database (and
-    // an unpatterned "matching") cannot even be built, mirroring the API validator's rule.
+    // an unpatterned "matching") is rejected at construction, mirroring the API validator's rule.
     Assertions.assertThrows(
         IllegalArgumentException.class, () -> UserViewQuery.matching(null, "t0%"));
     Assertions.assertThrows(
@@ -1408,7 +1407,7 @@ public class UserTablesServiceTest {
     seedTypedRow(ENTITY_TYPE_DB, "same_type", EntityType.TABLE);
     UserTableRow before = findRow(ENTITY_TYPE_DB, "same_type");
 
-    Pair<UserTableDto, Boolean> updated =
+    PutResult updated =
         userTablesService.putUserTable(
             UserTable.builder()
                 .databaseId(ENTITY_TYPE_DB)
@@ -1417,8 +1416,8 @@ public class UserTablesServiceTest {
                 .metadataLocation("/openhouse/entity_type_db/same_type/v1_metadata.json")
                 .entityType("TaBlE")
                 .build());
-    assertThat(updated.getSecond()).isTrue();
-    assertThat(updated.getFirst().getEntityType()).isEqualTo(EntityType.TABLE);
+    assertThat(updated.isReplacedExisting()).isTrue();
+    assertThat(updated.getEntity().getEntityType()).isEqualTo(EntityType.TABLE);
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "same_type")).hasValue("TABLE");
 
     // A stale version at the same type is still a concurrency conflict, not a type conflict.
@@ -1613,9 +1612,9 @@ public class UserTablesServiceTest {
             .entityType(EntityType.TABLE.name())
             .build();
 
-    Pair<UserTableDto, Boolean> winner = userTablesService.putUserTable(tableCreate);
-    assertThat(winner.getSecond()).as("the winner creates rather than updates").isFalse();
-    assertThat(winner.getFirst().getEntityType()).isEqualTo(EntityType.TABLE);
+    PutResult winner = userTablesService.putUserTable(tableCreate);
+    assertThat(winner.isReplacedExisting()).as("the winner creates rather than updates").isFalse();
+    assertThat(winner.getEntity().getEntityType()).isEqualTo(EntityType.TABLE);
 
     // The loser's occupancy read was taken before the winner committed. putUserTable reads through
     // findById, and a default method calls its siblings on the repository proxy rather than back
@@ -1656,7 +1655,7 @@ public class UserTablesServiceTest {
    * concurrent-modification label), with the original violation preserved as its cause.
    */
   @Test
-  public void testNonDuplicateIntegrityViolationOnPutIsNotReportedAsConcurrentModification() {
+  public void testNonDuplicateIntegrityViolationOnPutIsTranslatedToStorageIntegrityViolation() {
     DataIntegrityViolationException notADuplicate =
         new DataIntegrityViolationException(
             "could not execute statement",

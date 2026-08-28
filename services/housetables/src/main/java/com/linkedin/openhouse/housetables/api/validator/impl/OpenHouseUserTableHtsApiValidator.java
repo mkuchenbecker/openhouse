@@ -126,7 +126,7 @@ public class OpenHouseUserTableHtsApiValidator
   @Override
   public void validateRenameEntity(
       UserTableKey fromUserTableKey, UserTableKey toUserTableKey, String metadataLocation) {
-    validateRenameEntity(fromUserTableKey, toUserTableKey);
+    validateRenameKeys(fromUserTableKey, toUserTableKey);
     List<String> validationFailures = new ArrayList<>();
     validateLength(
         "metadataLocation", metadataLocation, MAX_METADATA_LOCATION_LENGTH, validationFailures);
@@ -135,8 +135,8 @@ public class OpenHouseUserTableHtsApiValidator
     }
   }
 
-  @Override
-  public void validateRenameEntity(UserTableKey fromUserTableKey, UserTableKey toUserTableKey) {
+  /** The key half of the rename validation, shared by no other entry point. */
+  private void validateRenameKeys(UserTableKey fromUserTableKey, UserTableKey toUserTableKey) {
     validateGetEntity(fromUserTableKey);
     validateGetEntity(toUserTableKey);
     List<String> validationFailures = new ArrayList<>();

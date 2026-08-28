@@ -34,7 +34,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.util.Pair;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -163,11 +162,8 @@ public class UserTablesServiceImpl implements UserTablesService {
   }
 
   @Override
-  public Pair<UserTableDto, Boolean> putUserTable(UserTable userTable) {
-    // The legacy pair-shaped signature is preserved; the primitive's named result is unwrapped.
-    PutResult result =
-        JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable, EntityType.TABLE));
-    return Pair.of(result.getEntity(), result.isReplacedExisting());
+  public PutResult putUserTable(UserTable userTable) {
+    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable, EntityType.TABLE));
   }
 
   @Override
@@ -215,7 +211,8 @@ public class UserTablesServiceImpl implements UserTablesService {
     } catch (DataIntegrityViolationException e) {
       // Only a duplicate key means another writer holds the row. Any other integrity violation
       // is a server-side failure, not a race, so mislabeling it a 409 would send the caller into
-      // a futile retry loop; it propagates as the 500 it is.
+      // a futile retry loop; it is translated to a module-owned storage failure and rendered as
+      // the 500 it is.
       if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
         throw JdbcPersistenceFailures.serverFailure(e);
       }
