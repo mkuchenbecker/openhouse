@@ -55,12 +55,15 @@ public interface UserTableHtsJdbcRepository
    * table, so without it every pre-existing table becomes invisible. Do not reduce it to a plain
    * equality before a verified backfill and a {@code NOT NULL} migration.
    *
-   * <p>Collation assumption, shared with {@link #VIEW_ROW_PREDICATE}: this comparison assumes the
-   * column's collation matches these values exactly, folding neither accents nor trailing spaces,
-   * so that SQL agrees with {@link EntityType#fromName} about what counts as a table. An accent
-   * insensitive collation would let a stored {@code 'TÁBLE'} match here yet fail hydration, and a
-   * PAD SPACE collation would do the same for {@code 'TABLE '}. Unconfirmed against production;
-   * please confirm the deployed collation.
+   * <p>Collation contract, shared with {@link #VIEW_ROW_PREDICATE}: {@code
+   * ddl/0002__pin_entity_type_collation.sql} pins the column to {@code utf8mb4_0900_as_ci}
+   * (case-insensitive, accent-sensitive, NO PAD), under which this comparison matches exactly the
+   * spellings {@link EntityType#fromName} accepts. Under the MySQL 8 server default {@code
+   * utf8mb4_0900_ai_ci} a stored {@code 'TÁBLE'} would match here yet fail hydration, and a PAD
+   * SPACE collation would do the same for {@code 'TABLE '}; the pin removes both divergences, and
+   * the oh-only-mysql E2E suite asserts the pinned collation and the resulting taxonomy. H2 in
+   * tests compares case-sensitively with NO PAD, which the explicit {@code upper()} folds into the
+   * same contract, so the test and deployed engines agree.
    */
   String TABLE_ROW_PREDICATE = "(u.entityType IS NULL OR upper(u.entityType) = '" + TABLE + "')";
 
