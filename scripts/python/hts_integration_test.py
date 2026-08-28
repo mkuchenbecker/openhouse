@@ -1044,15 +1044,21 @@ def test_corrupt_entity_type_values_split_into_two_failure_modes() -> None:
 
     The read predicate compares against 'TABLE' under the column's collation.
     ddl/0002__pin_entity_type_collation.sql pins that collation to
-    utf8mb4_0900_as_ci -- case-insensitive, accent-SENSITIVE, NO PAD -- whose
-    equality classes are exactly the spellings ``EntityType.fromName`` accepts.
-    The taxonomy is therefore clean:
+    utf8mb4_0900_as_ci -- case-insensitive, accent-SENSITIVE, NO PAD -- under
+    which the ASCII, accented and padded spellings classify the same way in SQL
+    as in ``EntityType.fromName``: case variants match, accents and padding do
+    not. (The alignment is a narrowing, not an equivalence: _as_ci is a UCA
+    strength-2 collation, so a tertiary-only variant such as a fullwidth
+    spelling still compares equal in SQL while fromName rejects it. No writer
+    of the column produces such values; the cases below stay in the family
+    writers and operators actually produce.) The taxonomy for that family:
 
-    * No corrupt value can pass a typed predicate. Accented forms such as
+    * No such corrupt value can pass a typed predicate. Accented forms such as
       'TABLE' with an acute accent miss because the collation is accent
       sensitive; padded forms, the empty string, and all-spaces values miss
-      because it is NO PAD. Every corrupt row is 404-invisible to the typed
-      routes, and, crucially, cannot poison a typed read with a hydration 500.
+      because it is NO PAD. Every corrupt row here is 404-invisible to the
+      typed routes, and, crucially, cannot poison a typed read with a
+      hydration 500.
     * Invisible is not benign: the neutral /hts/entities read carries no type
       predicate, so it hydrates any corrupt row and answers the stable
       corruption 500.
