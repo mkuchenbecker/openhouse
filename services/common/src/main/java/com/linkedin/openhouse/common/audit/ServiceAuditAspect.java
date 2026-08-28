@@ -96,22 +96,27 @@ public class ServiceAuditAspect {
   }
 
   /**
-   * Install the Around advice for all exception handler methods.
+   * Install the Around advice for all exception handler methods: the shared handler in {@code
+   * common.exception.handler} plus every advice class that opted in by implementing {@link
+   * AuditedResponseRenderer} (e.g. the tables service's Iceberg REST views error rendering), so a
+   * failure keeps its audit event whichever advice renders it.
    *
    * @param point The exception handler method being enhanced
    * @return Result of the exception handler method
    * @throws Throwable Any exception during execution of the exception handler method
    */
-  @Around("execution(* com.linkedin.openhouse.common.exception.handler.*.*(..))")
+  @Around(
+      "execution(* com.linkedin.openhouse.common.exception.handler.*.*(..))"
+          + " || execution(* com.linkedin.openhouse.common.audit.AuditedResponseRenderer+.*(..))")
   protected Object auditFailedRequests(ProceedingJoinPoint point) throws Throwable {
     Object result = null;
     try {
       result = point.proceed();
       try {
         RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
-        if (requestAttributes != null) {
+        if (requestAttributes != null && result instanceof ResponseEntity) {
           HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
-          ResponseEntity<ErrorResponseBody> response = (ResponseEntity<ErrorResponseBody>) result;
+          ResponseEntity<?> response = (ResponseEntity<?>) result;
           ServiceAuditEvent event =
               buildServiceAuditEvent(
                   (Instant) request.getAttribute(ATTRIBUTE_START_TIME),
@@ -163,12 +168,16 @@ public class ServiceAuditAspect {
     String stacktrace = null;
     String cause = null;
     if (isFailed) {
-      ErrorResponseBody errorResponseBody =
-          ((ResponseEntity<ErrorResponseBody>) response).getBody();
-      if (errorResponseBody != null) {
+      Object body = response.getBody();
+      if (body instanceof ErrorResponseBody) {
+        ErrorResponseBody errorResponseBody = (ErrorResponseBody) body;
         responseErrorMessage = errorResponseBody.getMessage();
         stacktrace = errorResponseBody.getStacktrace();
         cause = errorResponseBody.getCause();
+      } else if (body instanceof String) {
+        // An Iceberg REST error envelope: {"error": {"message", "type", "code"}}. It carries no
+        // stacktrace or cause by design; the message is what identifies the failure.
+        responseErrorMessage = extractIcebergEnvelopeMessage((String) body);
       }
     }
     // Get request uri and query string
@@ -213,27 +222,45 @@ public class ServiceAuditAspect {
     return redacted;
   }
 
+  /** The audited failure message of an Iceberg REST error envelope, or null when unparseable. */
+  private static String extractIcebergEnvelopeMessage(String body) {
+    try {
+      JsonElement root = JsonParser.parseString(body);
+      JsonElement error = root.getAsJsonObject().get("error");
+      JsonElement message = error.getAsJsonObject().get("message");
+      return message.isJsonNull() ? null : message.getAsString();
+    } catch (RuntimeException e) {
+      return null;
+    }
+  }
+
   private ServiceName getServiceNameFromRequestURI(String uri) {
     if (uri.startsWith("/jobs")) {
       return ServiceName.JOBS_SERVICE;
     } else if (uri.startsWith("/hts")) {
       return ServiceName.HOUSETABLES_SERVICE;
-    } else if (uri.startsWith("/databases") || uri.matches("/v[0-9]+/databases.*")) {
+    } else if (uri.startsWith("/databases")
+        || uri.matches("/v[0-9]+/databases.*")
+        // The Iceberg REST views surface, mounted by the tables service.
+        || uri.matches("/v[0-9]+/namespaces.*")
+        || uri.matches("/v[0-9]+/config")) {
       return ServiceName.TABLES_SERVICE;
     }
     return ServiceName.UNRECOGNIZED;
   }
 
   /**
-   * Build updated response for the client by excluding stacktrace
+   * Build updated response for the client by excluding stacktrace. Bodies that are not the
+   * OpenHouse {@link ErrorResponseBody} (e.g. an already-serialized Iceberg REST envelope, which
+   * never carries a stacktrace) pass through unchanged.
    *
    * @param response
    * @return ResponseEntity
    */
-  private ResponseEntity<ErrorResponseBody> buildUpdatedResponseEntity(
-      ResponseEntity<ErrorResponseBody> response) {
-    ErrorResponseBody errorResponseBody = response.getBody();
-    if (errorResponseBody != null) {
+  private ResponseEntity<?> buildUpdatedResponseEntity(ResponseEntity<?> response) {
+    Object body = response.getBody();
+    if (body instanceof ErrorResponseBody) {
+      ErrorResponseBody errorResponseBody = (ErrorResponseBody) body;
       ErrorResponseBody updatedErrorResponseBody =
           ErrorResponseBody.builder()
               .status(errorResponseBody.getStatus())

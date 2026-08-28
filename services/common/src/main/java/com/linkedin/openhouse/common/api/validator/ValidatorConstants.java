@@ -20,13 +20,20 @@ public final class ValidatorConstants {
   public static final int MAX_ALLOWED_CLUSTERING_COLUMNS = 4;
   public static final String INITIAL_TABLE_VERSION = "INITIAL_VERSION";
 
-  /** The only view representation type accepted by the /v2 views API. */
+  /** The only view representation type accepted by the views API. */
   public static final String SQL_VIEW_REPRESENTATION_TYPE = "sql";
 
   /**
-   * Maximum length of a view or database identifier on the /v2 views API. Mirrors the
-   * {@code @Size(max = 128)} bean constraint on the request body identifiers so a path identifier
-   * cannot bypass the limit the body enforces.
+   * The spec-sanctioned {@code view-version.summary} key OpenHouse uses to mark which
+   * representation carries the source-of-truth definition. Optional when a single representation is
+   * supplied (the server defaults it to that representation's dialect); required when
+   * representations are plural, where the unique-dialect rule alone no longer identifies one.
+   */
+  public static final String VIEW_SOURCE_DIALECT_SUMMARY_KEY = "openhouse.source-dialect";
+
+  /**
+   * Maximum length of a view or namespace identifier on the views API, so a path identifier and a
+   * body identifier are held to the same limit.
    */
   public static final int MAX_VIEW_IDENTIFIER_LENGTH = 128;
 
