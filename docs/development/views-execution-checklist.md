@@ -108,7 +108,7 @@ plan doc to match as part of implementation.
 ### Reviews & integration (orchestrator)
 - [ ] Lane S review (arch-review + spec, testing-review, pedantic-linter) → fixes applied → pass
 - [x] Lane C review (arch+spec vs 1.5.2.17 bytecode, testing, pedantic-linter) → 1 testing blocker (F4 fault-injection gap) + suggestions → all 20 fix items applied on [#48](https://github.com/mkuchenbecker/openhouse/pull/48) head `262edfbb`; java-itest 63/63 (21 wire tests), Spark 3.5 222/222. Decisions: TLS warn (https-gated); User-Agent unconditional; `WebClientFactory.SESSION_ID` made public; displaced-catalog graveyard fixes the token-refresh race
-- [ ] Lane P1/P2 review (fidelity + findings coverage) → pass
+- [x] Lane P1/P2 review → P1 fidelity exact-SHA (mechanical); P2 three-SME round: 2 testing blockers (unbounded rename-metadataLocation/put-storageType; undiscriminated pattern seam) + converged arch/lint suggestions → all 17 fix items applied red-then-green on [#46](https://github.com/mkuchenbecker/openhouse/pull/46) (head `5e0b56c0`-series), housetables 316/316, common 14/14, MySQL E2E 23/23. Owner-ratification note in #46: four deleted search-view metric wire names
 - [ ] Merge S, then C, into `claude/iceberg-rest-spec-compliance-l0s2ju`
 - [ ] Add gate-on integration itest (client enabled ↔ stubbed server: SELECT falls through, CREATE VIEW → AnalysisException, SHOW VIEWS → empty)
 - [ ] Full-tree test pass on the integrated branch
