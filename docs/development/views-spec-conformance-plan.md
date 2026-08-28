@@ -4,22 +4,44 @@ Correctness evidence for the views surface should come from `org.apache.iceberg.
 subclassed by hand against the embedded test server, pulled from the coordinate we already ship —
 `com.linkedin.iceberg:iceberg-core:1.5.2.17:tests`. The REST Compatibility Kit (RCK) should not be
 adopted: its view class is *only* `ViewCatalogTests` with different hooks, it exists solely at
-Iceberg 1.7.0+, and against this server it errors in `@BeforeAll` before reaching a single test body.
-Identical assertions, strictly worse reachability.
+Iceberg 1.7.0+, and its fixtures, walked against our seven routes, error in `@BeforeAll` on a
+`listNamespaces()` call we answer with a 404, before any test body runs. That walkthrough is
+Appendix B, read from source: RCK has never been executed here, because it does not exist at the
+version we pin. Identical assertions, strictly worse reachability.
+
+The gap this closes: every test that judges the views surface today, we wrote. Iceberg's parsers
+accepting documents Iceberg's serializers produced is not evidence that a real client can drive this
+server, and §2 says why the three suites we have cannot become that evidence by being extended.
 
 On spec surface: after view persistence — which almost everything here waits on — serve exactly one
 more route, `POST /v1/{prefix}/views/rename`. It converts 5 permanently-failing conformance tests
 into runnable ones and is the only thing standing between us and Spark's `ALTER VIEW … RENAME TO`.
-Namespaces, `register-view`, the table routes and the OAuth endpoint stay unserved, and §5 says why
-each one buys nothing: a stock 1.5.2 `RESTCatalog` calls no namespace route on the view path, the
-1.5.2-era spec has no `register-view` at all, and the OAuth endpoint is marked deprecated for removal
-in the spec that defines it.
+Note that the compliance document records `rename-view` as out of scope, owner-confirmed; §5.1 is a
+proposed revision to that decision, not a decision.
+
+`register-view`, the namespace *write* routes, the table routes and the OAuth endpoint stay
+unserved, and §5 says why each buys nothing: the 1.5.2-era spec has no `register-view` at all,
+`DatabasesService` has no create or drop whose semantics we could expose, and the OAuth endpoint is
+marked deprecated for removal in the spec that defines it. The three read-only namespace routes are
+the one open question — no client we plan to run calls them, but nobody has checked whether Spark
+3.5 probes a namespace above the Iceberg client layer, and §5.2 names the one experiment that
+decides whether they move ahead of `rename-view`.
+
+Two details in the routes we already serve also get verdicts here. `listViews` must return every
+identifier for a request carrying no `pageToken`, which is an obligation the persistence change
+inherits rather than work available today, and `GET /v1/config` ignoring the `warehouse` parameter is
+accepted as a permanent deviation for a server with one unnamed warehouse (§6).
 
 **Status:** proposal. Nothing here is implemented; the harness in §4 does not exist yet.
 **Branch:** `claude/iceberg-rest-spec-compliance-l0s2ju`.
 **Companions:** [views-iceberg-rest-compliance.md](views-iceberg-rest-compliance.md) (the server
-surface this document tests) and [views-client-plugin-plan.md](views-client-plugin-plan.md) (the
-client that consumes it). Read the first one before this.
+surface this document tests) · [views-client-plugin-plan.md](views-client-plugin-plan.md) (the
+client that consumes it) · [views-docker-rest-tests-plan.md](views-docker-rest-tests-plan.md)
+(black-box HTTP conformance against the deployed container — it owns the wire-level `message`,
+`type` and `endpoints` assertions that §5.1 and the persistence prerequisite will both invalidate;
+see §5.1) · [views-spark-docker-itests-plan.md](views-spark-docker-itests-plan.md) (its **Stage 3**,
+a real `ViewsService` over a `ViewOperations`, is the "view persistence" every schedule below waits
+on). Read the first one before this.
 **References:** [Iceberg REST Catalog OpenAPI](https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml)
 (line numbers below are `apache/iceberg` `main`, 6026 lines, fetched 2026-08-28) ·
 [`ViewCatalogTests` at 1.5.2](https://github.com/apache/iceberg/blob/apache-iceberg-1.5.2/core/src/test/java/org/apache/iceberg/view/ViewCatalogTests.java)
@@ -52,9 +74,12 @@ client that consumes it). Read the first one before this.
 **Won't, this milestone**
 
 9. Enabling the suite in the default `:services:tables:test` run. Against `ViewsDisabledService`
-   every view-only test fails at its first `create()`; a permanently red suite is not a signal.
-   It lands `@Disabled` with the reason recorded, and the persistence change flips it.
-10. RCK, at any version. §3 and Appendix B.
+   every view-only test fails at its first `create()`; a permanently red suite is not a signal. It
+   lands `@Disabled` with the reason recorded. Persistence alone does **not** flip it — the five
+   rename-only tests would still fail — so the annotation names both persistence and `rename-view`,
+   and §4.3 explains why the alternative is unsatisfiable.
+10. RCK, at any version. Its assertions are the same class we already run, and its fixtures error
+    in setup against this server before any test body executes (§3, Appendix B).
 11. `register-view`, the namespace *write* routes (`createNamespace`, `dropNamespace`,
     `updateProperties`), the whole table surface, and `POST /v1/oauth/tokens`.
 12. Emitting `next-page-token` from `listViews`. The spec forbids paginating a request that carries
@@ -66,7 +91,9 @@ client that consumes it). Read the first one before this.
     this document designs. Every ordering claim in §5 is relative to it.
 14. Bumping the Iceberg dependency to 1.7+. The only thing that would buy is RCK, which §3 rejects
     on other grounds.
-15. Regenerating `docs/specs/catalog.md`, unchanged from the compliance plan's §1.11.
+15. Regenerating `docs/specs/catalog.md`. It needs a booted service and the external `widdershins`
+    tool, and regenerates on the next scheduled spec refresh — the same decision as the compliance
+    plan's §1.11.
 
 ## 2. Context: what exists, and what has judged it
 
@@ -87,19 +114,22 @@ right reason. A conformance suite written by the people who wrote the client tes
 
 ## 3. Options for the conformance evidence
 
-The columns are the must-requirements from §1; the rows are the four ways to get external evidence.
+The columns are must-requirements 1 through 5 from §1, plus what each option costs to wire; must 6
+governs §5's route choices, not this one. The rows are the four ways to get external evidence.
 Row 1 is the recommendation, and row 2 is the one worth reading closely, because RCK is the obvious
-answer and it is the wrong one: it fails requirement 4 not marginally but totally — it never reaches
-a test body against this server.
+answer and it is the wrong one: it fails requirement 4 outright, never reaching a test body against
+this server.
 
 | Option | 1. Iceberg's own code | 2. Runs at 1.5.2.17 | 3. No new lineage/module | 4. Runnable today | 5. Mechanical skips | Cost |
 |---|---|---|---|---|---|---|
 | **1. `ViewCatalogTests` subclass (recommended)** | Yes — the class, unmodified | Yes — published at our exact coordinate | Yes — one `testImplementation` line, classifier on a jar we already resolve | Yes — 10 skip, 28 run and fail with readable diffs | Yes — `tableCatalog()` returning `null` and `requiresNamespaceCreate()` staying `false` are the suite's own hooks | ~40 lines of test code |
-| 2. RCK (`RESTCompatibilityKitViewCatalogTests`) | Yes, but *the same class* — RCK adds no assertion of its own | No — `iceberg-open-api` starts at 1.7.0 | No — a 1.7.x `iceberg-open-api` and its client beside our 1.5.2.17 | **No** — `@BeforeAll` calls `listNamespaces()`; our 404 errors the class in setup | No — `tableCatalog()` is overridden to a non-null `RESTCatalog`, so the 10 table tests cannot skip | Namespaces + full table surface + rename first |
+| 2. RCK (`RESTCompatibilityKitViewCatalogTests`) | Yes, but *the same class* — RCK adds no assertion of its own | No — Apache's `iceberg-open-api` starts at 1.7.0, and the fork's 1.5.2.x `-tests` jar holds no classes (App. B) | No — a 1.7.x `iceberg-open-api` and its client beside our 1.5.2.17 | **No** — by source walkthrough, not by a run: `@BeforeAll` calls `listNamespaces()`, which we answer with a 404, erroring the class in setup | No — `tableCatalog()` is overridden to a non-null `RESTCatalog`, so the 10 table tests cannot skip | Namespaces + full table surface + rename first |
 | 3. Status quo (our contract tests only) | No | n/a | n/a | n/a | n/a | Zero, and no external evidence ever |
 | 4. RCK later, after the full surface | Yes | No | No | Later, by definition | No | The entire table domain re-projected onto the Iceberg wire |
 
-**The verdict is option 1, and the deciding fact is byte identity.** `RESTCompatibilityKitViewCatalogTests`
+**The verdict is option 1, and column 4 is what decides it: RCK never reaches a test body against
+this server, while the subclass produces a per-test verdict today.** Byte identity is why paying
+RCK's cost would buy nothing even if it ran. `RESTCompatibilityKitViewCatalogTests`
 extends `ViewCatalogTests<RESTCatalog>` and contributes four hook overrides, a `@BeforeAll`, a
 `@BeforeEach` and an `@AfterAll` — not one assertion about view behavior. The assertions all live in
 `ViewCatalogTests`, and that class is *the same file*: `ViewCatalogTests.java` is byte-identical
@@ -118,7 +148,9 @@ errors in setup and reports zero tests, not 28 failures. Its `@BeforeEach` calls
 `listViews` → `dropView` → `dropNamespace`. Its `requiresNamespaceCreate()` defaults to **true**, and
 its `tableCatalog()` returns the same non-null `RESTCatalog`, so the 10 cross-entity tests lose their
 skip. RCK is a suite for a catalog that already serves namespaces, tables and rename; it is not a
-staged instrument, and there is no configuration that makes it one. (For the record, since it will
+staged instrument. Its properties reach only the survivable part of that: `rck.requires-namespace-create`
+can be set false, but `tableCatalog()` and the `@BeforeAll` namespace assertion are written into the
+class with no property behind them, so no configuration turns it into one. (For the record, since it will
 come up again: RCK reads `CATALOG_`-prefixed env vars — `CATALOG_URI`, `CATALOG_TOKEN`,
 `CATALOG_WAREHOUSE`, `CATALOG_IO__IMPL` — or `rck.`-prefixed system properties, and `rck.local`
 defaults to true, booting a local reference server unless explicitly set false.)
@@ -129,9 +161,11 @@ Appendix B carries the rest of the RCK evidence.
 
 ### 4.1 What the suite is
 
-`ViewCatalogTests` is an abstract JUnit 5 class introduced in Iceberg 1.5.0. It declares 38 `@Test`
-methods — 39 executions, because `createOrReplaceView` is a `@ParameterizedTest` over
-`@ValueSource(booleans = {false, true})` — and its whole contract is 27 lines (1.5.2 source, 48-74):
+`ViewCatalogTests` is an abstract JUnit 5 class introduced in Iceberg 1.5.0. It declares 38 test
+methods — 37 annotated `@Test` and one `@ParameterizedTest` (`createOrReplaceView`, over
+`@ValueSource(booleans = {false, true})`), for 39 executions — and its **declared** contract is 27
+lines (1.5.2 source, 48-74). Read §4.2 before treating those 27 lines as the whole contract; the
+undeclared half is that the catalog is empty when each test begins.
 
 ```java
 public abstract class ViewCatalogTests<C extends ViewCatalog & SupportsNamespaces> {
@@ -149,11 +183,12 @@ blocks, and the class contains no `listNamespaces`, `namespaceExists` or `dropNa
 — so with the default `false`, the suite never touches a namespace route. Second, 10 methods open
 with `Assumptions.assumeThat(tableCatalog()).as("Only valid for catalogs that support tables").isNotNull()`
 (lines 294, 324, 352, 382, 415, 448, 478, 658, 693, 788), so returning `null` makes JUnit **abort them
-as skipped**, not failed. The 7 `rename*` methods have no such guard.
+as skipped**, not failed. Five of the 7 `rename*` methods have no such guard; the other two
+(658, 693) are among the ten above.
 
 `RESTCatalog` satisfies the type bound (`implements Catalog, ViewCatalog, SupportsNamespaces, …`),
 and the class needs nothing beyond iceberg-core, relocated Guava, AssertJ and `junit-jupiter-params`
-— all four already on the `services/tables` test classpath (`build.gradle:101-105`, plus
+— all four already on the `services/tables` test classpath (root `build.gradle:101-105`, plus
 `spring-boot-starter-test` from the Boot conventions). It is compiled at class-file major 52
 (Java 8), matching `sourceCompatibility = VERSION_1_8`.
 
@@ -177,19 +212,54 @@ And a subclass, in the existing embedded-server test package:
 
 ```java
 // services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/
-@SpringBootTest(classes = SpringH2Application.class, webEnvironment = RANDOM_PORT)
-@Disabled("Enabled by the view-persistence change; see docs/development/views-spec-conformance-plan.md §4.3")
+@SpringBootTest(
+    classes = SpringH2Application.class,
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ContextConfiguration(
+    initializers = {PropertyOverrideContextInitializer.class, AuthorizationPropertiesInitializer.class})
+@Disabled("Enabled only when BOTH view persistence and POST /v1/views/rename have landed; with "
+        + "persistence alone the 5 rename-only tests fail and the suite is permanently red. "
+        + "See docs/development/views-spec-conformance-plan.md §4.3.")
 public class IcebergRestViewCatalogConformanceTest extends ViewCatalogTests<RESTCatalog> {
+
+  private static final List<Namespace> TEST_NAMESPACES =
+      ImmutableList.of(
+          Namespace.of("ns"), Namespace.of("ns1"), Namespace.of("ns2"),
+          Namespace.of("other_ns"), Namespace.of("non_existing"));
 
   @LocalServerPort private int port;
   private RESTCatalog restCatalog;
 
   @BeforeEach
-  void initCatalog() {
+  void initCatalog() throws Exception {
+    // AuthorizationPropertiesInitializer registers DummyTokenInterceptor, which answers 401 before
+    // dispatch unless a Bearer token decodes to DUMMY_CODE. It also enables @Secured, so the whole
+    // suite runs as the single principal DUMMY_ANONYMOUS_USER and asserts nothing about denial.
+    String token = new DummyTokenInterceptor.DummySecurityJWT("DUMMY_ANONYMOUS_USER").buildNoopJWT();
     restCatalog = new RESTCatalog();
     restCatalog.initialize("openhouse", ImmutableMap.of(
         CatalogProperties.URI, "http://localhost:" + port,
-        "header.Authorization", "Bearer " + dummyToken()));   // services/common/.../dummy.token
+        "header.Authorization", "Bearer " + token));
+  }
+
+  /**
+   * ViewCatalogTests assumes an empty catalog at the start of every test — Iceberg's own
+   * TestRESTViewCatalog rebuilds its backend in @BeforeEach and RCK purges in @BeforeEach — but
+   * @SpringBootTest caches one context, and one backing store, across all 38 methods.
+   */
+  @AfterEach
+  void purgeAndClose() throws IOException {
+    try {
+      for (Namespace ns : TEST_NAMESPACES) {
+        try {
+          restCatalog.listViews(ns).forEach(restCatalog::dropView);
+        } catch (NoSuchNamespaceException | NoSuchViewException absent) {
+          // Namespace never materialized, or views are still disabled: nothing to purge.
+        }
+      }
+    } finally {
+      restCatalog.close();
+    }
   }
 
   @Override protected RESTCatalog catalog() { return restCatalog; }
@@ -201,10 +271,36 @@ public class IcebergRestViewCatalogConformanceTest extends ViewCatalogTests<REST
 }
 ```
 
+**The `@AfterEach` is not optional, and an earlier draft of this plan omitted it.** §4.1 quotes
+`ViewCatalogTests`' 27-line hook surface as though it were the whole contract. It is not: the
+undeclared half is that the catalog is empty when each test starts. Nine of the 38 tests leave a
+view behind — `createViewThatAlreadyExists`, `createViewConflict`, `renameViewNamespaceMissing`,
+`renameViewTargetAlreadyExistsAsView`, `concurrentReplaceViewVersion` and the three
+`testSqlFor*` methods — and 23 open by asserting the view does *not* exist. JUnit 5's default
+method order is deterministic but unspecified, so whenever a leaking test sorts ahead of
+`basicCreateView`, that test fails on its first line with a diff that says nothing about the
+server, on some machines and not others. Every in-tree subclass of this class supplies the reset;
+the plan cited RCK's `purgeCatalogTestEntries` twice as hostile machinery without noticing it is
+the machinery this subclass needs.
+
+**The context wiring is the module's convention, not decoration.** Ten of the twelve
+application-booting tests in `e2e/h2` carry the same two initializers.
+`PropertyOverrideContextInitializer` is what points `cluster.storage.root-path` at a fresh temp
+directory — which matters the moment persistence writes metadata — and
+`AuthorizationPropertiesInitializer` is what sets
+`cluster.security.token.interceptor.classname`, defaulted to `null` by `ClusterProperties`.
+Without the second, the `Authorization` header is inert decoration; with it, `@Secured` is live.
+The suite takes the second option and runs as one authenticated principal.
+
 `header.Authorization` rather than the REST `token` property, for the same reason as the client
-plugin (§5.2 there): the OAuth2 session machinery must stay out of the loop. The token is the
-existing `dummy.token` resource the Spark fixtures already use
-(`services/common/src/main/resources/dummy.token`, on this module's classpath).
+plugin (§5.2 there): the OAuth2 session machinery must stay out of the loop.
+
+Two mechanical notes for whoever writes this. `webEnvironment = RANDOM_PORT` has **no precedent in
+this module** — `grep -rn 'webEnvironment\|LocalServerPort' services/tables/src/test/java` returns
+nothing, because every existing test is MockMvc — so the fallback below is likelier than it looks.
+And there is no `dummyToken()` helper anywhere in the repository; the four existing consumers of
+`dummy.token` each read the classpath resource with their own idiom, none reachable from
+`services/tables`, which is why the snippet above builds the JWT directly.
 
 Host it in `services/tables` rather than in a new module or in
 `integrations/java/iceberg-1.5/openhouse-java-itest`: the suite is evidence about the server, it
@@ -213,25 +309,64 @@ If `webEnvironment = RANDOM_PORT` turns out to fight the H2 test application, th
 `OpenHouseLocalServer` from `tables-test-fixtures` (embedded Tomcat, OS-assigned port,
 `getPort()`), which the Spark integration tests already boot the same way.
 
-### 4.3 What the run reports, at each stage
+### 4.3 What the run should report, at each stage
 
-This is the schedule the `@Disabled` annotation is keyed to. The middle row is the one that matters:
-it is the milestone where the suite starts being evidence rather than a harness check.
+These counts are derived from the suite's source, not from a run; §7 is how to turn the first row
+into a measurement. The `@Disabled` annotation is keyed to this schedule, and the row that matters is
+`rename-view` served, because that is the milestone that removes the annotation.
 
 | Stage | Skipped | Failing | Passing |
 |---|---|---|---|
-| Today (`ViewsDisabledService`) | 10 (table-guarded) | 28 | 0 whole methods |
-| View persistence lands | 10 | 5 (rename-only) | up to 23 |
-| `rename-view` served | 10 | 0 | up to 28 |
+| Today (`ViewsDisabledService`) | 10 (table-guarded) | 28 | 1 — `createViewErrorCases`, client-side only |
+| View persistence lands (suite stays `@Disabled`) | 10 | 5 (rename-only) | up to 23, run manually per §7 |
+| `rename-view` served — **the milestone that removes `@Disabled`** | 10 | 0 | up to 28 |
 | Table surface served (not planned) | 0 | — | up to 38 |
 
+**Why persistence alone does not enable the suite.** An earlier draft had the persistence change
+delete the `@Disabled`. It cannot: at that stage the five rename-only tests fail, requirement 5
+forbids annotating individual methods `@Disabled`, and `ViewCatalogTests` publishes no hook that
+skips rename — so the three constraints are jointly unsatisfiable and `:services:tables:test` would
+go from green to permanently red. The annotation therefore names *both* milestones, and the stage-2
+row is a manual-run state rather than a shipping one.
+
 The 38 methods partition as: 10 table-guarded, 7 rename, 2 of which are both, leaving 5 rename-only
-and 23 view-only. Against today's stub, no method passes end to end — but the *leading* assertion of
-most view-only tests, `assertThat(catalog().viewExists(identifier)).as("View should not exist").isFalse()`,
-does pass, because 1.5.2's `viewExists` is the `ViewCatalog` default (`loadView`, catch
-`NoSuchViewException`) and our views-disabled 404 renders exactly that type. Each test then dies at
-its first `.create()`. That is the harness check requirement 4 asks for: setup works, the client
-reaches us, our error envelope is understood, and the failures are all in one place.
+and 23 view-only. Against today's stub only `createViewErrorCases` passes, and it never contacts the
+server — its four `assertThatThrownBy` blocks all trip `Preconditions` inside `RESTViewBuilder.create()`
+before any HTTP call. The *leading* assertion of most view-only tests,
+`assertThat(catalog().viewExists(identifier)).as("View should not exist").isFalse()`, also passes.
+Each test then dies at its first `.create()`.
+
+That is the harness check requirement 4 asks for — but read the **failures**, not the leading
+assertion, to get it. `viewExists` is the `ViewCatalog` default over `loadView`, and 1.5.2's
+`RESTSessionCatalog.loadView` converts any `RESTException` into `NoSuchViewException`, so that
+assertion passes against a malformed envelope, a 500 and a connection reset alike. The envelope is
+proven by every test dying at `.create()` with `NoSuchNamespaceException: Views are disabled` — the
+per-route type the compliance doc specifies — rather than with a `RESTException`.
+
+**The `@Disabled` needs something that trips when its trigger arrives.** Otherwise the class lands
+disabled, nothing in the repository notices when persistence lands, and a 38-test deliverable becomes
+dead code — the exact surface requirement 5 exists to prevent, reintroduced one level up. The
+checkable half is a guard test in the same package; the human half is a row in the execution
+checklist, which the orchestrator owns.
+
+```java
+/** Trips when the stub is replaced, so the @Disabled conformance suite cannot be forgotten. */
+@SpringBootTest
+@ContextConfiguration(initializers = PropertyOverrideContextInitializer.class)
+public class ConformanceSuiteReenableTriggerTest {
+
+  @Autowired private ViewsService viewsService;
+
+  @Test
+  void viewsStillStubbedSoTheConformanceSuiteMayStayDisabled() {
+    assertThat(viewsService)
+        .as("ViewsDisabledService has been replaced. Serve POST /v1/views/rename, then delete the"
+            + " @Disabled on IcebergRestViewCatalogConformanceTest, re-baseline §4.3, and delete"
+            + " this test.")
+        .isInstanceOf(ViewsDisabledService.class);
+  }
+}
+```
 
 Two opt-outs need a decision when persistence lands, and both are legitimate per-implementation
 declarations rather than concealed failures. `overridesRequestedLocation()` gates location assertions
@@ -243,10 +378,10 @@ a failed requirement server-side.
 
 ## 5. Remaining spec surface, in the order worth serving it
 
-Everything below except the two items in §6 sits *after* view persistence: a rename route over a
+Every surface in the table below sits *after* view persistence: a rename route over a
 catalog that cannot hold a view renames nothing, and every conformance test that would exercise
 these fails on `create()` first regardless. The table's second column is the whole argument — an
-item with nothing in it does not get built. `rename-view` is the only row above the line.
+item with nothing in it does not get built. `rename-view` is the only row with a Serve verdict.
 
 | Surface | What it unlocks | Relative to persistence | Verdict |
 |---|---|---|---|
@@ -264,12 +399,26 @@ required), accepts an optional `Idempotency-Key`, and answers `204` on success, 
 source view or target namespace, `406` for an unsupported cross-namespace move, `409` when the target
 already exists. It is in the 1.5.2-era spec (line 1358 of the `apache-iceberg-1.5.2` document), and
 1.5.2's `RESTSessionCatalog.renameView` posts to it directly, so our current client generation
-already knows how to call it. Serving it is one route, one service method, and one addition to
+already knows how to call it. Wiring it is one route, one service method, and one addition to
 `IcebergRestViewPaths.IMPLEMENTED_ENDPOINTS` — that last part is not optional for 1.7+ clients, which
-refuse to attempt an operation whose endpoint we do not advertise.
+refuse to attempt an operation whose endpoint we do not advertise. Mount it un-prefixed, at
+`POST /v1/views/rename`, matching the seven routes we already serve, while advertising the spec's
+templated form in `IMPLEMENTED_ENDPOINTS`.
 
-The client plugin currently throws `UnsupportedOperationException` from `renameView` on both gate
-states, deliberately matching this server's scope (plugin plan §5.4). Serving the route is what
+**But "one route, one service method" understates it by three semantic decisions,** and converting
+all five rename tests needs all three. `renameViewNamespaceMissing` requires a 404
+`NoSuchNamespaceException` for a rename into an absent namespace — and OpenHouse databases are
+implicit, brought into existence by creating a table, so no write path today has a "does this
+database exist" answer to give. That has to be defined, probably over `DatabasesService`.
+`renameViewUsingDifferentNamespace` requires cross-namespace moves to **succeed**; the spec permits
+refusing with 406, but the test does not. And `renameViewTargetAlreadyExistsAsView` pins the 409
+message verbatim (§6.3).
+
+Two assertions in the black-box plan also retire when this lands: its `/v1/config` `endpoints` array
+is pinned in order to seven entries, and an eighth breaks it.
+
+The client plugin currently throws `UnsupportedOperationException` from `renameView` whether views
+are enabled or disabled, deliberately matching this server's scope (plugin plan §5.4). Serving the route is what
 retires that decision.
 
 ### 5.2 Namespaces block nothing, and the one thing that might is unverified
@@ -312,7 +461,8 @@ domain.
 
 ## 6. Two conformance details in what we already serve
 
-Both are checkable now and neither is urgent.
+One is settled today. The other is checkable in the wire layer today but is an obligation the
+persistence change inherits. Neither is urgent.
 
 **Pagination.** The spec is explicit that an absent `pageToken` means *no paging*, not *first page*:
 "Servers that support pagination must return all results in a single response with the value of
@@ -321,8 +471,13 @@ Both are checkable now and neither is urgent.
 no continuation token, so anything we put in `next-page-token` is silently dropped and the client's
 listing truncates. `ViewIdentifiersPage` documents this obligation and `IcebergRestWire.toListViewsJson`
 omits the field on a null token, so the wire layer is right; what is unverified is the service, which
-today throws before producing a page. The persistence change must return all identifiers for an
-un-tokened request, and the conformance suite's `listViews` test is what will catch it if it does not.
+today throws before producing a page.
+
+The obligation itself belongs to the compliance plan, which already states it ("with no `pageToken`,
+return every identifier in one page and omit `next-page-token`"). What this document adds is who
+checks it: the conformance suite's `listViews` test is the only thing that will catch a persistence
+change that paginates eagerly. Note this is not work available today — it is an obligation the
+persistence change inherits, which is why §5's "everything sits after persistence" applies here too.
 
 **`GET /v1/config` ignores `warehouse`.** The spec defines a `404 NoSuchWarehouseError` for an
 unknown warehouse (line 166); `IcebergRestViewsController.getConfig()` takes no query parameter and
@@ -347,11 +502,22 @@ operations on `Endpoint.check`, and when a server sends no `endpoints`, the assu
 
 ## 7. Verification
 
-**Wiring, start to finish.** Add the one `testImplementation` line from §4.2 to
-`services/tables/build.gradle`; add `IcebergRestViewCatalogConformanceTest` from §4.2 under
-`services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/`; run it explicitly, since it
-lands `@Disabled`. A Gradle `-D` reaches the daemon, not the forked test JVM, so deactivate the
-condition through the test task (or just delete the annotation locally):
+**Step 0. Baseline the test count, before touching `build.gradle`.** Pulling the whole `-tests.jar`
+puts Iceberg's own `TestRESTCatalog`, `TestJdbcCatalog` and friends on the test classpath. Gradle's
+`Test` task scans `testClassesDirs` — the module's own compiled test classes — and not classpath
+jars, and neither the root `tasks.withType(Test)` block (root `build.gradle:108-131`) nor
+`services/tables/build.gradle` overrides `scanForTestClasses` or sets a `filter`, so those classes
+should never execute. Confirm it rather than assume it: run `./gradlew :services:tables:test` **now**
+and note the count (660 today), then run it again after Step 1 and check it is unchanged. If it
+moves, add an explicit `filter { includeTestsMatching "com.linkedin.openhouse.*" }` rather than
+removing the dependency.
+
+**Step 1. Wiring, start to finish.** Add the one `testImplementation` line from §4.2 to
+`services/tables/build.gradle`; add `IcebergRestViewCatalogConformanceTest` and
+`ConformanceSuiteReenableTriggerTest` from §4.2 under
+`services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/`; run the first explicitly,
+since it lands `@Disabled`. A Gradle `-D` reaches the daemon, not the forked test JVM, so deactivate
+the condition through the test task (or just delete the annotation locally):
 
 ```
 ./gradlew :services:tables:test --tests '*IcebergRestViewCatalogConformanceTest'
@@ -359,18 +525,37 @@ condition through the test task (or just delete the annotation locally):
 #   test { systemProperty 'junit.jupiter.conditions.deactivate', 'org.junit*DisabledCondition' }
 ```
 
-Expect 39 executions: 10 aborted with "Only valid for catalogs that support tables", 29 failed
-(28 methods, one of them parameterized twice), 0 passed. Any *error* rather than failure — anything
-in setup, or a `RESTException` about a config bootstrap — is a harness bug, not a server finding.
+Expect 39 executions: 10 aborted with "Only valid for catalogs that support tables", 28 failed, and
+**1 passed** — `createViewErrorCases`, whose four assertions are all client-side `Preconditions`
+inside `RESTViewBuilder.create()` and never reach the server. Every failure must be a
+`NoSuchNamespaceException` at `.create()` carrying `Views are disabled`; any *error* rather than
+failure, and any `RESTException`, is a harness bug rather than a server finding.
 
-**Step 0, before trusting any of the above.** Pulling the whole `-tests.jar` puts Iceberg's own
-`TestRESTCatalog`, `TestJdbcCatalog` and friends on the test classpath. Gradle's `Test` task scans
-`testClassesDirs` — the module's own compiled test classes — and not classpath jars, and neither the
-root `tasks.withType(Test)` block (`build.gradle:107-130`) nor `services/tables/build.gradle`
-overrides `scanForTestClasses` or sets a `filter`, so those classes should never execute. Confirm it
-rather than assume it: run `./gradlew :services:tables:test` before and after adding the dependency
-and check the test count is unchanged (660 today). If it moves, add an explicit
-`filter { includeTestsMatching "com.linkedin.openhouse.*" }` rather than removing the dependency.
+**Step 2. The three musts nothing else catches.** Requirements 1, 2 and 3 are true by construction
+and checked by nothing, so a future Iceberg bump could satisfy should-7 mechanically while quietly
+breaking them. Print the resolved coordinate and confirm it is the one requirement 2 names and the
+one Appendix A hashed:
+
+```
+./gradlew :services:tables:dependencies --configuration testRuntimeClasspath | grep -i iceberg
+#   -> exactly one lineage, com.linkedin.iceberg, at 1.5.2.17
+#   -> no org.apache.iceberg line, and no second version
+```
+
+Run it after every Iceberg bump. It is the only check behind requirements 1, 2 and 3.
+
+**What the persistence change inherits from this plan.** Four items, all blocking a green run, and
+each argued in a different section — collected here because the person who needs them is reading
+their own design document, not this one:
+
+| Obligation | Where it is argued |
+|---|---|
+| Return every identifier for a `listViews` request carrying no `pageToken` | §6 |
+| Decide `overridesRequestedLocation()`: `true` if the server assigns view locations itself, `false` only if a client-supplied `location` is honored verbatim | §4.3 |
+| Decide `supportsServerSideRetry()`: `false` unless the commit path retries a failed requirement server-side | §4.3 |
+| Emit the exact error `message` strings Iceberg's handlers copy into the exceptions the tests assert on | Appendix C |
+
+Removing the `@Disabled` is **not** on that list: it waits for `rename-view` as well, per §4.3.
 
 **What a green run would prove**, once persistence lands and the class is enabled: that a real
 Iceberg client, at the version we ship, can create, load, replace, list, drop and version views
@@ -380,15 +565,16 @@ survives a round trip with its schemas, versions and version log intact.
 
 **What it would not prove.** Nothing about namespaces, tables, or any cross-entity rule — those 10
 tests are skipped, and a skip is silent. Nothing about `rename-view` until it is served. Nothing
-about authorization: the suite runs as one principal and asserts nothing about `@Secured`. Nothing
+about authorization beyond the happy path: `@Secured` is live (§4.2 wires the token interceptor), but
+the suite runs as the single principal `DUMMY_ANONYMOUS_USER` and asserts nothing about denial. Nothing
 about pagination beyond a single small page. Nothing about Spark: `ResolveViews`, dialect selection
 and the fall-through posture are the client plugin's integration tests, not this suite's. And
 nothing about clients newer than 1.5.2 — in particular the `endpoints` gating in 1.7+, which no test
 in this repository exercises today.
 
-## Appendix A. Artifact facts, re-verified
+## Appendix A. Artifact facts
 
-Everything in this table was confirmed by download and inspection on 2026-08-28, not from memory. The
+Every value here was confirmed by downloading the artifact and inspecting it on 2026-08-28. The
 first row is the one the recommendation rests on: the artifact we already resolve carries the suite.
 
 | Fact | Value |
@@ -410,7 +596,7 @@ and `…ViewCatalogTests.java`, with `RCKUtils` and `RESTServerExtension` in tha
 `org.apache.iceberg:iceberg-open-api` at 1.7.0 through 1.11.0 on Central, with `tests` and
 `test-fixtures` classifiers and no main jar.
 
-One correction to earlier notes: the LinkedIn fork *does* publish `com.linkedin.iceberg:iceberg-open-api`,
+The LinkedIn fork *does* publish `com.linkedin.iceberg:iceberg-open-api`,
 at 1.5.2.0-rc1 through 1.5.2.20. It does not help. The 1.5.2.17 `-tests.jar` is 6,184 B and contains
 no classes at all — just `META-INF/MANIFEST.MF`, `iceberg-build.properties`, `LICENSE` and `NOTICE`
 — because that module predates RCK. There is no RCK at our pinned version from either publisher.
@@ -425,14 +611,32 @@ calls `namespaceExists`, then `listTables`/`dropTable`, `listViews`/`dropView`, 
 Walked against our seven routes, the first call in `@BeforeAll` lands on the `/v1/**` 404 and the
 class errors before any test body runs.
 
-## Appendix C. Where this document corrects earlier notes
+## Appendix C. Message strings this suite makes part of the wire contract
 
-Recorded so the next reader does not re-derive them: (1) the pure-view test count is **23**, not ~21
-— 38 methods minus 10 table-guarded minus the 5 rename tests that are not also table-guarded;
-(2) `Idempotency-Key` is listed on view replace and drop, not on create-view, so the config-signal
-argument holds but the route list in earlier notes was inverted; (3) `referenced-by` is not
-table-only — it is an optional query parameter on `loadView` too, and ignoring it is still correct;
-(4) the three transaction-based cross-entity tests commit through staged table create/replace, not
-through `POST /v1/{prefix}/transactions/commit`; (5) `supportsServerSideRetry()` gates exactly one
-test (`concurrentReplaceViewVersion`), not a branch in several; (6) `com.linkedin.iceberg` does
-publish an `iceberg-open-api` module, but its tests jar is empty of classes.
+Adopting `ViewCatalogTests` is not purely black-box: Iceberg's error handlers copy our
+`IcebergErrorResponse.message` verbatim into the exception they raise, and several tests then assert
+on that text. `ErrorHandlers.ViewErrorHandler` renders 404 as `NoSuchViewException("%s", message)`
+and 409 as `AlreadyExistsException("%s", message)`; `ViewCommitErrorHandler` renders 409 as
+`CommitFailedException("Commit failed: %s", message)`.
+
+So the persistence change must emit these strings, or the tests that check them fail on wording:
+
+| Assertion | Required server `message` |
+|---|---|
+| `createViewThatAlreadyExists`, `createViewConflict` | contains `View already exists: ns.view` |
+| `renameViewSourceMissing` | starts with `View does not exist: ns.non_existing` |
+| `replaceViewErrorCases`, `replaceViewConflict`, and two others | contains `View does not exist: ns.view` |
+| `concurrentReplaceViewVersion` (retry off) | contains `Cannot commit` |
+| `renameViewNamespaceMissing` | contains `Namespace does not exist: non_existing` |
+| `renameViewTargetAlreadyExistsAsView` | contains `Cannot rename ns.viewOne to ns.viewTwo. View already exists` |
+
+This collides with the black-box plan, which pins those same `message` fields over the wire to
+exactly `Views are disabled` and requires the exact string. Both are correct for their own stage —
+the strings differ because the service behind them differs — but the persistence change touches both
+and the compliance document should own the resulting vocabulary. Until it does, treat this table as
+the handoff.
+
+Note also that five "view-only" tests already depend on the *table* 404's type:
+`RESTViewBuilder.replace()` calls `tableExists` before every `replace()` and `createOrReplace()`, and
+that works only because the unresolved-`/v1` handler renders `type: NotFoundException`, which
+`ErrorHandlers.TableErrorHandler` maps to `NoSuchTableException` — the one type `tableExists` catches.
