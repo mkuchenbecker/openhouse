@@ -81,7 +81,9 @@ allprojects {
 
   def excludedProjects = [
       ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest',
-      ':apps:openhouse-spark-apps-1.5_2.12'
+      ':apps:openhouse-spark-apps-1.5_2.12',
+      // Uses a test-scoped Apache Iceberg 1.11 client, which needs its own (newer) jackson.
+      ':tests:iceberg-rest-catalog-compat'
   ]
 
   if (!excludedProjects.contains(it.path)) {
