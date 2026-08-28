@@ -15,6 +15,7 @@ import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import com.linkedin.openhouse.housetables.e2e.SpringH2HtsApplication;
+import com.linkedin.openhouse.housetables.metrics.ViewMetricsConstant;
 import com.linkedin.openhouse.housetables.model.EntityType;
 import com.linkedin.openhouse.housetables.model.TestHouseTableModelConstants;
 import com.linkedin.openhouse.housetables.model.UserTableRow;
@@ -1157,23 +1158,23 @@ public class UserTablesServiceTest {
         UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).tableIdPattern("t0%").build();
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_LIST_VIEWS_REQUEST,
-        MetricsConstant.HTS_LIST_VIEWS_TIME,
+        ViewMetricsConstant.HTS_LIST_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_LIST_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byDatabase));
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_PAGE_VIEWS_REQUEST,
-        MetricsConstant.HTS_PAGE_VIEWS_TIME,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byDatabase, 0, 2, "tableId"));
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_LIST_VIEWS_REQUEST,
-        MetricsConstant.HTS_LIST_VIEWS_TIME,
+        ViewMetricsConstant.HTS_LIST_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_LIST_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byPattern));
 
     assertMetricsAdvance(
-        MetricsConstant.HTS_PAGE_VIEWS_REQUEST,
-        MetricsConstant.HTS_PAGE_VIEWS_TIME,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_REQUEST,
+        ViewMetricsConstant.HTS_PAGE_VIEWS_TIME,
         () -> userTablesService.getAllUserViews(byPattern, 0, 2, "tableId"));
   }
 
