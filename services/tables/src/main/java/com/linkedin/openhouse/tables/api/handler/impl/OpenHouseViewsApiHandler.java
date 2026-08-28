@@ -43,8 +43,7 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
 
   @Override
   public ApiResponse<String> getConfig() {
-    return jsonResponse(
-        HttpStatus.OK, IcebergRestWire.toCatalogConfigJson(IcebergRestWire.implementedEndpoints()));
+    return jsonResponse(HttpStatus.OK, IcebergRestWire.toCatalogConfigJson());
   }
 
   @Override
@@ -115,6 +114,9 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
     if (viewsService.viewExists(TableIdentifier.of(databaseId, view), actingPrincipal)) {
       return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
     }
+    // Deliberately a throw rather than a 404 return: an absent view goes through the exception
+    // path like every other failure, so it gets the same failure-path service audit event (the
+    // envelope itself is suppressed for HEAD by the exception handler either way).
     throw new ViewApiException(
         ViewErrorCode.NO_SUCH_VIEW, String.format("View %s.%s does not exist", databaseId, view));
   }

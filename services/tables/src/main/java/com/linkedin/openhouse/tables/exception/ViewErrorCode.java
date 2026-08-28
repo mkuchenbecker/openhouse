@@ -69,11 +69,7 @@ public enum ViewErrorCode {
   /**
    * Whether the spec's per-route 404 vocabulary applies: {@code true} for the codes rendered as
    * {@code NoSuchNamespaceException} on create/list but {@code NoSuchViewException} on the per-view
-   * routes.
+   * routes. Lombok's {@code @Getter} derives the {@code isRouteSensitive404()} accessor.
    */
   private final boolean routeSensitive404;
-
-  public boolean isRouteSensitive404() {
-    return routeSensitive404;
-  }
 }

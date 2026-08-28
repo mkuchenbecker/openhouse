@@ -139,18 +139,29 @@ BadRequestException`-typed envelope listing all accumulated violations in `messa
 views-surface `400 BadRequestException` envelopes with fixed messages (parser messages may echo
 the submitted document, and every error message is copied into audit events).
 
-**The `/v1/**` unresolved-path surface (F3):** the tables service runs with
+**The `/v1/**` request-mapping failure surface (F3):** the tables service runs with
 `throw-exception-if-no-handler-found`, and the global handler renders unknown paths as
 OpenHouse-envelope 400s. The views error rendering owns `/v1/**`:
-`NoHandlerFoundException` under `/v1/**` → `404 NotFoundException` Iceberg envelope (this is
-the "plain 404" for `rename-view`/`register-view` probes); `AccessDeniedException` on the view
-routes → `403 ForbiddenException` envelope with no stacktrace leakage; uncoded infrastructure
-failures → `503 ServiceUnavailableException`; unexpected server faults → `500
-InternalServerError` with a fixed message. 401 stays a bare status: authentication is rejected
-by the token interceptor before dispatch. Non-`/v1` unknown paths keep the legacy
-OpenHouse-envelope 400 byte-for-byte. Advice ordering (`@Order(HIGHEST_PRECEDENCE)` on the
-views-scoped advice, `+1` on the `/v1` unresolved-path advice) beats the un-ordered global
-handler.
+`NoHandlerFoundException` under `/v1/**` → `404 NotFoundException` Iceberg envelope with the
+fixed message `"Route does not exist"` — the requested URL is attacker-chosen text and is never
+echoed into the envelope or audit events; method and path are logged server-side instead (this
+404 is the "plain 404" for `rename-view`/`register-view` probes). A wrong method on a known
+`/v1` route → `405 MethodNotAllowedException` envelope (plus `Allow`); a wrong content type →
+`415 UnsupportedMediaTypeException` envelope (the 405/415 type strings are self-describing —
+the spec has no examples for those statuses). A parameter that cannot bind to its declared
+type (e.g. non-numeric `pageSize`) → `400 BadRequestException` with a fixed message.
+`AccessDeniedException` on the view routes → `403 ForbiddenException` envelope with no
+stacktrace leakage; uncoded infrastructure failures → `503 ServiceUnavailableException`;
+unexpected server faults → `500 InternalServerError` with a fixed message. 401 stays a bare
+status: authentication is rejected by the token interceptor before dispatch. Non-`/v1` paths
+keep their legacy behavior byte-for-byte (the OpenHouse-envelope 400 for unknown paths; the
+framework's bare 405/415 with `Allow`/`Accept` headers). Advice ordering
+(`@Order(HIGHEST_PRECEDENCE)` on the views-scoped advice, `+1` on the `/v1` advice) beats the
+un-ordered global handler. The two view path templates are owned once
+(`IcebergRestViewPaths`) and consumed by the controller mappings, the audit redactor's scope,
+the per-route 404 decision (keyed off the matched-pattern attribute, trailing-slash tolerant)
+and the `/v1/config` endpoints list, so the route shape cannot drift apart across those
+consumers.
 
 ### 3.2 Serialization strategy — use Iceberg's own models and parsers
 

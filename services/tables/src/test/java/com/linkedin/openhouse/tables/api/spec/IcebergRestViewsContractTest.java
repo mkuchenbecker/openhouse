@@ -8,7 +8,9 @@ import com.linkedin.openhouse.tables.model.IcebergRestViewFixtures;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import org.apache.iceberg.MetadataUpdate;
@@ -262,8 +264,7 @@ public class IcebergRestViewsContractTest {
 
   @Test
   public void configBodyDeclaresEmptyMapsAndTheSevenImplementedEndpoints() throws Exception {
-    JsonNode root =
-        JSON.readTree(IcebergRestWire.toCatalogConfigJson(IcebergRestWire.implementedEndpoints()));
+    JsonNode root = JSON.readTree(IcebergRestWire.toCatalogConfigJson());
 
     Assertions.assertEquals(setOf("defaults", "overrides", "endpoints"), fieldNames(root));
     Assertions.assertEquals(0, root.get("defaults").size());
@@ -327,6 +328,52 @@ public class IcebergRestViewsContractTest {
       }
     }
     Assertions.assertEquals(setOf("DATABASE_NOT_FOUND", "VIEWS_DISABLED"), routeSensitive);
+  }
+
+  /**
+   * The golden taxonomy pin, transcribed by hand from the plan document's §3.1 error table —
+   * deliberately not derived from the enum — so changing any code's (status, type) pairing is a
+   * two-file edit: the enum and this literal table (and the plan doc that both mirror).
+   */
+  @Test
+  public void taxonomyMatchesThePlanDocumentLiterally() {
+    Map<String, Object[]> golden = new LinkedHashMap<>();
+    golden.put("NO_SUCH_VIEW", pair(404, "NoSuchViewException"));
+    golden.put("VIEW_ALREADY_EXISTS", pair(409, "AlreadyExistsException"));
+    golden.put("NAME_ALREADY_EXISTS_AS_TABLE", pair(409, "AlreadyExistsException"));
+    golden.put("CONCURRENT_VIEW_MODIFICATION", pair(409, "CommitFailedException"));
+    golden.put("DATABASE_NOT_FOUND", pair(404, "NoSuchNamespaceException"));
+    golden.put("VIEWS_DISABLED", pair(404, "NoSuchNamespaceException"));
+    golden.put("INVALID_VIEW_DEFINITION", pair(400, "BadRequestException"));
+    golden.put("UNSUPPORTED_VIEW_DIALECT", pair(400, "BadRequestException"));
+    golden.put("UNSUPPORTED_VIEW_SCHEMA", pair(400, "BadRequestException"));
+    golden.put("VIEW_ADMISSION_FAILED", pair(400, "ValidationException"));
+    golden.put("REQUIRED_REPRESENTATION_MISSING", pair(400, "ValidationException"));
+    golden.put("DEPENDENCY_CYCLE", pair(400, "ValidationException"));
+    golden.put("MAX_VIEW_DEPTH_EXCEEDED", pair(400, "ValidationException"));
+    golden.put("ADMISSION_SERVICE_UNAVAILABLE", pair(503, "ServiceUnavailableException"));
+
+    Assertions.assertEquals(
+        golden.keySet(),
+        java.util.Arrays.stream(ViewErrorCode.values())
+            .map(Enum::name)
+            .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)),
+        "The enum and the golden table must name exactly the same codes.");
+    for (ViewErrorCode code : ViewErrorCode.values()) {
+      Object[] expected = golden.get(code.name());
+      Assertions.assertEquals(
+          expected[0],
+          code.getHttpStatus().value(),
+          code.name() + " drifted from the plan document's status.");
+      Assertions.assertEquals(
+          expected[1],
+          code.getErrorType(),
+          code.name() + " drifted from the plan document's type.");
+    }
+  }
+
+  private static Object[] pair(int status, String type) {
+    return new Object[] {status, type};
   }
 
   // ---------------------------------------------------------------------------------------------

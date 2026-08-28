@@ -5,10 +5,10 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.linkedin.openhouse.common.audit.ServiceAuditPayloadRedactor;
+import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
 import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.util.AntPathMatcher;
 
 /**
  * Keeps view definitions out of service audit events.
@@ -39,20 +39,11 @@ public class ViewRequestPayloadRedactor implements ServiceAuditPayloadRedactor {
   static final String SCHEMA_FIELD = "schema";
   static final String SQL_FIELD = "sql";
 
-  /** The view collection route, which POST creates against. */
-  private static final String VIEW_COLLECTION_PATTERN = "/v1/namespaces/*/views";
-
-  /** The view item route, which POST replaces against. */
-  private static final String VIEW_ITEM_PATTERN = "/v1/namespaces/*/views/*";
-
-  private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
-
   @Override
   public boolean appliesTo(HttpServletRequest request) {
-    String uri = request.getRequestURI();
-    return uri != null
-        && (PATH_MATCHER.match(VIEW_COLLECTION_PATTERN, uri)
-            || PATH_MATCHER.match(VIEW_ITEM_PATTERN, uri));
+    // The route shape is owned by IcebergRestViewPaths, shared with the controller mappings, so
+    // the redaction scope cannot silently drift away from where the routes actually serve.
+    return IcebergRestViewPaths.isViewRoute(request.getRequestURI());
   }
 
   @Override
@@ -74,7 +65,7 @@ public class ViewRequestPayloadRedactor implements ServiceAuditPayloadRedactor {
       for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
         String key = entry.getKey();
         if (SCHEMA_FIELD.equals(key) || SQL_FIELD.equals(key)) {
-          object.add(key, new JsonPrimitive(REDACTED_VALUE));
+          entry.setValue(new JsonPrimitive(REDACTED_VALUE));
         } else {
           redactInPlace(entry.getValue());
         }

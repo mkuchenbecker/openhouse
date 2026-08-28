@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import java.io.UncheckedIOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +64,13 @@ public final class IcebergRestWire {
   /**
    * Parse a create-view request body with Iceberg's {@link CreateViewRequestParser}.
    *
+   * <p>Only the two failure modes Iceberg raises for caller-supplied text are caught: a document
+   * that parses as JSON but is not a valid request — wrong shapes, missing required fields, a Spark
+   * {@code StructType} document where an Iceberg schema belongs — surfaces as {@link
+   * IllegalArgumentException}, and text that is not JSON at all as an {@link UncheckedIOException}
+   * wrapping Jackson's parse failure. Anything else is a server fault and must propagate to the 500
+   * path rather than be reported to the caller as a bad request.
+   *
    * @param json the raw request body, possibly {@code null} when the caller sent none
    * @return the parsed request
    * @throws ViewApiException 400 {@code BadRequestException}-typed on a missing or unparseable
@@ -70,11 +78,11 @@ public final class IcebergRestWire {
    */
   public static CreateViewRequest parseCreateViewRequest(String json) {
     if (json == null || json.trim().isEmpty()) {
-      throw badRequest(MALFORMED_CREATE_VIEW_REQUEST, null);
+      throw badRequest(MALFORMED_CREATE_VIEW_REQUEST);
     }
     try {
       return CreateViewRequestParser.fromJson(json);
-    } catch (RuntimeException e) {
+    } catch (IllegalArgumentException | UncheckedIOException e) {
       throw badRequest(MALFORMED_CREATE_VIEW_REQUEST, e);
     }
   }
@@ -82,7 +90,8 @@ public final class IcebergRestWire {
   /**
    * Parse a commit-view (replace) request body with Iceberg's {@link UpdateTableRequestParser}: the
    * commit envelope is shared between tables and views in the Iceberg REST protocol, and 1.5.2.17
-   * has no separate {@code CommitViewRequest} class.
+   * has no separate {@code CommitViewRequest} class. The caught failure modes mirror {@link
+   * #parseCreateViewRequest(String)}.
    *
    * @param json the raw request body, possibly {@code null} when the caller sent none
    * @return the parsed request
@@ -91,11 +100,11 @@ public final class IcebergRestWire {
    */
   public static UpdateTableRequest parseCommitViewRequest(String json) {
     if (json == null || json.trim().isEmpty()) {
-      throw badRequest(MALFORMED_COMMIT_VIEW_REQUEST, null);
+      throw badRequest(MALFORMED_COMMIT_VIEW_REQUEST);
     }
     try {
       return UpdateTableRequestParser.fromJson(json);
-    } catch (RuntimeException e) {
+    } catch (IllegalArgumentException | UncheckedIOException e) {
       throw badRequest(MALFORMED_COMMIT_VIEW_REQUEST, e);
     }
   }
@@ -138,12 +147,12 @@ public final class IcebergRestWire {
    * capability advertisement; without it a 1.6+ client would assume the default endpoint set, which
    * is wrong in both directions for this server.
    */
-  public static String toCatalogConfigJson(List<String> endpoints) {
+  public static String toCatalogConfigJson() {
     ObjectNode root = MAPPER.createObjectNode();
     root.putObject("defaults");
     root.putObject("overrides");
     ArrayNode endpointsNode = root.putArray("endpoints");
-    endpoints.forEach(endpointsNode::add);
+    IMPLEMENTED_ENDPOINTS.forEach(endpointsNode::add);
     return root.toString();
   }
 
@@ -169,25 +178,34 @@ public final class IcebergRestWire {
     }
   }
 
-  private static ViewApiException badRequest(String message, RuntimeException cause) {
-    if (cause == null) {
-      return new ViewApiException(ViewErrorCode.INVALID_VIEW_DEFINITION, message);
-    }
-    // Only the exception class is logged: the parser message can echo the submitted document.
-    log.warn("Rejected an unparseable views request: {}", cause.getClass().getName());
+  private static ViewApiException badRequest(String message) {
     return new ViewApiException(ViewErrorCode.INVALID_VIEW_DEFINITION, message);
   }
 
+  private static ViewApiException badRequest(String message, RuntimeException cause) {
+    // Only the exception class is logged; the cause is chained for server-side diagnostics. The
+    // advice never serializes stacks, and the redaction invariant governs messages only.
+    log.warn("Rejected an unparseable views request: {}", cause.getClass().getName());
+    return new ViewApiException(ViewErrorCode.INVALID_VIEW_DEFINITION, message, cause);
+  }
+
+  /**
+   * The seven implemented endpoints in the spec's capability-advertisement format, derived from the
+   * owned path templates in {@link IcebergRestViewPaths}.
+   */
+  private static final List<String> IMPLEMENTED_ENDPOINTS =
+      Collections.unmodifiableList(
+          Arrays.asList(
+              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.CONFIG_TEMPLATE),
+              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE),
+              IcebergRestViewPaths.endpoint("POST", IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE),
+              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
+              IcebergRestViewPaths.endpoint("POST", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
+              IcebergRestViewPaths.endpoint("DELETE", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
+              IcebergRestViewPaths.endpoint("HEAD", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE)));
+
   /** The seven implemented endpoints, in the spec's capability-advertisement format. */
   public static List<String> implementedEndpoints() {
-    return Collections.unmodifiableList(
-        java.util.Arrays.asList(
-            "GET /v1/config",
-            "GET /v1/{prefix}/namespaces/{namespace}/views",
-            "POST /v1/{prefix}/namespaces/{namespace}/views",
-            "GET /v1/{prefix}/namespaces/{namespace}/views/{view}",
-            "POST /v1/{prefix}/namespaces/{namespace}/views/{view}",
-            "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
-            "HEAD /v1/{prefix}/namespaces/{namespace}/views/{view}"));
+    return IMPLEMENTED_ENDPOINTS;
   }
 }

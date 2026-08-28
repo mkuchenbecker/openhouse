@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.tables.model;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import lombok.Builder;
 import lombok.Value;
@@ -17,11 +19,21 @@ import org.apache.iceberg.catalog.TableIdentifier;
  * client's listing.
  */
 @Value
-@Builder
 public class ViewIdentifiersPage {
 
+  /** Never {@code null}: an absent list collapses to empty. Unmodifiable. */
   List<TableIdentifier> identifiers;
 
   /** Opaque continuation token, {@code null} when the listing is complete. */
   String nextPageToken;
+
+  /** Defensively copies the identifier list so the page is deeply immutable. */
+  @Builder
+  private ViewIdentifiersPage(List<TableIdentifier> identifiers, String nextPageToken) {
+    this.identifiers =
+        identifiers == null
+            ? Collections.emptyList()
+            : Collections.unmodifiableList(new ArrayList<>(identifiers));
+    this.nextPageToken = nextPageToken;
+  }
 }

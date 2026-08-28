@@ -42,7 +42,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.test.context.ContextConfiguration;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
@@ -121,8 +120,8 @@ public class IcebergRestViewsControllerTest {
             .build();
 
     mockedHandler = Mockito.mock(ViewsApiHandler.class);
-    IcebergRestViewsController controllerWithMockedHandler = new IcebergRestViewsController();
-    ReflectionTestUtils.setField(controllerWithMockedHandler, "viewsApiHandler", mockedHandler);
+    IcebergRestViewsController controllerWithMockedHandler =
+        new IcebergRestViewsController(mockedHandler);
     mvcWithMockedHandler =
         MockMvcBuilders.standaloneSetup(controllerWithMockedHandler)
             .setControllerAdvice(
@@ -258,6 +257,14 @@ public class IcebergRestViewsControllerTest {
     mvc.perform(route.request()).andExpect(status().isUnauthorized());
   }
 
+  /** 401 stays a bare status: no envelope of either vocabulary is written. */
+  @Test
+  public void aMissingBearerTokenGetsABareStatusWithNoBody() throws Exception {
+    mvc.perform(MockMvcRequestBuilders.get(VIEW_PATH))
+        .andExpect(status().isUnauthorized())
+        .andExpect(content().string(""));
+  }
+
   @ParameterizedTest(name = "{0}")
   @MethodSource("allViewRoutes")
   public void everyRouteRejectsAMalformedBearerTokenWith401(String routeName, RouteCall route)
@@ -302,6 +309,135 @@ public class IcebergRestViewsControllerTest {
         .andExpect(jsonPath("$.error.message", Matchers.startsWith("Malformed CommitViewRequest")));
   }
 
+  /**
+   * The second malformed mode: syntactically valid JSON that is not a valid request document. An
+   * empty object parses as JSON but misses every required field; the failure must carry the same
+   * fixed prefix, pinning that this mode echoes nothing from the parser either.
+   */
+  @Test
+  public void emptyJsonObjectCreateBodyIsA400WithTheFixedPrefix() throws Exception {
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEWS_PATH))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
+        .andExpect(jsonPath("$.error.message", Matchers.startsWith("Malformed CreateViewRequest")));
+  }
+
+  /**
+   * A Spark {@code StructType} document where the Iceberg schema belongs — the engine mistake the
+   * old /v2 surface pinned explicitly — fails inside Iceberg's parser and is reported with the
+   * fixed prefix, never with the parser's message (which would echo the schema document).
+   */
+  @Test
+  public void sparkStructTypeSchemaInCreateBodyIsA400WithTheFixedPrefix() throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper jackson =
+        new com.fasterxml.jackson.databind.ObjectMapper();
+    com.fasterxml.jackson.databind.node.ObjectNode root =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            jackson.readTree(IcebergRestViewFixtures.createViewRequestJson());
+    root.set(
+        "schema",
+        jackson.readTree(
+            "{\"type\": \"struct\", \"fields\": [{\"name\": \"struct_type_marker_column\","
+                + " \"type\": \"string\", \"nullable\": true, \"metadata\": {}}]}"));
+
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEWS_PATH))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(root.toString()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
+        .andExpect(jsonPath("$.error.message", Matchers.startsWith("Malformed CreateViewRequest")))
+        .andExpect(
+            jsonPath(
+                "$.error.message", Matchers.not(Matchers.containsString("struct_type_marker"))));
+  }
+
+  /** The commit-route analogue: valid JSON, wrong shape for the field. */
+  @Test
+  public void wrongShapedCommitBodyIsA400WithTheFixedPrefix() throws Exception {
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEW_PATH))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"requirements\": 3}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
+        .andExpect(jsonPath("$.error.message", Matchers.startsWith("Malformed CommitViewRequest")));
+  }
+
+  @Test
+  public void missingCommitBodyIsA400BadRequestEnvelope() throws Exception {
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEW_PATH)).contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
+        .andExpect(jsonPath("$.error.message", Matchers.startsWith("Malformed CommitViewRequest")));
+  }
+
+  /**
+   * Pins the UTF-8 wire decode: SQL of {@code MAX_VIEW_SQL_BYTES / 2} two-byte characters is
+   * exactly at the byte cap under correct UTF-8 decoding, so the request passes validation and
+   * reaches the disabled service's 404. Under an ISO-8859-1 mis-decode every character becomes two
+   * characters (four UTF-8 bytes on re-encode), which would trip the cap and 400 instead.
+   */
+  @Test
+  public void multibyteSqlIsDecodedAsUtf8OnTheWire() throws Exception {
+    char[] sql =
+        new char
+            [com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_SQL_BYTES / 2];
+    java.util.Arrays.fill(sql, 'é');
+    String body =
+        IcebergRestViewFixtures.createViewRequestJson(
+            org.apache.iceberg.rest.requests.ImmutableCreateViewRequest.builder()
+                .from(IcebergRestViewFixtures.createViewRequest())
+                .viewVersion(
+                    IcebergRestViewFixtures.viewVersionWithRepresentations(
+                        IcebergRestViewFixtures.representation("spark", new String(sql))))
+                .build());
+
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEWS_PATH))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.type", Matchers.is(NO_SUCH_NAMESPACE_TYPE)))
+        .andExpect(jsonPath("$.error.message", Matchers.is(VIEWS_DISABLED_MESSAGE)));
+  }
+
+  /** A parameter that cannot bind to its declared type is the same client mistake as a 400. */
+  @Test
+  public void nonNumericPageSizeIsA400BadRequestEnvelope() throws Exception {
+    mvc.perform(authed(MockMvcRequestBuilders.get(VIEWS_PATH + "?pageSize=abc")))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error.type", Matchers.is("BadRequestException")))
+        .andExpect(jsonPath("$.error.code", Matchers.is(400)))
+        // Fixed message: binding failures echo the offending value.
+        .andExpect(jsonPath("$.error.message", Matchers.not(Matchers.containsString("abc"))));
+  }
+
+  /** A known /v1 route probed with a method it does not serve: 405 in the spec envelope. */
+  @Test
+  public void unsupportedMethodOnAViewRouteIsA405Envelope() throws Exception {
+    mvc.perform(authed(MockMvcRequestBuilders.put(VIEW_PATH)))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(jsonPath("$.error.type", Matchers.is("MethodNotAllowedException")))
+        .andExpect(jsonPath("$.error.code", Matchers.is(405)));
+  }
+
+  /** A known /v1 route addressed with a content type it does not consume: 415 envelope. */
+  @Test
+  public void unsupportedContentTypeOnCreateIsA415Envelope() throws Exception {
+    mvc.perform(
+            authed(MockMvcRequestBuilders.post(VIEWS_PATH))
+                .contentType(MediaType.TEXT_PLAIN)
+                .content("SELECT 1"))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(jsonPath("$.error.type", Matchers.is("UnsupportedMediaTypeException")))
+        .andExpect(jsonPath("$.error.code", Matchers.is(415)));
+  }
+
   /** A structurally invalid identifier accumulates every violation into one 400 envelope. */
   @Test
   public void validationFailuresAccumulateIntoOne400Envelope() throws Exception {
@@ -337,6 +473,15 @@ public class IcebergRestViewsControllerTest {
         .andExpect(jsonPath("$.error.type", Matchers.is(NO_SUCH_VIEW_TYPE)));
   }
 
+  /** URL normalization must not flip the per-route 404 vocabulary. */
+  @Test
+  public void trailingSlashOnALoadStillRendersTheItemRouteType() throws Exception {
+    mvc.perform(authed(MockMvcRequestBuilders.get(VIEW_PATH + "/")))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.type", Matchers.is(NO_SUCH_VIEW_TYPE)))
+        .andExpect(jsonPath("$.error.message", Matchers.is(VIEWS_DISABLED_MESSAGE)));
+  }
+
   // ---------------------------------------------------------------------------------------------
   // /v1/** unresolved paths: Iceberg 404; everything else keeps the legacy contract
   // ---------------------------------------------------------------------------------------------
@@ -347,7 +492,9 @@ public class IcebergRestViewsControllerTest {
         .perform(authed(MockMvcRequestBuilders.post("/v1/views/rename")))
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.error.type", Matchers.is("NotFoundException")))
-        .andExpect(jsonPath("$.error.code", Matchers.is(404)));
+        .andExpect(jsonPath("$.error.code", Matchers.is(404)))
+        // Message hygiene: the requested URL is attacker-chosen text and is never echoed.
+        .andExpect(jsonPath("$.error.message", Matchers.is("Route does not exist")));
   }
 
   @Test
@@ -355,7 +502,35 @@ public class IcebergRestViewsControllerTest {
     mvcThrowingOnUnmappedPath
         .perform(authed(MockMvcRequestBuilders.get("/v1/namespaces/d/tables/t")))
         .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.error.type", Matchers.is("NotFoundException")));
+        .andExpect(jsonPath("$.error.type", Matchers.is("NotFoundException")))
+        .andExpect(jsonPath("$.error.message", Matchers.is("Route does not exist")));
+  }
+
+  /** The spec's HEAD routes carry no body on any status, unresolved paths included. */
+  @Test
+  public void unknownV1PathProbedWithHeadIsA404WithNoBody() throws Exception {
+    mvcThrowingOnUnmappedPath
+        .perform(authed(MockMvcRequestBuilders.head("/v1/namespaces/d/tables/t")))
+        .andExpect(status().isNotFound())
+        .andExpect(content().string(""));
+  }
+
+  /**
+   * An unresolved-path probe still produces a service audit event: the {@code /v1} advice carries
+   * the {@code AuditedResponseRenderer} marker, and the audited URI maps to the tables service.
+   */
+  @Test
+  public void unknownV1PathProbeProducesAServiceAuditEvent() throws Exception {
+    mvcThrowingOnUnmappedPath.perform(
+        authed(MockMvcRequestBuilders.get("/v1/namespaces/d/tables/t")));
+
+    ServiceAuditEvent event = capturedAuditEvent();
+    Assertions.assertEquals(404, event.getStatusCode());
+    Assertions.assertEquals("Route does not exist", event.getResponseErrorMessage());
+    Assertions.assertEquals(
+        com.linkedin.openhouse.common.audit.model.ServiceName.TABLES_SERVICE,
+        event.getServiceName(),
+        "The Iceberg REST paths must attribute to the tables service in audit events.");
   }
 
   /** The retired /v2 views surface no longer resolves, and keeps the legacy rendering. */
@@ -488,6 +663,13 @@ public class IcebergRestViewsControllerTest {
     ServiceAuditEvent event = capturedAuditEvent();
     Assertions.assertEquals(
         404, event.getStatusCode(), "Precondition: the disabled service rejects the create.");
+    Assertions.assertEquals(
+        VIEWS_DISABLED_MESSAGE,
+        event.getResponseErrorMessage(),
+        "The audited failure message is extracted from the Iceberg envelope.");
+    Assertions.assertEquals(
+        com.linkedin.openhouse.common.audit.model.ServiceName.TABLES_SERVICE,
+        event.getServiceName());
     JsonElement payload = event.getRequestPayload();
     Assertions.assertNotNull(payload);
     JsonObject payloadObject = payload.getAsJsonObject();

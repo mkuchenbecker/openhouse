@@ -18,6 +18,12 @@ import org.apache.iceberg.view.ViewVersion;
  * envelopes ({@code CreateViewRequest}, {@code UpdateTableRequest}). Unwrapping is the API
  * handler's job, which keeps this seam reusable by a future non-REST caller and keeps wire-shape
  * churn out of the service contract.
+ *
+ * <p><b>Failure contract:</b> every method reports failures as {@link
+ * com.linkedin.openhouse.tables.exception.ViewApiException} carrying the {@link
+ * com.linkedin.openhouse.tables.exception.ViewErrorCode} named in its {@code @throws} clause — that
+ * taxonomy is what the exception handler renders as the spec's status and error type, so a future
+ * real implementation must not substitute another vocabulary.
  */
 public interface ViewsService {
 
@@ -27,6 +33,9 @@ public interface ViewsService {
    * @param identifier view identifier (single-level namespace plus view name)
    * @param actingPrincipal authenticated user
    * @return the complete current view metadata
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code NO_SUCH_VIEW},
+   *     {@code DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (all rendered {@code
+   *     NoSuchViewException}/404 on this route)
    */
   ViewMetadata loadView(TableIdentifier identifier, String actingPrincipal);
 
@@ -36,6 +45,9 @@ public interface ViewsService {
    * @param identifier view identifier
    * @param actingPrincipal authenticated user
    * @return true iff the view exists and the principal may know that
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code NO_SUCH_VIEW},
+   *     {@code DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (the route renders every failure as a
+   *     bodyless 404)
    */
   boolean viewExists(TableIdentifier identifier, String actingPrincipal);
 
@@ -52,6 +64,9 @@ public interface ViewsService {
    * @param pageSize requested page size, or {@code null} when the caller did not specify one
    * @param actingPrincipal authenticated user
    * @return one page of identifiers plus the continuation token
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code
+   *     DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (rendered {@code
+   *     NoSuchNamespaceException}/404 on this route)
    */
   ViewIdentifiersPage listViews(
       String databaseId, String pageToken, Integer pageSize, String actingPrincipal);
@@ -68,6 +83,13 @@ public interface ViewsService {
    * @param properties user view properties (reserved keys already rejected by validation)
    * @param actingPrincipal authenticated user
    * @return the complete metadata of the created view
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code
+   *     DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (rendered {@code
+   *     NoSuchNamespaceException}/404 on this route), {@code VIEW_ALREADY_EXISTS} or {@code
+   *     NAME_ALREADY_EXISTS_AS_TABLE} ({@code AlreadyExistsException}/409), or an admission code
+   *     ({@code VIEW_ADMISSION_FAILED}, {@code REQUIRED_REPRESENTATION_MISSING}, {@code
+   *     DEPENDENCY_CYCLE}, {@code MAX_VIEW_DEPTH_EXCEEDED} — {@code ValidationException}/400;
+   *     {@code ADMISSION_SERVICE_UNAVAILABLE} — {@code ServiceUnavailableException}/503)
    */
   ViewMetadata createView(
       TableIdentifier identifier,
@@ -85,6 +107,10 @@ public interface ViewsService {
    * @param updates typed metadata updates to apply
    * @param actingPrincipal authenticated user
    * @return the complete metadata after the commit
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code NO_SUCH_VIEW},
+   *     {@code DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (rendered {@code
+   *     NoSuchViewException}/404 on this route), {@code CONCURRENT_VIEW_MODIFICATION} ({@code
+   *     CommitFailedException}/409 when a requirement fails), or an admission code as on create
    */
   ViewMetadata replaceView(
       TableIdentifier identifier,
@@ -97,6 +123,9 @@ public interface ViewsService {
    *
    * @param identifier view identifier
    * @param actingPrincipal authenticated user
+   * @throws com.linkedin.openhouse.tables.exception.ViewApiException carrying {@code NO_SUCH_VIEW},
+   *     {@code DATABASE_NOT_FOUND} or {@code VIEWS_DISABLED} (rendered {@code
+   *     NoSuchViewException}/404 on this route)
    */
   void dropView(TableIdentifier identifier, String actingPrincipal);
 }

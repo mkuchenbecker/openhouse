@@ -4,10 +4,12 @@ import static com.linkedin.openhouse.common.security.AuthenticationUtils.*;
 
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
+import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import java.nio.charset.StandardCharsets;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -46,7 +48,12 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class IcebergRestViewsController {
 
-  @Autowired private ViewsApiHandler viewsApiHandler;
+  private final ViewsApiHandler viewsApiHandler;
+
+  @Autowired
+  public IcebergRestViewsController(ViewsApiHandler viewsApiHandler) {
+    this.viewsApiHandler = viewsApiHandler;
+  }
 
   @Operation(
       summary = "Catalog configuration",
@@ -65,7 +72,7 @@ public class IcebergRestViewsController {
             description = "Config GET: UNAUTHORIZED")
       })
   @GetMapping(
-      value = "/v1/config",
+      value = IcebergRestViewPaths.CONFIG_TEMPLATE,
       produces = {MediaType.APPLICATION_JSON_VALUE})
   public ResponseEntity<String> getConfig() {
     return toResponseEntity(viewsApiHandler.getConfig());
@@ -97,7 +104,7 @@ public class IcebergRestViewsController {
             description = "View LIST: SERVICE_UNAVAILABLE")
       })
   @GetMapping(
-      value = "/v1/namespaces/{namespace}/views",
+      value = IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE,
       produces = {MediaType.APPLICATION_JSON_VALUE})
   @Secured(value = Privileges.Privilege.LIST_VIEW)
   public ResponseEntity<String> listViews(
@@ -141,7 +148,7 @@ public class IcebergRestViewsController {
             description = "View CREATE: SERVICE_UNAVAILABLE")
       })
   @PostMapping(
-      value = "/v1/namespaces/{namespace}/views",
+      value = IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE,
       consumes = {MediaType.APPLICATION_JSON_VALUE},
       produces = {MediaType.APPLICATION_JSON_VALUE})
   @Secured(value = Privileges.Privilege.CREATE_VIEW)
@@ -181,7 +188,7 @@ public class IcebergRestViewsController {
             description = "View LOAD: SERVICE_UNAVAILABLE")
       })
   @GetMapping(
-      value = "/v1/namespaces/{namespace}/views/{view}",
+      value = IcebergRestViewPaths.VIEW_ITEM_TEMPLATE,
       produces = {MediaType.APPLICATION_JSON_VALUE})
   @Secured(value = Privileges.Privilege.SELECT)
   public ResponseEntity<String> loadView(
@@ -223,7 +230,7 @@ public class IcebergRestViewsController {
             description = "View REPLACE: SERVICE_UNAVAILABLE")
       })
   @PostMapping(
-      value = "/v1/namespaces/{namespace}/views/{view}",
+      value = IcebergRestViewPaths.VIEW_ITEM_TEMPLATE,
       consumes = {MediaType.APPLICATION_JSON_VALUE},
       produces = {MediaType.APPLICATION_JSON_VALUE})
   @Secured(value = Privileges.Privilege.UPDATE_VIEW_METADATA)
@@ -263,16 +270,14 @@ public class IcebergRestViewsController {
             responseCode = "503",
             description = "View DROP: SERVICE_UNAVAILABLE")
       })
-  @DeleteMapping(value = "/v1/namespaces/{namespace}/views/{view}")
+  @DeleteMapping(value = IcebergRestViewPaths.VIEW_ITEM_TEMPLATE)
   @Secured(value = Privileges.Privilege.DELETE_VIEW)
   public ResponseEntity<Void> dropView(
       @Parameter(description = "Namespace identifier", required = true) @PathVariable
           String namespace,
       @Parameter(description = "View name", required = true) @PathVariable String view) {
-    ApiResponse<Void> apiResponse =
-        viewsApiHandler.dropView(namespace, view, extractAuthenticatedUserPrincipal());
-    return new ResponseEntity<>(
-        apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
+    return toVoidResponseEntity(
+        viewsApiHandler.dropView(namespace, view, extractAuthenticatedUserPrincipal()));
   }
 
   @Operation(
@@ -297,22 +302,29 @@ public class IcebergRestViewsController {
             responseCode = "503",
             description = "View EXISTS: SERVICE_UNAVAILABLE")
       })
-  @RequestMapping(method = RequestMethod.HEAD, value = "/v1/namespaces/{namespace}/views/{view}")
+  @RequestMapping(method = RequestMethod.HEAD, value = IcebergRestViewPaths.VIEW_ITEM_TEMPLATE)
   @Secured(value = Privileges.Privilege.SELECT)
   public ResponseEntity<Void> viewExists(
       @Parameter(description = "Namespace identifier", required = true) @PathVariable
           String namespace,
       @Parameter(description = "View name", required = true) @PathVariable String view) {
-    ApiResponse<Void> apiResponse =
-        viewsApiHandler.viewExists(namespace, view, extractAuthenticatedUserPrincipal());
-    return new ResponseEntity<>(
-        apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
+    return toVoidResponseEntity(
+        viewsApiHandler.viewExists(namespace, view, extractAuthenticatedUserPrincipal()));
   }
 
+  /** Forwards status, any handler-supplied headers and the serialized JSON body. */
   private static ResponseEntity<String> toResponseEntity(ApiResponse<String> apiResponse) {
     return ResponseEntity.status(apiResponse.getHttpStatus())
+        .headers(apiResponse.getHttpHeaders())
         .contentType(MediaType.APPLICATION_JSON)
         .body(apiResponse.getResponseBody());
+  }
+
+  /** Forwards status and any handler-supplied headers for the bodyless routes. */
+  private static ResponseEntity<Void> toVoidResponseEntity(ApiResponse<Void> apiResponse) {
+    return ResponseEntity.status(apiResponse.getHttpStatus())
+        .headers(apiResponse.getHttpHeaders())
+        .build();
   }
 
   /**
@@ -322,6 +334,6 @@ public class IcebergRestViewsController {
    * UTF-8 by RFC 8259.
    */
   private static String utf8Body(byte[] body) {
-    return body == null ? null : new String(body, java.nio.charset.StandardCharsets.UTF_8);
+    return body == null ? null : new String(body, StandardCharsets.UTF_8);
   }
 }

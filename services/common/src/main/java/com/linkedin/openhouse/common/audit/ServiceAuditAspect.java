@@ -5,6 +5,7 @@ import static com.linkedin.openhouse.common.security.AuthenticationUtils.extract
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.metrics.micrometer.MetricsReporter;
 import com.linkedin.openhouse.common.api.spec.ErrorResponseBody;
@@ -222,16 +223,30 @@ public class ServiceAuditAspect {
     return redacted;
   }
 
-  /** The audited failure message of an Iceberg REST error envelope, or null when unparseable. */
-  private static String extractIcebergEnvelopeMessage(String body) {
+  /**
+   * The audited failure message of an Iceberg REST error envelope ({@code {"error": {"message":
+   * ...}}}), or null when the body is not such a document. Package-private for direct unit
+   * coverage.
+   */
+  static String extractIcebergEnvelopeMessage(String body) {
+    JsonElement root;
     try {
-      JsonElement root = JsonParser.parseString(body);
-      JsonElement error = root.getAsJsonObject().get("error");
-      JsonElement message = error.getAsJsonObject().get("message");
-      return message.isJsonNull() ? null : message.getAsString();
-    } catch (RuntimeException e) {
+      root = JsonParser.parseString(body);
+    } catch (JsonSyntaxException e) {
       return null;
     }
+    if (root == null || !root.isJsonObject()) {
+      return null;
+    }
+    JsonElement error = root.getAsJsonObject().get("error");
+    if (error == null || !error.isJsonObject()) {
+      return null;
+    }
+    JsonElement message = error.getAsJsonObject().get("message");
+    if (message == null || !message.isJsonPrimitive()) {
+      return null;
+    }
+    return message.getAsString();
   }
 
   private ServiceName getServiceNameFromRequestURI(String uri) {

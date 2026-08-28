@@ -2,10 +2,14 @@ package com.linkedin.openhouse.tables.mock;
 
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
+import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseViewsApiHandler;
+import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
+import com.linkedin.openhouse.tables.services.ViewsService;
 import com.linkedin.openhouse.tables.toggle.TableFeatureToggle;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
@@ -65,11 +69,9 @@ public class MockTablesApplication {
    * read-bridge dependencies, which this slim context deliberately omits.
    */
   @Bean
-  public com.linkedin.openhouse.tables.api.handler.ViewsApiHandler viewsApiHandler(
-      com.linkedin.openhouse.tables.api.validator.ViewsApiValidator viewsApiValidator,
-      com.linkedin.openhouse.tables.services.ViewsService viewsService) {
-    return new com.linkedin.openhouse.tables.api.handler.impl.OpenHouseViewsApiHandler(
-        viewsApiValidator, viewsService);
+  public ViewsApiHandler viewsApiHandler(
+      ViewsApiValidator viewsApiValidator, ViewsService viewsService) {
+    return new OpenHouseViewsApiHandler(viewsApiValidator, viewsService);
   }
 
   /**

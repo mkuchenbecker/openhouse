@@ -1,14 +1,18 @@
 package com.linkedin.openhouse.tables.controller;
 
+import com.linkedin.openhouse.common.audit.AuditedResponseRenderer;
+import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestWire;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import io.swagger.v3.oas.annotations.Hidden;
 import javax.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.ForbiddenException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.exceptions.ServiceUnavailableException;
+import org.springframework.beans.TypeMismatchException;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
@@ -17,9 +21,9 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.AuthorizationServiceException;
-import org.springframework.util.AntPathMatcher;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.HandlerMapping;
 
 /**
  * Error rendering for the Iceberg REST views routes: every failure a views controller method raises
@@ -50,13 +54,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Slf4j
 @Order(Ordered.HIGHEST_PRECEDENCE)
 @RestControllerAdvice(assignableTypes = IcebergRestViewsController.class)
-public class IcebergRestViewsExceptionHandler
-    implements com.linkedin.openhouse.common.audit.AuditedResponseRenderer {
-
-  private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
-
-  /** The per-view routes: load, replace, drop and exists all address a single view. */
-  private static final String VIEW_ITEM_PATTERN = "/v1/namespaces/*/views/*";
+public class IcebergRestViewsExceptionHandler implements AuditedResponseRenderer {
 
   @Hidden
   @ExceptionHandler(ViewApiException.class)
@@ -93,6 +91,23 @@ public class IcebergRestViewsExceptionHandler
   }
 
   /**
+   * A request parameter that could not be bound to its declared type (e.g. a non-numeric {@code
+   * pageSize}) never reaches the handler, so it cannot be reported through validation; it is the
+   * same client mistake and gets the same 400. The message is fixed: binding failures echo the
+   * offending value.
+   */
+  @Hidden
+  @ExceptionHandler(TypeMismatchException.class)
+  public ResponseEntity<String> handleParameterBindingFailure(
+      TypeMismatchException exception, HttpServletRequest request) {
+    return envelope(
+        request,
+        HttpStatus.BAD_REQUEST,
+        BadRequestException.class.getSimpleName(),
+        "Malformed request parameter: a query or path parameter does not have its declared type");
+  }
+
+  /**
    * Anything else is a server fault. The message is fixed: an arbitrary exception's message can
    * carry internals (paths, SQL fragments from lower layers), and unlike the coded paths above it
    * was never written with the redaction invariant in mind.
@@ -112,9 +127,27 @@ public class IcebergRestViewsExceptionHandler
     return errorCode.getErrorType();
   }
 
+  /**
+   * Whether the failing request targeted the per-view route. Keyed off the matched handler pattern
+   * when the dispatcher recorded one — the authoritative answer — with a trailing-slash-tolerant
+   * URI match against the owned pattern as the fallback.
+   */
   private static boolean isViewItemRoute(HttpServletRequest request) {
-    String uri = request.getRequestURI();
-    return uri != null && PATH_MATCHER.match(VIEW_ITEM_PATTERN, uri);
+    Object bestMatchingPattern =
+        request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
+    if (bestMatchingPattern instanceof String
+        && IcebergRestViewPaths.VIEW_ITEM_TEMPLATE.equals(
+            stripTrailingSlash((String) bestMatchingPattern))) {
+      return true;
+    }
+    return IcebergRestViewPaths.isViewItemUri(request.getRequestURI());
+  }
+
+  /** Trailing-slash matches record the pattern with the slash appended; normalize it away. */
+  private static String stripTrailingSlash(String pattern) {
+    return pattern.length() > 1 && pattern.endsWith("/")
+        ? pattern.substring(0, pattern.length() - 1)
+        : pattern;
   }
 
   private static ResponseEntity<String> envelope(

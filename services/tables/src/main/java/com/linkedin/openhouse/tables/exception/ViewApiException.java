@@ -5,16 +5,17 @@ import java.util.Objects;
 import org.springframework.http.HttpStatus;
 
 /**
- * Failure of a /v2 views API operation, carrying the internal {@link ViewErrorCode} that selects
- * the response status.
+ * Failure of an Iceberg REST views API operation, carrying the {@link ViewErrorCode} that selects
+ * both the response status and the {@code type} string serialized into the {@code
+ * IcebergErrorResponse} envelope by the views exception handler.
  *
- * <p>The code is deliberately tables-local and never serialized: {@link #getHttpStatus()} is the
- * only thing {@code services/common} sees, which keeps the error body shape unchanged. The typed
- * {@link #getErrorCode()} getter exists so unit tests can assert the internal taxonomy directly.
+ * <p>The enum itself stays tables-local: what reaches the wire is the status plus the spec error
+ * type the code maps to (with the per-route 404 swap applied by the handler), never the enum name.
+ * The typed {@link #getErrorCode()} getter exists so the handler can resolve the type and so unit
+ * tests can assert the internal taxonomy directly.
  *
  * <p>Messages carried by this exception are copied verbatim into the error response body and into
- * service audit events, so callers must never interpolate SQL text, schema text or a base version
- * token into them.
+ * service audit events, so callers must never interpolate SQL text or schema text into them.
  *
  * <p>The code is required. Without the null check the failure would surface only when {@link
  * #getHttpStatus()} is called, which happens inside the exception handler: the resulting {@code

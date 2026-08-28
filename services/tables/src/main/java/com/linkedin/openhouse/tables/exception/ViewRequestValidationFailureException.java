@@ -4,16 +4,17 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Structural validation failure of a /v2 views request. Accumulated reasons are joined with {@code
- * "; "} exactly like {@link
+ * Structural validation failure of an Iceberg REST views request, rendered as a 400 {@code
+ * BadRequestException}-typed {@code IcebergErrorResponse} envelope. Accumulated reasons are joined
+ * with {@code "; "} exactly like {@link
  * com.linkedin.openhouse.common.exception.RequestValidationFailureException} does for tables, so
  * the two APIs report multiple failures identically.
  *
  * <p>Only 400-mapped codes are accepted, and that is expressed in the type: the constructors take a
- * {@link ViewValidationErrorCode}, which can only name one of the three {@code BAD_REQUEST} codes.
- * A validation failure that is not a bad request is therefore not expressible, rather than
- * representable and rejected at runtime. {@link #getErrorCode()} still reports the corresponding
- * {@link ViewErrorCode}, so status selection is unchanged.
+ * {@link ViewValidationErrorCode}, which can only name one of the three {@code BAD_REQUEST}/{@code
+ * BadRequestException} codes. A validation failure that is not a bad request is therefore not
+ * expressible, rather than representable and rejected at runtime. {@link #getErrorCode()} still
+ * reports the corresponding {@link ViewErrorCode}, so status and type selection are unchanged.
  */
 public final class ViewRequestValidationFailureException extends ViewApiException {
 
