@@ -712,7 +712,9 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
         REST_HEADER_PREFIX + HttpHeaders.USER_AGENT,
         WebClientFactory.USER_AGENT_CLIENT_PRODUCT + "/" + resolveClientVersion());
     String truststore = properties.get(TRUST_STORE);
-    if (isNotEmpty(truststore) && uri != null && uri.toLowerCase(Locale.ROOT).startsWith("https://")) {
+    if (isNotEmpty(truststore)
+        && uri != null
+        && uri.toLowerCase(Locale.ROOT).startsWith("https://")) {
       // May re-fire on each rebuild (token refresh / close-then-reuse); accepted — the asymmetry
       // is worth re-surfacing whenever a fresh embedded client is about to dial out over https.
       log.warn(
