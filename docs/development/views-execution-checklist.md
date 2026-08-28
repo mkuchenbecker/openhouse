@@ -119,3 +119,4 @@ plan doc to match as part of implementation.
 |---|---|
 | 2026-08-28 ~05:5x | Checklist created; lanes P1, S, C launched |
 | 2026-08-28 06:0x | P1 complete: fork PRs [#45](https://github.com/mkuchenbecker/openhouse/pull/45)/[#46](https://github.com/mkuchenbecker/openhouse/pull/46)/[#47](https://github.com/mkuchenbecker/openhouse/pull/47) up at exact upstream SHAs; housetables 291/291, common 15/15, MySQL E2E 23/23. P2 launched |
+| 2026-08-28 06:4x | Lane C complete: [#48](https://github.com/mkuchenbecker/openhouse/pull/48) (client plugin), java-itest 56/56, Spark 3.5 itest 222/222. Review fan-in launched (arch+spec, testing, pedantic-linter). Open Qs for review: TLS warn-vs-fail-fast; embedded-catalog User-Agent |
