@@ -25,6 +25,7 @@ import com.linkedin.openhouse.housetables.model.UserTableRow;
 import com.linkedin.openhouse.housetables.model.UserTableRowPrimaryKey;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.SoftDeletedUserTableHtsJdbcRepository;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.UserTableHtsJdbcRepository;
+import com.linkedin.openhouse.housetables.services.PutResult;
 import com.linkedin.openhouse.housetables.services.UserTablesService;
 import com.linkedin.openhouse.housetables.services.UserViewQuery;
 import io.micrometer.core.instrument.Counter;
@@ -1084,7 +1085,7 @@ public class UserTablesServiceTest {
   public void testGetAllUserViewsWithEmptyQueryReturnsEveryView() {
     seedCanonicalRows("");
 
-    List<UserTableDto> views = userTablesService.getAllUserViews(UserViewQuery.builder().build());
+    List<UserTableDto> views = userTablesService.getAllUserViews(UserViewQuery.allViews());
 
     assertThat(sortedIds(views)).isEqualTo(CANONICAL_VIEW_IDS);
     // Not a database-name projection: every result is a fully identified view.
@@ -1092,7 +1093,7 @@ public class UserTablesServiceTest {
     assertThat(views).allSatisfy(v -> assertThat(v.getEntityType()).isEqualTo(EntityType.VIEW));
 
     Page<UserTableDto> page =
-        userTablesService.getAllUserViews(UserViewQuery.builder().build(), 0, 50, "tableId");
+        userTablesService.getAllUserViews(UserViewQuery.allViews(), 0, 50, "tableId");
     Assertions.assertEquals(3, page.getTotalElements());
     assertThat(pageIds(page)).containsExactlyElementsOf(CANONICAL_VIEW_IDS);
   }
@@ -1101,7 +1102,7 @@ public class UserTablesServiceTest {
   @Test
   public void testGetAllUserViewsFiltersBeforePagination() {
     seedCanonicalRows("");
-    UserViewQuery searchBy = UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).build();
+    UserViewQuery searchBy = UserViewQuery.allViews(ENTITY_TYPE_DB);
 
     assertThat(sortedIds(userTablesService.getAllUserViews(searchBy)))
         .isEqualTo(CANONICAL_VIEW_IDS);
@@ -1125,8 +1126,7 @@ public class UserTablesServiceTest {
   public void testGetAllUserViewsWithPatternFiltersViews() {
     seedCanonicalRows("match_");
     seedTypedRow(ENTITY_TYPE_DB, "nomatch_view", EntityType.VIEW);
-    UserViewQuery searchBy =
-        UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).tableIdPattern("match_%").build();
+    UserViewQuery searchBy = UserViewQuery.matching(ENTITY_TYPE_DB, "match_%");
 
     assertThat(sortedIds(userTablesService.getAllUserViews(searchBy)))
         .containsExactly("match_t01_view", "match_t03_view", "match_t05_view");
@@ -1142,25 +1142,23 @@ public class UserTablesServiceTest {
   // everything else at its boundary. HtsControllerTest's
   // testEntityTypeQueryParameterIsIgnoredOnViewQuery pins the HTTP-level behavior.
 
-  /** A pattern with no database to scope it is rejected, mirroring the API validator's rule. */
+  /** A pattern with no database to scope it cannot exist, mirroring the API validator's rule. */
   @Test
-  public void testViewPatternWithoutDatabaseIsRejected() {
-    UserViewQuery patternOnly = UserViewQuery.builder().tableIdPattern("t0%").build();
-
+  public void testViewPatternWithoutDatabaseIsUnrepresentable() {
+    // The factory methods are the type's only constructors, so a pattern with no database (and
+    // an unpatterned "matching") cannot even be built, mirroring the API validator's rule.
     Assertions.assertThrows(
-        IllegalArgumentException.class, () -> userTablesService.getAllUserViews(patternOnly));
+        IllegalArgumentException.class, () -> UserViewQuery.matching(null, "t0%"));
     Assertions.assertThrows(
-        IllegalArgumentException.class,
-        () -> userTablesService.getAllUserViews(patternOnly, 0, 2, "tableId"));
+        IllegalArgumentException.class, () -> UserViewQuery.matching(ENTITY_TYPE_DB, null));
   }
 
   /** Every view read path is instrumented the same way its table sibling is. */
   @Test
   public void testViewListAndSearchMetricsAreReported() {
     seedCanonicalRows("");
-    UserViewQuery byDatabase = UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).build();
-    UserViewQuery byPattern =
-        UserViewQuery.builder().databaseId(ENTITY_TYPE_DB).tableIdPattern("t0%").build();
+    UserViewQuery byDatabase = UserViewQuery.allViews(ENTITY_TYPE_DB);
+    UserViewQuery byPattern = UserViewQuery.matching(ENTITY_TYPE_DB, "t0%");
 
     assertMetricsAdvance(
         ViewMetricsConstant.HTS_LIST_VIEWS_REQUEST,
@@ -1365,7 +1363,7 @@ public class UserTablesServiceTest {
    */
   @Test
   public void testPutUserViewStampsViewWhenThePayloadIsSilent() {
-    Pair<UserTableDto, Boolean> created =
+    PutResult created =
         userTablesService.putUserView(
             UserTable.builder()
                 .databaseId(ENTITY_TYPE_DB)
@@ -1374,8 +1372,8 @@ public class UserTablesServiceTest {
                 .metadataLocation("/openhouse/entity_type_db/silent_view/v1_metadata.json")
                 .build());
 
-    assertThat(created.getSecond()).isFalse();
-    assertThat(created.getFirst().getEntityType()).isEqualTo(EntityType.VIEW);
+    assertThat(created.isReplacedExisting()).isFalse();
+    assertThat(created.getEntity().getEntityType()).isEqualTo(EntityType.VIEW);
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "silent_view")).hasValue("VIEW");
   }
 

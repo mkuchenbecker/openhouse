@@ -139,12 +139,14 @@ public class UserTablesServiceImpl implements UserTablesService {
 
   @Override
   public List<UserTableDto> getAllUserViews(UserViewQuery userViewQuery) {
+    // A patterned query always carries a databaseId: UserViewQuery's factories are its only
+    // constructors, and matching() requires both parts.
     return JdbcPersistenceFailures.surfacingCorruption(
         () -> {
           if (userViewQuery.getTableIdPattern() == null) {
             return listViews(userViewQuery.getDatabaseId());
           }
-          return listViewsWithPattern(requireDatabaseId(userViewQuery));
+          return listViewsWithPattern(userViewQuery);
         });
   }
 
@@ -156,26 +158,20 @@ public class UserTablesServiceImpl implements UserTablesService {
           if (userViewQuery.getTableIdPattern() == null) {
             return listViews(userViewQuery.getDatabaseId(), page, size, sortBy);
           }
-          return listViewsWithPattern(requireDatabaseId(userViewQuery), page, size, sortBy);
+          return listViewsWithPattern(userViewQuery, page, size, sortBy);
         });
-  }
-
-  /** The API validator enforces the same rule at ingress; this repeats it for direct callers. */
-  private static UserViewQuery requireDatabaseId(UserViewQuery userViewQuery) {
-    if (userViewQuery.getDatabaseId() == null) {
-      throw new IllegalArgumentException(
-          "A view query with a tableIdPattern requires a databaseId");
-    }
-    return userViewQuery;
   }
 
   @Override
   public Pair<UserTableDto, Boolean> putUserTable(UserTable userTable) {
-    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable, EntityType.TABLE));
+    // The legacy pair-shaped signature is preserved; the primitive's named result is unwrapped.
+    PutResult result =
+        JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable, EntityType.TABLE));
+    return Pair.of(result.getEntity(), result.isReplacedExisting());
   }
 
   @Override
-  public Pair<UserTableDto, Boolean> putUserView(UserTable userView) {
+  public PutResult putUserView(UserTable userView) {
     return JdbcPersistenceFailures.surfacingCorruption(() -> put(userView, EntityType.VIEW));
   }
 
@@ -185,7 +181,7 @@ public class UserTablesServiceImpl implements UserTablesService {
    * rejected here so the typed methods establish the invariant their names promise even for callers
    * that bypass the controller's own mismatch check.
    */
-  private Pair<UserTableDto, Boolean> put(UserTable userTable, EntityType entityType) {
+  private PutResult put(UserTable userTable, EntityType entityType) {
     if (userTable.getEntityType() != null
         && userTablesMapper.toEntityType(userTable.getEntityType()) != entityType) {
       throw new RequestValidationFailureException(
@@ -228,7 +224,10 @@ public class UserTablesServiceImpl implements UserTablesService {
       throw concurrentModification(targetUserTableRow, userTable, e);
     }
 
-    return Pair.of(returnedDto, existingUserTableRow.isPresent());
+    return PutResult.builder()
+        .entity(returnedDto)
+        .replacedExisting(existingUserTableRow.isPresent())
+        .build();
   }
 
   private EntityConcurrentModificationException concurrentModification(
