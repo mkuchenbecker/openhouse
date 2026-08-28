@@ -25,6 +25,7 @@ import com.linkedin.openhouse.tables.client.model.UpdateAclPoliciesRequestBody;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.MalformedURLException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -151,16 +152,12 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   /** Prefix for {@link RESTCatalog} properties passed through verbatim as HTTP request headers. */
   private static final String REST_HEADER_PREFIX = "header.";
 
-  /**
-   * Session header name set by {@code WebClientFactory} on the tables WebClient; mirrored on the
-   * embedded REST catalog so audit/telemetry sees the same session identity on view calls. (The
-   * constant is private in {@code WebClientFactory}.)
-   */
-  private static final String SESSION_ID_HEADER = "session-id";
+  /** Version advertised in {@code User-Agent} when no explicit or manifest version is available. */
+  private static final String CLIENT_VERSION_UNKNOWN = "unknown";
 
   /**
    * Embedded Iceberg REST catalog backing the enabled view operations. Constructed and initialized
-   * lazily by {@link #viewsRestCatalog()} on the first view operation — never in {@link
+   * lazily by {@link #getOrCreateViewsRestCatalog()} on the first view operation — never in {@link
    * #initialize} — so its {@code GET /v1/config} bootstrap cannot run, or fail, unless a view
    * operation actually happens. Guarded by {@link #viewsRestCatalogLock}; volatile for the
    * double-checked read.
@@ -168,6 +165,17 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   private volatile RESTCatalog viewsRestCatalog;
 
   private final Object viewsRestCatalogLock = new Object();
+
+  /**
+   * Displaced embedded catalogs awaiting {@link #close()}. A token refresh swaps {@link
+   * #viewsRestCatalog} to a fresh instance but must NOT close the displaced one: an in-flight view
+   * operation may already hold the old reference from the fast-path read, and closing it under the
+   * operation would surface an {@code IllegalStateException} from the closed HTTP client into
+   * Spark's table resolution (which probes {@code loadView}). Instead the displaced instance is
+   * parked here and reclaimed in {@link #close()} — a bounded leak of one idle HTTP client per
+   * token refresh, reclaimed at close()/JVM exit. Guarded by {@link #viewsRestCatalogLock}.
+   */
+  private final List<RESTCatalog> displacedViewsRestCatalogs = new ArrayList<>();
 
   @Override
   public void initialize(String name, Map<String, String> properties) {
@@ -205,7 +213,8 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
         Boolean.parseBoolean(properties.getOrDefault(VIEWS_ENABLED_PROPERTY, "false"));
     if (viewsEnabled) {
       // NOTE: the embedded REST catalog is intentionally NOT constructed here. It is built lazily
-      // on the first view operation (see viewsRestCatalog()) so that a views-endpoint bootstrap
+      // on the first view operation (see getOrCreateViewsRestCatalog()) so that a views-endpoint
+      // bootstrap
       // failure cannot break table operations.
       log.info(
           "OpenHouse view support is ENABLED. View operations delegate to the Iceberg REST "
@@ -227,17 +236,19 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *
    * <p>Also propagates the new token to the embedded views {@link RESTCatalog}: its {@code
    * header.Authorization} is captured immutably at initialization, so the cheapest correct
-   * mechanism is to close and discard the embedded catalog here and let the next view operation
-   * lazily rebuild it from the updated {@code auth-token} property. With views disabled (or no
-   * embedded catalog built yet) this is a no-op.
+   * mechanism is to displace the embedded catalog here and let the next view operation lazily
+   * rebuild it from the updated {@code auth-token} property. The displaced instance is not closed
+   * here (see {@link #displacedViewsRestCatalogs} for the in-flight-operation race this avoids); it
+   * is reclaimed by {@link #close()}. With views disabled (or no embedded catalog built yet) this
+   * is a no-op.
    *
    * @param token
    */
   protected void updateAuthToken(String token) {
     if (token != null && !token.isEmpty()) {
       this.properties.put(AUTH_TOKEN, token);
-      this.apiClient.addDefaultHeader(HttpHeaders.AUTHORIZATION, String.format("Bearer %s", token));
-      closeViewsRestCatalog();
+      this.apiClient.addDefaultHeader(HttpHeaders.AUTHORIZATION, bearerValue(token));
+      displaceViewsRestCatalog();
     }
   }
 
@@ -630,28 +641,12 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   // SparkCatalog treats a non-ViewCatalog (table-only) catalog — no view REST call is ever made.
 
   /**
-   * Guard for the view rename operation ({@link #renameView}). When views are disabled this throws
-   * {@link UnsupportedOperationException}. Reached only when a view already exists (rename resolves
-   * the source view first), which cannot happen while views are disabled, so it is effectively a
-   * safety net for direct (non-Spark) API callers. The create path ({@link #buildView}) instead
-   * throws {@link NoSuchNamespaceException} so {@code SparkCatalog.createView} normalizes it to a
-   * Spark {@code AnalysisException}; the read/probe operations ({@link #loadView}, {@link
-   * #listViews}, {@link #dropView}) each return their "no such view" result so table flows are
-   * unaffected.
-   */
-  private void requireViewsEnabled() {
-    if (!viewsEnabled) {
-      throw new UnsupportedOperationException("OpenHouse views are unsupported.");
-    }
-  }
-
-  /**
    * Lazily builds (and caches) the embedded {@link RESTCatalog} that backs enabled view operations.
    * The first call performs the Iceberg REST {@code GET /v1/config} bootstrap; a bootstrap or
    * configuration failure therefore surfaces as that view operation's failure and leaves nothing
    * cached (the next view operation retries), while table operations are untouched.
    */
-  private RESTCatalog viewsRestCatalog() {
+  private RESTCatalog getOrCreateViewsRestCatalog() {
     RESTCatalog current = viewsRestCatalog;
     if (current != null) {
       return current;
@@ -676,7 +671,11 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *       machinery (token refresh, {@code /v1/oauth/tokens}) is deliberately kept out of the loop.
    *   <li>{@code header.X-Client-Name}/{@code header.session-id}/{@code header.User-Agent}: mirror
    *       the identity headers {@code TablesApiClientFactory} sets on the tables WebClient, so
-   *       audit/telemetry sees the same client identity on view calls.
+   *       audit/telemetry sees the same client identity on view calls. {@code User-Agent} is always
+   *       set ({@code client-version} property, else this jar's manifest Implementation-Version,
+   *       else {@code unknown}); {@code session-id} only when the {@code app-id} property is
+   *       present — fabricating a UUID here would break correlation with the tables WebClient's
+   *       session.
    *   <li>{@code prefix}: unset — the server serves un-prefixed paths and its {@code /v1/config}
    *       returns no override.
    * </ul>
@@ -690,37 +689,34 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    */
   private RESTCatalog buildViewsRestCatalog() {
     Map<String, String> restProperties = new HashMap<>();
-    restProperties.put(CatalogProperties.URI, properties.get(CatalogProperties.URI));
-    String token = properties.getOrDefault(AUTH_TOKEN, null);
-    if (token != null && !token.isEmpty()) {
-      restProperties.put(
-          REST_HEADER_PREFIX + HttpHeaders.AUTHORIZATION, String.format("Bearer %s", token));
+    String uri = properties.get(CatalogProperties.URI);
+    restProperties.put(CatalogProperties.URI, uri);
+    String token = properties.get(AUTH_TOKEN);
+    if (hasText(token)) {
+      restProperties.put(REST_HEADER_PREFIX + HttpHeaders.AUTHORIZATION, bearerValue(token));
     }
-    String clientName = properties.getOrDefault(CLIENT_NAME, null);
-    if (clientName != null) {
+    String clientName = properties.get(CLIENT_NAME);
+    if (hasText(clientName)) {
       restProperties.put(REST_HEADER_PREFIX + WebClientFactory.HTTP_HEADER_CLIENT_NAME, clientName);
     }
-    if (properties.containsKey(CatalogProperties.APP_ID)) {
-      restProperties.put(
-          REST_HEADER_PREFIX + SESSION_ID_HEADER, properties.get(CatalogProperties.APP_ID));
+    String sessionId = properties.get(CatalogProperties.APP_ID);
+    if (hasText(sessionId)) {
+      restProperties.put(REST_HEADER_PREFIX + WebClientFactory.SESSION_ID, sessionId);
     }
-    String clientVersion = properties.getOrDefault(CLIENT_VERSION, null);
-    if (clientVersion != null) {
-      restProperties.put(
-          REST_HEADER_PREFIX + HttpHeaders.USER_AGENT,
-          WebClientFactory.USER_AGENT_CLIENT_PRODUCT + "/" + clientVersion);
-    }
-    String truststore = properties.getOrDefault(TRUST_STORE, "");
-    if (!truststore.isEmpty()) {
+    restProperties.put(
+        REST_HEADER_PREFIX + HttpHeaders.USER_AGENT,
+        WebClientFactory.USER_AGENT_CLIENT_PRODUCT + "/" + resolveClientVersion());
+    String truststore = properties.get(TRUST_STORE);
+    if (hasText(truststore) && uri != null && uri.startsWith("https://")) {
+      // May re-fire on each rebuild (token refresh / close-then-reuse); accepted — the asymmetry
+      // is worth re-surfacing whenever a fresh embedded client is about to dial out over https.
       log.warn(
           "Catalog property '{}' configures the tables WebClient only; the embedded views REST "
               + "catalog trusts the JVM default trust store (javax.net.ssl.trustStore* system "
               + "properties). Ensure the service certificate chains from the JVM trust material.",
           TRUST_STORE);
     }
-    log.info(
-        "Initializing embedded Iceberg REST catalog for OpenHouse views at {}",
-        restProperties.get(CatalogProperties.URI));
+    log.info("Initializing embedded Iceberg REST catalog for OpenHouse views at {}", uri);
     RESTCatalog restCatalog = new RESTCatalog();
     restCatalog.setConf(conf);
     try {
@@ -736,28 +732,70 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     }
   }
 
+  /** True when the value is present and non-empty (the uniform absence test for properties). */
+  private static boolean hasText(String value) {
+    return value != null && !value.isEmpty();
+  }
+
+  /** Formats the {@code Authorization} header value for the given token. */
+  private static String bearerValue(String token) {
+    return String.format("Bearer %s", token);
+  }
+
   /**
-   * Closes and discards the embedded views {@link RESTCatalog}, if one was ever built. The next
-   * enabled view operation lazily rebuilds it from the current catalog properties (see {@link
-   * #updateAuthToken}).
+   * Version advertised in the embedded catalog's {@code User-Agent}: the explicit {@code
+   * client-version} property, else the Implementation-Version stamped into this jar's manifest,
+   * else {@value #CLIENT_VERSION_UNKNOWN} — mirroring {@code WebClientFactory}'s resolution for the
+   * tables WebClient.
    */
-  private void closeViewsRestCatalog() {
+  private String resolveClientVersion() {
+    String clientVersion = properties.get(CLIENT_VERSION);
+    if (hasText(clientVersion)) {
+      return clientVersion;
+    }
+    Package pkg = OpenHouseCatalog.class.getPackage();
+    String manifestVersion = pkg == null ? null : pkg.getImplementationVersion();
+    return hasText(manifestVersion) ? manifestVersion : CLIENT_VERSION_UNKNOWN;
+  }
+
+  /**
+   * Displaces (without closing) the embedded views {@link RESTCatalog}, if one was ever built. The
+   * next enabled view operation lazily rebuilds it from the current catalog properties (see {@link
+   * #updateAuthToken}); the displaced instance is parked in {@link #displacedViewsRestCatalogs} and
+   * reclaimed by {@link #close()}, never closed here — see the field javadoc for the in-flight race
+   * that closing here would create.
+   */
+  private void displaceViewsRestCatalog() {
     synchronized (viewsRestCatalogLock) {
       if (viewsRestCatalog != null) {
-        try {
-          viewsRestCatalog.close();
-        } catch (IOException | RuntimeException e) {
-          log.warn("Failed to close the embedded views REST catalog", e);
-        }
+        displacedViewsRestCatalogs.add(viewsRestCatalog);
         viewsRestCatalog = null;
       }
     }
   }
 
-  /** Closes client-side resources; today that is only the embedded views {@link RESTCatalog}. */
+  /**
+   * Closes client-side resources; today that is the embedded views {@link RESTCatalog} plus any
+   * instances displaced by token refreshes. Not terminal for view support: a subsequent view
+   * operation lazily re-initializes a fresh embedded catalog (accepted resurrection semantics — the
+   * catalog object itself stays usable).
+   */
   @Override
   public void close() {
-    closeViewsRestCatalog();
+    synchronized (viewsRestCatalogLock) {
+      if (viewsRestCatalog != null) {
+        displacedViewsRestCatalogs.add(viewsRestCatalog);
+        viewsRestCatalog = null;
+      }
+      for (RESTCatalog displaced : displacedViewsRestCatalogs) {
+        try {
+          displaced.close();
+        } catch (IOException | RuntimeException e) {
+          log.warn("Failed to close a displaced embedded views REST catalog", e);
+        }
+      }
+      displacedViewsRestCatalogs.clear();
+    }
   }
 
   /**
@@ -788,7 +826,7 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       throw new NoSuchViewException("View does not exist: %s", identifier);
     }
     log.info("Calling loadView with identifier: {}", identifier);
-    return viewsRestCatalog().loadView(identifier);
+    return getOrCreateViewsRestCatalog().loadView(identifier);
   }
 
   /**
@@ -806,7 +844,7 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       return false;
     }
     log.info("Calling viewExists with identifier: {}", identifier);
-    return viewsRestCatalog().viewExists(identifier);
+    return getOrCreateViewsRestCatalog().viewExists(identifier);
   }
 
   /**
@@ -833,7 +871,7 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     // replace/createOrReplace -> load + commit POST with assert-view-uuid requirements + typed
     // updates. The REST client owns commit semantics; location assignment is the server's job (no
     // client-side default location).
-    return viewsRestCatalog().buildView(identifier);
+    return getOrCreateViewsRestCatalog().buildView(identifier);
   }
 
   /**
@@ -844,11 +882,14 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *
    * <p>When enabled, delegates a single {@code GET .../views} to the embedded REST catalog —
    * iceberg 1.5.2.17's {@code RESTSessionCatalog.listViews} does no {@code next-page-token} paging
-   * (the server must return all results when {@code pageToken} is absent). A {@code 404} from the
-   * list route ({@code NoSuchNamespaceException} per the spec, or a {@code NoSuchViewException}
-   * views-disabled envelope) is caught here and answered as an empty list: {@code
-   * SparkCatalog.listViews} catches nothing, so without this {@code SHOW VIEWS} would leak a raw
-   * error instead of showing no views.
+   * (the server must return all results when {@code pageToken} is absent). Any {@code 404} from the
+   * list route is caught here and answered as an empty list: {@code SparkCatalog.listViews} catches
+   * nothing, so without this {@code SHOW VIEWS} would leak a raw error instead of showing no views.
+   * In 1.5.2.17 the route's {@code namespaceErrorHandler} switches on the status code, not the
+   * envelope's {@code type}, so every list-route 404 (the spec's {@code NoSuchNamespaceException}
+   * and the views-disabled {@code NoSuchViewException} envelope alike) arrives client-side as
+   * {@link NoSuchNamespaceException}; {@link NoSuchViewException} is caught too as cheap
+   * future-proofing against a client that starts honoring the envelope type.
    */
   @Override
   public List<TableIdentifier> listViews(Namespace namespace) {
@@ -857,7 +898,7 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     }
     log.info("Calling listViews with namespace: {}", namespace.toString());
     try {
-      return viewsRestCatalog().listViews(namespace);
+      return getOrCreateViewsRestCatalog().listViews(namespace);
     } catch (NoSuchNamespaceException | NoSuchViewException e) {
       log.debug("listViews for namespace {} answered 404; returning empty list", namespace, e);
       return Collections.emptyList();
@@ -877,24 +918,24 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
       return false;
     }
     log.info("Calling dropView with identifier: {}", identifier);
-    return viewsRestCatalog().dropView(identifier);
+    return getOrCreateViewsRestCatalog().dropView(identifier);
   }
 
   /**
    * {@inheritDoc}
    *
-   * <p>A modify operation: when views are disabled this throws {@link
-   * UnsupportedOperationException} via {@link #requireViewsEnabled()}, matching how {@code
-   * SparkCatalog} fails {@code ALTER VIEW ... RENAME} for a non-{@code ViewCatalog} catalog.
-   *
-   * <p>When views are enabled this still throws {@link UnsupportedOperationException}: the server
-   * deliberately does not claim the spec's {@code rename-view} route (a plain 404), and delegating
-   * would turn that 404 into a misleading {@link NoSuchViewException}.
+   * <p>Unsupported in both gate states, so no gate check is needed: when views are disabled this
+   * matches how {@code SparkCatalog} fails {@code ALTER VIEW ... RENAME} for a non-{@code
+   * ViewCatalog} catalog, and when enabled the server deliberately leaves the spec's {@code
+   * rename-view} route unclaimed (a plain 404) — delegating would only turn that 404 into a
+   * misleading {@link NoSuchViewException}.
    */
   @Override
   public void renameView(TableIdentifier from, TableIdentifier to) {
-    requireViewsEnabled();
-    throw new UnsupportedOperationException("Renaming views is not supported");
+    throw new UnsupportedOperationException(
+        "Renaming views is not supported by OpenHouse (regardless of the "
+            + VIEWS_ENABLED_PROPERTY
+            + " gate)");
   }
 
   /**
