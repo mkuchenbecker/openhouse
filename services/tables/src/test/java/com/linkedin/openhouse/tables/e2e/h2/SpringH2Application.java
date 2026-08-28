@@ -29,6 +29,7 @@ import org.springframework.context.annotation.ComponentScan;
       "com.linkedin.openhouse.cluster.configs",
       "com.linkedin.openhouse.cluster.storage",
       "com.linkedin.openhouse.tables.repository",
+      "com.linkedin.openhouse.tables.resthandler",
       "com.linkedin.openhouse.tables.utils",
       "com.linkedin.openhouse.common.exception.handler",
       "com.linkedin.openhouse.common.audit",
