@@ -20,21 +20,22 @@ trait MorReaderWriterScenarios extends MorScenarioKit {
   private def morCreate(t: String, fmt: String): String =
     s"CREATE TABLE $t ($columnDefinitions) USING $dataSource TBLPROPERTIES (${morPropsFmt(fmt)})"
 
+  /** Three seed rows in a merge-on-read table in the given file format. `format` sets the file format. */
   private def morPreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
       TableTest(Core)
         .sql("create")(table => morCreate(table, format))()
-        .insert(3)(),
-      description = s"Three seed rows in a merge-on-read $format table.")
+        .insert(3)())
 
-  // The changelog view over an append on a merge-on-read table.
+  /**
+   * On a merge-on-read table, a changelog view over an appended row reports exactly one INSERT and
+   * no DELETE. `format` sets the file format.
+   */
   def morReaderWriterChangelogAppendCases(format: String): List[Plan.Case] =
     List(
       morPreparation(format).test(
-        "readerWriter.changelog.append.mor",
-        "On a merge-on-read table, a changelog view over an appended row reports exactly one " +
-          "INSERT and no DELETE.") { table =>
+        "readerWriter.changelog.append.mor") { table =>
         val seedSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"INSERT INTO ${table.name} VALUES " +
@@ -59,13 +60,14 @@ trait MorReaderWriterScenarios extends MorScenarioKit {
           s"MoR append changelog must contain one INSERT and no DELETE: $changeTypes")
       })
 
-  // The changelog view over an INSERT OVERWRITE on a merge-on-read table.
+  /**
+   * On a merge-on-read table, a changelog view over an INSERT OVERWRITE that drops one row reports
+   * exactly that row as a DELETE. `format` sets the file format.
+   */
   def morReaderWriterChangelogOverwriteCases(format: String): List[Plan.Case] =
     List(
       morPreparation(format).test(
-        "readerWriter.changelog.overwrite.mor",
-        "On a merge-on-read table, a changelog view over an INSERT OVERWRITE that drops one row " +
-          "reports exactly that row as a DELETE.") { table =>
+        "readerWriter.changelog.overwrite.mor") { table =>
         val seedSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"INSERT OVERWRITE ${table.name} " +
@@ -90,13 +92,14 @@ trait MorReaderWriterScenarios extends MorScenarioKit {
           s"MoR overwrite changelog must contain the one removed row: $changeTypes")
       })
 
-  // The changelog view over a position-delete DELETE.
+  /**
+   * On a merge-on-read table, a changelog view over a DELETE reports exactly one DELETE and no
+   * INSERT. `format` sets the file format.
+   */
   def morReaderWriterChangelogDeleteCases(format: String): List[Plan.Case] =
     List(
       morPreparation(format).test(
-        "readerWriter.changelog.delete.mor",
-        "On a merge-on-read table, a changelog view over a DELETE reports exactly one DELETE and " +
-          "no INSERT.") { table =>
+        "readerWriter.changelog.delete.mor") { table =>
         val seedSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"DELETE FROM ${table.name} WHERE ${Core.long0.columnName} = 1")
@@ -120,13 +123,14 @@ trait MorReaderWriterScenarios extends MorScenarioKit {
           s"MoR delete changelog must contain one DELETE and no INSERT: $changeTypes")
       })
 
-  // The changelog view over a merge-on-read UPDATE.
+  /**
+   * On a merge-on-read table, reading a changelog view over an UPDATE is rejected because
+   * position-delete files are not supported in changelog scans. `format` sets the file format.
+   */
   def morReaderWriterChangelogUpdateCases(format: String): List[Plan.Case] =
     List(
       morPreparation(format).test(
-        "readerWriter.changelog.update.mor",
-        "On a merge-on-read table, reading a changelog view over an UPDATE is rejected because " +
-          "position-delete files are not supported in changelog scans.") { table =>
+        "readerWriter.changelog.update.mor") { table =>
         val seedSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"UPDATE ${table.name} SET ${Core.string0.columnName} = 'upd' " +
@@ -152,13 +156,14 @@ trait MorReaderWriterScenarios extends MorScenarioKit {
             "REJECTED (delete files unsupported in changelog scans)")
       })
 
-  // The changelog view over a merge-on-read MERGE.
+  /**
+   * On a merge-on-read table, reading a changelog view over a MERGE is rejected because
+   * position-delete files are not supported in changelog scans. `format` sets the file format.
+   */
   def morReaderWriterChangelogMergeCases(format: String): List[Plan.Case] =
     List(
       morPreparation(format).test(
-        "readerWriter.changelog.merge.mor",
-        "On a merge-on-read table, reading a changelog view over a MERGE is rejected because " +
-          "position-delete files are not supported in changelog scans.") { table =>
+        "readerWriter.changelog.merge.mor") { table =>
         val seedSnapshotId = snapshotIds(table.spark, table.name).head
         table.spark.sql(
           s"MERGE INTO ${table.name} target " +

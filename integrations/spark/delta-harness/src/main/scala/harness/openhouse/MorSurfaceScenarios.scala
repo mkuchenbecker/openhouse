@@ -17,6 +17,10 @@ import scala.util.control.NonFatal
 trait MorSurfaceScenarios extends MorScenarioKit {
   import Rows._
 
+  /**
+   * Three seed rows written as one data file in a merge-on-read table in the given file format, so
+   * a strict-subset DELETE leaves a live position-delete file. `format` sets the file format.
+   */
   private def surfaceMergeOnReadPreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
@@ -28,17 +32,16 @@ trait MorSurfaceScenarios extends MorScenarioKit {
             "'write.delete.mode'='merge-on-read')")()
         .sql("seed")(table =>
           s"INSERT INTO $table SELECT /*+ COALESCE(1) */ * FROM " +
-            s"(${RowGenerator.valuesClause(Core, 3)}) AS seed")(),
-      description = s"Three seed rows written as one data file in a merge-on-read $format " +
-        "table.")
+            s"(${RowGenerator.valuesClause(Core, 3)}) AS seed")())
 
-  // The rewrite procedure that compacts position-delete files.
+  /**
+   * After a merge-on-read DELETE creates one position-delete file, rewrite_position_delete_files
+   * compacts it while the two surviving rows remain readable. `format` sets the file format.
+   */
   def morSurfaceRewriteProcedureCases(format: String): List[Plan.Case] =
     List(
       surfaceMergeOnReadPreparation(format).test(
-        "surface.proc.rewritePositionDeletes",
-        "After a MoR DELETE creates one position-delete file, rewrite_position_delete_files " +
-          "compacts it while the 2 surviving rows remain readable.") { table =>
+        "surface.proc.rewritePositionDeletes") { table =>
         table.spark.sql(
           s"DELETE FROM ${table.name} WHERE ${Core.long0.columnName} = 1")
         assert(
@@ -58,13 +61,14 @@ trait MorSurfaceScenarios extends MorScenarioKit {
           "rewrite_position_delete_files should preserve live rows")
       })
 
-  // The position_deletes metadata table.
+  /**
+   * After a merge-on-read DELETE, the position_deletes metadata table reports exactly the one
+   * position-delete entry it created. `format` sets the file format.
+   */
   def morSurfaceMetadataCases(format: String): List[Plan.Case] =
     List(
       surfaceMergeOnReadPreparation(format).test(
-        "surface.meta.positionDeletes",
-        "After a MoR DELETE, the position_deletes metadata table reports exactly the one " +
-          "position-delete entry it created.") { table =>
+        "surface.meta.positionDeletes") { table =>
         table.spark.sql(
           s"DELETE FROM ${table.name} WHERE ${Core.long0.columnName} = 1")
         assert(
