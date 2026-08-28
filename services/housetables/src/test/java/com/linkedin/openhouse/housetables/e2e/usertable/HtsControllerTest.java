@@ -1792,9 +1792,13 @@ public class HtsControllerTest {
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "corrupt_row")).hasValue("UNKNOWN");
   }
 
-  /** The diagnostic has to survive the persistence wrapping to reach the operator. */
+  /**
+   * The corruption response is a stable generic 500: the offending column, stored value, and
+   * converter stack are logged server-side under a correlation id, and the body names only that id.
+   * Persistence detail is deliberately not part of the public error contract.
+   */
   @Test
-  public void testCorruptDiscriminatorResponseCarriesColumnDiagnostic() throws Exception {
+  public void testCorruptDiscriminatorResponseIsStableAndLeaksNoStorageDetail() throws Exception {
     insertRawEntityType(ENTITY_TYPE_DB, "corrupt_diagnostic", "UNKNOWN");
 
     mvc.perform(
@@ -1803,11 +1807,12 @@ public class HtsControllerTest {
                 .param("tableId", "corrupt_diagnostic")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError())
-        .andExpect(
-            jsonPath(
-                "$.message",
-                containsString("Column user_table_row.entity_type holds unrecognized value")))
-        .andExpect(jsonPath("$.message", containsString("['UNKNOWN']")));
+        .andExpect(jsonPath("$.message", containsString("could not read the stored entity type")))
+        .andExpect(jsonPath("$.message", containsString("correlationId=")))
+        .andExpect(jsonPath("$.message", not(containsString("user_table_row.entity_type"))))
+        .andExpect(jsonPath("$.message", not(containsString("UNKNOWN"))))
+        .andExpect(jsonPath("$.stacktrace").value(nullValue()))
+        .andExpect(jsonPath("$.cause", not(containsString("UNKNOWN"))));
   }
 
   /** A typed delete or table rename at a corrupt key is 404, and the row stays put. */

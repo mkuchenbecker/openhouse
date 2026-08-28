@@ -48,9 +48,10 @@ public class EntityTypeConverterTest {
         "TABLE\n", "VIEW\t", " VIEW"
       })
   void unrecognizedColumnValueFailsLoudly(String columnValue) {
-    IllegalArgumentException thrown =
+    CorruptEntityTypeException thrown =
         Assertions.assertThrows(
-            IllegalArgumentException.class, () -> converter.convertToEntityAttribute(columnValue));
+            CorruptEntityTypeException.class,
+            () -> converter.convertToEntityAttribute(columnValue));
     Assertions.assertTrue(thrown.getMessage().contains("user_table_row.entity_type"));
     Assertions.assertTrue(thrown.getMessage().contains(columnValue));
   }
@@ -106,18 +107,18 @@ public class EntityTypeConverterTest {
   }
 
   /**
-   * The dedicated type exists so the advice can bind an explicit server-error branch: the inherited
-   * {@code IllegalArgumentException} advice answers 400, wrong for corruption already sitting in
-   * storage. However the value got there, stored state the vocabulary does not admit is a server
-   * failure, so it answers 500. It stays an {@link IllegalArgumentException} so existing callers
-   * keep catching it.
+   * The dedicated type exists so the advice can bind an explicit server-error branch: the {@code
+   * IllegalArgumentException} advice answers 400, wrong for corruption already sitting in storage.
+   * However the value got there, stored state the vocabulary does not admit is a server failure, so
+   * it answers 500. It deliberately shares no ancestry with {@link IllegalArgumentException}: the
+   * two outcomes map to different HTTP categories and must not be catch-compatible.
    */
   @Test
   void unrecognizedColumnValueThrowsTheDedicatedCorruptionType() {
-    IllegalArgumentException thrown =
+    CorruptEntityTypeException thrown =
         Assertions.assertThrows(
-            IllegalArgumentException.class, () -> converter.convertToEntityAttribute("UNKNOWN"));
-    Assertions.assertTrue(thrown instanceof CorruptEntityTypeException);
+            CorruptEntityTypeException.class, () -> converter.convertToEntityAttribute("UNKNOWN"));
+    Assertions.assertFalse(IllegalArgumentException.class.isInstance(thrown));
     Assertions.assertTrue(thrown.getMessage().contains("user_table_row.entity_type"));
     Assertions.assertTrue(thrown.getMessage().contains("UNKNOWN"));
   }

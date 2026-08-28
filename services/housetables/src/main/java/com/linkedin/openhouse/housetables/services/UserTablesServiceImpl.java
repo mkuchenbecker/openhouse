@@ -53,91 +53,122 @@ public class UserTablesServiceImpl implements UserTablesService {
       MetricsReporter.of(MetricsConstant.HOUSETABLES_SERVICE);
   @Autowired private SoftDeletedUserTableHtsJdbcRepository softDeletedUserTableHtsJdbcRepository;
 
+  /**
+   * Every method whose repository interaction hydrates rows runs under {@link
+   * JdbcPersistenceFailures#surfacingCorruption}, so a corrupt {@code entity_type} leaves this
+   * service as the module-owned {@link
+   * com.linkedin.openhouse.common.exception.CorruptEntityTypeException} rather than as the ORM
+   * wrapper JPA translation hands back.
+   */
   @Override
   public UserTableDto getUserTable(String databaseId, String tableId) {
-    UserTableRow userTableRow;
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          UserTableRow userTableRow;
 
-    try {
-      userTableRow =
-          htsJdbcRepository
-              .findTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
-              .orElseThrow(NoSuchElementException::new);
-    } catch (NoSuchElementException ne) {
-      throw new NoSuchUserTableException(databaseId, tableId, ne);
-    }
+          try {
+            userTableRow =
+                htsJdbcRepository
+                    .findTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
+                    .orElseThrow(NoSuchElementException::new);
+          } catch (NoSuchElementException ne) {
+            throw new NoSuchUserTableException(databaseId, tableId, ne);
+          }
 
-    return userTablesMapper.toUserTableDto(userTableRow);
+          return userTablesMapper.toUserTableDto(userTableRow);
+        });
   }
 
   @Override
   public UserTableDto getNeutralEntity(String databaseId, String tableId) {
     // Only an empty Optional is absence; repository and hydration failures must escape, because
     // reporting a broken row as "free" is how an occupant gets overwritten.
-    return htsJdbcRepository
-        .findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
-        .map(userTablesMapper::toUserTableDto)
-        .orElseThrow(() -> new NoSuchEntityException("Entity", databaseId + "." + tableId));
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () ->
+            htsJdbcRepository
+                .findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
+                .map(userTablesMapper::toUserTableDto)
+                .orElseThrow(
+                    () -> new NoSuchEntityException("Entity", databaseId + "." + tableId)));
   }
 
   @Override
   public UserTableDto getUserView(String databaseId, String tableId) {
-    return htsJdbcRepository
-        .findViewByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
-        .map(userTablesMapper::toUserTableDto)
-        .orElseThrow(() -> new NoSuchEntityException("View", databaseId + "." + tableId));
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () ->
+            htsJdbcRepository
+                .findViewByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
+                .map(userTablesMapper::toUserTableDto)
+                .orElseThrow(() -> new NoSuchEntityException("View", databaseId + "." + tableId)));
   }
 
   @Override
   public List<UserTableDto> getAllUserTables(UserTable userTable) {
-    if (isListDatabases(userTable)) {
-      return listDatabases();
-    } else if (isListTables(userTable)) {
-      return listTables(userTable);
-    } else if (isListTablesWithPattern(userTable)) {
-      return listTablesWithPattern(userTable);
-    } else {
-      return searchTables(userTable);
-    }
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          if (isListDatabases(userTable)) {
+            return listDatabases();
+          } else if (isListTables(userTable)) {
+            return listTables(userTable);
+          } else if (isListTablesWithPattern(userTable)) {
+            return listTablesWithPattern(userTable);
+          } else {
+            return searchTables(userTable);
+          }
+        });
   }
 
   @Override
   public Page<UserTableDto> getAllUserTables(
       UserTable userTable, int page, int size, String sortBy) {
-    if (isListDatabases(userTable)) {
-      return listDatabases(page, size, sortBy);
-    } else if (isListTables(userTable)) {
-      return listTables(userTable, page, size, sortBy);
-    } else if (isListTablesWithPattern(userTable)) {
-      return listTablesWithPattern(userTable, page, size, sortBy);
-    } else {
-      return searchTables(userTable, page, size, sortBy);
-    }
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          if (isListDatabases(userTable)) {
+            return listDatabases(page, size, sortBy);
+          } else if (isListTables(userTable)) {
+            return listTables(userTable, page, size, sortBy);
+          } else if (isListTablesWithPattern(userTable)) {
+            return listTablesWithPattern(userTable, page, size, sortBy);
+          } else {
+            return searchTables(userTable, page, size, sortBy);
+          }
+        });
   }
 
   @Override
   public List<UserTableDto> getAllUserViews(UserTable userView) {
-    if (isListViews(userView)) {
-      return listViews(userView);
-    } else if (isListViewsWithPattern(userView)) {
-      return listViewsWithPattern(userView);
-    } else {
-      return searchViews(userView);
-    }
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          if (isListViews(userView)) {
+            return listViews(userView);
+          } else if (isListViewsWithPattern(userView)) {
+            return listViewsWithPattern(userView);
+          } else {
+            return searchViews(userView);
+          }
+        });
   }
 
   @Override
   public Page<UserTableDto> getAllUserViews(UserTable userView, int page, int size, String sortBy) {
-    if (isListViews(userView)) {
-      return listViews(userView, page, size, sortBy);
-    } else if (isListViewsWithPattern(userView)) {
-      return listViewsWithPattern(userView, page, size, sortBy);
-    } else {
-      return searchViews(userView, page, size, sortBy);
-    }
+    return JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          if (isListViews(userView)) {
+            return listViews(userView, page, size, sortBy);
+          } else if (isListViewsWithPattern(userView)) {
+            return listViewsWithPattern(userView, page, size, sortBy);
+          } else {
+            return searchViews(userView, page, size, sortBy);
+          }
+        });
   }
 
   @Override
   public Pair<UserTableDto, Boolean> putUserTable(UserTable userTable) {
+    return JdbcPersistenceFailures.surfacingCorruption(() -> put(userTable));
+  }
+
+  private Pair<UserTableDto, Boolean> put(UserTable userTable) {
     Optional<UserTableRow> existingUserTableRow =
         htsJdbcRepository.findById(
             UserTableRowPrimaryKey.builder()
@@ -235,21 +266,24 @@ public class UserTablesServiceImpl implements UserTablesService {
   @Override
   @Transactional
   public void deleteUserTable(String databaseId, String tableId, boolean isSoftDeleted) {
-    UserTableRowPrimaryKey key =
-        UserTableRowPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build();
-    if (isSoftDeleted) {
-      UserTableRow existingTable =
-          htsJdbcRepository
-              .findTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
-              .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
-      softDeletedHtsJdbcRepository.save(
-          softDeletedUserTablesMapper.toSoftDeletedUserTableRow(existingTable));
-    }
-    // Throwing inside the transaction rolls the copy above back, so a row that loses the race is
-    // not left behind in the soft-deleted store.
-    if (htsJdbcRepository.deleteTableById(key) == 0) {
-      throw new NoSuchUserTableException(databaseId, tableId);
-    }
+    JdbcPersistenceFailures.surfacingCorruption(
+        () -> {
+          UserTableRowPrimaryKey key =
+              UserTableRowPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build();
+          if (isSoftDeleted) {
+            UserTableRow existingTable =
+                htsJdbcRepository
+                    .findTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(databaseId, tableId)
+                    .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+            softDeletedHtsJdbcRepository.save(
+                softDeletedUserTablesMapper.toSoftDeletedUserTableRow(existingTable));
+          }
+          // Throwing inside the transaction rolls the copy above back, so a row that loses the
+          // race is not left behind in the soft-deleted store.
+          if (htsJdbcRepository.deleteTableById(key) == 0) {
+            throw new NoSuchUserTableException(databaseId, tableId);
+          }
+        });
   }
 
   @Override
@@ -273,8 +307,13 @@ public class UserTablesServiceImpl implements UserTablesService {
   @Transactional
   public UserTableDto restoreUserTable(String databaseId, String tableId, Long deletedAt) {
     Optional<UserTableRow> existingUserTable =
-        htsJdbcRepository.findById(
-            UserTableRowPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build());
+        JdbcPersistenceFailures.surfacingCorruption(
+            () ->
+                htsJdbcRepository.findById(
+                    UserTableRowPrimaryKey.builder()
+                        .databaseId(databaseId)
+                        .tableId(tableId)
+                        .build()));
     if (existingUserTable.isPresent()) {
       // If the table already exists, we throw an exception
       throw new AlreadyExistsException("Table", existingUserTable.get().getTableId());
@@ -293,8 +332,11 @@ public class UserTablesServiceImpl implements UserTablesService {
 
     try {
       softDeletedHtsJdbcRepository.deleteById(softDeletedTableKey);
-      return userTablesMapper.toUserTableDto(
-          htsJdbcRepository.save(userTablesMapper.toUserTableRow(existingSoftDeletedTable)));
+      return JdbcPersistenceFailures.surfacingCorruption(
+          () ->
+              userTablesMapper.toUserTableDto(
+                  htsJdbcRepository.save(
+                      userTablesMapper.toUserTableRow(existingSoftDeletedTable))));
     } catch (DataIntegrityViolationException e) {
       // Same discrimination as the put path: only a duplicate key is a lost restore race.
       if (!JdbcPersistenceFailures.isDuplicateKey(e)) {

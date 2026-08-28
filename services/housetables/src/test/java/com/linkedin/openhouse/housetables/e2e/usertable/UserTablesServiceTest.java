@@ -1038,7 +1038,10 @@ public class UserTablesServiceTest {
   public void testGetNeutralEntityAtCorruptKeyFailsLoudly() {
     insertRawEntityType(ENTITY_TYPE_DB, "neutral_corrupt", "UNKNOWN");
 
+    // The service boundary translates the ORM wrapper, so the module-owned corruption type is
+    // what leaves it, still naming the column and value for its internal consumers.
     assertThatThrownBy(() -> userTablesService.getNeutralEntity(ENTITY_TYPE_DB, "neutral_corrupt"))
+        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type")
         .hasStackTraceContaining("UNKNOWN");
 
@@ -1407,6 +1410,7 @@ public class UserTablesServiceTest {
                         .metadataLocation("/openhouse/entity_type_db/put_corrupt/v1_metadata.json")
                         .entityType(EntityType.TABLE.name())
                         .build()))
+        .isInstanceOf(com.linkedin.openhouse.common.exception.CorruptEntityTypeException.class)
         .hasStackTraceContaining("user_table_row.entity_type");
 
     assertThat(readRawEntityType(ENTITY_TYPE_DB, "put_corrupt")).hasValue("UNKNOWN");
