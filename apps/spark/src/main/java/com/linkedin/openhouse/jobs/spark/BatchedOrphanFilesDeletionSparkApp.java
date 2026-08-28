@@ -100,8 +100,6 @@ public class BatchedOrphanFilesDeletionSparkApp extends BatchedMaintenanceSparkA
         ops.deleteOrphanFiles(
             table,
             olderThanTimestampMillis,
-            Boolean.parseBoolean(
-                table.properties().getOrDefault(AppConstants.BACKUP_ENABLED_KEY, "false")),
             backupDir,
             concurrentDeletes,
             streamResults,
