@@ -4,8 +4,8 @@ import static com.linkedin.openhouse.common.audit.CachingRequestBodyFilter.ATTRI
 import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
 
 import com.google.gson.JsonElement;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
-import com.google.gson.JsonSyntaxException;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.metrics.micrometer.MetricsReporter;
 import com.linkedin.openhouse.common.api.spec.ErrorResponseBody;
@@ -232,10 +232,10 @@ public class ServiceAuditAspect {
     JsonElement root;
     try {
       root = JsonParser.parseString(body);
-    } catch (JsonSyntaxException e) {
+    } catch (JsonParseException e) {
       return null;
     }
-    if (root == null || !root.isJsonObject()) {
+    if (!root.isJsonObject()) {
       return null;
     }
     JsonElement error = root.getAsJsonObject().get("error");
