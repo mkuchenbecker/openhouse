@@ -3,11 +3,16 @@ package com.linkedin.openhouse.javaclient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -17,6 +22,7 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
+import org.apache.iceberg.exceptions.ServiceFailureException;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.view.View;
 import org.junit.jupiter.api.AfterEach;
@@ -53,10 +59,21 @@ public class OpenHouseCatalogViewsRestTest {
       "{\"error\":{\"message\":\"Database does not exist\",\"type\":\"NoSuchNamespaceException\","
           + "\"code\":404}}";
 
+  private static final String SERVICE_FAILURE_ENVELOPE =
+      "{\"error\":{\"message\":\"Internal failure\",\"type\":\"InternalServerError\","
+          + "\"code\":500}}";
+
   private static final String AUTH_TOKEN_PROPERTY = "auth-token";
+
+  private static final String VIEWS_ENABLED_PROPERTY = "iceberg-views-enabled";
+
+  /** The spec's {@code CreateViewRequest} top-level key set (location omitted when unset). */
+  private static final Set<String> SPEC_CREATE_VIEW_KEYS =
+      new HashSet<>(Arrays.asList("name", "location", "schema", "view-version", "properties"));
 
   private MockWebServer server;
   private String url;
+  private OpenHouseCatalog catalog;
 
   @BeforeEach
   void setup() throws IOException {
@@ -67,19 +84,38 @@ public class OpenHouseCatalogViewsRestTest {
 
   @AfterEach
   void teardown() throws IOException {
+    if (catalog != null) {
+      catalog.close();
+      catalog = null;
+    }
     server.shutdown();
   }
 
-  private OpenHouseCatalog newCatalog(boolean viewsEnabled, String token) {
-    OpenHouseCatalog catalog = new OpenHouseCatalog();
+  private OpenHouseCatalog newViewsEnabledCatalog(String token) {
+    return newViewsEnabledCatalog(token, Collections.emptyMap());
+  }
+
+  private OpenHouseCatalog newViewsEnabledCatalog(String token, Map<String, String> extraProps) {
+    return newCatalog(true, token, extraProps);
+  }
+
+  private OpenHouseCatalog newViewsDisabledCatalog(String token) {
+    return newCatalog(false, token, Collections.emptyMap());
+  }
+
+  private OpenHouseCatalog newCatalog(
+      boolean viewsEnabled, String token, Map<String, String> extraProps) {
+    OpenHouseCatalog newCatalog = new OpenHouseCatalog();
     Map<String, String> properties = new HashMap<>();
     properties.put(CatalogProperties.URI, url);
     if (token != null) {
       properties.put(AUTH_TOKEN_PROPERTY, token);
     }
-    properties.put("iceberg-views-enabled", Boolean.toString(viewsEnabled));
-    catalog.initialize("openhouse", properties);
-    return catalog;
+    properties.put(VIEWS_ENABLED_PROPERTY, Boolean.toString(viewsEnabled));
+    properties.putAll(extraProps);
+    newCatalog.initialize("openhouse", properties);
+    this.catalog = newCatalog;
+    return newCatalog;
   }
 
   private void enqueueJson(int code, String body) {
@@ -92,6 +128,13 @@ public class OpenHouseCatalogViewsRestTest {
 
   private void enqueueConfig() {
     enqueueJson(200, CONFIG_JSON);
+  }
+
+  /** Takes the next recorded request, failing (instead of NPEing) when none arrived in time. */
+  private RecordedRequest takeRecordedRequest() throws InterruptedException {
+    RecordedRequest request = server.takeRequest(1, TimeUnit.SECONDS);
+    Assertions.assertNotNull(request, "Expected another recorded request, but none arrived");
+    return request;
   }
 
   /** A spec-shaped {@code LoadViewResult}: complete view metadata inline, kebab-case keys. */
@@ -134,7 +177,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testDisabledGateMakesNoRestCalls() {
-    OpenHouseCatalog catalog = newCatalog(false, "token");
+    newViewsDisabledCatalog("token");
     TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
 
     Assertions.assertThrows(NoSuchViewException.class, () -> catalog.loadView(viewId));
@@ -156,7 +199,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testEnabledGateIsLazyUntilFirstViewOperation() throws InterruptedException {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     Assertions.assertEquals(
         0, server.getRequestCount(), "initialize() must not touch the views REST surface");
 
@@ -166,12 +209,42 @@ public class OpenHouseCatalogViewsRestTest {
         NoSuchViewException.class, () -> catalog.loadView(TableIdentifier.of("db", "v_wire")));
 
     Assertions.assertEquals(2, server.getRequestCount());
-    RecordedRequest config = server.takeRequest(1, TimeUnit.SECONDS);
+    RecordedRequest config = takeRecordedRequest();
     Assertions.assertEquals("GET", config.getMethod());
     Assertions.assertEquals("/v1/config", config.getRequestUrl().encodedPath());
-    RecordedRequest load = server.takeRequest(1, TimeUnit.SECONDS);
+    RecordedRequest load = takeRecordedRequest();
     Assertions.assertEquals("GET", load.getMethod());
     Assertions.assertEquals("/v1/namespaces/db/views/v_wire", load.getPath());
+  }
+
+  /**
+   * F4 failure containment: a failed {@code /v1/config} bootstrap fails that view operation only —
+   * exactly one request went out, nothing was cached, and the next view operation retries the
+   * bootstrap from scratch (the SECOND {@code /v1/config} proves it) and then behaves normally.
+   * Table operations never enter this code path at all.
+   */
+  @Test
+  public void testEmbeddedCatalogBootstrapFailureIsContainedAndRetried()
+      throws InterruptedException {
+    newViewsEnabledCatalog("token");
+    TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
+
+    enqueueJson(500, SERVICE_FAILURE_ENVELOPE);
+    Assertions.assertThrows(ServiceFailureException.class, () -> catalog.loadView(viewId));
+    Assertions.assertEquals(
+        1, server.getRequestCount(), "bootstrap failure must stop after the config request");
+
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertThrows(NoSuchViewException.class, () -> catalog.loadView(viewId));
+    Assertions.assertEquals(3, server.getRequestCount());
+
+    takeRecordedRequest(); // the failed bootstrap's config request
+    RecordedRequest retriedConfig = takeRecordedRequest();
+    Assertions.assertEquals(
+        "/v1/config",
+        retriedConfig.getRequestUrl().encodedPath(),
+        "second view op must re-run the bootstrap (nothing cached from the failure)");
   }
 
   /**
@@ -179,7 +252,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testLoadViewParsesFullLoadViewResult() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, loadViewResultJson("fa6506c3-7681-40c8-86dc-e36561f83385", "SELECT 1 AS id"));
 
@@ -201,7 +274,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testViewsDisabledEnvelopeSurfacesAsNoSuchViewException() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
 
@@ -214,12 +287,14 @@ public class OpenHouseCatalogViewsRestTest {
   /**
    * A 404 from the list route must surface as an EMPTY listing, not an exception: Spark's {@code
    * SparkCatalog.listViews} catches nothing, so {@code SHOW VIEWS} would otherwise leak a raw
-   * error. Covers both 404 types the route can produce: {@code NoSuchNamespaceException} (spec's
-   * list-route 404) and a {@code NoSuchViewException} views-disabled envelope.
+   * error. Both envelope fixtures pin the wire contract (the spec's list-route 404 type and the
+   * views-disabled envelope); client-side, 1.5.2.17's {@code namespaceErrorHandler} switches on the
+   * status code, not the envelope type, so both arrive as {@code NoSuchNamespaceException} — the
+   * two-type catch in {@code listViews} is F1 plus future-proofing, not a behavioral split.
    */
   @Test
   public void testListViews404ReturnsEmptyList() throws InterruptedException {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, NO_SUCH_NAMESPACE_ENVELOPE);
     Assertions.assertTrue(catalog.listViews(Namespace.of("db")).isEmpty());
@@ -228,16 +303,31 @@ public class OpenHouseCatalogViewsRestTest {
     Assertions.assertTrue(catalog.listViews(Namespace.of("db")).isEmpty());
 
     Assertions.assertEquals(3, server.getRequestCount());
-    server.takeRequest(1, TimeUnit.SECONDS); // config
-    RecordedRequest list = server.takeRequest(1, TimeUnit.SECONDS);
+    takeRecordedRequest(); // config
+    RecordedRequest list = takeRecordedRequest();
     Assertions.assertEquals("GET", list.getMethod());
     Assertions.assertEquals("/v1/namespaces/db/views", list.getRequestUrl().encodedPath());
+  }
+
+  /**
+   * F1's negative space: only 404s are absorbed into an empty listing. A server-side failure (500
+   * Iceberg envelope) must propagate as an exception — masking it as "no views" would hide real
+   * outages from {@code SHOW VIEWS}.
+   */
+  @Test
+  public void testListViews500Propagates() {
+    newViewsEnabledCatalog("token");
+    enqueueConfig();
+    enqueueJson(500, SERVICE_FAILURE_ENVELOPE);
+
+    Assertions.assertThrows(
+        ServiceFailureException.class, () -> catalog.listViews(Namespace.of("db")));
   }
 
   /** A populated list response parses into identifiers (single GET; no paging in 1.5.2.17). */
   @Test
   public void testListViewsParsesIdentifiers() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, "{\"identifiers\":[{\"namespace\":[\"db\"],\"name\":\"v_wire\"}]}");
 
@@ -247,13 +337,36 @@ public class OpenHouseCatalogViewsRestTest {
   }
 
   /**
+   * {@code viewExists} on the enabled path delegates to the embedded catalog: {@code false} for the
+   * views-disabled 404 envelope, {@code true} for a 200 {@code LoadViewResult}. The recorded
+   * request pins F2's note: 1.5.2.17 issues {@code GET} on the view path (the load-and-catch {@code
+   * ViewCatalog} default), not the spec's {@code HEAD}.
+   */
+  @Test
+  public void testViewExistsDelegatesGet() throws InterruptedException {
+    newViewsEnabledCatalog("token");
+    TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertFalse(catalog.viewExists(viewId));
+
+    enqueueJson(200, loadViewResultJson("fa6506c3-7681-40c8-86dc-e36561f83385", "SELECT 1 AS id"));
+    Assertions.assertTrue(catalog.viewExists(viewId));
+
+    takeRecordedRequest(); // config
+    RecordedRequest exists = takeRecordedRequest();
+    Assertions.assertEquals("GET", exists.getMethod(), "1.5.2.17 viewExists issues GET, not HEAD");
+    Assertions.assertEquals("/v1/namespaces/db/views/v_wire", exists.getRequestUrl().encodedPath());
+  }
+
+  /**
    * {@code CREATE VIEW} sends a spec-shaped {@code CreateViewRequest}: kebab-case keys, the
    * definition under {@code view-version}, and no OpenHouse-isms — no {@code clusterId}, and the
    * path identity (namespace) is not repeated in the body.
    */
   @Test
   public void testCreateSendsSpecShapedCreateViewRequest() throws Exception {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(200, loadViewResultJson("fa6506c3-7681-40c8-86dc-e36561f83385", "SELECT 1 AS id"));
 
@@ -266,13 +379,12 @@ public class OpenHouseCatalogViewsRestTest {
         .withProperty("comment", "wire fixture")
         .create();
 
-    server.takeRequest(1, TimeUnit.SECONDS); // config
-    RecordedRequest create = server.takeRequest(1, TimeUnit.SECONDS);
+    takeRecordedRequest(); // config
+    RecordedRequest create = takeRecordedRequest();
     Assertions.assertEquals("POST", create.getMethod());
     Assertions.assertEquals("/v1/namespaces/db/views", create.getRequestUrl().encodedPath());
 
     JsonNode body = JSON.readTree(create.getBody().readUtf8());
-    // Exact top-level key set of the spec's CreateViewRequest (location omitted when unset).
     Assertions.assertEquals("v_wire", body.get("name").asText());
     Assertions.assertTrue(body.has("schema"), "structured schema object expected");
     Assertions.assertTrue(body.has("view-version"), "kebab-case view-version expected");
@@ -280,12 +392,7 @@ public class OpenHouseCatalogViewsRestTest {
     for (Iterator<String> fields = body.fieldNames(); fields.hasNext(); ) {
       String field = fields.next();
       Assertions.assertTrue(
-          field.equals("name")
-              || field.equals("location")
-              || field.equals("schema")
-              || field.equals("view-version")
-              || field.equals("properties"),
-          "Unexpected CreateViewRequest key: " + field);
+          SPEC_CREATE_VIEW_KEYS.contains(field), "Unexpected CreateViewRequest key: " + field);
     }
     // No OpenHouse-isms: no clusterId, no repeated path identity in the body.
     Assertions.assertFalse(body.has("clusterId"));
@@ -309,7 +416,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testCreateRoute404SurfacesAsNoSuchNamespaceException() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     enqueueJson(404, NO_SUCH_NAMESPACE_ENVELOPE);
 
@@ -325,13 +432,13 @@ public class OpenHouseCatalogViewsRestTest {
   }
 
   /**
-   * REPLACE loads the current view then commits a spec-shaped commit request: {@code
-   * assert-view-uuid} requirement plus typed updates — commit semantics are owned by iceberg-core,
-   * not OpenHouse code.
+   * REPLACE probes that the name is not a table, loads the current view, then commits a spec-shaped
+   * commit request: {@code assert-view-uuid} requirement plus typed updates — commit semantics are
+   * owned by iceberg-core, not OpenHouse code.
    */
   @Test
   public void testReplaceSendsRequirementsAndUpdates() throws Exception {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     String uuid = "fa6506c3-7681-40c8-86dc-e36561f83385";
     enqueueConfig();
     // RESTViewBuilder.replace first probes tableExists (view name must not be a table): 404 = no.
@@ -350,32 +457,34 @@ public class OpenHouseCatalogViewsRestTest {
         .replace();
 
     Assertions.assertEquals(4, server.getRequestCount());
-    server.takeRequest(1, TimeUnit.SECONDS); // config
-    server.takeRequest(1, TimeUnit.SECONDS); // tableExists probe (404)
-    RecordedRequest load = server.takeRequest(1, TimeUnit.SECONDS);
+    takeRecordedRequest(); // config
+    RecordedRequest tableProbe = takeRecordedRequest();
+    Assertions.assertEquals("GET", tableProbe.getMethod());
+    Assertions.assertEquals(
+        "/v1/namespaces/db/tables/v_wire", tableProbe.getRequestUrl().encodedPath());
+    RecordedRequest load = takeRecordedRequest();
     Assertions.assertEquals("GET", load.getMethod());
-    RecordedRequest commit = server.takeRequest(1, TimeUnit.SECONDS);
+    RecordedRequest commit = takeRecordedRequest();
     Assertions.assertEquals("POST", commit.getMethod());
     Assertions.assertEquals("/v1/namespaces/db/views/v_wire", commit.getRequestUrl().encodedPath());
 
     JsonNode body = JSON.readTree(commit.getBody().readUtf8());
     Assertions.assertTrue(body.has("requirements"));
     Assertions.assertTrue(body.has("updates"));
-    boolean hasAssertUuid = false;
-    for (JsonNode requirement : body.get("requirements")) {
-      if ("assert-view-uuid".equals(requirement.get("type").asText())) {
-        hasAssertUuid = true;
-        Assertions.assertEquals(uuid, requirement.get("uuid").asText());
-      }
-    }
-    Assertions.assertTrue(hasAssertUuid, "commit must carry an assert-view-uuid requirement");
+    JsonNode assertUuid =
+        StreamSupport.stream(body.get("requirements").spliterator(), false)
+            .filter(requirement -> "assert-view-uuid".equals(requirement.path("type").asText()))
+            .findFirst()
+            .orElse(null);
+    Assertions.assertNotNull(assertUuid, "commit must carry an assert-view-uuid requirement");
+    Assertions.assertEquals(uuid, assertUuid.get("uuid").asText());
     Assertions.assertTrue(body.get("updates").size() > 0, "commit must carry typed updates");
   }
 
   /** {@code dropView} delegates to the REST {@code DELETE}; a 404 answers {@code false}. */
   @Test
   public void testDropViewDelegatesDelete() throws Exception {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     enqueueConfig();
     server.enqueue(new MockResponse().setResponseCode(204));
     Assertions.assertTrue(catalog.dropView(TableIdentifier.of("db", "v_wire")));
@@ -383,8 +492,8 @@ public class OpenHouseCatalogViewsRestTest {
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertFalse(catalog.dropView(TableIdentifier.of("db", "v_wire")));
 
-    server.takeRequest(1, TimeUnit.SECONDS); // config
-    RecordedRequest drop = server.takeRequest(1, TimeUnit.SECONDS);
+    takeRecordedRequest(); // config
+    RecordedRequest drop = takeRecordedRequest();
     Assertions.assertEquals("DELETE", drop.getMethod());
     Assertions.assertEquals("/v1/namespaces/db/views/v_wire", drop.getRequestUrl().encodedPath());
   }
@@ -395,7 +504,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testRenameViewUnsupportedEvenWhenEnabledAndMakesNoRestCall() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     Assertions.assertThrows(
         UnsupportedOperationException.class,
         () ->
@@ -412,7 +521,7 @@ public class OpenHouseCatalogViewsRestTest {
    */
   @Test
   public void testAuthorizationHeaderPresentOnEveryViewCall() throws Exception {
-    OpenHouseCatalog catalog = newCatalog(true, "the-token");
+    newViewsEnabledCatalog("the-token");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -420,7 +529,7 @@ public class OpenHouseCatalogViewsRestTest {
 
     Assertions.assertEquals(2, server.getRequestCount());
     for (int i = 0; i < 2; i++) {
-      RecordedRequest request = server.takeRequest(1, TimeUnit.SECONDS);
+      RecordedRequest request = takeRecordedRequest();
       Assertions.assertEquals(
           "Bearer the-token",
           request.getHeader("Authorization"),
@@ -430,13 +539,60 @@ public class OpenHouseCatalogViewsRestTest {
   }
 
   /**
+   * The identity headers on view calls mirror the tables WebClient: {@code X-Client-Name} from
+   * {@code client-name}, {@code session-id} from {@code app-id}, and {@code User-Agent} as {@code
+   * openhouse-java-client/<client-version>}.
+   */
+  @Test
+  public void testIdentityHeadersMirroredOnConfigRequest() throws Exception {
+    Map<String, String> identity = new HashMap<>();
+    identity.put(OpenHouseCatalog.CLIENT_NAME, "my-client");
+    identity.put(OpenHouseCatalog.CLIENT_VERSION, "1.2.3");
+    identity.put(CatalogProperties.APP_ID, "my-session");
+    newViewsEnabledCatalog("token", identity);
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertThrows(
+        NoSuchViewException.class, () -> catalog.loadView(TableIdentifier.of("db", "v_wire")));
+
+    RecordedRequest config = takeRecordedRequest();
+    Assertions.assertEquals("/v1/config", config.getRequestUrl().encodedPath());
+    Assertions.assertEquals("my-client", config.getHeader("X-Client-Name"));
+    Assertions.assertEquals("my-session", config.getHeader("session-id"));
+    Assertions.assertEquals("openhouse-java-client/1.2.3", config.getHeader("User-Agent"));
+  }
+
+  /**
+   * {@code User-Agent} is set unconditionally: without a {@code client-version} property it falls
+   * back to the jar manifest's Implementation-Version, else {@code unknown} — but always carries
+   * the {@code openhouse-java-client/} product token. {@code session-id} stays absent without
+   * {@code app-id} (a fabricated UUID would break correlation with the tables WebClient session).
+   */
+  @Test
+  public void testDefaultUserAgentAlwaysAdvertisesClientProduct() throws Exception {
+    newViewsEnabledCatalog("token");
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertThrows(
+        NoSuchViewException.class, () -> catalog.loadView(TableIdentifier.of("db", "v_wire")));
+
+    RecordedRequest config = takeRecordedRequest();
+    String userAgent = config.getHeader("User-Agent");
+    Assertions.assertNotNull(userAgent);
+    Assertions.assertTrue(
+        userAgent.startsWith("openhouse-java-client/"),
+        "User-Agent must always advertise the client product, got: " + userAgent);
+    Assertions.assertNull(config.getHeader("session-id"));
+  }
+
+  /**
    * {@code updateAuthToken} propagates to the embedded catalog: the stale embedded catalog is
-   * discarded and the next view operation rebuilds it (fresh {@code /v1/config}) carrying the new
-   * bearer token.
+   * displaced (reclaimed later by {@code close()}) and the next view operation rebuilds it (fresh
+   * {@code /v1/config}) carrying the new bearer token.
    */
   @Test
   public void testUpdateAuthTokenPropagatesToEmbeddedCatalog() throws Exception {
-    OpenHouseCatalog catalog = newCatalog(true, "token-1");
+    newViewsEnabledCatalog("token-1");
     enqueueConfig();
     enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
     Assertions.assertThrows(
@@ -450,21 +606,67 @@ public class OpenHouseCatalogViewsRestTest {
         NoSuchViewException.class, () -> catalog.loadView(TableIdentifier.of("db", "v_wire")));
 
     Assertions.assertEquals(4, server.getRequestCount());
-    Assertions.assertEquals(
-        "Bearer token-1", server.takeRequest(1, TimeUnit.SECONDS).getHeader("Authorization"));
-    Assertions.assertEquals(
-        "Bearer token-1", server.takeRequest(1, TimeUnit.SECONDS).getHeader("Authorization"));
-    RecordedRequest refreshedConfig = server.takeRequest(1, TimeUnit.SECONDS);
+    Assertions.assertEquals("Bearer token-1", takeRecordedRequest().getHeader("Authorization"));
+    Assertions.assertEquals("Bearer token-1", takeRecordedRequest().getHeader("Authorization"));
+    RecordedRequest refreshedConfig = takeRecordedRequest();
     Assertions.assertEquals("/v1/config", refreshedConfig.getRequestUrl().encodedPath());
     Assertions.assertEquals("Bearer token-2", refreshedConfig.getHeader("Authorization"));
+    Assertions.assertEquals("Bearer token-2", takeRecordedRequest().getHeader("Authorization"));
+  }
+
+  /**
+   * {@code close()} discards the embedded catalog (and drains any instances displaced by token
+   * refreshes); a subsequent view operation re-initializes a fresh embedded catalog — the third
+   * request being a fresh {@code /v1/config} proves the discard-and-rebuild.
+   */
+  @Test
+  public void testCloseDiscardsEmbeddedCatalogAndNextViewOpRebuilds() throws Exception {
+    newViewsEnabledCatalog("token");
+    TableIdentifier viewId = TableIdentifier.of("db", "v_wire");
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertThrows(NoSuchViewException.class, () -> catalog.loadView(viewId));
+
+    catalog.close();
+
+    enqueueConfig();
+    enqueueJson(404, VIEWS_DISABLED_ENVELOPE);
+    Assertions.assertThrows(NoSuchViewException.class, () -> catalog.loadView(viewId));
+
+    Assertions.assertEquals(4, server.getRequestCount());
+    takeRecordedRequest(); // first config
+    takeRecordedRequest(); // first view GET
+    RecordedRequest rebuiltConfig = takeRecordedRequest();
     Assertions.assertEquals(
-        "Bearer token-2", server.takeRequest(1, TimeUnit.SECONDS).getHeader("Authorization"));
+        "/v1/config",
+        rebuiltConfig.getRequestUrl().encodedPath(),
+        "view op after close() must re-bootstrap a fresh embedded catalog");
+  }
+
+  /**
+   * Blast-radius pin for a malformed (non-JSON) 404 body: iceberg-core's error handler falls back
+   * to a synthesized error response carrying the raw body, and the 404 still maps to {@link
+   * NoSuchViewException} on the view route — i.e. even a proxy's HTML 404 page keeps Spark's
+   * loadView fall-through intact. This test pins that observed behavior, it does not specify it.
+   */
+  @Test
+  public void testMalformed404BodySurfacesAsNoSuchViewException() {
+    newViewsEnabledCatalog("token");
+    enqueueConfig();
+    server.enqueue(
+        new MockResponse()
+            .setResponseCode(404)
+            .setBody("<html>not found</html>")
+            .addHeader("Content-Type", "text/html"));
+
+    Assertions.assertThrows(
+        NoSuchViewException.class, () -> catalog.loadView(TableIdentifier.of("db", "v_wire")));
   }
 
   /** {@code newViewOps} is unreachable now that view operations delegate to the REST catalog. */
   @Test
   public void testNewViewOpsIsUnreachable() {
-    OpenHouseCatalog catalog = newCatalog(true, "token");
+    newViewsEnabledCatalog("token");
     Assertions.assertThrows(
         IllegalStateException.class, () -> catalog.newViewOps(TableIdentifier.of("db", "v_wire")));
     Assertions.assertEquals(0, server.getRequestCount());
