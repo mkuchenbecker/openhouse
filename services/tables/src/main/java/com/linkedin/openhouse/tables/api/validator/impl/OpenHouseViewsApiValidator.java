@@ -1,23 +1,17 @@
 package com.linkedin.openhouse.tables.api.validator.impl;
 
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_ERROR_MSG;
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_IDENTIFIER_LENGTH;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_SCHEMA_BYTES;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.MAX_VIEW_SQL_BYTES;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.SQL_VIEW_REPRESENTATION_TYPE;
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.VIEW_SOURCE_DIALECT_SUMMARY_KEY;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
-import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtils;
-import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
-import com.linkedin.openhouse.tables.api.spec.v0.request.components.ViewRepresentation;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.exception.ViewRequestValidationFailureException;
 import com.linkedin.openhouse.tables.exception.ViewValidationErrorCode;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -26,24 +20,32 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
-import javax.validation.Validator;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.UpdateRequirement;
+import org.apache.iceberg.rest.requests.CreateViewRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
+import org.apache.iceberg.view.SQLViewRepresentation;
+import org.apache.iceberg.view.ViewRepresentation;
+import org.apache.iceberg.view.ViewVersion;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
- * Structural validation of /v2 views requests.
+ * Structural validation of Iceberg REST views requests, layered on top of what Iceberg's parsers
+ * already enforce (required fields, field types, update/requirement polymorphism).
  *
- * <p><b>Security invariant:</b> no message built here interpolates SQL text, schema text or a
- * {@code baseViewVersion} token. Messages are copied verbatim into the error response body and into
- * service audit events, so every payload-derived failure uses a fixed redacted message.
+ * <p><b>Security invariant:</b> no message built here interpolates SQL text or schema text.
+ * Messages are copied verbatim into the error response body and into service audit events, so every
+ * payload-derived failure uses a fixed redacted message. Identifiers, dialects and property keys
+ * are user-authored names rather than payload text and may be echoed.
  *
  * <p>SQL is opaque: nothing here parses, translates or engine-validates a view definition.
  */
@@ -58,19 +60,28 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
    */
   private static final String POLICIES_PROPERTY_KEY = "policies";
 
-  @Autowired private Validator validator;
+  /**
+   * The view-update subset of the commit vocabulary. Every other {@link MetadataUpdate} action is
+   * table-only and rejected on the views surface.
+   */
+  private static final List<Class<? extends MetadataUpdate>> SUPPORTED_VIEW_UPDATES =
+      Collections.unmodifiableList(
+          java.util.Arrays.asList(
+              MetadataUpdate.AssignUUID.class,
+              MetadataUpdate.UpgradeFormatVersion.class,
+              MetadataUpdate.AddSchema.class,
+              MetadataUpdate.SetLocation.class,
+              MetadataUpdate.SetProperties.class,
+              MetadataUpdate.RemoveProperties.class,
+              MetadataUpdate.AddViewVersion.class,
+              MetadataUpdate.SetCurrentViewVersion.class));
 
   @Autowired private ClusterProperties clusterProperties;
 
   /**
    * The dialects this deployment accepts, normalized once at startup. Configured values are
    * lowercased and deduplicated so a comma-separated property is compared the same way whatever
-   * spacing or casing it was written with, while a caller's dialect still has to match exactly in
-   * lowercase, as it always has.
-   *
-   * <p>A {@link LinkedHashSet} over sorted values rather than the {@link TreeSet} that sorted them:
-   * a comparator-ordered set rejects a {@code null} lookup, and a representation may legally reach
-   * the membership test with no dialect at all.
+   * spacing or casing it was written with.
    */
   private Set<String> supportedDialects;
 
@@ -90,214 +101,177 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
   }
 
   @Override
-  public void validateGetView(String databaseId, String viewId) {
+  public void validateViewIdentifier(String databaseId, String viewId) {
     ViewValidationFailures failures = new ViewValidationFailures();
-    validateDatabaseId(databaseId, failures);
-    validateViewId(viewId, failures);
+    validateIdentifier("namespace", databaseId, failures);
+    validateIdentifier("view", viewId, failures);
     failures.throwIfPresent();
   }
 
   @Override
-  public void validateGetAllViews(String databaseId, int page, int size, String sortBy) {
+  public void validateListViews(String databaseId, String pageToken, Integer pageSize) {
     ViewValidationFailures failures = new ViewValidationFailures();
-    validateDatabaseId(databaseId, failures);
-    ApiValidatorUtil.validatePageable(page, size, sortBy, failures.getMessages());
+    validateIdentifier("namespace", databaseId, failures);
+    if (pageSize != null && pageSize < 1) {
+      failures.addGeneric(
+          String.format("pageSize : provided %d, must be greater than 0", pageSize));
+    }
+    // pageToken is deliberately opaque: no shape validation.
     failures.throwIfPresent();
   }
 
   @Override
-  public void validateCreateView(
-      String clusterId, String databaseId, CreateUpdateViewRequestBody requestBody) {
+  public void validateCreateView(String databaseId, CreateViewRequest request) {
     ViewValidationFailures failures = new ViewValidationFailures();
-    validateBody(clusterId, databaseId, requestBody, failures);
-    // POST distinguishes only "supplied" from "omitted": a supplied-but-blank token is a value the
-    // rule below has to reject, not an absence.
-    validateCreateBaseViewVersion(suppliedField(requestBody.getBaseViewVersion()), failures);
+    validateIdentifier("namespace", databaseId, failures);
+    validateIdentifier("name", request.name(), failures);
+    validateSchemaSize("schema", request.schema(), failures);
+    validateViewVersion("view-version", request.viewVersion(), failures);
+    validateProperties("properties", request.properties(), failures);
     failures.throwIfPresent();
   }
 
   @Override
-  public void validateUpdateView(
-      String clusterId, String databaseId, String viewId, CreateUpdateViewRequestBody requestBody) {
+  public void validateReplaceView(String databaseId, String viewId, UpdateTableRequest request) {
     ViewValidationFailures failures = new ViewValidationFailures();
-    validateBody(clusterId, databaseId, requestBody, failures);
-    if (requestBody.getViewId() != null && !requestBody.getViewId().equals(viewId)) {
+    validateIdentifier("namespace", databaseId, failures);
+    validateIdentifier("view", viewId, failures);
+    if (request.identifier() != null
+        && !(request.identifier().namespace().levels().length == 1
+            && databaseId.equals(request.identifier().namespace().level(0))
+            && viewId.equals(request.identifier().name()))) {
       failures.addGeneric(
           String.format(
-              "viewId : provided %s, doesn't match with the RequestBody %s",
-              viewId, requestBody.getViewId()));
+              "identifier : provided %s, doesn't match the request path %s.%s",
+              request.identifier(), databaseId, viewId));
     }
-    validateUpdateBaseViewVersion(nonBlankField(requestBody.getBaseViewVersion()), failures);
+    validateRequirements(request.requirements(), failures);
+    validateUpdates(request.updates(), failures);
     failures.throwIfPresent();
-  }
-
-  @Override
-  public void validateDeleteView(String databaseId, String viewId) {
-    // Identifier rules are identical to a read, so reuse them.
-    validateGetView(databaseId, viewId);
   }
 
   /**
-   * Rules shared by POST and PUT. Verb-specific base-version rules are applied by the caller.
-   *
-   * <p>This is the one place absence is decided. Every nullable field of the request body is
-   * converted here to an explicit {@link Optional}, so no rule below re-derives what "not supplied"
-   * means for its own field. The two list fields are normalized differently on purpose:
-   *
-   * <ul>
-   *   <li>{@code representations}: an omitted list and an empty list are the same client mistake
-   *       and are both already reported by bean validation, so an empty list collapses to absent.
-   *   <li>{@code defaultNamespace}: the field is optional, but an explicitly empty list is a
-   *       distinct client error with its own message, so it stays present.
-   * </ul>
+   * The views surface supports exactly one commit requirement, {@code assert-view-uuid}. Every
+   * other requirement type belongs to the table commit vocabulary and is rejected with a 400 rather
+   * than silently ignored: a client that sent it is asserting something this server would not
+   * check.
    */
-  private void validateBody(
-      String clusterId,
-      String databaseId,
-      CreateUpdateViewRequestBody requestBody,
-      ViewValidationFailures failures) {
-    // Bean violations stay in the generic category, so they are collected into a plain list first
-    // and then forwarded, rather than influencing the error-code precedence.
-    List<String> beanViolations = new ArrayList<>();
-    ApiValidatorUtil.collectViolations(validator, requestBody, beanViolations);
-    beanViolations.forEach(failures::addGeneric);
-    if (requestBody.getClusterId() != null && !requestBody.getClusterId().equals(clusterId)) {
-      failures.addGeneric(
-          String.format(
-              "clusterId : provided %s, doesn't match with the server cluster %s",
-              requestBody.getClusterId(), clusterId));
-    }
-    if (requestBody.getDatabaseId() != null && !requestBody.getDatabaseId().equals(databaseId)) {
-      failures.addGeneric(
-          String.format(
-              "databaseId : provided %s, doesn't match with the RequestBody %s",
-              databaseId, requestBody.getDatabaseId()));
-    }
-
-    Optional<String> schema = nonEmptyField(requestBody.getSchema());
-    Optional<List<ViewRepresentation>> representations =
-        nonEmptyField(requestBody.getRepresentations());
-    Optional<String> sourceDialect = nonEmptyField(requestBody.getSourceDialect());
-    Optional<String> defaultCatalog = suppliedField(requestBody.getDefaultCatalog());
-    Optional<List<String>> defaultNamespace = suppliedField(requestBody.getDefaultNamespace());
-    Optional<Map<String, String>> viewProperties = nonEmptyField(requestBody.getViewProperties());
-
-    validateSchema(schema, failures);
-    validateRepresentations(representations, failures);
-    validateUniqueDialects(representations, failures);
-    validateSourceDialect(sourceDialect, representations, failures);
-    validateDefaultCatalog(defaultCatalog, failures);
-    validateDefaultNamespace(defaultNamespace, failures);
-    validateViewProperties(viewProperties, failures);
-  }
-
-  /** Present whenever the caller supplied the field at all, including as a blank or empty value. */
-  private static <T> Optional<T> suppliedField(T value) {
-    return Optional.ofNullable(value);
-  }
-
-  /** Absent when the field was omitted or supplied empty; the two are equivalent to every rule. */
-  private static Optional<String> nonEmptyField(String value) {
-    return Optional.ofNullable(value).filter(StringUtils::isNotEmpty);
-  }
-
-  private static <T> Optional<List<T>> nonEmptyField(List<T> value) {
-    return Optional.ofNullable(value).filter(list -> !list.isEmpty());
-  }
-
-  private static <K, V> Optional<Map<K, V>> nonEmptyField(Map<K, V> value) {
-    return Optional.ofNullable(value).filter(map -> !map.isEmpty());
-  }
-
-  /** Absent when the field was omitted or supplied blank; the two are equivalent to every rule. */
-  private static Optional<String> nonBlankField(String value) {
-    return Optional.ofNullable(value).filter(StringUtils::isNotBlank);
-  }
-
-  /**
-   * Parse the schema with Iceberg. Iceberg already rejects duplicate field ids and malformed JSON,
-   * so this only has to wrap the failure; there is deliberately no separate duplicate-id check.
-   *
-   * <p>The size rule runs first and short-circuits parsing, so an oversized document is never fed
-   * to the parser.
-   *
-   * <p>Only the two failures Iceberg raises for caller-supplied text are caught. {@code
-   * SchemaParser} reports a structurally valid document that is not an Iceberg schema — including
-   * the Spark {@code StructType} shape and duplicate field ids — as an {@link
-   * IllegalArgumentException}, and text that is not JSON at all as an {@link UncheckedIOException}
-   * wrapping Jackson's parse failure. Anything else is a server fault and must propagate as a 500
-   * rather than be reported to the caller as a bad request.
-   */
-  private void validateSchema(Optional<String> maybeSchema, ViewValidationFailures failures) {
-    if (!maybeSchema.isPresent()) {
-      // An absent schema is already reported by bean validation.
-      return;
-    }
-    String schema = maybeSchema.get();
-    if (utf8Size(schema) > MAX_VIEW_SCHEMA_BYTES) {
-      failures.addSchema(
-          String.format("schema : exceeds maximum UTF-8 size of %d bytes", MAX_VIEW_SCHEMA_BYTES));
-      return;
-    }
-    try {
-      IcebergSchemaHelper.getSchemaFromSchemaJson(schema);
-    } catch (IllegalArgumentException | UncheckedIOException e) {
-      // Only the exception type is logged: the parser message can echo the caller's schema text.
-      log.warn("Rejected a view request with an unparseable Iceberg schema: {}", e.getClass());
-      failures.addSchema(
-          "schema : must be valid Iceberg schema JSON; Spark StructType JSON is not supported");
-    }
-  }
-
-  /**
-   * Every representation must name a dialect this deployment supports. There is deliberately no
-   * rule on how many representations a request may carry: {@link #validateUniqueDialects} already
-   * rejects an ambiguous request, so a request carrying one representation per supported dialect is
-   * well formed and is accepted.
-   */
-  private void validateRepresentations(
-      Optional<List<ViewRepresentation>> maybeRepresentations, ViewValidationFailures failures) {
-    if (!maybeRepresentations.isPresent()) {
-      // An absent or empty list is already reported by bean validation.
-      return;
-    }
-    List<ViewRepresentation> representations = maybeRepresentations.get();
-    for (int index = 0; index < representations.size(); index++) {
-      ViewRepresentation representation = representations.get(index);
-      if (representation == null) {
-        failures.addGeneric(String.format("representations[%d] : cannot be null", index));
-        continue;
-      }
-      if (!SQL_VIEW_REPRESENTATION_TYPE.equals(representation.getType())) {
+  private void validateRequirements(
+      List<UpdateRequirement> requirements, ViewValidationFailures failures) {
+    for (int index = 0; index < requirements.size(); index++) {
+      UpdateRequirement requirement = requirements.get(index);
+      if (!(requirement instanceof UpdateRequirement.AssertViewUUID)) {
         failures.addGeneric(
             String.format(
-                "representations[%d].type : must be '%s'", index, SQL_VIEW_REPRESENTATION_TYPE));
+                "requirements[%d] : only assert-view-uuid is supported on the views surface",
+                index));
       }
-      if (!supportedDialects.contains(representation.getDialect())) {
-        failures.addDialect(
-            String.format(
-                "representations[%d].dialect : must be one of the supported dialects: %s",
-                index, supportedDialectsText));
-      }
-      validateRepresentationSql(index, representation.getSql(), failures);
     }
   }
 
   /**
-   * SQL is opaque, so the only rule is a size ceiling. It is counted in UTF-8 bytes rather than
-   * characters, which is what a {@code @Size} bean constraint would have counted.
+   * Restricts update actions to the spec's view-update set and applies the same structural rules to
+   * an {@code add-view-version} payload as a create request's {@code view-version} gets. Shape
+   * compliance and capability scope are separate axes: the stubbed service may still reject
+   * combinations it does not implement.
    */
-  private void validateRepresentationSql(int index, String sql, ViewValidationFailures failures) {
-    if (StringUtils.isEmpty(sql)) {
-      // An absent SQL text is already reported by bean validation.
+  private void validateUpdates(List<MetadataUpdate> updates, ViewValidationFailures failures) {
+    for (int index = 0; index < updates.size(); index++) {
+      MetadataUpdate update = updates.get(index);
+      if (update == null || !isSupportedViewUpdate(update)) {
+        failures.addGeneric(
+            String.format("updates[%d] : action is not part of the view-update set", index));
+        continue;
+      }
+      if (update instanceof MetadataUpdate.AddViewVersion) {
+        validateViewVersion(
+            String.format("updates[%d].view-version", index),
+            ((MetadataUpdate.AddViewVersion) update).viewVersion(),
+            failures);
+      } else if (update instanceof MetadataUpdate.AddSchema) {
+        validateSchemaSize(
+            String.format("updates[%d].schema", index),
+            ((MetadataUpdate.AddSchema) update).schema(),
+            failures);
+      } else if (update instanceof MetadataUpdate.SetProperties) {
+        validateProperties(
+            String.format("updates[%d].updates", index),
+            ((MetadataUpdate.SetProperties) update).updated(),
+            failures);
+      }
+    }
+  }
+
+  private static boolean isSupportedViewUpdate(MetadataUpdate update) {
+    return SUPPORTED_VIEW_UPDATES.stream().anyMatch(supported -> supported.isInstance(update));
+  }
+
+  /**
+   * The size ceiling is measured on the canonical serialized form, in UTF-8 bytes: the limit
+   * protects storage and transport, and byte count is what a multibyte document actually costs.
+   * Parseability is already proven — the request reached this point through Iceberg's parser.
+   */
+  private void validateSchemaSize(String field, Schema schema, ViewValidationFailures failures) {
+    if (schema == null) {
+      // Parser-required; unreachable for a parsed request but kept total for direct callers.
       return;
     }
-    if (utf8Size(sql) > MAX_VIEW_SQL_BYTES) {
-      failures.addGeneric(
+    if (utf8Size(SchemaParser.toJson(schema)) > MAX_VIEW_SCHEMA_BYTES) {
+      failures.addSchema(
           String.format(
-              "representations[%d].sql : exceeds maximum UTF-8 size of %d bytes",
-              index, MAX_VIEW_SQL_BYTES));
+              "%s : exceeds maximum UTF-8 size of %d bytes", field, MAX_VIEW_SCHEMA_BYTES));
     }
+  }
+
+  /**
+   * Shared rules for a {@code view-version}, whether it arrives in a create request or in an {@code
+   * add-view-version} update: at least one representation, SQL-typed representations only, every
+   * dialect supported and unique, SQL within the size ceiling, and the {@code
+   * openhouse.source-dialect} summary rule. The source-dialect summary key is optional with a
+   * single representation — the unique-dialect rule makes the server-side default well defined —
+   * and required only when representations are plural, so a stock client's create passes
+   * unmodified.
+   */
+  private void validateViewVersion(
+      String field, ViewVersion viewVersion, ViewValidationFailures failures) {
+    if (viewVersion == null) {
+      // Parser-required; unreachable for a parsed request but kept total for direct callers.
+      return;
+    }
+    List<ViewRepresentation> representations = viewVersion.representations();
+    if (representations.isEmpty()) {
+      failures.addGeneric(
+          String.format("%s.representations : must contain at least one representation", field));
+    }
+    List<SQLViewRepresentation> sqlRepresentations = new ArrayList<>();
+    for (int index = 0; index < representations.size(); index++) {
+      ViewRepresentation representation = representations.get(index);
+      if (!(representation instanceof SQLViewRepresentation)) {
+        failures.addGeneric(
+            String.format(
+                "%s.representations[%d].type : must be '%s'",
+                field, index, SQL_VIEW_REPRESENTATION_TYPE));
+        continue;
+      }
+      SQLViewRepresentation sqlRepresentation = (SQLViewRepresentation) representation;
+      sqlRepresentations.add(sqlRepresentation);
+      if (!supportedDialects.contains(normalizeDialect(sqlRepresentation.dialect()))) {
+        failures.addDialect(
+            String.format(
+                "%s.representations[%d].dialect : must be one of the supported dialects: %s",
+                field, index, supportedDialectsText));
+      }
+      if (utf8Size(sqlRepresentation.sql()) > MAX_VIEW_SQL_BYTES) {
+        failures.addGeneric(
+            String.format(
+                "%s.representations[%d].sql : exceeds maximum UTF-8 size of %d bytes",
+                field, index, MAX_VIEW_SQL_BYTES));
+      }
+    }
+    validateUniqueDialects(field, sqlRepresentations, failures);
+    validateSourceDialectSummary(field, viewVersion, sqlRepresentations, failures);
+    validateDefaultCatalog(field, viewVersion.defaultCatalog(), failures);
+    validateDefaultNamespace(field, viewVersion.defaultNamespace(), failures);
   }
 
   /**
@@ -306,60 +280,62 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
    * and rejecting the pair as duplicates is more useful than reporting only the casing failure.
    */
   private void validateUniqueDialects(
-      Optional<List<ViewRepresentation>> maybeRepresentations, ViewValidationFailures failures) {
-    List<ViewRepresentation> representations = maybeRepresentations.orElse(Collections.emptyList());
+      String field, List<SQLViewRepresentation> representations, ViewValidationFailures failures) {
     Set<String> seen = new HashSet<>();
     Set<String> duplicates = new TreeSet<>();
-    for (ViewRepresentation representation : representations) {
-      if (representation == null || StringUtils.isEmpty(representation.getDialect())) {
-        continue;
-      }
-      String normalized = representation.getDialect().toLowerCase(Locale.ROOT);
-      if (!seen.add(normalized)) {
+    for (SQLViewRepresentation representation : representations) {
+      String normalized = normalizeDialect(representation.dialect());
+      if (normalized != null && !seen.add(normalized)) {
         duplicates.add(normalized);
       }
     }
     if (!duplicates.isEmpty()) {
       failures.addDialect(
           String.format(
-              "representations : dialects must be unique, duplicated: %s",
-              String.join(", ", duplicates)));
+              "%s.representations : dialects must be unique, duplicated: %s",
+              field, String.join(", ", duplicates)));
     }
   }
 
   /**
-   * The source dialect carries two separate obligations: it must name a dialect this deployment
-   * supports, and it must name one of the representations actually supplied. The first is about
-   * what the server can serve, the second about what this request defines.
+   * The {@code openhouse.source-dialect} summary entry: optional with a single representation,
+   * required with several. When present it must name a supported dialect and one of the supplied
+   * representations — the first is about what the server can serve, the second about what this
+   * request defines.
    */
-  private void validateSourceDialect(
-      Optional<String> maybeSourceDialect,
-      Optional<List<ViewRepresentation>> maybeRepresentations,
+  private void validateSourceDialectSummary(
+      String field,
+      ViewVersion viewVersion,
+      List<SQLViewRepresentation> representations,
       ViewValidationFailures failures) {
-    if (!maybeSourceDialect.isPresent()) {
-      // An absent source dialect is already reported by bean validation.
+    String sourceDialect = viewVersion.summary().get(VIEW_SOURCE_DIALECT_SUMMARY_KEY);
+    if (sourceDialect == null) {
+      if (representations.size() > 1) {
+        failures.addDialect(
+            String.format(
+                "%s.summary.%s : required when multiple representations are supplied",
+                field, VIEW_SOURCE_DIALECT_SUMMARY_KEY));
+      }
       return;
     }
-    String sourceDialect = maybeSourceDialect.get();
-    if (!supportedDialects.contains(sourceDialect)) {
+    String normalized = normalizeDialect(sourceDialect);
+    if (!supportedDialects.contains(normalized)) {
       failures.addDialect(
           String.format(
-              "sourceDialect : must be one of the supported dialects: %s", supportedDialectsText));
+              "%s.summary.%s : must be one of the supported dialects: %s",
+              field, VIEW_SOURCE_DIALECT_SUMMARY_KEY, supportedDialectsText));
       return;
     }
-    // Only meaningful when at least one usable representation was supplied. With none, the missing
-    // or null representation is already reported, and adding a second message here would both
-    // duplicate that diagnosis and promote a malformed body to the more specific dialect code.
-    List<ViewRepresentation> suppliedRepresentations =
-        maybeRepresentations.orElse(Collections.emptyList()).stream()
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
-    if (suppliedRepresentations.isEmpty()) {
-      return;
-    }
-    if (suppliedRepresentations.stream()
-        .noneMatch(representation -> sourceDialect.equals(representation.getDialect()))) {
-      failures.addDialect("sourceDialect : does not name a supplied representation");
+    // Only meaningful when at least one SQL representation was supplied; with none, the missing
+    // representation is already reported and a second message would duplicate that diagnosis.
+    if (!representations.isEmpty()
+        && representations.stream()
+            .noneMatch(
+                representation -> normalized.equals(normalizeDialect(representation.dialect())))) {
+      failures.addDialect(
+          String.format(
+              "%s.summary.%s : does not name a supplied representation",
+              field, VIEW_SOURCE_DIALECT_SUMMARY_KEY));
     }
   }
 
@@ -368,48 +344,39 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
    * rather than an omission, so it is rejected instead of silently ignored.
    */
   private void validateDefaultCatalog(
-      Optional<String> maybeDefaultCatalog, ViewValidationFailures failures) {
-    if (!maybeDefaultCatalog.isPresent()) {
+      String field, String defaultCatalog, ViewValidationFailures failures) {
+    if (defaultCatalog == null) {
       return;
     }
-    String defaultCatalog = maybeDefaultCatalog.get();
     if (StringUtils.isBlank(defaultCatalog)) {
-      failures.addGeneric("defaultCatalog : cannot be blank when provided");
+      failures.addGeneric(
+          String.format("%s.default-catalog : cannot be blank when provided", field));
     } else if (defaultCatalog.length() > MAX_VIEW_IDENTIFIER_LENGTH) {
       failures.addGeneric(
           String.format(
-              "defaultCatalog : exceeds the maximum length of %d characters",
-              MAX_VIEW_IDENTIFIER_LENGTH));
+              "%s.default-catalog : exceeds the maximum length of %d characters",
+              field, MAX_VIEW_IDENTIFIER_LENGTH));
     }
   }
 
   /**
-   * Namespace segments follow the same identifier rules as a database id. Messages are indexed but
-   * fixed: the offending segment is never echoed, keeping every payload-derived message redacted.
+   * Resolution namespace segments follow the same identifier rules as a path namespace. An empty
+   * namespace is legal — the spec requires the field but allows it empty, meaning unset. Messages
+   * are indexed but fixed: the offending segment is only echoed through the shared identifier rule,
+   * which reports names, never payload.
    */
   private void validateDefaultNamespace(
-      Optional<List<String>> maybeDefaultNamespace, ViewValidationFailures failures) {
-    if (!maybeDefaultNamespace.isPresent()) {
+      String field,
+      org.apache.iceberg.catalog.Namespace defaultNamespace,
+      ViewValidationFailures failures) {
+    if (defaultNamespace == null) {
       return;
     }
-    List<String> defaultNamespace = maybeDefaultNamespace.get();
-    if (defaultNamespace.isEmpty()) {
-      failures.addGeneric("defaultNamespace : cannot be empty when provided");
-      return;
-    }
-    for (int index = 0; index < defaultNamespace.size(); index++) {
-      String segment = defaultNamespace.get(index);
-      if (StringUtils.isBlank(segment)) {
-        failures.addGeneric(String.format("defaultNamespace[%d] : cannot be blank", index));
-      } else if (!segment.matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
-        failures.addGeneric(
-            String.format("defaultNamespace[%d] : %s", index, ALPHA_NUM_UNDERSCORE_ERROR_MSG));
-      } else if (segment.length() > MAX_VIEW_IDENTIFIER_LENGTH) {
-        failures.addGeneric(
-            String.format(
-                "defaultNamespace[%d] : exceeds the maximum length of %d characters",
-                index, MAX_VIEW_IDENTIFIER_LENGTH));
-      }
+    for (int index = 0; index < defaultNamespace.levels().length; index++) {
+      validateIdentifier(
+          String.format("%s.default-namespace[%d]", field, index),
+          defaultNamespace.level(index),
+          failures);
     }
   }
 
@@ -420,124 +387,68 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
    * user property such as {@code OpenHouse.myTeam} stays legal.
    *
    * <p>Property keys are user-authored identifiers rather than payload text, so listing the
-   * offending keys is intentional and does not breach the SQL/schema/token redaction invariant.
+   * offending keys is intentional and does not breach the SQL/schema redaction invariant.
    */
-  private void validateViewProperties(
-      Optional<Map<String, String>> maybeViewProperties, ViewValidationFailures failures) {
-    if (!maybeViewProperties.isPresent()) {
-      return;
-    }
-    Map<String, String> viewProperties = maybeViewProperties.get();
+  private void validateProperties(
+      String field, Map<String, String> properties, ViewValidationFailures failures) {
     boolean blankKey = false;
-    Set<String> nullValueKeys = new TreeSet<>();
     Set<String> reservedKeys = new TreeSet<>();
-    for (Map.Entry<String, String> property : viewProperties.entrySet()) {
+    for (Map.Entry<String, String> property : properties.entrySet()) {
       String key = property.getKey();
       if (StringUtils.isBlank(key)) {
         blankKey = true;
         continue;
-      }
-      if (property.getValue() == null) {
-        nullValueKeys.add(key);
       }
       if (HouseTableSerdeUtils.IS_OH_PREFIXED.test(key) || POLICIES_PROPERTY_KEY.equals(key)) {
         reservedKeys.add(key);
       }
     }
     if (blankKey) {
-      failures.addGeneric("viewProperties : property keys cannot be blank");
-    }
-    if (!nullValueKeys.isEmpty()) {
-      failures.addGeneric(
-          String.format(
-              "viewProperties : property values cannot be null, keys: %s",
-              String.join(", ", nullValueKeys)));
+      failures.addGeneric(String.format("%s : property keys cannot be blank", field));
     }
     if (!reservedKeys.isEmpty()) {
       failures.addGeneric(
           String.format(
-              "viewProperties : reserved keys are not allowed: %s",
-              String.join(", ", reservedKeys)));
+              "%s : reserved keys are not allowed: %s", field, String.join(", ", reservedKeys)));
     }
+  }
+
+  private void validateIdentifier(String field, String value, ViewValidationFailures failures) {
+    List<String> identifierFailures = new ArrayList<>();
+    ApiValidatorUtil.validateIdentifier(field, value, identifierFailures);
+    if (!identifierFailures.isEmpty()) {
+      identifierFailures.forEach(failures::addGeneric);
+    } else if (value.length() > MAX_VIEW_IDENTIFIER_LENGTH) {
+      // Deliberately omits the offending value: an over-long identifier is by definition large
+      // and the message is copied into the error body and into service audit events.
+      failures.addGeneric(
+          String.format(
+              "%s : exceeds the maximum length of %d characters",
+              field, MAX_VIEW_IDENTIFIER_LENGTH));
+    }
+  }
+
+  private static String normalizeDialect(String dialect) {
+    return dialect == null ? null : dialect.toLowerCase(Locale.ROOT);
   }
 
   /** Counts UTF-8 bytes, not UTF-16 characters. */
   private static int utf8Size(String value) {
-    return value.getBytes(StandardCharsets.UTF_8).length;
-  }
-
-  /**
-   * POST accepts an omitted base version or the table-style {@code INITIAL_VERSION} token, matching
-   * both the Iceberg client, which sends the initial token on create, and callers that omit the
-   * field entirely.
-   */
-  private void validateCreateBaseViewVersion(
-      Optional<String> baseViewVersion, ViewValidationFailures failures) {
-    if (baseViewVersion.isPresent() && !INITIAL_TABLE_VERSION.equals(baseViewVersion.get())) {
-      failures.addGeneric(
-          "baseViewVersion : must be omitted or " + INITIAL_TABLE_VERSION + " on POST create");
-    }
-  }
-
-  /**
-   * PUT requires a base version but treats it as fully opaque: no path, scheme, suffix or length
-   * rule is applied, so the service alone decides whether the token is current.
-   *
-   * <p>The caller normalizes a blank token to absent, because a token of whitespace is
-   * indistinguishable from an omitted one to every rule here.
-   */
-  private void validateUpdateBaseViewVersion(
-      Optional<String> baseViewVersion, ViewValidationFailures failures) {
-    if (!baseViewVersion.isPresent()) {
-      failures.addGeneric("baseViewVersion : is required and cannot be blank on PUT");
-    }
-  }
-
-  private void validateDatabaseId(String databaseId, ViewValidationFailures failures) {
-    List<String> identifierFailures = new ArrayList<>();
-    ApiValidatorUtil.validateIdentifier("databaseId", databaseId, identifierFailures);
-    if (!identifierFailures.isEmpty()) {
-      identifierFailures.forEach(failures::addGeneric);
-    } else if (databaseId.length() > MAX_VIEW_IDENTIFIER_LENGTH) {
-      failures.addGeneric(identifierTooLong("databaseId"));
-    }
-  }
-
-  private void validateViewId(String viewId, ViewValidationFailures failures) {
-    List<String> identifierFailures = new ArrayList<>();
-    ApiValidatorUtil.validateIdentifier("viewId", viewId, identifierFailures);
-    if (!identifierFailures.isEmpty()) {
-      identifierFailures.forEach(failures::addGeneric);
-    } else if (viewId.length() > MAX_VIEW_IDENTIFIER_LENGTH) {
-      failures.addGeneric(identifierTooLong("viewId"));
-    }
-  }
-
-  /**
-   * Deliberately omits the offending value. Every other identifier message echoes it, but an
-   * over-long identifier is by definition large and the message is copied into the error body and
-   * into service audit events.
-   */
-  private static String identifierTooLong(String field) {
-    return String.format(
-        "%s : exceeds the maximum length of %d characters", field, MAX_VIEW_IDENTIFIER_LENGTH);
+    return value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;
   }
 
   /**
    * Accumulates failure messages in discovery order while separately remembering whether a schema
    * or dialect rule failed, so the thrown exception can carry the most specific internal code.
    *
-   * <p>Precedence is schema, then dialect, then the generic definition code. All three map to 400,
-   * so the choice is observable only to internal callers and tests.
+   * <p>Precedence is schema, then dialect, then the generic definition code. All three map to 400
+   * with the {@code BadRequestException} type, so the choice is observable only to internal callers
+   * and tests.
    */
   private static final class ViewValidationFailures {
     private final List<String> messages = new ArrayList<>();
     private boolean schemaFailure;
     private boolean dialectFailure;
-
-    private List<String> getMessages() {
-      return messages;
-    }
 
     private void addGeneric(String message) {
       messages.add(message);

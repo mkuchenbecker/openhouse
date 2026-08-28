@@ -59,6 +59,20 @@ public class MockTablesApplication {
   @MockBean HouseTableRepository houseTableRepository;
 
   /**
+   * The Iceberg REST views chain is real in mock tests: handler, validator and the disabled service
+   * together are the deployed views-disabled posture the controller tests pin. Wired as an explicit
+   * bean because scanning {@code tables.api.handler} would also pull in the tables handler and its
+   * read-bridge dependencies, which this slim context deliberately omits.
+   */
+  @Bean
+  public com.linkedin.openhouse.tables.api.handler.ViewsApiHandler viewsApiHandler(
+      com.linkedin.openhouse.tables.api.validator.ViewsApiValidator viewsApiValidator,
+      com.linkedin.openhouse.tables.services.ViewsService viewsService) {
+    return new com.linkedin.openhouse.tables.api.handler.impl.OpenHouseViewsApiHandler(
+        viewsApiValidator, viewsService);
+  }
+
+  /**
    * Mock tests scan {@code tables.api.validator}, not {@code tables.api}, so {@code ApiConfig} is
    * not loaded. Wire a no-op strip guard rather than component-scanning {@code tables.readbridge}.
    */

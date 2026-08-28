@@ -1,55 +1,102 @@
 package com.linkedin.openhouse.tables.services;
 
-import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
-import com.linkedin.openhouse.tables.model.ViewDto;
-import org.springframework.data.domain.Page;
-import org.springframework.data.util.Pair;
+import com.linkedin.openhouse.tables.model.ViewIdentifiersPage;
+import java.util.List;
+import java.util.Map;
+import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.UpdateRequirement;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.view.ViewMetadata;
+import org.apache.iceberg.view.ViewVersion;
 
-/** Service interface backing the /v2 views endpoints. */
+/**
+ * Service interface backing the Iceberg REST views endpoints.
+ *
+ * <p>The interface speaks unwrapped catalog-domain types — {@link ViewMetadata}, {@link
+ * MetadataUpdate}, {@link UpdateRequirement}, identifiers and page tokens — never the wire
+ * envelopes ({@code CreateViewRequest}, {@code UpdateTableRequest}). Unwrapping is the API
+ * handler's job, which keeps this seam reusable by a future non-REST caller and keeps wire-shape
+ * churn out of the service contract.
+ */
 public interface ViewsService {
 
   /**
-   * Given a databaseId and viewId, prepare a {@link ViewDto} if actingPrincipal has the right
-   * privilege.
+   * Load the complete metadata of a view.
    *
-   * @param databaseId database identifier
-   * @param viewId view identifier
+   * @param identifier view identifier (single-level namespace plus view name)
    * @param actingPrincipal authenticated user
-   * @return the view pointer
+   * @return the complete current view metadata
    */
-  ViewDto getView(String databaseId, String viewId, String actingPrincipal);
+  ViewMetadata loadView(TableIdentifier identifier, String actingPrincipal);
 
   /**
-   * Given a databaseId, prepare a page of identifier-only {@link ViewDto}s.
+   * Check whether a view exists.
    *
-   * @param databaseId database identifier
-   * @param page zero-based page index
-   * @param size page size
-   * @param sortBy optional single sort field
+   * @param identifier view identifier
    * @param actingPrincipal authenticated user
-   * @return a page of identifier-only dtos
+   * @return true iff the view exists and the principal may know that
    */
-  Page<ViewDto> getAllViews(
-      String databaseId, int page, int size, String sortBy, String actingPrincipal);
+  boolean viewExists(TableIdentifier identifier, String actingPrincipal);
 
   /**
-   * Create or replace a view.
+   * List view identifiers in a database.
    *
-   * @param requestBody the create/update request
-   * @param actingPrincipal authenticated user performing the write
-   * @param failOnExist true for POST create, false for PUT create-or-replace
-   * @return a pair whose first element is the saved view and whose second element is true iff the
-   *     call created the view rather than replacing it
+   * <p>Pagination contract (spec obligation): when {@code pageToken} is {@code null} the service
+   * must return <b>all</b> results in a single page; when a token is supplied, the service returns
+   * the next page and a new token, or a {@code null} token to terminate. Tokens are opaque to the
+   * caller.
+   *
+   * @param databaseId single-level namespace to list
+   * @param pageToken opaque continuation token, or {@code null} for an unpaged full listing
+   * @param pageSize requested page size, or {@code null} when the caller did not specify one
+   * @param actingPrincipal authenticated user
+   * @return one page of identifiers plus the continuation token
    */
-  Pair<ViewDto, Boolean> putView(
-      CreateUpdateViewRequestBody requestBody, String actingPrincipal, boolean failOnExist);
+  ViewIdentifiersPage listViews(
+      String databaseId, String pageToken, Integer pageSize, String actingPrincipal);
 
   /**
-   * Delete the view identified by databaseId and viewId if actingPrincipal has the right privilege.
+   * Create a view.
    *
-   * @param databaseId database identifier
-   * @param viewId view identifier
+   * @param identifier view identifier from the request path and body name
+   * @param schema the view schema
+   * @param requestedVersion the view version to create; the service owns version-id, schema-id and
+   *     timestamp assignment, and defaults an absent {@code openhouse.source-dialect} summary entry
+   *     to the sole representation's dialect
+   * @param location caller-requested location, or {@code null} for the server-owned default
+   * @param properties user view properties (reserved keys already rejected by validation)
+   * @param actingPrincipal authenticated user
+   * @return the complete metadata of the created view
+   */
+  ViewMetadata createView(
+      TableIdentifier identifier,
+      Schema schema,
+      ViewVersion requestedVersion,
+      String location,
+      Map<String, String> properties,
+      String actingPrincipal);
+
+  /**
+   * Commit updates to an existing view (the spec's replace-view operation).
+   *
+   * @param identifier view identifier
+   * @param requirements commit requirements; the views surface supports {@code assert-view-uuid}
+   * @param updates typed metadata updates to apply
+   * @param actingPrincipal authenticated user
+   * @return the complete metadata after the commit
+   */
+  ViewMetadata replaceView(
+      TableIdentifier identifier,
+      List<UpdateRequirement> requirements,
+      List<MetadataUpdate> updates,
+      String actingPrincipal);
+
+  /**
+   * Drop a view.
+   *
+   * @param identifier view identifier
    * @param actingPrincipal authenticated user
    */
-  void deleteView(String databaseId, String viewId, String actingPrincipal);
+  void dropView(TableIdentifier identifier, String actingPrincipal);
 }
