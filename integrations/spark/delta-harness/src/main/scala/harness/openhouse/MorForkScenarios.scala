@@ -19,13 +19,15 @@ trait MorForkScenarios extends MorScenarioKit {
   private def showProps(spark: SparkSession, table: String): Map[String, String] =
     spark.sql(s"SHOW TBLPROPERTIES $table").collect().toSeq.map(r => r.getString(0) -> r.getString(1)).toMap
 
-  // Delete-file replication factor for merge-on-read deletes.
-  // The write.delete-file-replication table property is resolved into a replication factor that the
-  // delete-file write path stamps onto the position-delete file's output properties, which is what tells
-  // HDFS to set that file's block replication. The actual HDFS block replication is not observable on the
-  // local filesystem this harness runs on, so this test asserts the parts that are locally observable:
-  // the property round-trips through the catalog metadata, a merge-on-read DELETE physically writes a
-  // position-delete file, and the DML result and the property both survive the mutation.
+  /**
+   * The write.delete-file-replication property round-trips through the catalog, a merge-on-read
+   * DELETE physically writes a position-delete file, the surviving rows are correct, and the
+   * property is still set after the delete. The property is resolved into a replication factor that
+   * the delete-file write path stamps onto the position-delete file's output properties, which is
+   * what tells HDFS to set that file's block replication. The local harness asserts the catalog
+   * property, the physical delete file, and the surviving rows; HDFS verifies block replication in
+   * its own environment.
+   */
   private def forkDeleteFileReplication(ctx: Ctx): Unit = {
     val spark = ctx.spark
     val table = s"${ctx.namespace}.t_delrepl"
@@ -61,12 +63,10 @@ trait MorForkScenarios extends MorScenarioKit {
     spark.sql(s"DROP TABLE IF EXISTS $table")
   }
 
+  /** The delete-file-replication case, driven directly against a merge-on-read table. */
   val forkDeleteFileReplicationCases: List[Plan.Case] =
     List(
       Plan.Case(
         "fork.deleteFileReplication @ mor",
-        forkDeleteFileReplication,
-        description = "The write.delete-file-replication table property round-trips through the " +
-          "catalog, a merge-on-read DELETE writes a position-delete file, the surviving rows are " +
-          "correct, and the property is still set after the delete."))
+        forkDeleteFileReplication))
 }

@@ -16,8 +16,12 @@ import scala.util.control.NonFatal
 trait RtasHazardScenarios extends RtasScenarioKit { this: HazardReaderWriterScenarios =>
   import Rows._
 
-  def hazardRtasCases(format: String): List[Plan.Case] = {
-    val taggedReplacePreparation = TablePreparation(
+  /**
+   * Three seed rows in a table in the given file format with replace.enabled set and the string
+   * column tagged PII.
+   */
+  private def taggedReplacePreparation(format: String): TablePreparation[CoreTable.type] =
+    TablePreparation(
       format,
       TableTest(Core)
         .sql("create")(table => cowCreate(table, format))()
@@ -26,32 +30,33 @@ trait RtasHazardScenarios extends RtasScenarioKit { this: HazardReaderWriterScen
           s"ALTER TABLE $table SET TBLPROPERTIES ('replace.enabled'='true')")()
         .sql("tagPii")(table =>
           s"ALTER TABLE $table MODIFY COLUMN " +
-            s"${Core.string0.columnName} SET TAG = (PII)")(),
-      description = s"Three seed rows in a $format table with replace.enabled set and the string " +
-        "column tagged PII.")
+            s"${Core.string0.columnName} SET TAG = (PII)")())
 
-    List(
-      taggedReplacePreparation.test(
-        "hazard.rtas.preservesColumnTags",
-        "CREATE OR REPLACE TABLE AS SELECT preserves the PII column tag policy that was set " +
-          "before the replace.") { table =>
-        val policiesBefore =
-          tableProps(table.spark, table.name).getOrElse("policies", "")
-        assert(
-          policiesBefore.toLowerCase.contains("pii") ||
-            policiesBefore.toLowerCase.contains("columntags"),
-          s"PII tag was not stored before RTAS: $policiesBefore")
+  /**
+   * CREATE OR REPLACE TABLE AS SELECT preserves the PII column tag policy that was set before the
+   * replace.
+   */
+  private def rtasPreservesColumnTagsCase(format: String): Plan.Case =
+    taggedReplacePreparation(format).test("hazard.rtas.preservesColumnTags") { table =>
+      val policiesBefore =
+        tableProps(table.spark, table.name).getOrElse("policies", "")
+      assert(
+        policiesBefore.toLowerCase.contains("pii") ||
+          policiesBefore.toLowerCase.contains("columntags"),
+        s"PII tag was not stored before RTAS: $policiesBefore")
 
-        table.spark.sql(
-          s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
-            s"AS SELECT * FROM ${table.name} " +
-            s"WHERE ${Core.long0.columnName} <= 2")
-        val policiesAfter =
-          tableProps(table.spark, table.name).getOrElse("policies", "")
+      table.spark.sql(
+        s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
+          s"AS SELECT * FROM ${table.name} " +
+          s"WHERE ${Core.long0.columnName} <= 2")
+      val policiesAfter =
+        tableProps(table.spark, table.name).getOrElse("policies", "")
 
-        assert(
-          policiesAfter == policiesBefore,
-          s"RTAS should preserve the PII column tag: $policiesAfter")
-      })
-  }
+      assert(
+        policiesAfter == policiesBefore,
+        s"RTAS should preserve the PII column tag: $policiesAfter")
+    }
+
+  def hazardRtasCases(format: String): List[Plan.Case] =
+    List(rtasPreservesColumnTagsCase(format))
 }
