@@ -247,8 +247,8 @@ The source map separates reusable DML structure from the bespoke standard famili
 
 `DmlCaseCatalogTest` pins the DML definitions, compatibility lists, preparation membership, and
 matrix order. `TablePreparationTest` pins case-ID formatting, deferred execution, post-test hooks,
-and known-bug propagation. `TableTestTest` pins namespace-scoped table-name uniqueness even when the
-counter is reset.
+and known-bug propagation. `TableTestTest` pins namespace-scoped table-name uniqueness,
+ownership-gated cleanup, and cleanup-failure propagation.
 
 Run the catalog tests with:
 
