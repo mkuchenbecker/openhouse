@@ -4,7 +4,6 @@ import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.dto.model.UserTableDto;
 import java.util.List;
 import org.springframework.data.domain.Page;
-import org.springframework.data.util.Pair;
 
 /** Service Interface for Implementing /hts/tables endpoint. */
 public interface UserTablesService {
@@ -15,6 +14,15 @@ public interface UserTablesService {
    *     service and transport layer.
    */
   UserTableDto getUserTable(String databaseId, String tableId);
+
+  /**
+   * Reads the occupant of a key whatever its type, for collision detection. Absence must mean
+   * genuine absence, so repository and hydration failures propagate rather than reading as free.
+   */
+  UserTableDto getNeutralEntity(String databaseId, String tableId);
+
+  /** View-scoped point read; a table or legacy null at the key resolves as absent. */
+  UserTableDto getUserView(String databaseId, String tableId);
 
   /**
    * Given a partially filled {@link UserTable} object, prepare list of {@link UserTableDto}s that
@@ -40,21 +48,62 @@ public interface UserTablesService {
    */
   Page<UserTableDto> getAllUserTables(UserTable userTable, int page, int size, String sortBy);
 
-  /** Given a databaseId and tableId, delete the user table entry from the House Table. */
+  /**
+   * Unlike {@link #getAllUserTables(UserTable)}, an empty query returns every view rather than a
+   * projection of database names; database enumeration stays type-agnostic on the table query.
+   *
+   * <p>Takes the service-owned {@link UserViewQuery} rather than the transport {@link UserTable}:
+   * the handler maps a validated request into it at the boundary, so the view read contract admits
+   * exactly a database id and an optional table pattern. The table-query methods still accept the
+   * transport type; changing them uniformly is a service-wide refactor tracked separately.
+   */
+  List<UserTableDto> getAllUserViews(UserViewQuery userViewQuery);
+
+  Page<UserTableDto> getAllUserViews(
+      UserViewQuery userViewQuery, int page, int size, String sortBy);
+
+  /**
+   * Given a databaseId and tableId, delete the user table entry from the House Table. The {@code
+   * isSoftDelete} flag is table-only; {@link #deleteUserView} has no equivalent by design.
+   */
   void deleteUserTable(String databaseId, String tableId, boolean isSoftDelete);
 
   /**
-   * Create or update a {@link UserTable} row in House table.
-   *
-   * @param userTable The object attempted to be used for update/creation.
-   * @return A pair of object: The first {@link UserTableDto} is the actual saved object. The second
-   *     boolean is set to true if overwritten occurred. This is to differentiate between creation
-   *     and update of {@link UserTableDto}.
+   * Always a hard delete: {@code soft_deleted_user_table_row} carries no discriminator, so a view
+   * routed through it would restore as a table.
    */
-  Pair<UserTableDto, Boolean> putUserTable(UserTable userTable);
+  void deleteUserView(String databaseId, String tableId);
 
   /**
-   * Rename a {@link UserTable} row in House table.
+   * Create or update a table row in House table. This entry point supplies its own {@code TABLE}
+   * type to the shared persistence primitive, so a caller cannot persist a view through it: a
+   * payload may agree with the type or omit it, and a contradiction is rejected.
+   *
+   * @param userTable The object attempted to be used for update/creation.
+   * @return the row as persisted, together with whether the write replaced an existing occupant or
+   *     created the key.
+   * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
+   *     payload's {@code entityType} contradicts this entry point's {@code TABLE}.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the write
+   *     breaks a storage constraint other than the row key.
+   */
+  PutResult putUserTable(UserTable userTable);
+
+  /**
+   * The view-typed twin of {@link #putUserTable}: supplies {@code VIEW} itself, so the method
+   * establishes the invariant its name promises even for a caller that bypasses the controller's
+   * wire mismatch check.
+   *
+   * @throws com.linkedin.openhouse.common.exception.RequestValidationFailureException if the
+   *     payload's {@code entityType} contradicts this entry point's {@code VIEW}.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the write
+   *     breaks a storage constraint other than the row key.
+   */
+  PutResult putUserView(UserTable userView);
+
+  /**
+   * Rename a {@link UserTable} row in House table. Table-only: views are not renameable, so there
+   * is deliberately no view equivalent.
    *
    * @param fromDatabaseId The databaseId of the row to rename.
    * @param fromTableId The tableId of the row to rename.
@@ -62,6 +111,8 @@ public interface UserTablesService {
    * @param toTableId The new tableId of the renamed row.
    * @param metadataLocation The new metadata file of the table with updated table properties for
    *     updated ids.
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the
+   *     rename breaks a storage constraint other than the destination key.
    */
   void renameUserTable(
       String fromDatabaseId,
@@ -76,6 +127,8 @@ public interface UserTablesService {
    * @param databaseId
    * @param tableId
    * @param deletedAtMs
+   * @throws com.linkedin.openhouse.common.exception.StorageIntegrityViolationException if the
+   *     restoring write breaks a storage constraint other than the row key.
    */
   UserTableDto restoreUserTable(String databaseId, String tableId, Long deletedAtMs);
 
