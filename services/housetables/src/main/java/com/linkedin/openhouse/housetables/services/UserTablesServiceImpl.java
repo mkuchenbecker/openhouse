@@ -136,6 +136,12 @@ public class UserTablesServiceImpl implements UserTablesService {
    * @param toTableId The new tableId of the renamed row.
    * @param metadataLocation The new metadata file of the table with updated table properties that
    *     match the new tableId
+   * @param expectedMetadataLocation The metadata location the caller observed when initiating the
+   *     rename (its optimistic-concurrency token), or null to skip the caller-side check. This
+   *     answers a different question than the update's condition below does: it reports whether the
+   *     caller's own view of the table is current. The rename update itself is always conditional
+   *     on the version and metadata location this method reads below, so a commit racing this
+   *     rename can never be silently overwritten even when the caller declared no token.
    */
   @Override
   public void renameUserTable(
@@ -143,10 +149,36 @@ public class UserTablesServiceImpl implements UserTablesService {
       String fromTableId,
       String toDatabaseId,
       String toTableId,
-      String metadataLocation) {
-    if (!htsJdbcRepository.existsById(
-        UserTableRowPrimaryKey.builder().databaseId(fromDatabaseId).tableId(fromTableId).build())) {
-      throw new NoSuchUserTableException(fromDatabaseId, fromTableId);
+      String metadataLocation,
+      String expectedMetadataLocation) {
+    UserTableRow fromUserTableRow =
+        htsJdbcRepository
+            .findById(
+                UserTableRowPrimaryKey.builder()
+                    .databaseId(fromDatabaseId)
+                    .tableId(fromTableId)
+                    .build())
+            .orElseThrow(() -> new NoSuchUserTableException(fromDatabaseId, fromTableId));
+    if (expectedMetadataLocation != null
+        && !expectedMetadataLocation.equals(fromUserTableRow.getMetadataLocation())) {
+      throw new EntityConcurrentModificationException(
+          String.format(
+              "databaseId : %s, tableId : %s, metadataLocation: %s %s",
+              fromDatabaseId,
+              fromTableId,
+              expectedMetadataLocation,
+              "The requested user table has been modified/created by other processes."),
+          UserTableRowPrimaryKey.builder()
+              .databaseId(fromDatabaseId)
+              .tableId(fromTableId)
+              .build()
+              .toString(),
+          // The 409 body renders this cause's message (OpenHouseExceptionHandler), so it carries
+          // the observed-vs-actual base the client needs to reconcile its retry.
+          new RuntimeException(
+              String.format(
+                  "Rename declared expectedMetadataLocation %s but the table is at %s",
+                  expectedMetadataLocation, fromUserTableRow.getMetadataLocation())));
     }
     // Renames user table within the same database
     try {
@@ -159,8 +191,48 @@ public class UserTablesServiceImpl implements UserTablesService {
       // Use fromDatabaseId for destination db to preserve the original case of the database
       // TODO: Use toDataBaseId for destination instead of fromDatabaseId once rename across
       // databases is supported
-      htsJdbcRepository.renameTableId(
-          fromDatabaseId, fromTableId, fromDatabaseId, toTableId, metadataLocation);
+      // The update is conditional on both the version and the metadataLocation read above, and it
+      // bumps the version atomically, so a concurrent commit that advances the row between the read
+      // and this update makes the update match 0 rows instead of clobbering the newer
+      // metadataLocation. The location is part of the condition because the version alone resets to
+      // 0 when a row is deleted and reinserted: a table dropped and recreated at this identity
+      // would present a fresh row at the same version, and a version-only condition would rename
+      // that new incarnation onto the old one's metadata. Metadata locations are never reused, so
+      // conditioning on the observed one pins the update to the exact row state that was read.
+      // The observed location is used rather than the caller's expectedMetadataLocation so that
+      // callers who declared no token are protected by the same condition.
+      int updatedRows =
+          htsJdbcRepository.renameTableId(
+              fromDatabaseId,
+              fromTableId,
+              fromDatabaseId,
+              toTableId,
+              metadataLocation,
+              fromUserTableRow.getVersion(),
+              fromUserTableRow.getMetadataLocation());
+      if (updatedRows == 0) {
+        throw new EntityConcurrentModificationException(
+            String.format(
+                "databaseId : %s, tableId : %s, version: %s, metadataLocation: %s %s",
+                fromDatabaseId,
+                fromTableId,
+                fromUserTableRow.getVersion(),
+                fromUserTableRow.getMetadataLocation(),
+                "The requested user table has been modified/created by other processes."),
+            UserTableRowPrimaryKey.builder()
+                .databaseId(fromDatabaseId)
+                .tableId(fromTableId)
+                .build()
+                .toString(),
+            // The 409 body renders this cause's message (OpenHouseExceptionHandler), so it names
+            // the row state the conditional update was conditioned on.
+            new RuntimeException(
+                String.format(
+                    "Rename update matched no row at the version %s and metadataLocation %s it"
+                        + " was conditioned on: the table was modified, or dropped and recreated,"
+                        + " between the rename's read and its update",
+                    fromUserTableRow.getVersion(), fromUserTableRow.getMetadataLocation())));
+      }
     } catch (DataIntegrityViolationException e) {
       throw new AlreadyExistsException("Table", toTableId);
     }

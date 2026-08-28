@@ -223,6 +223,66 @@ public class OpenHouseInternalTableOperationsTest {
   }
 
   /**
+   * A rename commit must declare the writer's base metadata location (the pre-commit tableLocation,
+   * surfaced as {@code HouseTable#getTableVersion()}) so HTS can reject the rename with a conflict
+   * when a concurrent commit has advanced the table, instead of the rename silently overwriting the
+   * winner's metadataLocation.
+   */
+  @Test
+  void testDoCommitRenamePassesExpectedMetadataLocation() {
+    Map<String, String> properties = new HashMap<>(BASE_TABLE_METADATA.properties());
+    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      properties.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION);
+      properties.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, "test_table_renamed");
+      properties.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, "test_db");
+      TableMetadata metadata = BASE_TABLE_METADATA.replaceProperties(properties);
+      Mockito.when(mockHouseTable.getTableVersion()).thenReturn(TEST_LOCATION);
+
+      openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, metadata);
+
+      Mockito.verify(mockHouseTableRepository, Mockito.times(1))
+          .rename(
+              Mockito.eq("test_db"),
+              Mockito.eq("test_table"),
+              Mockito.eq("test_db"),
+              Mockito.eq("test_table_renamed"),
+              Mockito.anyString(),
+              Mockito.eq(TEST_LOCATION));
+      Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    }
+  }
+
+  /**
+   * A rename whose writer has no persisted base (tableVersion is INITIAL_VERSION) must not declare
+   * an expected metadata location: the guarded HTS rename then falls back to its own
+   * read-then-conditional-update, which still cannot clobber a concurrent commit.
+   */
+  @Test
+  void testDoCommitRenameWithoutPersistedBaseOmitsExpectedMetadataLocation() {
+    Map<String, String> properties = new HashMap<>(BASE_TABLE_METADATA.properties());
+    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      properties.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, "test_table_renamed");
+      properties.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, "test_db");
+      TableMetadata metadata = BASE_TABLE_METADATA.replaceProperties(properties);
+      Mockito.when(mockHouseTable.getTableVersion()).thenReturn(CatalogConstants.INITIAL_VERSION);
+
+      openHouseInternalTableOperations.doCommit(BASE_TABLE_METADATA, metadata);
+
+      Mockito.verify(mockHouseTableRepository, Mockito.times(1))
+          .rename(
+              Mockito.eq("test_db"),
+              Mockito.eq("test_table"),
+              Mockito.eq("test_db"),
+              Mockito.eq("test_table_renamed"),
+              Mockito.anyString(),
+              Mockito.isNull());
+      Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    }
+  }
+
+  /**
    * Deterministic local reproduction of incident-12185 -- the {@code BaseTransaction.applyUpdates}
    * silent-rebase variant of the stale-base lost-update class (2026-05-25 WAR fingerprint, where
    * snapshot 3635817277608242413 was silently rebased out by a concurrent commit).
