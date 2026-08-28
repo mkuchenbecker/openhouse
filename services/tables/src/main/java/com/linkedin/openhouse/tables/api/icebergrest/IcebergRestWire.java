@@ -6,8 +6,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import java.io.UncheckedIOException;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -152,7 +150,7 @@ public final class IcebergRestWire {
     root.putObject("defaults");
     root.putObject("overrides");
     ArrayNode endpointsNode = root.putArray("endpoints");
-    IMPLEMENTED_ENDPOINTS.forEach(endpointsNode::add);
+    IcebergRestViewPaths.IMPLEMENTED_ENDPOINTS.forEach(endpointsNode::add);
     return root.toString();
   }
 
@@ -187,25 +185,5 @@ public final class IcebergRestWire {
     // advice never serializes stacks, and the redaction invariant governs messages only.
     log.warn("Rejected an unparseable views request: {}", cause.getClass().getName());
     return new ViewApiException(ViewErrorCode.INVALID_VIEW_DEFINITION, message, cause);
-  }
-
-  /**
-   * The seven implemented endpoints in the spec's capability-advertisement format, derived from the
-   * owned path templates in {@link IcebergRestViewPaths}.
-   */
-  private static final List<String> IMPLEMENTED_ENDPOINTS =
-      Collections.unmodifiableList(
-          Arrays.asList(
-              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.CONFIG_TEMPLATE),
-              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE),
-              IcebergRestViewPaths.endpoint("POST", IcebergRestViewPaths.VIEWS_COLLECTION_TEMPLATE),
-              IcebergRestViewPaths.endpoint("GET", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
-              IcebergRestViewPaths.endpoint("POST", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
-              IcebergRestViewPaths.endpoint("DELETE", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE),
-              IcebergRestViewPaths.endpoint("HEAD", IcebergRestViewPaths.VIEW_ITEM_TEMPLATE)));
-
-  /** The seven implemented endpoints, in the spec's capability-advertisement format. */
-  public static List<String> implementedEndpoints() {
-    return IMPLEMENTED_ENDPOINTS;
   }
 }
