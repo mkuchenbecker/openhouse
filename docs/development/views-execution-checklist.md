@@ -1,18 +1,36 @@
-# Views Work: Orchestration Plan & Execution Checklist
+# Views work: orchestration plan and execution checklist
 
-**Status:** Live tracking document, updated by the orchestrator as lanes progress.
-**Branch:** `claude/iceberg-rest-spec-compliance-l0s2ju` (orchestrator-owned; lane work happens on
-child/port branches listed below — only the orchestrator edits this file).
-**Companions:** [views-iceberg-rest-compliance.md](views-iceberg-rest-compliance.md) (server
-plan) · [views-client-plugin-plan.md](views-client-plugin-plan.md) (client plugin plan) ·
-[Iceberg REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec)
+All four lanes are complete and merged into
+`claude/iceberg-rest-spec-compliance-l0s2ju`, which passes a full-tree build.
+
+Four items are open and need the owner:
+
+1. **Ratify four deleted metric names.** `hts_general_search_views_request`,
+   `hts_search_views_time`, `hts_page_search_views_request`, and
+   `hts_page_search_views_time` were removed with the unreachable view-search branch.
+   Any dashboard or alert reading them will go dark. They can be re-emitted from the
+   surviving arms if needed. Detail in
+   [#46](https://github.com/mkuchenbecker/openhouse/pull/46).
+2. **Decide the ~14 unretrieved upstream #697 findings.** GitHub does not serve those
+   review threads anonymously; they need to be pasted in before they can be worked.
+3. **Regenerate `docs/specs/catalog.md`.** Needs a booted service and the external
+   `widdershins` tool.
+4. **Decide `/v1/config` `overrides.clusterId`.** Deferred to the persistence milestone.
+
+No PR in this stack has run fork CI: `pr-validations.yml` fires only for PRs based on
+`main`, and every PR here is based on another branch. Every test count below is a
+local run.
+
+**Branch:** `claude/iceberg-rest-spec-compliance-l0s2ju` (orchestrator-owned; lane work
+happens on the child branches listed below, and only the orchestrator edits this file).
+**Companions:** [views-iceberg-rest-compliance.md](views-iceberg-rest-compliance.md)
+(server plan) · [views-client-plugin-plan.md](views-client-plugin-plan.md) (client
+plugin plan) · [Iceberg REST Catalog spec](https://iceberg.apache.org/rest-catalog-spec)
 
 ## 1. Work model
 
-Three implementation lanes fan out in parallel; the orchestrator tracks them, runs
-multi-reviewer reviews on each completed lane (per the code-review-skills
-`review-orchestrator` flow, adapted: findings are applied as direct edits by the lane's
-agent, not posted as PR feedback), and owns integration.
+Three implementation lanes fan out in parallel; the orchestrator tracks them, reviews
+each completed lane, and owns integration.
 
 | Lane | Goal | Branch(es) | PR target |
 |---|---|---|---|
@@ -28,10 +46,25 @@ neither lane can run alone.
 
 ## 2. Authoritative dispositions from the blind architecture review
 
-A blind arch review (code-review-skills `arch-review`, verified against decompiled
-`1.5.2.17` fork artifacts and the spec) produced findings F1–F9. These dispositions are
-**binding on lanes S and C** and amend the two plan documents; each lane updates its own
-plan doc to match as part of implementation.
+An independent architecture review, run without access to the reasoning behind the two
+plans and verified against the decompiled `1.5.2.17` fork artifacts and the spec,
+produced the findings below. They are binding on lanes S and C; each lane folds its own
+into its plan document as part of implementation. F1 is the only one binding both lanes,
+and the only one whose server and client halves must land together.
+
+| # | Binds | Severity | Decision |
+|---|---|---|---|
+| F1 | S and C | blocker | Views-disabled renders per-route: `NoSuchNamespaceException` on create and list, `NoSuchViewException` elsewhere; the client catches both on `listViews` and returns empty |
+| F2 | C | blocker | 1.5.2.17 does no `next-page-token` paging and issues GET, not HEAD, for `viewExists`; the server must return all results when `pageToken` is absent |
+| F3 | S | blocker | The views error rendering owns the whole `/v1/**` surface, ahead of the global handler |
+| F4 | C | blocker | Construct and initialize the embedded `RESTCatalog` on first view operation, never in `initialize()` |
+| F5 | S | — | `/v1/config` declares the explicit `endpoints` list |
+| F6 | S | — | Wire envelopes are unwrapped at the handler; `ViewsService` speaks Iceberg types |
+| F7 | S | — | `openhouse.source-dialect` is optional with a single representation |
+| F8, F9 | S and C | doc | "No 422" claims scoped to the views surface; version cited as 1.5.2.17; step-0 class checks answered affirmative, fallback branches dropped |
+| — | S | decided | Controllers consume and produce `String` bodies through Iceberg's own parsers, `RESTCatalogAdapter` style, with no custom Jackson converters |
+
+The rationale for each follows.
 
 - **F1 (blocker, both lanes) — per-operation views-disabled contract.**
   Server: render `VIEWS_DISABLED` (and `DATABASE_NOT_FOUND`) as `type:
@@ -84,26 +117,26 @@ plan doc to match as part of implementation.
 - [x] Port 696 → [#45](https://github.com/mkuchenbecker/openhouse/pull/45) (exact upstream head SHAs, no cherry-picks; 17 commits)
 - [x] Port 697 → [#46](https://github.com/mkuchenbecker/openhouse/pull/46) (22 commits)
 - [x] Port 698 → [#47](https://github.com/mkuchenbecker/openhouse/pull/47) (1 commit)
-- [x] Validation: housetables 291/291, common 15/15 on the 697 port; #698's MySQL E2E run in docker via its own `oh-only-mysql` recipe — 23/23 incl. database-backed discriminator cases. Note: fork CI fires only for base `main`, so stacked PRs carry local validation only.
+- [x] Validation: housetables and common suites green on the 697 port; #698's MySQL E2E run in docker via its own `oh-only-mysql` recipe, including the database-backed discriminator cases.
 
 ### Lane P2 — address #697 feedback ✅ (2026-08-28)
 - [x] Findings cataloged from the public PR pages — ~21 of ~35 threads render server-side; findings 9, 10, 12, 13, 16, 18–25, 28, 29 are hidden mid-timeline items GitHub does not serve anonymously, recorded as not-retrievable in the PR table (owner can paste them for a follow-up round)
 - [x] Five thematic commits on the 697 port: collation pin (`ddl/0002`, `utf8mb4_0900_as_ci`), ingress bounds + genuine-duplicate-key-only 409, corruption vocabulary/hygiene (stable 500 + correlation id), service-owned `UserViewQuery`, view metrics ownership; 698 branch merged forward with E2E assertions re-pointed
 - [x] Findings→commit disposition table appended to [#46](https://github.com/mkuchenbecker/openhouse/pull/46)
-- [x] housetables 308/308, common 13/13; MySQL E2E on merged 698 head 23/23 (collation pin exercised via initdb)
+- [x] housetables and common suites green; MySQL E2E on the merged 698 head passes, exercising the collation pin through `initdb`
 
 ### Lane S — server implementation ✅ (2026-08-28)
 - [x] All seven §3.1 routes with §2 dispositions folded in; `/v2` views surface removed; backend stubbed per plan; serialization via `IcebergRestWire` + Iceberg parsers
 - [x] Plan doc amended (F1, F2-obligation, F3, F5, F6, F7, F8/F9); `docs/specs/catalog.md` regen deferred (needs bootable service + widdershins)
-- [x] tables 641/641, common 25/25; spotless clean on touched files
+- [x] Tests and spotless green on touched files
 - [x] Draft PR [#49](https://github.com/mkuchenbecker/openhouse/pull/49); noted deviations: two pre-existing e2e tests re-pinned to F3's unknown-`/v1`-path contract; services/common audit seam widened (`AuditedResponseRenderer`) so view failures keep producing audit events
 
-### Lane C — client implementation
-- [ ] Client plan phases with §2 dispositions (F1 catch, F2 corrections, F4 lazy init)
-- [ ] Plan doc amended
-- [ ] MockWebServer suite (serving `/v1/config` before view calls) + gate-off parity itests green
-- [ ] Draft PR into `claude/iceberg-rest-spec-compliance-l0s2ju`
-- [ ] Gate-on e2e itest deferred to integration (needs lane S's service) — tracked below
+### Lane C — client implementation ✅ (2026-08-28)
+- [x] Client plan phases with §2 dispositions (F1 catch, F2 corrections, F4 lazy init)
+- [x] Plan doc amended
+- [x] MockWebServer suite (serving `/v1/config` before view calls) + gate-off parity itests green
+- [x] Draft PR [#48](https://github.com/mkuchenbecker/openhouse/pull/48) into `claude/iceberg-rest-spec-compliance-l0s2ju`
+- [x] Gate-on e2e itest landed at integration ([#50](https://github.com/mkuchenbecker/openhouse/pull/50))
 
 ### Reviews & integration (orchestrator)
 - [x] Lane S review → 3 testing blockers (schema-cap pin lost, second malformed-body mode, UTF-8 wire decode) + converged arch/lint items (parse-catch narrowing, 405/415 ownership, route-shape single ownership, binding-failure 400) → all 18 fix items applied on [#49](https://github.com/mkuchenbecker/openhouse/pull/49) head `98d837c9`; tables 660/660, common 29/29, jobs 52/52, housetables 128/128. Cross-contract vs lane C fixtures verified COMPATIBLE against 1.5.2.17 bytecode
@@ -111,14 +144,4 @@ plan doc to match as part of implementation.
 - [x] Lane P1/P2 review → P1 fidelity exact-SHA (mechanical); P2 three-SME round: 2 testing blockers (unbounded rename-metadataLocation/put-storageType; undiscriminated pattern seam) + converged arch/lint suggestions → all 17 fix items applied red-then-green on [#46](https://github.com/mkuchenbecker/openhouse/pull/46) (head `5e0b56c0`-series), housetables 316/316, common 14/14, MySQL E2E 23/23. Owner-ratification note in #46: four deleted search-view metric wire names
 - [x] Merged S (`7fbe8d98`) then C (`b260d679`) into `claude/iceberg-rest-spec-compliance-l0s2ju` — both clean, disjoint file sets
 - [x] Gate-on integration itest merged ([#50](https://github.com/mkuchenbecker/openhouse/pull/50), `OpenHouseViewGateOnTestSpark3_5`, 5 tests): SELECT falls through over the real wire, SHOW VIEWS empty, CREATE VIEW → AnalysisException, programmatic ViewCatalog answers, gate-off control — with a wire-crossing pin on the server's fixed disabled message
-- [x] Full-tree pass on the integrated branch, first try: common 29/29, tables 660/660, jobs 52/52, housetables 128/128, java-itest 63/63, spark-3.5 catalogTest 77/77 + statementTest 60/60 + test 90/90. No merge-induced fixes needed
-
-**ALL LANES COMPLETE** — remaining follow-ups for the owner: ratify the four deleted search-view metric wire names (noted in [#46](https://github.com/mkuchenbecker/openhouse/pull/46)); supply the ~14 upstream #697 findings GitHub would not serve anonymously if they should be worked; `docs/specs/catalog.md` regeneration (needs bootable service + widdershins); `/v1/config` `overrides.clusterId` decision deferred to the persistence milestone.
-
-## 4. Lane log
-
-| When (UTC) | Event |
-|---|---|
-| 2026-08-28 ~05:5x | Checklist created; lanes P1, S, C launched |
-| 2026-08-28 06:0x | P1 complete: fork PRs [#45](https://github.com/mkuchenbecker/openhouse/pull/45)/[#46](https://github.com/mkuchenbecker/openhouse/pull/46)/[#47](https://github.com/mkuchenbecker/openhouse/pull/47) up at exact upstream SHAs; housetables 291/291, common 15/15, MySQL E2E 23/23. P2 launched |
-| 2026-08-28 06:4x | Lane C complete: [#48](https://github.com/mkuchenbecker/openhouse/pull/48) (client plugin), java-itest 56/56, Spark 3.5 itest 222/222. Review fan-in launched (arch+spec, testing, pedantic-linter). Open Qs for review: TLS warn-vs-fail-fast; embedded-catalog User-Agent |
+- [x] Full-tree pass on the integrated branch. Current counts: common 29/29, tables 660/660, jobs 52/52, housetables 128/128, java-itest 63/63, spark-3.5 catalogTest 77/77 + statementTest 60/60 + test 90/90. No merge-induced fixes needed

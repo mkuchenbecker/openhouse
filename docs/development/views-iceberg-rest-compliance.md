@@ -1,16 +1,63 @@
-# Views API: Iceberg REST Spec Compliance — Review Notes & Implementation Plan
+# Model the views API on the Iceberg REST spec, not on a bespoke `/v2` shape
 
-**Status:** Implemented (server surface, backend still stubbed) on
-`claude/views-rest-server-impl`, folding in the binding dispositions F1–F9 from the blind
-architecture review recorded in
-[views-execution-checklist.md §2](views-execution-checklist.md).
+The views wire surface added by PR #43 should be replaced with one modeled on the
+Iceberg REST catalog spec: the same seven operations, at the spec's paths, carrying
+the spec's request, response, and error documents, serialized by Iceberg's own
+parsers. The backend stays stubbed and views stay disabled by default. Only the wire
+shape changes.
+
+The deciding argument is installed base. Views are a net-new resource with no
+clients, so adopting the spec costs nothing today, and Iceberg views reach engines
+(Spark `ResolveViews`, Trino) through no protocol other than the REST catalog. Every
+release of the bespoke `/v2` shape turns that adoption into a breaking migration.
+
+**Status:** the server surface is implemented; the backend is still stubbed.
 **Branch:** `claude/iceberg-rest-spec-compliance-l0s2ju`, branched off PR
 [mkuchenbecker/openhouse#43](https://github.com/mkuchenbecker/openhouse/pull/43)
 (carbon copy of upstream [linkedin/openhouse#694](https://github.com/linkedin/openhouse/pull/694)).
 **References:** [Iceberg View Spec](https://iceberg.apache.org/view-spec/) ·
 [Iceberg REST Catalog OpenAPI](https://github.com/apache/iceberg/blob/main/open-api/rest-catalog-open-api.yaml)
 
-## 1. Context
+## 1. Requirements
+
+**Must**
+
+1. Every operation the `/v2` surface serves keeps a home: create, load, replace,
+   list, delete, plus an existence check and client bootstrap.
+2. Every field the `/v2` request and response bodies carry keeps a home, with no
+   custom wire extensions. §3.2 maps each one.
+3. A stock, unmodified Iceberg `RESTCatalog` can bootstrap against the service and
+   reach every view route without client-side patching. Views themselves stay
+   disabled this milestone, so what it reaches is the disabled response, not data.
+4. With views disabled, Spark's `ResolveViews` falls through to `loadTable`, so
+   table behavior is unchanged.
+5. Error responses on the views routes never carry a stack trace, the requested
+   URL, or the submitted document.
+
+**Should**
+
+6. Wire compliance comes from the Iceberg dependency's own models and parsers, not
+   from hand-written models pinned by our tests.
+7. Nothing about the surface forces a new client-side runtime dependency or shading
+   rule.
+
+**Won't, this milestone**
+
+8. Persistence. The service stays views-disabled; only the wire shape changes.
+9. Arbitrary commit semantics. The wire shape is `requirements`/`updates`; the
+   service may reject update combinations it does not support with a typed 400.
+   Shape compliance and capability scope are independent axes.
+
+**Out of scope**
+
+10. `rename-view`, `register-view`, the tables and namespaces REST routes, and the
+    OAuth token endpoint. A probe of an unclaimed route gets the spec's plain 404,
+    so the server never advertises protocol surface it does not serve.
+11. Regenerating `docs/specs/catalog.md`. It needs a booted service and the external
+    `widdershins` tool, and it predates the views surface entirely; it regenerates on
+    the next scheduled spec refresh.
+
+## 2. Context
 
 PR #43 / upstream #694 adds a `/v2/databases/{databaseId}/views` wire surface (models, routes,
 handler, structural validation) with the business logic deliberately stubbed: the only
@@ -29,9 +76,15 @@ but model them on the Iceberg REST spec. Ancillary protocol surface (rename-view
 register-view, table routes, OAuth endpoints) is out of scope. The backend stays stubbed
 (views-disabled posture unchanged).
 
-## 2. Independent compliance review: PR #43 vs the spec
+## 3. Independent compliance review: PR #43 vs the spec
 
-### 2.1 Where the PR diverges
+### 3.1 Where the PR diverges
+
+The surface diverges from the spec in every dimension below. Rows 2 through 5 are the
+ones that make a stock client impossible: the request, load, create, and replace
+documents share no field names, no shapes, and no verbs with the spec's. Rows 8, 9,
+and 10 are additive or cosmetic by comparison. Appendix A develops the counterarguments
+raised upstream and why they do not survive a resource with no installed base.
 
 | # | Dimension | PR #43 (`/v2`) | Iceberg REST spec |
 |---|-----------|----------------|-------------------|
@@ -45,33 +98,9 @@ register-view, table routes, OAuth endpoints) is out of scope. The backend stays
 | 8 | Existence check | none | `HEAD .../views/{view}` → `204`/`404` |
 | 9 | Client bootstrap | none | `GET /v1/config` → `{defaults, overrides}`; required for a stock `RESTCatalog` client to connect |
 | 10 | Field naming | camelCase | kebab-case (`metadata-location`, `view-uuid`, `version-id`, `timestamp-ms`) |
-| 11 | Status vocabulary | `422` for admission failures; `201` create | Views surface uses `200` for create/replace, `204` for delete/exists; no `422` anywhere in the spec's views surface (F8: the claim is scoped to views — other spec areas are not asserted) |
+| 11 | Status vocabulary | `422` for admission failures; `201` create | Views surface uses `200` for create/replace, `204` for delete/exists; no `422` anywhere in the spec's views surface  |
 
-### 2.2 Judgment on the upstream dispute
-
-The upstream blocking feedback is correct on substance, and the author's two strongest
-counterarguments do not survive scrutiny:
-
-- **"Partial conformance buys nothing today."** True as stated — and an argument *for* full
-  modeling of these endpoints, not for a bespoke shape. Views are a net-new resource with zero
-  client installed base; this is the one moment adopting the spec costs nothing. Every release
-  of the bespoke `/v2` shape makes later adoption a breaking migration. Iceberg views only have
-  engine support (Spark `ResolveViews`, Trino) through the catalog/REST protocol, so an
-  OH-flavored views API guarantees custom client work later.
-- **"Consistency with tables."** Tables carry a legacy contract with an installed base; views
-  don't. Consistency achieved by copying a non-standard shape onto a greenfield resource
-  converts one legacy surface into two. The tables migration question is real but separable —
-  and is not made harder by views being spec-shaped (if anything it produces the shared
-  REST-model plumbing a tables migration would reuse).
-- The **v1-vs-v2 debate** (abhisheknath2011's comment) dissolves under spec modeling: the spec's
-  own paths are versioned `/v1/...`, distinct from the OH tables routes, and collide with
-  nothing (`/v1/namespaces/...` and `/v1/config` are unclaimed in the tables service).
-- One author point stands and is preserved: **the commit model does not require implementing
-  arbitrary commit semantics now.** The wire shape is `requirements`/`updates`; the (stubbed)
-  service — and its later real implementation — may reject update combinations it does not
-  support with a typed 400. Shape compliance and capability scope are independent axes.
-
-### 2.3 Nothing is lost: OH-concept → REST-concept mapping
+### 3.2 Nothing is lost: OH-concept → REST-concept mapping
 
 Owner's constraint: all data the PR's API passes is needed. Each field maps into spec
 structures without custom wire extensions:
@@ -80,7 +109,7 @@ structures without custom wire extensions:
 |---|---|
 | `databaseId` | path `{namespace}` (single-level; multi-level → `404 NoSuchNamespaceException`) |
 | `viewId` | path `{view}` / `TableIdentifier{namespace, name}` |
-| `clusterId` | dropped from the body (server-owned; the server *is* the cluster — matches the upstream objection to repeating identity in the body). Exposed via `GET /v1/config` `overrides` and/or `openhouse.clusterId` view property if needed |
+| `clusterId` | dropped from the body (server-owned; the server *is* the cluster — matches the upstream objection to repeating identity in the body). Available through `GET /v1/config` `overrides`. Whether it is also exposed as an `openhouse.clusterId` view property is deferred to the persistence milestone |
 | `schema` (string) | `CreateViewRequest.schema` (structured `Schema`); `metadata.schemas[]` on read |
 | `representations` | `view-version.representations[]` (`SQLViewRepresentation{type, sql, dialect}` — identical shape, now in its spec location) |
 | `sourceDialect` | `view-version.summary` entry (e.g. `openhouse.source-dialect`) — `summary` is a spec-sanctioned string map; validator enforces it references a present representation's dialect |
@@ -89,9 +118,13 @@ structures without custom wire extensions:
 | `baseViewVersion` | `CommitViewRequest.requirements[]` → `assert-view-uuid`; staleness detectable client-side by `metadata-location` comparison |
 | `viewUri`, `creationTime` | derivable / `version-log[].timestamp-ms`; `openhouse.` properties may carry server-owned annotations exactly as tables do |
 
-## 3. Target design
+## 4. Target design
 
-### 3.1 Endpoints (all mounted by the tables service; no `{prefix}` — config returns none)
+### 4.1 Endpoints
+
+The seven routes below are the whole surface, all mounted by the tables service with
+no `{prefix}` (config returns none). `GET /v1/config` is the load-bearing one: without
+it a stock `RESTCatalog` cannot bootstrap, so nothing else is reachable.
 
 | Method & path | Request | Success | Privilege |
 |---|---|---|---|
@@ -103,17 +136,14 @@ structures without custom wire extensions:
 | `DELETE /v1/namespaces/{namespace}/views/{view}` | — | `204` | `DELETE_VIEW` |
 | `HEAD /v1/namespaces/{namespace}/views/{view}` | — | `204` | `SELECT` |
 
-Out of scope: `rename-view`, `register-view` (absent; if probed, a plain spec 404 — deliberate,
-not `406`, to avoid claiming protocol surface we don't serve), tables/namespaces REST routes,
-OAuth token endpoint.
 
-**`GET /v1/config` declares `endpoints` (F5):** the body is
+**`GET /v1/config` declares `endpoints`:** the body is
 `{"defaults": {}, "overrides": {}, "endpoints": [...]}` where `endpoints` explicitly lists the
 seven implemented routes in the spec's capability-advertisement format
 (`"GET /v1/{prefix}/namespaces/{namespace}/views"`, …). An empty config would make a ≥1.6
 client assume the default endpoint set, which is wrong in both directions for this server.
 
-**List pagination obligation (F2, server side):** when `pageToken` is absent the service must
+**List pagination obligation (server side):** when `pageToken` is absent the service must
 return **all** results in one page — the 1.5.2.17 client's `listViews` issues a single GET and
 follows no `next-page-token`, so an eagerly paginating server would silently truncate that
 client's listing. A `null` continuation token serializes as an omitted `next-page-token` field,
@@ -125,21 +155,21 @@ Errors on these routes only: `IcebergErrorResponse` envelope, never the OpenHous
 `ErrorResponseBody`, and never with a serialized stack. `ViewErrorCode` carries a spec `type`
 string per value: `NO_SUCH_VIEW → NoSuchViewException/404`,
 `VIEW_ALREADY_EXISTS`/`NAME_ALREADY_EXISTS_AS_TABLE → AlreadyExistsException/409`,
-`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`. **Per-route 404 vocabulary (F1):**
+`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`. **Per-route 404 vocabulary:**
 `DATABASE_NOT_FOUND` and `VIEWS_DISABLED` (message "Views are disabled") render as
 `NoSuchNamespaceException` on the create and list routes and as `NoSuchViewException` on
 load/replace/drop/`HEAD` — matching the spec's own per-route 404 types, so a stock client
 treats the surface as absent and Spark's `ResolveViews` falls through to `loadTable`,
 preserving the design's default-off posture. A multi-level namespace (`%1F` separator) is that
 same 404: OpenHouse namespaces are single-level. `HEAD` failures carry no body at any status,
-per the spec. Admission codes move off `422` (not part of the spec's views vocabulary — F8)
+per the spec. Admission codes move off `422`, which the spec's views surface does not use,
 onto `400` with the distinct `ValidationException` type. Validation failures: `400
 BadRequestException`-typed envelope listing all accumulated violations in `message`
 (multi-failure accumulation from the PR is kept). Malformed or missing request bodies are also
 views-surface `400 BadRequestException` envelopes with fixed messages (parser messages may echo
 the submitted document, and every error message is copied into audit events).
 
-**The `/v1/**` request-mapping failure surface (F3):** the tables service runs with
+**The `/v1/**` request-mapping failure surface:** the tables service runs with
 `throw-exception-if-no-handler-found`, and the global handler renders unknown paths as
 OpenHouse-envelope 400s. The views error rendering owns `/v1/**`:
 `NoHandlerFoundException` under `/v1/**` → `404 NotFoundException` Iceberg envelope with the
@@ -163,7 +193,7 @@ the per-route 404 decision (keyed off the matched-pattern attribute, trailing-sl
 and the `/v1/config` endpoints list, so the route shape cannot drift apart across those
 consumers.
 
-### 3.2 Serialization strategy — use Iceberg's own models and parsers
+### 4.2 Serialization strategy — use Iceberg's own models and parsers
 
 `com.linkedin.iceberg:iceberg-core:1.5.2.17` is already an `api` dependency of
 `services/tables` (via `openhouse.iceberg-conventions-1.5.2`). It ships the REST view protocol
@@ -189,11 +219,10 @@ the views error surface, not the global handler. The serialization helpers live 
 `RESTSerializers`-registered mapper for the two documents 1.5.2.17 has no parser entry point
 for (the list-views and config bodies).
 
-**Step 0 result (F9, answered affirmative):** the class-presence check against the resolved
-`iceberg-core-1.5.2.17` jar found every class listed above present; the hand-modeling fallback
-is retired.
+The resolved `iceberg-core-1.5.2.17` jar contains every class listed above; `javap` on the
+jar is how to re-check it after a dependency bump.
 
-### 3.3 What happens to the PR's surface (this branch replaces, not coexists)
+### 4.3 What happens to the PR's surface (this branch replaces, not coexists)
 
 **Removed:** `ViewsController` (`/v2` routes), `CreateUpdateViewRequestBody`,
 `GetViewResponseBody`, `GetAllViewsResponseBody`, the OH `ViewRepresentation` component,
@@ -209,7 +238,7 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
 `cluster.tables.views.supported-dialects`; identifier and byte-size limits (128-char ids,
 256 KiB SQL / 512 KiB schema); reserved `openhouse.`/`policies` property-key rejection.
 
-### 3.4 Validation (structural only, as before)
+### 4.4 Validation (structural only, as before)
 
 `OpenHouseViewsApiValidator` reworked to the new shapes, still accumulating all violations:
 - namespace: identifier charset/length rules (single-level enforcement is not a validation 400:
@@ -218,7 +247,7 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
   representation, SQL-typed representations only, unique normalized dialects, every dialect in
   the configured supported set; UTF-8 size caps (measured on the canonical serialized schema
   and on each representation's SQL); reserved property keys rejected.
-- **`openhouse.source-dialect` summary key is optional (F7):** with a single representation the
+- **`openhouse.source-dialect` summary key is optional:** with a single representation the
   server defaults it to that representation's dialect (the unique-dialect rule makes this well
   defined), so a stock client's create passes unmodified; it is required exactly when
   representations are plural, and when present must name a supported dialect and a supplied
@@ -231,14 +260,14 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
   body, when present, must match the path.
 - `pageSize` ≥ 1 if present; `pageToken` opaque (no shape validation).
 
-## 4. Implementation (phases as landed)
+## 5. Implementation
 
-1. **Dependency check (step 0):** done, affirmative — see §3.2.
+1. **Dependency check (step 0):** done, affirmative — see §4.2.
 2. **Error envelope:** `IcebergRestViewsExceptionHandler` (views-scoped
    `@RestControllerAdvice`, `@Order(HIGHEST_PRECEDENCE)`) renders `ViewApiException`,
    `AccessDeniedException`, `AuthorizationServiceException` and unexpected faults as
-   `ErrorResponse`-serialized envelopes with the F1 per-route 404 types;
-   `V1RestUnresolvedPathExceptionHandler` owns `NoHandlerFoundException` for `/v1/**` (F3) and
+   `ErrorResponse`-serialized envelopes with the per-route 404 types;
+   `V1RestUnresolvedPathExceptionHandler` owns `NoHandlerFoundException` for `/v1/**` and
    falls back to `OpenHouseExceptionHandler.unresolvedRouteErrorResponseBody` (extracted for
    reuse) everywhere else. Both advices implement the new `AuditedResponseRenderer` marker so
    `ServiceAuditAspect` still audits failures they render (the aspect's failed-request pointcut
@@ -248,20 +277,20 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
 3. **Wire plumbing:** `IcebergRestWire` — static Iceberg parsers for
    create/commit/load-result/error documents; a dedicated `RESTSerializers`-registered mapper
    for the list-views and config documents; fixed redacted messages for parse failures.
-4. **Controller:** `IcebergRestViewsController` with the seven routes (§3.1), `@Secured` as
+4. **Controller:** `IcebergRestViewsController` with the seven routes (§4.1), `@Secured` as
    today (`LIST_VIEW`, `CREATE_VIEW`, `SELECT` for load and `HEAD`, `UPDATE_VIEW_METADATA`,
-   `DELETE_VIEW`; `/v1/config` authenticated-only), `String`/`byte[]` bodies per §3.2,
+   `DELETE_VIEW`; `/v1/config` authenticated-only), `String`/`byte[]` bodies per §4.2,
    delegating to the reshaped `ViewsApiHandler` (parse → validate → unwrap → service →
-   serialize). **Wire envelopes are unwrapped at the handler (F6):** `ViewsService` speaks
+   serialize). **Wire envelopes are unwrapped at the handler:** `ViewsService` speaks
    `ViewMetadata`, `List<MetadataUpdate>`, `List<UpdateRequirement>`, `TableIdentifier`,
    `Schema`, `ViewVersion` and page tokens (`ViewIdentifiersPage`) — never
    `CreateViewRequest`/`UpdateTableRequest`.
-5. **Validator rework** per §3.4 (`OpenHouseViewsApiValidator` on Iceberg types; shared
+5. **Validator rework** per §4.4 (`OpenHouseViewsApiValidator` on Iceberg types; shared
    `ApiValidatorUtil` identifier rules kept).
 6. **Stub service:** `ViewsDisabledService` unchanged in posture; throws
    `ViewApiException(VIEWS_DISABLED)` from the new interface methods. `GET /v1/config` is
    served by the handler even while views are disabled — bootstrap precedes the 404s — and
-   declares the endpoints list (F5).
+   declares the endpoints list.
 7. **Audit redaction:** `ViewRequestPayloadRedactor` scoped to the `/v1` view write routes,
    recursively replacing every `schema` and `sql` value in both request shapes (create and
    commit, including `add-schema` and `add-view-version` nestings).
@@ -270,11 +299,11 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
      (kebab-case) for `LoadViewResult`, `ListTablesResponse` and the error envelope,
      round-trips through Iceberg parsers, a spec-example create document, the `/v1/config`
      body, and the error-taxonomy/type-vocabulary pins (no 422 on this surface).
-   - `IcebergRestViewsControllerTest` (MockMvc): per-route views-disabled envelope (F1),
+   - `IcebergRestViewsControllerTest` (MockMvc): per-route views-disabled envelope,
      `HEAD` 404 with empty body, 401s, malformed/missing bodies, multi-level namespaces,
-     `/v1/**` vs legacy unresolved paths (F3), the full error-code matrix on item and
+     `/v1/**` vs legacy unresolved paths, the full error-code matrix on item and
      collection routes, 403/503/500 envelopes, and audit redaction on the failure path.
-   - `IcebergRestViewsValidatorTest` / `...MultiDialectTest` (F7 and the spark+trino shape),
+   - `IcebergRestViewsValidatorTest` and `...MultiDialectTest` (source-dialect optionality and the spark+trino shape),
      `ViewRequestPayloadRedactorTest`, `ViewsDisabledServiceTest`,
      `IcebergRestViewsPrivilegeTest` reworked to the new shapes.
 9. **Docs:** this file's status updated. `docs/specs/catalog.md` regeneration is deferred: it
@@ -282,22 +311,45 @@ seam (redactor reworked to strip `sql`/`schema` from the new request shapes);
    predates the views surface entirely (the retired `/v2` routes were never folded in either);
    regenerate on the next scheduled spec refresh.
 
-## 5. Verification (results)
+## 6. Verification
 
-- `./gradlew :services:common:test :services:tables:test` — green, including every reworked
-  view test (counts recorded in the lane PR).
+- `./gradlew :services:common:test :services:tables:test` passes: tables 660, common 29.
 - `./gradlew :services:common:spotlessCheck :services:tables:spotlessCheck` — clean. The three
   known spotless-red files synced from upstream (`OpenHouseCatalog.java` iceberg-1.5,
-  `OpenHouseViewEnabledTestSpark3_5.java`, `OpenHouseViewSparkITest.java`) belong to lane C and
-  were not touched.
+  `OpenHouseViewEnabledTestSpark3_5.java`, `OpenHouseViewSparkITest.java`) are client-plugin
+  files and were not touched here.
 - Contract tests pin serialized key sets and round-trips as described in §4.8; the
   views-disabled MockMvc pins are exactly the §2.2 smoke shapes: `GET /v1/config` 200;
   `GET .../views/x` 404 with
   `{"error":{"message":"Views are disabled","type":"NoSuchViewException","code":404}}`;
   `HEAD` 404 with empty body.
-- Two pre-existing e2e tests pinned the legacy unknown-`/v1`-path 400; they now pin the F3
-  contract (Iceberg 404 envelope) instead, with the non-`/v1` legacy rendering pinned
-  separately.
-- Stretch (documented, not gating): point a stock `RESTCatalog` at a running instance and
-  confirm bootstrap + `loadView` 404 fall-through — this is lane C's gate-on integration
-  itest, deferred to orchestrator integration.
+- Two e2e tests pin the unknown-`/v1`-path contract (the Iceberg 404 envelope); the
+  non-`/v1` legacy rendering is pinned separately.
+- A stock `RESTCatalog` pointed at a running instance, confirming bootstrap and the
+  `loadView` 404 fall-through, is covered by the client plugin's gate-on integration test
+  (`OpenHouseViewGateOnTestSpark3_5`).
+
+## Appendix A. The upstream dispute
+
+
+The upstream blocking feedback is correct on substance, and the author's two strongest
+counterarguments do not survive scrutiny:
+
+- **"Partial conformance buys nothing today."** True as stated — and an argument *for* full
+  modeling of these endpoints, not for a bespoke shape. Views are a net-new resource with zero
+  client installed base; this is the one moment adopting the spec costs nothing. Every release
+  of the bespoke `/v2` shape makes later adoption a breaking migration. Iceberg views only have
+  engine support (Spark `ResolveViews`, Trino) through the catalog/REST protocol, so an
+  OH-flavored views API guarantees custom client work later.
+- **"Consistency with tables."** Tables carry a legacy contract with an installed base; views
+  don't. Consistency achieved by copying a non-standard shape onto a greenfield resource
+  converts one legacy surface into two. The tables migration question is real but separable —
+  and is not made harder by views being spec-shaped (if anything it produces the shared
+  REST-model plumbing a tables migration would reuse).
+- The **v1-vs-v2 debate** raised in review on [upstream #694](https://github.com/linkedin/openhouse/pull/694) dissolves under spec modeling: the spec's
+  own paths are versioned `/v1/...`, distinct from the OH tables routes, and collide with
+  nothing (`/v1/namespaces/...` and `/v1/config` are unclaimed in the tables service).
+- One author point stands and is preserved: **the commit model does not require implementing
+  arbitrary commit semantics now.** The wire shape is `requirements`/`updates`; the (stubbed)
+  service — and its later real implementation — may reject update combinations it does not
+  support with a typed 400. Shape compliance and capability scope are independent axes.
