@@ -110,8 +110,10 @@ plan doc to match as part of implementation.
 - [x] Lane C review (arch+spec vs 1.5.2.17 bytecode, testing, pedantic-linter) → 1 testing blocker (F4 fault-injection gap) + suggestions → all 20 fix items applied on [#48](https://github.com/mkuchenbecker/openhouse/pull/48) head `262edfbb`; java-itest 63/63 (21 wire tests), Spark 3.5 222/222. Decisions: TLS warn (https-gated); User-Agent unconditional; `WebClientFactory.SESSION_ID` made public; displaced-catalog graveyard fixes the token-refresh race
 - [x] Lane P1/P2 review → P1 fidelity exact-SHA (mechanical); P2 three-SME round: 2 testing blockers (unbounded rename-metadataLocation/put-storageType; undiscriminated pattern seam) + converged arch/lint suggestions → all 17 fix items applied red-then-green on [#46](https://github.com/mkuchenbecker/openhouse/pull/46) (head `5e0b56c0`-series), housetables 316/316, common 14/14, MySQL E2E 23/23. Owner-ratification note in #46: four deleted search-view metric wire names
 - [x] Merged S (`7fbe8d98`) then C (`b260d679`) into `claude/iceberg-rest-spec-compliance-l0s2ju` — both clean, disjoint file sets
-- [ ] Add gate-on integration itest (client enabled ↔ stubbed server: SELECT falls through, CREATE VIEW → AnalysisException, SHOW VIEWS → empty)
-- [ ] Full-tree test pass on the integrated branch
+- [x] Gate-on integration itest merged ([#50](https://github.com/mkuchenbecker/openhouse/pull/50), `OpenHouseViewGateOnTestSpark3_5`, 5 tests): SELECT falls through over the real wire, SHOW VIEWS empty, CREATE VIEW → AnalysisException, programmatic ViewCatalog answers, gate-off control — with a wire-crossing pin on the server's fixed disabled message
+- [x] Full-tree pass on the integrated branch, first try: common 29/29, tables 660/660, jobs 52/52, housetables 128/128, java-itest 63/63, spark-3.5 catalogTest 77/77 + statementTest 60/60 + test 90/90. No merge-induced fixes needed
+
+**ALL LANES COMPLETE** — remaining follow-ups for the owner: ratify the four deleted search-view metric wire names (noted in [#46](https://github.com/mkuchenbecker/openhouse/pull/46)); supply the ~14 upstream #697 findings GitHub would not serve anonymously if they should be worked; `docs/specs/catalog.md` regeneration (needs bootable service + widdershins); `/v1/config` `overrides.clusterId` decision deferred to the persistence milestone.
 
 ## 4. Lane log
 
