@@ -78,13 +78,13 @@ plan doc to match as part of implementation.
 
 ## 3. Execution checklist
 
-### Lane P1 — port the upstream stack
-- [ ] Fetch upstream `feature/view-support` + PR heads 696/697/698 (anonymous git read)
-- [ ] Mirror base branch if `feature/view-support` ≠ fork `main`
-- [ ] Port 696 (carbon copy, authorship intact, fidelity-verified) + draft PR
-- [ ] Port 697 stacked on 696 + draft PR
-- [ ] Port 698 stacked on 697 + draft PR
-- [ ] Housetables/common test suites run on the 697 port (698's MySQL E2E documented if not runnable in-sandbox)
+### Lane P1 — port the upstream stack ✅ (2026-08-28)
+- [x] Fetch upstream `feature/view-support` + PR heads 696/697/698 (anonymous git read)
+- [x] Mirror base branch: `claude/feature-view-support` (upstream tree absent from fork `main`; no shared git ancestry — fork syncs are tree copies)
+- [x] Port 696 → [#45](https://github.com/mkuchenbecker/openhouse/pull/45) (exact upstream head SHAs, no cherry-picks; 17 commits)
+- [x] Port 697 → [#46](https://github.com/mkuchenbecker/openhouse/pull/46) (22 commits)
+- [x] Port 698 → [#47](https://github.com/mkuchenbecker/openhouse/pull/47) (1 commit)
+- [x] Validation: housetables 291/291, common 15/15 on the 697 port; #698's MySQL E2E run in docker via its own `oh-only-mysql` recipe — 23/23 incl. database-backed discriminator cases. Note: fork CI fires only for base `main`, so stacked PRs carry local validation only.
 
 ### Lane P2 — address #697 feedback (starts after P1)
 - [ ] Catalog all findings from the upstream #697 review threads
@@ -118,3 +118,4 @@ plan doc to match as part of implementation.
 | When (UTC) | Event |
 |---|---|
 | 2026-08-28 ~05:5x | Checklist created; lanes P1, S, C launched |
+| 2026-08-28 06:0x | P1 complete: fork PRs [#45](https://github.com/mkuchenbecker/openhouse/pull/45)/[#46](https://github.com/mkuchenbecker/openhouse/pull/46)/[#47](https://github.com/mkuchenbecker/openhouse/pull/47) up at exact upstream SHAs; housetables 291/291, common 15/15, MySQL E2E 23/23. P2 launched |
