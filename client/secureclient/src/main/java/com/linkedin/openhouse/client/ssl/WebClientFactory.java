@@ -24,7 +24,7 @@ public abstract class WebClientFactory {
 
   private static final String HTTP = "http";
   private static final String HTTPS = "https";
-  private static final String SESSION_ID = "session-id";
+  public static final String SESSION_ID = "session-id";
 
   public static final String HTTP_HEADER_CLIENT_NAME = "X-Client-Name";
   // Product token advertised in the User-Agent header so the server can observe the client version.
