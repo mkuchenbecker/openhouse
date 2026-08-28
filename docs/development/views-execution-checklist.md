@@ -86,11 +86,11 @@ plan doc to match as part of implementation.
 - [x] Port 698 → [#47](https://github.com/mkuchenbecker/openhouse/pull/47) (1 commit)
 - [x] Validation: housetables 291/291, common 15/15 on the 697 port; #698's MySQL E2E run in docker via its own `oh-only-mysql` recipe — 23/23 incl. database-backed discriminator cases. Note: fork CI fires only for base `main`, so stacked PRs carry local validation only.
 
-### Lane P2 — address #697 feedback (starts after P1)
-- [ ] Catalog all findings from the upstream #697 review threads
-- [ ] Address each on the fork port branch (or record a reasoned disposition)
-- [ ] Findings→commit map in the fork PR description
-- [ ] Suites green
+### Lane P2 — address #697 feedback ✅ (2026-08-28)
+- [x] Findings cataloged from the public PR pages — ~21 of ~35 threads render server-side; findings 9, 10, 12, 13, 16, 18–25, 28, 29 are hidden mid-timeline items GitHub does not serve anonymously, recorded as not-retrievable in the PR table (owner can paste them for a follow-up round)
+- [x] Five thematic commits on the 697 port: collation pin (`ddl/0002`, `utf8mb4_0900_as_ci`), ingress bounds + genuine-duplicate-key-only 409, corruption vocabulary/hygiene (stable 500 + correlation id), service-owned `UserViewQuery`, view metrics ownership; 698 branch merged forward with E2E assertions re-pointed
+- [x] Findings→commit disposition table appended to [#46](https://github.com/mkuchenbecker/openhouse/pull/46)
+- [x] housetables 308/308, common 13/13; MySQL E2E on merged 698 head 23/23 (collation pin exercised via initdb)
 
 ### Lane S — server implementation
 - [ ] Phases 1–9 of the server plan with §2 dispositions folded in
