@@ -145,3 +145,28 @@ The rationale for each follows.
 - [x] Merged S (`7fbe8d98`) then C (`b260d679`) into `claude/iceberg-rest-spec-compliance-l0s2ju` — both clean, disjoint file sets
 - [x] Gate-on integration itest merged ([#50](https://github.com/mkuchenbecker/openhouse/pull/50), `OpenHouseViewGateOnTestSpark3_5`, 5 tests): SELECT falls through over the real wire, SHOW VIEWS empty, CREATE VIEW → AnalysisException, programmatic ViewCatalog answers, gate-off control — with a wire-crossing pin on the server's fixed disabled message
 - [x] Full-tree pass on the integrated branch. Current counts: common 29/29, tables 660/660, jobs 52/52, housetables 128/128, java-itest 63/63, spark-3.5 catalogTest 77/77 + statementTest 60/60 + test 90/90. No merge-induced fixes needed
+
+### Second review round: prose, and the fix-round code
+
+The first round reviewed each lane's initial output. It left two gaps, closed here.
+
+- [x] **Writing pass** (`writing-review`, against the external structure and sentence
+  references plus `DESIGN-DOCS.md`) over all three documents and the four PR bodies —
+  never run in the first round. 30 findings, 11 blockers: no document led with its
+  conclusion, neither design document had a requirements section, and both justified
+  decisions by citing disposition numbers and lane names that resolve only inside this
+  file. All applied. One finding was a factual error here: the Lane C section showed five
+  unchecked boxes for work that three other passages in this same file recorded as built,
+  reviewed and merged.
+- [x] **Pedantic pass over the review-fix commits themselves** ([#51](https://github.com/mkuchenbecker/openhouse/pull/51)
+  and `65ffdda9` on the 697 port) — the code the first round's fixes produced, which
+  nobody but its author had read. One blocker: the displaced-catalog list added to fix the
+  token-refresh race only ever grew, so a long-lived driver leaked an idle HTTP client per
+  refresh while its javadoc called the leak bounded. Also corrected: an auth-token property
+  write outside the monitor guarding its reads, two comments stating the redaction
+  invariant backwards, a Gson catch narrow enough to drop whole audit events, and a javadoc
+  crediting Spring with a duplicate-key classification that no Spring generation makes.
+- [x] Suites re-run after both: common 29/29, tables 660/660, jobs 52/52, housetables
+  316/316 (697 port) and 128/128 (integrated branch), java-itest 63/63, spark-3.5 90/90,
+  spark apps 288, MySQL E2E 23/23.
+
