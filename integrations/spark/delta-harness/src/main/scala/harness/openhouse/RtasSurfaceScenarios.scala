@@ -29,6 +29,7 @@ trait RtasSurfaceScenarios extends RtasScenarioKit { this: SurfaceScenarios =>
     assert(!m.startsWith("java.lang.NullPointerException"), s"$context: bare NPE surfaced: ${m.take(160)}")
   }
 
+  /** Three seed rows in an unpartitioned table in the given file format with replace.enabled=true. */
   private def surfaceReplacePreparation(format: String): TablePreparation[CoreTable.type] =
     TablePreparation(
       format,
@@ -38,83 +39,87 @@ trait RtasSurfaceScenarios extends RtasScenarioKit { this: SurfaceScenarios =>
             s"TBLPROPERTIES ('write.format.default'='$format')")()
         .insert(3)()
         .sql("enableReplace")(table =>
-          s"ALTER TABLE $table SET TBLPROPERTIES ('replace.enabled'='true')")(),
-      description = s"Three seed rows in an unpartitioned $format table with " +
-        "replace.enabled=true.")
+          s"ALTER TABLE $table SET TBLPROPERTIES ('replace.enabled'='true')")())
+
+  /**
+   * Rejection messages for a dropped column, a reserved property, disabled RTAS and CREATE
+   * NAMESPACE are each non-empty, free of internal-error markers, free of raw stack frames, and not
+   * a bare NullPointerException.
+   */
+  private def surfaceReadabilityGuardCase(format: String): Plan.Case =
+    surfaceBasePreparation(format).test("surface.msg.readabilityGuard") { table =>
+      assertReadableMessage("dropColumn")(
+        Check.intercept[Exception](
+          table.spark.sql(
+            s"ALTER TABLE ${table.name} " +
+              s"DROP COLUMN ${Core.int0.columnName}")))
+      assertReadableMessage("reservedProp")(
+        Check.intercept[Exception](
+          table.spark.sql(
+            s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
+              "('openhouse.tableUUID'='x')")))
+      assertReadableMessage("rtasDisabled")(
+        Check.intercept[Exception](
+          table.spark.sql(
+            s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
+              s"AS SELECT * FROM ${table.name}")))
+      assertReadableMessage("createNamespace")(
+        Check.intercept[Exception](
+          table.spark.sql("CREATE NAMESPACE openhouse.nope_ns")))
+    }
 
   // The rejection messages a user reads back from the catalog.
   def surfaceMessageCases(format: String): List[Plan.Case] =
-    List(
-      surfaceBasePreparation(format).test(
-        "surface.msg.readabilityGuard",
-        "Rejection messages for a dropped column, a reserved property, disabled RTAS and " +
-          "CREATE NAMESPACE are all non-empty, free of internal-error markers, free of raw " +
-          "stack frames, and not a bare NullPointerException.") { table =>
-        assertReadableMessage("dropColumn")(
-          Check.intercept[Exception](
-            table.spark.sql(
-              s"ALTER TABLE ${table.name} " +
-                s"DROP COLUMN ${Core.int0.columnName}")))
-        assertReadableMessage("reservedProp")(
-          Check.intercept[Exception](
-            table.spark.sql(
-              s"ALTER TABLE ${table.name} SET TBLPROPERTIES " +
-                "('openhouse.tableUUID'='x')")))
-        assertReadableMessage("rtasDisabled")(
-          Check.intercept[Exception](
-            table.spark.sql(
-              s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
-                s"AS SELECT * FROM ${table.name}")))
-        assertReadableMessage("createNamespace")(
-          Check.intercept[Exception](
-            table.spark.sql("CREATE NAMESPACE openhouse.nope_ns")))
-      })
+    List(surfaceReadabilityGuardCase(format))
+
+  /**
+   * A concurrent CREATE OR REPLACE TABLE AS SELECT racing an INSERT settles at either two rows
+   * (replace won) or three rows (append also landed), with any failure being a typed commit
+   * conflict.
+   */
+  private def surfaceRtasVsAppendCase(format: String): Plan.Case =
+    surfaceReplacePreparation(format).test("surface.conc.rtasVsAppend") { table =>
+      def replaceTable(): Unit =
+        try {
+          table.spark.sql(
+            s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
+              s"AS SELECT * FROM ${table.name} " +
+              s"WHERE ${Core.long0.columnName} <= 2")
+        } catch {
+          case exception: Throwable =>
+            assert(
+              isTypedCommitConflict(exception),
+              s"RTAS race failed with ${exception.getClass.getName}")
+        }
+      def appendRow(): Unit =
+        try {
+          table.spark.sql(
+            s"INSERT INTO ${table.name} VALUES " +
+              "(CAST(30 AS BIGINT), 30, 'row-30', 30.5, " +
+              "true, '2024-01-09-01')")
+        } catch {
+          case exception: Throwable =>
+            assert(
+              isTypedCommitConflict(exception),
+              s"append race failed with ${exception.getClass.getName}")
+        }
+      val threadErrors =
+        runConcurrently(Seq(() => replaceTable(), () => appendRow()))
+
+      assert(
+        threadErrors.isEmpty,
+        s"racing thread failed with a non-conflict error: $threadErrors")
+      table.spark.sql(s"REFRESH TABLE ${table.name}")
+      val rowCount = countOf(
+        table.spark,
+        s"SELECT count(*) FROM ${table.name}").toLong
+      assert(
+        rowCount == 2 || rowCount == 3,
+        s"RTAS and append race settled at $rowCount rows")
+      println(s"DIAG conc.rtasVsAppend: settled at $rowCount rows")
+    }
 
   // A replace racing an append. The outcome is either a commit or a typed commit conflict.
   def surfaceRtasConcurrencyCases(format: String): List[Plan.Case] =
-    List(
-      surfaceReplacePreparation(format).test(
-        "surface.conc.rtasVsAppend",
-        "A concurrent CREATE OR REPLACE TABLE AS SELECT racing an INSERT settles at either 2 " +
-          "rows (replace won) or 3 rows (append also landed), with any failure being a typed " +
-          "commit conflict.") { table =>
-        def replaceTable(): Unit =
-          try {
-            table.spark.sql(
-              s"CREATE OR REPLACE TABLE ${table.name} USING $dataSource " +
-                s"AS SELECT * FROM ${table.name} " +
-                s"WHERE ${Core.long0.columnName} <= 2")
-          } catch {
-            case exception: Throwable =>
-              assert(
-                isTypedCommitConflict(exception),
-                s"RTAS race failed with ${exception.getClass.getName}")
-          }
-        def appendRow(): Unit =
-          try {
-            table.spark.sql(
-              s"INSERT INTO ${table.name} VALUES " +
-                "(CAST(30 AS BIGINT), 30, 'row-30', 30.5, " +
-                "true, '2024-01-09-01')")
-          } catch {
-            case exception: Throwable =>
-              assert(
-                isTypedCommitConflict(exception),
-                s"append race failed with ${exception.getClass.getName}")
-          }
-        val threadErrors =
-          runConcurrently(Seq(() => replaceTable(), () => appendRow()))
-
-        assert(
-          threadErrors.isEmpty,
-          s"racing thread failed with a non-conflict error: $threadErrors")
-        table.spark.sql(s"REFRESH TABLE ${table.name}")
-        val rowCount = countOf(
-          table.spark,
-          s"SELECT count(*) FROM ${table.name}").toLong
-        assert(
-          rowCount == 2 || rowCount == 3,
-          s"RTAS and append race settled at $rowCount rows")
-        println(s"DIAG conc.rtasVsAppend: settled at $rowCount rows")
-      })
+    List(surfaceRtasVsAppendCase(format))
 }

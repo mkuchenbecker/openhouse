@@ -1,6 +1,6 @@
 package harness
 
-import org.junit.jupiter.api.Assertions.{assertEquals, assertTrue}
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 /**
@@ -24,11 +24,16 @@ final class RtasDmlCaseCatalogTest {
   }
 
   @Test
-  def theReplaceLineagePreparationsDescribeTheReplaceTheyPerform(): Unit = {
+  def theReplaceLineagePreparationsCarryTheReplacePath(): Unit = {
     Scenarios.preparedRtasCoreTables.foreach { preparation =>
-      assertTrue(
-        preparation.description.contains("CREATE OR REPLACE TABLE AS SELECT"),
-        s"${preparation.label} does not describe the replace it performs")
+      assertEquals(
+        "prep.rtas:",
+        preparation.casePrefix,
+        s"${preparation.label} is not marked as a replace-lineage preparation")
+      assertEquals(
+        List("prep.rtas", "prep.rtas.refresh"),
+        preparation.preparation.steps.map(_.label).toList.takeRight(2),
+        s"${preparation.label} does not end with the replace-and-refresh steps")
     }
   }
 
@@ -39,20 +44,19 @@ final class RtasDmlCaseCatalogTest {
       Scenarios.rtasLayoutFormatCases.map(_.id))
 
   @Test
-  def everyRtasCaseCarriesItsOwnDescriptionAndItsPreparationDescription(): Unit = {
-    val describedBuckets = List(
-      Scenarios.rtasDmlCases,
-      Scenarios.rtasPartitionedDmlCases,
-      Scenarios.rtasLayoutFormatCases).flatten
-
-    describedBuckets.foreach { testCase =>
-      assertTrue(
-        testCase.description.trim.nonEmpty,
-        s"${testCase.id} has no description of the operation it runs")
-      assertTrue(
-        testCase.preparationDescription.trim.nonEmpty,
-        s"${testCase.id} has no description of the state it starts from")
-    }
+  def theNullStringPreparationsExtendTheReplaceLineagePreparations(): Unit = {
+    assertEquals(
+      Scenarios.preparedRtasCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)),
+      Scenarios.preparedNullStringRtasCoreTables.map(preparation =>
+        (preparation.casePrefix, preparation.label)))
+    assertEquals(
+      Scenarios.preparedRtasCoreTables.map(_.preparation.steps.size + 1),
+      Scenarios.preparedNullStringRtasCoreTables.map(_.preparation.steps.size))
+    assertEquals(
+      List("prep.nullStringRow"),
+      Scenarios.preparedNullStringRtasCoreTables.head.preparation.steps
+        .map(_.label).toList.takeRight(1))
   }
 
   private def caseIds(

@@ -6,6 +6,12 @@ package harness
 // into `object Scenarios` has been constructed.
 trait RtasScenarioKit extends ScenarioKit {
 
+  /**
+   * Creates a replace-lineage table: it seeds `numberOfRows` rows, then re-specifies the same
+   * shape through CREATE OR REPLACE TABLE AS SELECT and refreshes the table in the current Spark
+   * session, so the result holds the seeded rows reached through the replace path. `partitioning`
+   * sets the table layout and `format` sets the file format.
+   */
   def createAndSeedRtas(partitioning: Partitioning, numberOfRows: Int, format: String): TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING $dataSource ${partitioning.clause} " +
@@ -18,14 +24,11 @@ trait RtasScenarioKit extends ScenarioKit {
       // pointer so later statements in the session see the replaced table.
       .sql("prep.rtas.refresh")(t => s"REFRESH TABLE $t")()
 
-  // Create and seed, then CREATE OR REPLACE ... AS SELECT * re-specifying the same shape, so the
-  // table holds the same three rows and was reached through the replace path. The cases run on all
-  // six layouts, so a replaced table supports the same operations as a freshly created one.
-  private def rtasPreparationDescription(partitioning: Partitioning, format: String): String =
-    s"Three seed rows with keys 1, 2 and 3 in a $format table ${partitioning.description}, then " +
-      "replaced by CREATE OR REPLACE TABLE AS SELECT re-specifying the same shape, so the table " +
-      "holds the same three rows on replace lineage."
-
+  /**
+   * One replace-lineage preparation per core layout: three seed rows with keys 1, 2 and 3, then
+   * replaced in place by CREATE OR REPLACE TABLE AS SELECT re-specifying the same shape, so the
+   * table holds the same three rows on replace lineage.
+   */
   lazy val preparedRtasCoreTables: List[TablePreparation[CoreTable.type]] =
     for {
       partitioning <- partitionings
@@ -33,24 +36,29 @@ trait RtasScenarioKit extends ScenarioKit {
     } yield TablePreparation(
       s"${partitioning.label}/$format",
       createAndSeedRtas(partitioning, 3, format),
-      "prep.rtas:",
-      description = rtasPreparationDescription(partitioning, format))
+      "prep.rtas:")
 
+  /**
+   * One replace-lineage preparation per datepartition-partitioned core layout: three seed rows,
+   * then replaced in place by CREATE OR REPLACE TABLE AS SELECT re-specifying the same shape.
+   */
   lazy val preparedRtasPartitionedCoreTables: List[TablePreparation[CoreTable.type]] =
     fileFormats.map { format =>
       TablePreparation(
         s"${partitionedByDate.label}/$format",
         createAndSeedRtas(partitionedByDate, 3, format),
-        "prep.rtas:",
-        description = rtasPreparationDescription(partitionedByDate, format))
+        "prep.rtas:")
     }
 
+  /** The replace-lineage core preparations, each carrying one row whose string column is null. */
   lazy val preparedNullStringRtasCoreTables: List[TablePreparation[CoreTable.type]] =
     preparedRtasCoreTables.map(withNullStringRow)
 
+  /** The replace-lineage preparations that leave data files behind. */
   lazy val rtasLayoutFormatPreparations: List[TablePreparation[CoreTable.type]] =
     preparedRtasCoreTables
 
+  /** The format-materialization case on every replace-lineage preparation. */
   def rtasLayoutFormatCases: List[Plan.Case] =
     layoutFormatCasesFor(rtasLayoutFormatPreparations)
 }
