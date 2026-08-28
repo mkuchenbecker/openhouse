@@ -433,6 +433,44 @@ public class HtsControllerTest {
         .andExpect(status().isBadRequest());
   }
 
+  /**
+   * An identifier longer than its column is the client's 400 at ingress, not a database integrity
+   * violation surfacing later as a mislabeled 409 or a bare 500.
+   */
+  @Test
+  public void testOverLengthIdentifierIsBadRequestAtIngress() throws Exception {
+    StringBuilder overLength = new StringBuilder(129);
+    for (int i = 0; i < 129; i++) {
+      overLength.append('a');
+    }
+
+    mvc.perform(
+            MockMvcRequestBuilders.get("/hts/tables")
+                .param("databaseId", TEST_DB_ID)
+                .param("tableId", overLength.toString())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", containsString("exceeding the maximum of 128")));
+
+    mvc.perform(
+            MockMvcRequestBuilders.put("/hts/tables")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    CreateUpdateEntityRequestBody.<UserTable>builder()
+                        .entity(
+                            UserTable.builder()
+                                .databaseId(TEST_DB_ID)
+                                .tableId(overLength.toString())
+                                .tableVersion(INITIAL_TABLE_VERSION)
+                                .metadataLocation("/openhouse/loc/v1_metadata.json")
+                                .build())
+                        .build()
+                        .toJson())
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", containsString("exceeding the maximum of 128")));
+  }
+
   @Test
   public void testPutUserTableWithNullStorageType() throws Exception {
     mvc.perform(

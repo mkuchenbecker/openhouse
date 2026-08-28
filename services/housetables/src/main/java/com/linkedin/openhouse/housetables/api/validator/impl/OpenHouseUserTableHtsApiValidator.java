@@ -19,6 +19,20 @@ import org.springframework.stereotype.Component;
 public class OpenHouseUserTableHtsApiValidator
     implements HouseTablesApiValidator<UserTableKey, UserTable> {
 
+  /**
+   * Storage bounds, from the DDL this service persists into ({@code
+   * services/housetables/ddl/0000__baseline.sql}: {@code database_id} and {@code table_id} are
+   * {@code VARCHAR(128)}, {@code metadata_location} is {@code VARCHAR(512)}). Enforced at ingress
+   * so an over-length identifier is the client's 400, not a database integrity violation
+   * misreported as a concurrent modification or a bare server failure.
+   */
+  static final int MAX_IDENTIFIER_LENGTH = 128;
+
+  static final int MAX_METADATA_LOCATION_LENGTH = 512;
+
+  private static final String IDENTIFIER_TOO_LONG_MSG =
+      "%s provided has %d characters, exceeding the maximum of %d";
+
   @Autowired private Validator validator;
 
   @Override
@@ -36,8 +50,19 @@ public class OpenHouseUserTableHtsApiValidator
               "tableId provided: %s, %s",
               userTableKey.getTableId(), ALPHA_NUM_UNDERSCORE_ERROR_MSG));
     }
+    validateLength(
+        "databaseId", userTableKey.getDatabaseId(), MAX_IDENTIFIER_LENGTH, validationFailures);
+    validateLength("tableId", userTableKey.getTableId(), MAX_IDENTIFIER_LENGTH, validationFailures);
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
+    }
+  }
+
+  private static void validateLength(
+      String field, String value, int maxLength, List<String> validationFailures) {
+    if (value != null && value.length() > maxLength) {
+      validationFailures.add(
+          String.format(IDENTIFIER_TOO_LONG_MSG, field, value.length(), maxLength));
     }
   }
 
@@ -74,6 +99,14 @@ public class OpenHouseUserTableHtsApiValidator
       validationFailures.add(
           String.format("%s : %s", ApiValidatorUtil.getField(violation), violation.getMessage()));
     }
+    validateLength(
+        "databaseId", userTable.getDatabaseId(), MAX_IDENTIFIER_LENGTH, validationFailures);
+    validateLength("tableId", userTable.getTableId(), MAX_IDENTIFIER_LENGTH, validationFailures);
+    validateLength(
+        "metadataLocation",
+        userTable.getMetadataLocation(),
+        MAX_METADATA_LOCATION_LENGTH,
+        validationFailures);
 
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
@@ -120,6 +153,9 @@ public class OpenHouseUserTableHtsApiValidator
               "databaseId provided: %s, %s",
               userTable.getDatabaseId(), ALPHA_NUM_UNDERSCORE_ERROR_MSG));
     }
+    validateLength(
+        "databaseId", userTable.getDatabaseId(), MAX_IDENTIFIER_LENGTH, validationFailures);
+    validateLength("tableId", userTable.getTableId(), MAX_IDENTIFIER_LENGTH, validationFailures);
 
     if (userTable.getTableId() != null) {
       if (userTable.getDatabaseId() == null) {

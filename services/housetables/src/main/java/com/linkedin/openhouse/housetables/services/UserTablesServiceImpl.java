@@ -18,6 +18,7 @@ import com.linkedin.openhouse.housetables.model.SoftDeletedUserTableRow;
 import com.linkedin.openhouse.housetables.model.SoftDeletedUserTableRowPrimaryKey;
 import com.linkedin.openhouse.housetables.model.UserTableRow;
 import com.linkedin.openhouse.housetables.model.UserTableRowPrimaryKey;
+import com.linkedin.openhouse.housetables.repository.impl.jdbc.JdbcPersistenceFailures;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.SoftDeletedUserTableHtsJdbcRepository;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.UserTableHtsJdbcRepository;
 import java.util.List;
@@ -159,21 +160,32 @@ public class UserTablesServiceImpl implements UserTablesService {
 
     try {
       returnedDto = userTablesMapper.toUserTableDto(htsJdbcRepository.save(targetUserTableRow));
-    } catch (CommitFailedException
-        | ObjectOptimisticLockingFailureException
-        | DataIntegrityViolationException e) {
-      throw new EntityConcurrentModificationException(
-          String.format(
-              "databaseId : %s, tableId : %s, version: %s %s",
-              targetUserTableRow.getDatabaseId(),
-              targetUserTableRow.getTableId(),
-              targetUserTableRow.getVersion(),
-              "The requested user table has been modified/created by other processes."),
-          userTablesMapper.fromUserTableToRowKey(userTable).toString(),
-          e);
+    } catch (DataIntegrityViolationException e) {
+      // Only a duplicate key means another writer holds the row. Any other integrity violation
+      // is a server-side failure, not a race, so mislabeling it a 409 would send the caller into
+      // a futile retry loop; it propagates as the 500 it is.
+      if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
+        throw e;
+      }
+      throw concurrentModification(targetUserTableRow, userTable, e);
+    } catch (CommitFailedException | ObjectOptimisticLockingFailureException e) {
+      throw concurrentModification(targetUserTableRow, userTable, e);
     }
 
     return Pair.of(returnedDto, existingUserTableRow.isPresent());
+  }
+
+  private EntityConcurrentModificationException concurrentModification(
+      UserTableRow targetUserTableRow, UserTable userTable, Exception cause) {
+    return new EntityConcurrentModificationException(
+        String.format(
+            "databaseId : %s, tableId : %s, version: %s %s",
+            targetUserTableRow.getDatabaseId(),
+            targetUserTableRow.getTableId(),
+            targetUserTableRow.getVersion(),
+            "The requested user table has been modified/created by other processes."),
+        userTablesMapper.fromUserTableToRowKey(userTable).toString(),
+        cause);
   }
 
   /**
@@ -211,7 +223,12 @@ public class UserTablesServiceImpl implements UserTablesService {
         throw new NoSuchUserTableException(fromDatabaseId, fromTableId);
       }
     } catch (DataIntegrityViolationException e) {
-      throw new AlreadyExistsException("Table", toTableId);
+      // A duplicate key means the destination is occupied; anything else broke a different
+      // constraint and must not masquerade as an occupied destination.
+      if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
+        throw e;
+      }
+      throw new AlreadyExistsException("Table", toTableId, e);
     }
   }
 
@@ -279,7 +296,11 @@ public class UserTablesServiceImpl implements UserTablesService {
       return userTablesMapper.toUserTableDto(
           htsJdbcRepository.save(userTablesMapper.toUserTableRow(existingSoftDeletedTable)));
     } catch (DataIntegrityViolationException e) {
-      throw new AlreadyExistsException("Table", existingSoftDeletedTable.getTableId());
+      // Same discrimination as the put path: only a duplicate key is a lost restore race.
+      if (!JdbcPersistenceFailures.isDuplicateKey(e)) {
+        throw e;
+      }
+      throw new AlreadyExistsException("Table", existingSoftDeletedTable.getTableId(), e);
     }
   }
 

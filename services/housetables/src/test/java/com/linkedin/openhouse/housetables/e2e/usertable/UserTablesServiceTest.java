@@ -1604,6 +1604,57 @@ public class UserTablesServiceTest {
                 "race_key"));
   }
 
+  /**
+   * A 409 promises the caller a retry can win. An integrity violation that is not a duplicate key —
+   * a null column, an over-length value the ingress bound somehow missed — is a server failure a
+   * retry cannot fix, so it must escape as itself rather than wear the concurrent-modification
+   * label.
+   */
+  @Test
+  public void testNonDuplicateIntegrityViolationOnPutIsNotReportedAsConcurrentModification() {
+    org.springframework.dao.DataIntegrityViolationException notADuplicate =
+        new org.springframework.dao.DataIntegrityViolationException(
+            "could not execute statement",
+            new java.sql.SQLException("Data too long for column 'table_id'", "22001", 1406));
+    doThrow(notADuplicate).when(htsRepository).save(any(UserTableRow.class));
+
+    assertThatThrownBy(
+            () ->
+                userTablesService.putUserTable(
+                    UserTable.builder()
+                        .databaseId(ENTITY_TYPE_DB)
+                        .tableId("integrity_violation")
+                        .tableVersion("INITIAL_VERSION")
+                        .metadataLocation(
+                            "/openhouse/entity_type_db/integrity_violation/v1_metadata.json")
+                        .entityType(EntityType.TABLE.name())
+                        .build()))
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class)
+        .isNotInstanceOf(EntityConcurrentModificationException.class);
+  }
+
+  /** The JPA dialect's generic wrapper around a real duplicate key still reads as the 409 race. */
+  @Test
+  public void testDuplicateKeyUnderGenericWrapperOnPutIsConcurrentModification() {
+    org.springframework.dao.DataIntegrityViolationException duplicate =
+        new org.springframework.dao.DataIntegrityViolationException(
+            "could not execute statement",
+            new java.sql.SQLException("Unique index or primary key violation", "23505"));
+    doThrow(duplicate).when(htsRepository).save(any(UserTableRow.class));
+
+    Assertions.assertThrows(
+        EntityConcurrentModificationException.class,
+        () ->
+            userTablesService.putUserTable(
+                UserTable.builder()
+                    .databaseId(ENTITY_TYPE_DB)
+                    .tableId("duplicate_key")
+                    .tableVersion("INITIAL_VERSION")
+                    .metadataLocation("/openhouse/entity_type_db/duplicate_key/v1_metadata.json")
+                    .entityType(EntityType.TABLE.name())
+                    .build()));
+  }
+
   /** Reads the counter and timer deltas a single instrumented call must produce. */
   private void assertMetricsAdvance(String requestMetric, String timeMetric, Runnable call) {
     double requestsBefore = counterValue(requestMetric);
