@@ -252,11 +252,40 @@ public class OpenHouseUserTablesValidatorTest {
   // -------------------------------------------------------------------------------------------
 
   private static String repeated(int length) {
-    StringBuilder builder = new StringBuilder(length);
-    for (int i = 0; i < length; i++) {
-      builder.append('a');
-    }
-    return builder.toString();
+    return String.join("", java.util.Collections.nCopies(length, "a"));
+  }
+
+  /** The rename writes exactly one non-key field, and it is bounded like every other write. */
+  @Test
+  public void validateRenameEntityRejectsOverLengthMetadataLocation() {
+    UserTableKey fromKey = UserTableKey.builder().tableId("srcTable").databaseId("testDB").build();
+    UserTableKey toKey = UserTableKey.builder().tableId("dstTable").databaseId("testDB").build();
+
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, "/" + repeated(512)));
+    assertDoesNotThrow(
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, "/" + repeated(511)));
+  }
+
+  /** storageType persists into a VARCHAR(128) column, so it is bounded at ingress like the ids. */
+  @Test
+  public void validatePutEntityRejectsOverLengthStorageType() {
+    UserTable overLength =
+        UserTable.builder()
+            .databaseId("db1")
+            .tableId("t1")
+            .metadataLocation("/tmp/db1/t1")
+            .storageType(repeated(129))
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(overLength));
+
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validatePutEntity(
+                overLength.toBuilder().storageType(repeated(128)).build()));
   }
 
   @Test
@@ -281,8 +310,13 @@ public class OpenHouseUserTablesValidatorTest {
         () -> userTablesHtsApiValidator.validateGetEntity(longTable));
   }
 
+  /**
+   * The query's databaseId addresses the key column exactly, so it carries the storage bound — on
+   * the plain and the paged overload alike. The tableId filter is a LIKE pattern, a predicate
+   * rather than a stored value, so no length bound applies to it (its search regex still does).
+   */
   @Test
-  public void validateGetEntitiesRejectsOverLengthFilterIdentifiers() {
+  public void validateGetEntitiesBoundsDatabaseIdButNotThePattern() {
     assertThrows(
         RequestValidationFailureException.class,
         () ->
@@ -292,7 +326,19 @@ public class OpenHouseUserTablesValidatorTest {
         RequestValidationFailureException.class,
         () ->
             userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId(repeated(129)).build(), 0, 50, "tableId"));
+
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
                 UserTable.builder().databaseId("db1").tableId(repeated(129)).build()));
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId("db1").tableId(repeated(129)).build(),
+                0,
+                50,
+                "tableId"));
   }
 
   @Test

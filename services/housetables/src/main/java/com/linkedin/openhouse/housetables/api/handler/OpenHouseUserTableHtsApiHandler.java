@@ -208,7 +208,8 @@ public class OpenHouseUserTableHtsApiHandler implements UserTableHtsApiHandler {
             .databaseId(toUserTable.getDatabaseId())
             .tableId(toUserTable.getTableId())
             .build();
-    userTablesHtsApiValidator.validateRenameEntity(fromUserTableKey, toUserTableKey);
+    userTablesHtsApiValidator.validateRenameEntity(
+        fromUserTableKey, toUserTableKey, toUserTable.getMetadataLocation());
     userTableService.renameUserTable(
         fromUserTable.getDatabaseId(),
         fromUserTable.getTableId(),

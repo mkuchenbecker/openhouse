@@ -439,15 +439,12 @@ public class HtsControllerTest {
    */
   @Test
   public void testOverLengthIdentifierIsBadRequestAtIngress() throws Exception {
-    StringBuilder overLength = new StringBuilder(129);
-    for (int i = 0; i < 129; i++) {
-      overLength.append('a');
-    }
+    String overLength = String.join("", java.util.Collections.nCopies(129, "a"));
 
     mvc.perform(
             MockMvcRequestBuilders.get("/hts/tables")
                 .param("databaseId", TEST_DB_ID)
-                .param("tableId", overLength.toString())
+                .param("tableId", overLength)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.message", containsString("exceeding the maximum of 128")));
@@ -460,7 +457,7 @@ public class HtsControllerTest {
                         .entity(
                             UserTable.builder()
                                 .databaseId(TEST_DB_ID)
-                                .tableId(overLength.toString())
+                                .tableId(overLength)
                                 .tableVersion(INITIAL_TABLE_VERSION)
                                 .metadataLocation("/openhouse/loc/v1_metadata.json")
                                 .build())
@@ -1357,6 +1354,48 @@ public class HtsControllerTest {
   }
 
   /** Unlike the table query, an empty filter returns every view, not database names. */
+  /**
+   * The pattern must actually narrow: a seeded view the pattern excludes stays out of the patterned
+   * result while remaining in the unpatterned one. This is what pins the handler's
+   * tableId-to-tableIdPattern mapping — dropping the pattern at that seam would return the superset
+   * and fail here by name.
+   */
+  @Test
+  public void testViewQueryPatternExcludesNonMatchingViews() throws Exception {
+    seedCanonicalRows("");
+    seedTypedRow(ENTITY_TYPE_DB, "excluded_view", EntityType.VIEW);
+
+    // Unpatterned: all four views, the excluded one included.
+    mvc.perform(
+            MockMvcRequestBuilders.get("/hts/views/query")
+                .params(queryParams("databaseId", ENTITY_TYPE_DB))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.results", hasSize(4)))
+        .andExpect(jsonPath("$.results[*].tableId", hasItem("excluded_view")));
+
+    // Patterned: strictly fewer rows, each named, and the excluded view absent.
+    mvc.perform(
+            MockMvcRequestBuilders.get("/hts/views/query")
+                .params(queryParams("databaseId", ENTITY_TYPE_DB, "tableId", "t0%"))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.results", hasSize(3)))
+        .andExpect(
+            jsonPath(
+                "$.results[*].tableId", containsInAnyOrder("t01_view", "t03_view", "t05_view")))
+        .andExpect(jsonPath("$.results[*].tableId", not(hasItem("excluded_view"))));
+
+    // The paged overload crosses the same seam.
+    mvc.perform(
+            MockMvcRequestBuilders.get("/v1/hts/views/query")
+                .params(queryParams("databaseId", ENTITY_TYPE_DB, "tableId", "t0%"))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.pageResults.content", hasSize(3)))
+        .andExpect(jsonPath("$.pageResults.content[*].tableId", not(hasItem("excluded_view"))));
+  }
+
   @Test
   public void testViewQueriesExcludeTablesAndLegacyRows() throws Exception {
     seedCanonicalRows("");
