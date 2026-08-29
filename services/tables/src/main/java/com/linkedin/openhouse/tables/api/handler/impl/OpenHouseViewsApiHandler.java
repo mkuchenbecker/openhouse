@@ -4,6 +4,7 @@ import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestWire;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
+import com.linkedin.openhouse.tables.config.ConditionalOnIcebergViewApi;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewCommitConflictException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
@@ -36,6 +37,7 @@ import org.springframework.stereotype.Component;
  * names a namespace this catalog can never contain and is reported as the spec's 404 for an absent
  * namespace, not as a validation 400.
  */
+@ConditionalOnIcebergViewApi
 @Component
 public class OpenHouseViewsApiHandler implements ViewsApiHandler {
 

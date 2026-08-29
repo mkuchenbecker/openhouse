@@ -6,6 +6,7 @@ import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
 import com.linkedin.openhouse.tables.authorization.Privileges;
+import com.linkedin.openhouse.tables.config.ConditionalOnIcebergViewApi;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -45,6 +46,7 @@ import org.springframework.web.bind.annotation.RestController;
  * register-view}, the tables/namespaces REST routes and the OAuth token endpoint — probing them
  * lands on the {@code /v1/**} unresolved-path 404.
  */
+@ConditionalOnIcebergViewApi
 @RestController
 public class IcebergRestViewsController {
 

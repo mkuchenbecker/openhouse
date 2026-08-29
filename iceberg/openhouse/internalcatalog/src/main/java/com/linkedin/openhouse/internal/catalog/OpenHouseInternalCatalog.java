@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
+import org.apache.iceberg.BaseMetastoreCatalog;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
@@ -37,8 +38,6 @@ import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
-import org.apache.iceberg.view.BaseMetastoreViewCatalog;
-import org.apache.iceberg.view.ViewOperations;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -48,10 +47,23 @@ import org.springframework.stereotype.Component;
  * Iceberg Catalog Implementation for OpenHouse User Table persisted as Iceberg tables. Built on-top
  * of HouseTableService where the Iceberg table root pointer is persisted. A custom implementation
  * can be built on top of this by extending this class and making that bean the primary.
+ *
+ * <h2>Why views are not served from here</h2>
+ *
+ * <p>This class names no type from Iceberg's {@code org.apache.iceberg.view} package, and that is a
+ * constraint rather than an omission. It is a {@code @Component}, and Spring walks a component's
+ * superclass chain while parsing it — so a supertype that is absent from the running classpath
+ * fails context startup outright, before any bean is created. The iceberg-1.2 test fixture boots
+ * this application with Iceberg 1.2, which has no view API at all, and every Spark 3.1 integration
+ * test depends on that server starting.
+ *
+ * <p>The view surface therefore lives in {@link OpenHouseInternalViewCatalog}, which extends
+ * Iceberg's view catalog, is not a component, and is only constructed where views are switched on —
+ * a deployment that by definition runs an Iceberg version that has them.
  */
 @Slf4j
 @Component
-public class OpenHouseInternalCatalog extends BaseMetastoreViewCatalog {
+public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Autowired HouseTableRepository houseTableRepository;
 
@@ -323,96 +335,5 @@ public class OpenHouseInternalCatalog extends BaseMetastoreViewCatalog {
                 .getType();
 
     return fileIOManager.getFileIO(type);
-  }
-
-  /**
-   * Builds the operations a view commit runs through.
-   *
-   * <p>Deliberately not given the metrics reporter or the metadata cache that {@link #newTableOps}
-   * passes along. Both are keyed to table commits — the reporter's counters name table operations
-   * and the cache stores {@code TableMetadata} — so handing them to a view would either miscount or
-   * not typecheck. Views get their own once there is something worth measuring.
-   */
-  @Override
-  protected ViewOperations newViewOps(TableIdentifier viewIdentifier) {
-    return new OpenHouseViewOperations(
-        houseTableRepository, resolveFileIO(viewIdentifier), fileIOManager, viewIdentifier);
-  }
-
-  /**
-   * The view operations for an identifier, for callers that need {@link
-   * org.apache.iceberg.view.ViewMetadata} rather than a {@link org.apache.iceberg.view.View}.
-   *
-   * <p>Iceberg's {@code View} interface deliberately exposes no metadata document — it offers
-   * schema, versions, history and properties, but not the object the REST spec's {@code
-   * LoadViewResult} is built from, and not the base a commit compares against. The REST layer needs
-   * both, so it needs the operations. This is a widening of {@link #newViewOps} rather than a
-   * second path to it: same object, public.
-   *
-   * @param viewIdentifier the view
-   * @return operations bound to that identifier, not yet refreshed
-   */
-  public ViewOperations viewOperations(TableIdentifier viewIdentifier) {
-    return newViewOps(viewIdentifier);
-  }
-
-  /**
-   * Every view in a namespace.
-   *
-   * <p>Reads through the view-scoped House Tables route, so a table sharing the namespace is not
-   * returned. Unlike {@link #listTables} there is no empty-namespace branch: that branch exists to
-   * enumerate databases, which is a table-side concern.
-   */
-  @Override
-  public List<TableIdentifier> listViews(Namespace namespace) {
-    NamespaceUtil.validateOperationNamespace(namespace);
-    return houseTableRepository.findAllViewsByDatabaseId(namespace.toString()).stream()
-        .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()))
-        .collect(Collectors.toList());
-  }
-
-  /**
-   * Drops a view, returning whether this call was the one that removed it.
-   *
-   * <p>The row is looked up first rather than deleted blind, so that dropping something that is not
-   * there is reported as {@code false} instead of succeeding silently — {@code
-   * ViewCatalog.dropView} is specified to answer whether the view existed.
-   *
-   * <p>The metadata file is deliberately left behind. The table path purges storage on drop because
-   * a table owns data files whose bytes dominate; a view owns one metadata document, and deleting
-   * it eagerly would make a concurrent reader holding that location fail on a missing file rather
-   * than on a missing view. Cleanup belongs to whatever sweeps orphaned metadata.
-   */
-  @Override
-  public boolean dropView(TableIdentifier identifier) {
-    HouseTablePrimaryKey primaryKey =
-        HouseTablePrimaryKey.builder()
-            .databaseId(identifier.namespace().toString())
-            .tableId(identifier.name())
-            .build();
-    if (!houseTableRepository.findViewById(primaryKey).isPresent()) {
-      return false;
-    }
-    houseTableRepository.deleteViewById(primaryKey);
-    return true;
-  }
-
-  /**
-   * Not supported, and not merely unimplemented here.
-   *
-   * <p>House Tables' rename is table-only by construction: {@code renameUserTable} is the sole
-   * rename on that service and its contract says views are not renameable. Serving the spec's
-   * {@code rename-view} therefore needs a view rename on House Tables first, which is a change to
-   * that service rather than to this catalog.
-   *
-   * <p>Throwing is safe here in a way it would not be on {@code loadView}: Iceberg's REST client
-   * reaches this only for an explicit {@code ALTER VIEW … RENAME TO}, never as part of resolving an
-   * identifier, so nothing probes it speculatively.
-   */
-  @Override
-  public void renameView(TableIdentifier from, TableIdentifier to) {
-    throw new UnsupportedOperationException(
-        String.format(
-            "Cannot rename view %s to %s: this catalog does not support renaming views", from, to));
   }
 }

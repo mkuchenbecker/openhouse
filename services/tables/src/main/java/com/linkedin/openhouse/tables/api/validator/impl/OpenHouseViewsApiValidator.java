@@ -10,6 +10,7 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtils;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
+import com.linkedin.openhouse.tables.config.ConditionalOnIcebergViewApi;
 import com.linkedin.openhouse.tables.exception.ViewRequestValidationFailureException;
 import com.linkedin.openhouse.tables.exception.ViewValidationErrorCode;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +51,7 @@ import org.springframework.stereotype.Component;
  * <p>SQL is opaque: nothing here parses, translates or engine-validates a view definition.
  */
 @Slf4j
+@ConditionalOnIcebergViewApi
 @Component
 public class OpenHouseViewsApiValidator implements ViewsApiValidator {
 

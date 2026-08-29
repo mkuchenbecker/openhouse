@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.controller;
 import com.linkedin.openhouse.common.audit.AuditedResponseRenderer;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
 import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestWire;
+import com.linkedin.openhouse.tables.config.ConditionalOnIcebergViewApi;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import io.swagger.v3.oas.annotations.Hidden;
@@ -53,6 +54,7 @@ import org.springframework.web.servlet.HandlerMapping;
  */
 @Slf4j
 @Order(Ordered.HIGHEST_PRECEDENCE)
+@ConditionalOnIcebergViewApi
 @RestControllerAdvice(assignableTypes = IcebergRestViewsController.class)
 public class IcebergRestViewsExceptionHandler implements AuditedResponseRenderer {
 

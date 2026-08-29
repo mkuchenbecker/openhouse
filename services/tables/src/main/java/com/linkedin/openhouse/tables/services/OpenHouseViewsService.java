@@ -1,7 +1,7 @@
 package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
-import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.internal.catalog.OpenHouseInternalViewCatalog;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewCommitConflictException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
@@ -28,7 +28,7 @@ import org.apache.iceberg.view.ViewRepresentation;
 import org.apache.iceberg.view.ViewVersion;
 
 /**
- * The {@link ViewsService} that actually stores views, over {@link OpenHouseInternalCatalog}.
+ * The {@link ViewsService} that actually stores views, over {@link OpenHouseInternalViewCatalog}.
  *
  * <h2>Why the catalog rather than the operations alone</h2>
  *
@@ -50,10 +50,11 @@ import org.apache.iceberg.view.ViewVersion;
  */
 public class OpenHouseViewsService implements ViewsService {
 
-  private final OpenHouseInternalCatalog catalog;
+  private final OpenHouseInternalViewCatalog catalog;
   private final StorageSelector storageSelector;
 
-  public OpenHouseViewsService(OpenHouseInternalCatalog catalog, StorageSelector storageSelector) {
+  public OpenHouseViewsService(
+      OpenHouseInternalViewCatalog catalog, StorageSelector storageSelector) {
     this.catalog = catalog;
     this.storageSelector = storageSelector;
   }
@@ -205,7 +206,7 @@ public class OpenHouseViewsService implements ViewsService {
   /**
    * Where this view's metadata will be written.
    *
-   * <p>The location is always supplied explicitly: {@code OpenHouseInternalCatalog} refuses to
+   * <p>The location is always supplied explicitly: {@code OpenHouseInternalViewCatalog} refuses to
    * invent one, because storage placement is the cluster's decision rather than Iceberg's. Views go
    * through the same allocator as tables, so a view's directory sits beside its database's tables
    * under the configured root prefix, and the {@code -<uuid>} suffix keeps a re-created view from
