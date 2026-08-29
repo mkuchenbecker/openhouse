@@ -39,6 +39,14 @@ import org.apache.iceberg.view.ViewMetadataParser;
  * — {@code BaseMetastoreViewCatalog.buildView().create()} commits directly — so there is no
  * corresponding state to protect and the inherited {@code commit} is correct as it stands.
  *
+ * <h2>The reads and writes are view-scoped</h2>
+ *
+ * <p>Every House Tables call below goes through the repository's view methods rather than the table
+ * ones. House Tables scopes access by entity type: its table-scoped point read treats a view at the
+ * key as absent, so a view written through the table put would have been invisible to its own
+ * {@link #doRefresh} — created, then not found. The distinction is not an optimization and the two
+ * families are not interchangeable.
+ *
  * <h2>Failure vocabulary</h2>
  *
  * <p>This class throws Iceberg's unchecked exceptions rather than returning typed outcomes. That is
@@ -48,13 +56,6 @@ import org.apache.iceberg.view.ViewMetadataParser;
  */
 @Slf4j
 public class OpenHouseViewOperations extends BaseViewOperations {
-
-  /**
-   * Marks the House Tables row as a view. The string, not an enum: this module maps straight onto
-   * the generated House Tables client, whose field is a String, and the enum lives on the far side
-   * of that wire.
-   */
-  static final String VIEW_ENTITY_TYPE = "VIEW";
 
   private final HouseTableRepository houseTableRepository;
   private final FileIO fileIO;
@@ -86,7 +87,7 @@ public class OpenHouseViewOperations extends BaseViewOperations {
   protected void doRefresh() {
     Optional<HouseTable> houseTable = Optional.empty();
     try {
-      houseTable = houseTableRepository.findById(primaryKey());
+      houseTable = houseTableRepository.findViewById(primaryKey());
     } catch (HouseTableNotFoundException absent) {
       // Expected while a view is being created: Iceberg refreshes before the first commit.
       log.debug("No House Tables entry for view {}", viewName());
@@ -114,7 +115,7 @@ public class OpenHouseViewOperations extends BaseViewOperations {
     ViewMetadataParser.write(metadata, io().newOutputFile(newMetadataLocation));
 
     try {
-      houseTableRepository.save(buildHouseTable(base, metadata, newMetadataLocation));
+      houseTableRepository.saveView(buildHouseTable(base, metadata, newMetadataLocation));
     } catch (HouseTableConcurrentUpdateException e) {
       // House Tables rejected the compare-and-swap on tableVersion (a 409): another writer
       // committed between our refresh and this save, and ours definitely did not land.
@@ -180,7 +181,7 @@ public class OpenHouseViewOperations extends BaseViewOperations {
                 : Optional.ofNullable(currentMetadataLocation())
                     .orElse(CatalogConstants.INITIAL_VERSION))
         .storageType(fileIOManager.getStorage(fileIO).getType().getValue())
-        .entityType(VIEW_ENTITY_TYPE)
+        .entityType(CatalogConstants.VIEW_ENTITY_TYPE)
         .lastModifiedTime(Long.parseLong(now))
         .creationTime(base == null ? Long.parseLong(now) : 0L)
         .build();

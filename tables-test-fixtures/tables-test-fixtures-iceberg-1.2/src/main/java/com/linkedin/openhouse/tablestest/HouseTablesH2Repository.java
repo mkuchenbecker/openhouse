@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.tablestest;
 
+import static com.linkedin.openhouse.internal.catalog.CatalogConstants.VIEW_ENTITY_TYPE;
+
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
@@ -9,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.domain.Page;
@@ -43,10 +46,12 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
   Optional<HouseTable> findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
       String databaseId, String tableId);
 
+  /** Table-scoped, like House Tables: a view at this key reads as absent. */
   @Override
   default Optional<HouseTable> findById(HouseTablePrimaryKey houseTablePrimaryKey) {
     return this.findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
-        houseTablePrimaryKey.getDatabaseId(), houseTablePrimaryKey.getTableId());
+            houseTablePrimaryKey.getDatabaseId(), houseTablePrimaryKey.getTableId())
+        .filter(houseTable -> !isView(houseTable));
   }
 
   @Override
@@ -132,5 +137,47 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
       // Restore the table to the main repository
       this.save(restoredTable);
     }
+  }
+
+  /**
+   * The view half of the stub.
+   *
+   * <p>This stub keeps tables and views in one H2 table, distinguished by {@code entityType}, so
+   * every method here filters on it. That filtering is fidelity, not tidiness: House Tables scopes
+   * reads and writes by entity type, and a stub that let a table method see a view would pass
+   * in-process tests that fail against a real deployment.
+   *
+   * @param houseTable the row to classify
+   * @return true when the row holds a view; a null discriminator is a table, as it is in House
+   *     Tables, where it means a row written before the column existed
+   */
+  static boolean isView(HouseTable houseTable) {
+    return VIEW_ENTITY_TYPE.equalsIgnoreCase(houseTable.getEntityType());
+  }
+
+  @Override
+  default Optional<HouseTable> findViewById(HouseTablePrimaryKey key) {
+    return this.findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+            key.getDatabaseId(), key.getTableId())
+        .filter(HouseTablesH2Repository::isView);
+  }
+
+  @Override
+  default HouseTable saveView(HouseTable entity) {
+    // One physical store, so the write is the same; entityType on the row is what separates them.
+    return this.save(entity);
+  }
+
+  @Override
+  default void deleteViewById(HouseTablePrimaryKey key) {
+    // No purge flag and no soft-delete map: soft delete is table-only in House Tables.
+    this.findViewById(key).ifPresent(this::delete);
+  }
+
+  @Override
+  default List<HouseTable> findAllViewsByDatabaseId(String databaseId) {
+    return this.findAllByDatabaseId(databaseId).stream()
+        .filter(HouseTablesH2Repository::isView)
+        .collect(Collectors.toList());
   }
 }
