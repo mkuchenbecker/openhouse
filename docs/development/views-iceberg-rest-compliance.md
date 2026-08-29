@@ -155,7 +155,12 @@ Errors on these routes only: `IcebergErrorResponse` envelope, never the OpenHous
 `ErrorResponseBody`, and never with a serialized stack. `ViewErrorCode` carries a spec `type`
 string per value: `NO_SUCH_VIEW → NoSuchViewException/404`,
 `VIEW_ALREADY_EXISTS`/`NAME_ALREADY_EXISTS_AS_TABLE → AlreadyExistsException/409`,
-`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`. **Per-route 404 vocabulary:**
+`CONCURRENT_VIEW_MODIFICATION → CommitFailedException/409`,
+`COMMIT_STATE_UNKNOWN → CommitStateUnknownException/500`. That last one is the spec's own
+rendering for a commit whose outcome the server cannot determine (the `replaceView` route
+documents `500` with exactly that type), and it is deliberately distinct from a `409`: a conflict
+tells the client its write definitely did not land, while this one tells it to re-read the view
+before deciding anything. **Per-route 404 vocabulary:**
 `DATABASE_NOT_FOUND` and `VIEWS_DISABLED` (message "Views are disabled") render as
 `NoSuchNamespaceException` on the create and list routes and as `NoSuchViewException` on
 load/replace/drop/`HEAD` — matching the spec's own per-route 404 types, so a stock client

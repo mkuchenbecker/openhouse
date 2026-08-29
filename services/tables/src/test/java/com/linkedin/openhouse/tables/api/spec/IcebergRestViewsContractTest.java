@@ -300,6 +300,7 @@ public class IcebergRestViewsContractTest {
             "NoSuchNamespaceException",
             "AlreadyExistsException",
             "CommitFailedException",
+            "CommitStateUnknownException",
             "BadRequestException",
             "ValidationException",
             "ServiceUnavailableException");
@@ -343,6 +344,7 @@ public class IcebergRestViewsContractTest {
     golden.put("VIEW_ALREADY_EXISTS", pair(409, "AlreadyExistsException"));
     golden.put("NAME_ALREADY_EXISTS_AS_TABLE", pair(409, "AlreadyExistsException"));
     golden.put("CONCURRENT_VIEW_MODIFICATION", pair(409, "CommitFailedException"));
+    golden.put("COMMIT_STATE_UNKNOWN", pair(500, "CommitStateUnknownException"));
     golden.put("DATABASE_NOT_FOUND", pair(404, "NoSuchNamespaceException"));
     golden.put("VIEWS_DISABLED", pair(404, "NoSuchNamespaceException"));
     golden.put("INVALID_VIEW_DEFINITION", pair(400, "BadRequestException"));

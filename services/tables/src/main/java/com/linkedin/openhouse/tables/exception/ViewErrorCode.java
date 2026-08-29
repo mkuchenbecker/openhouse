@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.exceptions.ServiceUnavailableException;
@@ -44,6 +45,8 @@ public enum ViewErrorCode {
       false),
   CONCURRENT_VIEW_MODIFICATION(
       HttpStatus.CONFLICT, CommitFailedException.class.getSimpleName(), false),
+  COMMIT_STATE_UNKNOWN(
+      HttpStatus.INTERNAL_SERVER_ERROR, CommitStateUnknownException.class.getSimpleName(), false),
   DATABASE_NOT_FOUND(HttpStatus.NOT_FOUND, NoSuchNamespaceException.class.getSimpleName(), true),
   VIEWS_DISABLED(HttpStatus.NOT_FOUND, NoSuchNamespaceException.class.getSimpleName(), true),
   INVALID_VIEW_DEFINITION(HttpStatus.BAD_REQUEST, BadRequestException.class.getSimpleName(), false),

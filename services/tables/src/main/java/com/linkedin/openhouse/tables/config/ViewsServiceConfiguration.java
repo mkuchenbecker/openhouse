@@ -1,8 +1,12 @@
 package com.linkedin.openhouse.tables.config;
 
+import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
+import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.tables.services.OpenHouseViewsService;
 import com.linkedin.openhouse.tables.services.ViewsDisabledService;
 import com.linkedin.openhouse.tables.services.ViewsService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -23,6 +27,24 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class ViewsServiceConfiguration {
+
+  /**
+   * The view store, when this deployment is configured to have one.
+   *
+   * <p>Declared before the fallback below, which is not incidental:
+   * {@code @ConditionalOnMissingBean} is evaluated in declaration order within a configuration
+   * class, so the fallback must come second to see this bean and stand down.
+   *
+   * @param catalog the internal catalog, which is a view catalog
+   * @param storageSelector picks the storage a view's location is allocated from
+   * @return a service that stores views
+   */
+  @Bean
+  @ConditionalOnProperty(name = "cluster.tables.views.enabled", havingValue = "true")
+  public ViewsService openHouseViewsService(
+      OpenHouseInternalCatalog catalog, StorageSelector storageSelector) {
+    return new OpenHouseViewsService(catalog, storageSelector);
+  }
 
   /** @return the disabled-views service, used unless a view store contributed a real one */
   @Bean

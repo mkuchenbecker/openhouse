@@ -147,6 +147,13 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
    * reads and writes by entity type, and a stub that let a table method see a view would pass
    * in-process tests that fail against a real deployment.
    *
+   * <p><b>Fidelity gap:</b> House Tables rejects a write whose key is held by the other kind of
+   * entity — a view write onto a table's key, or the reverse — with a 409, atomically. This stub
+   * does not: both writes land on one JPA {@code save}, and Spring Data gives no persist primitive
+   * a default method here could wrap in that check. Silence from this stub on a cross-type write is
+   * therefore not evidence that the server permits one; that guarantee is asserted against House
+   * Tables itself.
+   *
    * @param houseTable the row to classify
    * @return true when the row holds a view; a null discriminator is a table, as it is in House
    *     Tables, where it means a row written before the column existed

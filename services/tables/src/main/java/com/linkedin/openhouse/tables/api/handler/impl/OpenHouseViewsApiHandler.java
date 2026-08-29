@@ -82,7 +82,6 @@ public class OpenHouseViewsApiHandler implements ViewsApiHandler {
             .identifier(TableIdentifier.of(databaseId, request.name()))
             .schema(request.schema())
             .requestedVersion(request.viewVersion())
-            .location(request.location())
             .properties(request.properties())
             .build();
     ViewMetadata metadata;

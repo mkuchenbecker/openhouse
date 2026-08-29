@@ -63,6 +63,10 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
   /**
    * The view-update subset of the commit vocabulary. Every other {@link MetadataUpdate} action is
    * table-only and rejected on the views surface.
+   *
+   * <p>{@code set-location} is in the spec's view-update set but not in this one, for the same
+   * reason a create request's {@code location} is rejected: this server allocates view storage and
+   * a caller-chosen path would be written to verbatim. See {@link #validateServerOwnedLocation}.
    */
   private static final List<Class<? extends MetadataUpdate>> SUPPORTED_VIEW_UPDATES =
       Collections.unmodifiableList(
@@ -70,7 +74,6 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
               MetadataUpdate.AssignUUID.class,
               MetadataUpdate.UpgradeFormatVersion.class,
               MetadataUpdate.AddSchema.class,
-              MetadataUpdate.SetLocation.class,
               MetadataUpdate.SetProperties.class,
               MetadataUpdate.RemoveProperties.class,
               MetadataUpdate.AddViewVersion.class,
@@ -128,7 +131,28 @@ public class OpenHouseViewsApiValidator implements ViewsApiValidator {
     validateSchemaSize("schema", request.schema(), failures);
     validateViewVersion("view-version", request.viewVersion(), failures);
     validateProperties("properties", request.properties(), failures);
+    validateServerOwnedLocation("location", request.location(), failures);
     failures.throwIfPresent();
+  }
+
+  /**
+   * Storage placement is the server's to decide, so a caller-supplied {@code location} is refused
+   * rather than ignored.
+   *
+   * <p>The spec permits a client to name a location on create, and Iceberg's reference catalog
+   * honours it. This deployment cannot: it allocates every entity's location through its configured
+   * storage, which is what applies the cluster's root prefix and its directory permissions, and the
+   * supplied path is later written to verbatim by {@code FileIO}. Honouring an arbitrary path would
+   * let a caller place a view's metadata anywhere the service account can reach — including over
+   * another entity's directory. Ignoring it silently would be worse than refusing it: the view
+   * would be created somewhere other than the client asked, with nothing in the response saying so.
+   */
+  private void validateServerOwnedLocation(
+      String field, String location, ViewValidationFailures failures) {
+    if (location != null) {
+      failures.addGeneric(
+          String.format("%s : is assigned by the server and cannot be supplied", field));
+    }
   }
 
   @Override

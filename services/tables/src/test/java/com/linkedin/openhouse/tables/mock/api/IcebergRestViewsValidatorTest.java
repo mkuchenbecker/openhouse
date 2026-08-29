@@ -471,4 +471,42 @@ public class IcebergRestViewsValidatorTest {
             () -> validator.validateReplaceView(DB, VIEW, request));
     Assertions.assertTrue(exception.getMessage().contains("reserved keys"));
   }
+
+  /**
+   * Storage placement is the server's, on create and on commit alike.
+   *
+   * <p>Both of these are in the spec's vocabulary and both are refused, because the path a client
+   * names here is the path this server would later write a metadata file to. The pair is pinned
+   * together: relaxing one without the other would leave a client able to relocate a view it could
+   * not have created in the wrong place to begin with.
+   */
+  @Test
+  public void createWithACallerSuppliedLocationFails() {
+    CreateViewRequest request =
+        ImmutableCreateViewRequest.builder()
+            .from(IcebergRestViewFixtures.createViewRequest())
+            .location("file:/somewhere/else")
+            .build();
+
+    ViewRequestValidationFailureException exception =
+        Assertions.assertThrows(
+            ViewRequestValidationFailureException.class,
+            () -> validator.validateCreateView(DB, request));
+    Assertions.assertTrue(exception.getMessage().contains("assigned by the server"));
+  }
+
+  @Test
+  public void replaceWithASetLocationUpdateFails() {
+    UpdateTableRequest request =
+        UpdateTableRequest.create(
+            null,
+            Collections.emptyList(),
+            Collections.singletonList(new MetadataUpdate.SetLocation("file:/somewhere/else")));
+
+    ViewRequestValidationFailureException exception =
+        Assertions.assertThrows(
+            ViewRequestValidationFailureException.class,
+            () -> validator.validateReplaceView(DB, VIEW, request));
+    Assertions.assertTrue(exception.getMessage().contains("view-update set"));
+  }
 }

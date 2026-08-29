@@ -340,6 +340,23 @@ public class OpenHouseInternalCatalog extends BaseMetastoreViewCatalog {
   }
 
   /**
+   * The view operations for an identifier, for callers that need {@link
+   * org.apache.iceberg.view.ViewMetadata} rather than a {@link org.apache.iceberg.view.View}.
+   *
+   * <p>Iceberg's {@code View} interface deliberately exposes no metadata document — it offers
+   * schema, versions, history and properties, but not the object the REST spec's {@code
+   * LoadViewResult} is built from, and not the base a commit compares against. The REST layer needs
+   * both, so it needs the operations. This is a widening of {@link #newViewOps} rather than a
+   * second path to it: same object, public.
+   *
+   * @param viewIdentifier the view
+   * @return operations bound to that identifier, not yet refreshed
+   */
+  public ViewOperations viewOperations(TableIdentifier viewIdentifier) {
+    return newViewOps(viewIdentifier);
+  }
+
+  /**
    * Every view in a namespace.
    *
    * <p>Reads through the view-scoped House Tables route, so a table sharing the namespace is not
