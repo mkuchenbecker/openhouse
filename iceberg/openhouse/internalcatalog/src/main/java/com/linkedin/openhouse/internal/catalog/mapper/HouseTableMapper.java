@@ -41,6 +41,14 @@ public abstract class HouseTableMapper {
   @Mappings({@Mapping(target = "tableLocation", source = "userTable.metadataLocation")})
   public abstract HouseTable toHouseTable(UserTable userTable);
 
+  /**
+   * The discriminator maps through in both directions now that this catalog writes views as well as
+   * tables. It was previously ignored on this edge, which meant every write reached House Tables
+   * with a null discriminator — correct for a table, and silently wrong for a view, which would
+   * have been stored as a table and then been invisible to a typed view read.
+   *
+   * <p>{@code HouseTable.entityType} stays null on the table path, so table writes are unchanged.
+   */
   @Mappings({@Mapping(target = "metadataLocation", source = "houseTable.tableLocation")})
   public abstract UserTable toUserTable(HouseTable houseTable);
 
@@ -62,7 +70,18 @@ public abstract class HouseTableMapper {
         && HouseTableSerdeUtils.HTS_FIELD_NAMES.contains(stripOhNamespace(key));
   }
 
-  static String stripOhNamespace(String key) {
+  /**
+   * Private, and it must stay private.
+   *
+   * <p>MapStruct treats any visible {@code String}-to-{@code String} method on a mapper as a
+   * candidate implicit conversion and had been silently applying this one to <b>every</b> String
+   * property it generated — 23 call sites, none of them intended. That was harmless only because no
+   * mapped value happened to begin with {@code "openhouse."} and none was null; the first nullable
+   * String property added to the entity turned it into a {@link NullPointerException} inside
+   * generated code. Restricting visibility takes it out of MapStruct's candidate set, which is the
+   * fix, and leaves it available to the two call sites above that actually want it.
+   */
+  private static String stripOhNamespace(String key) {
     return IS_OH_PREFIXED.test(key) ? key.substring(OPENHOUSE_NAMESPACE.length()) : key;
   }
 }

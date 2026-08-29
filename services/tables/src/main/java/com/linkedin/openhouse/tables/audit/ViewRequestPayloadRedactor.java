@@ -1,53 +1,49 @@
 package com.linkedin.openhouse.tables.audit;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.linkedin.openhouse.common.audit.ServiceAuditPayloadRedactor;
+import com.linkedin.openhouse.tables.api.icebergrest.IcebergRestViewPaths;
+import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.util.AntPathMatcher;
 
 /**
  * Keeps view definitions out of service audit events.
  *
  * <p>{@link com.linkedin.openhouse.common.audit.ServiceAuditAspect} audits the complete cached
  * request body of every controller call, which for the view create and replace routes would retain
- * the caller's full SQL text and schema document. This replaces {@code schema} and every {@code
- * representations[*].sql} value with {@link #REDACTED_VALUE} before the event is built. The keys
- * are kept, so an auditor still sees that the fields were sent.
+ * the caller's full SQL text and schema documents. This walks the request tree and replaces every
+ * {@code schema} value and every {@code sql} value with {@link #REDACTED_VALUE} before the event is
+ * built. The keys are kept, so an auditor still sees that the fields were sent.
  *
- * <p>Scoped by request URI rather than by field name on purpose. {@code
+ * <p>The walk is deliberately structural rather than path-based: the definition-bearing subtrees
+ * sit at different depths in the two request shapes — {@code schema} and {@code
+ * view-version.representations[*].sql} in a {@code CreateViewRequest}; {@code updates[*].schema}
+ * ({@code add-schema}) and {@code updates[*].view-version .representations[*].sql} ({@code
+ * add-view-version}) in a {@code CommitViewRequest} — and a recursive key match cannot silently
+ * miss a new nesting. Everything that is not a {@code schema} or {@code sql} value (identifiers,
+ * dialects, property maps, requirements) stays intact, so an audit event still identifies what was
+ * operated on and by whom.
+ *
+ * <p>Scoped by request URI rather than by field name on purpose: {@code
  * CreateUpdateTableRequestBody} also carries a {@code schema}, and redacting by name alone would
- * silently change table, database and snapshot audit payloads. Matching the view routes leaves
- * every other route's payload exactly as it was.
- *
- * <p>Every field that is not part of the view definition — {@code viewId}, {@code databaseId},
- * {@code clusterId}, {@code sourceDialect}, {@code defaultCatalog}, {@code defaultNamespace},
- * {@code viewProperties} and {@code baseViewVersion} — is left intact, so an audit event still
- * identifies what was operated on and by whom.
+ * silently change table, database and snapshot audit payloads. Matching the two view write routes
+ * leaves every other route's payload exactly as it was.
  */
 @Component
 public class ViewRequestPayloadRedactor implements ServiceAuditPayloadRedactor {
 
   static final String SCHEMA_FIELD = "schema";
-  static final String REPRESENTATIONS_FIELD = "representations";
   static final String SQL_FIELD = "sql";
-
-  /** The view collection route, which POST creates against. */
-  private static final String VIEW_COLLECTION_PATTERN = "/v2/databases/*/views";
-
-  /** The view item route, which PUT replaces against. */
-  private static final String VIEW_ITEM_PATTERN = "/v2/databases/*/views/*";
-
-  private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
 
   @Override
   public boolean appliesTo(HttpServletRequest request) {
-    String uri = request.getRequestURI();
-    return uri != null
-        && (PATH_MATCHER.match(VIEW_COLLECTION_PATTERN, uri)
-            || PATH_MATCHER.match(VIEW_ITEM_PATTERN, uri));
+    // The route shape is owned by IcebergRestViewPaths, shared with the controller mappings, so
+    // the redaction scope cannot silently drift away from where the routes actually serve.
+    return IcebergRestViewPaths.isViewRoute(request.getRequestURI());
   }
 
   @Override
@@ -58,17 +54,27 @@ public class ViewRequestPayloadRedactor implements ServiceAuditPayloadRedactor {
       return requestPayload;
     }
     JsonObject redacted = requestPayload.deepCopy().getAsJsonObject();
-    if (redacted.has(SCHEMA_FIELD)) {
-      redacted.add(SCHEMA_FIELD, new JsonPrimitive(REDACTED_VALUE));
-    }
-    JsonElement representations = redacted.get(REPRESENTATIONS_FIELD);
-    if (representations != null && representations.isJsonArray()) {
-      for (JsonElement representation : representations.getAsJsonArray()) {
-        if (representation.isJsonObject() && representation.getAsJsonObject().has(SQL_FIELD)) {
-          representation.getAsJsonObject().add(SQL_FIELD, new JsonPrimitive(REDACTED_VALUE));
+    redactInPlace(redacted);
+    return redacted;
+  }
+
+  /** Recursively replaces every {@code schema} and {@code sql} value under {@code element}. */
+  private static void redactInPlace(JsonElement element) {
+    if (element.isJsonObject()) {
+      JsonObject object = element.getAsJsonObject();
+      for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
+        String key = entry.getKey();
+        if (SCHEMA_FIELD.equals(key) || SQL_FIELD.equals(key)) {
+          entry.setValue(new JsonPrimitive(REDACTED_VALUE));
+        } else {
+          redactInPlace(entry.getValue());
         }
       }
+    } else if (element.isJsonArray()) {
+      JsonArray array = element.getAsJsonArray();
+      for (JsonElement item : array) {
+        redactInPlace(item);
+      }
     }
-    return redacted;
   }
 }

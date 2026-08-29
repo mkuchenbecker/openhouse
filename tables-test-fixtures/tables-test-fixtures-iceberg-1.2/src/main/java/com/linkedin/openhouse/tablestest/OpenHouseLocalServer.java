@@ -1,6 +1,8 @@
 package com.linkedin.openhouse.tablestest;
 
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -11,21 +13,43 @@ import org.springframework.context.ConfigurableApplicationContext;
  * determined. Once the server has started with {@link OpenHouseLocalServer#start()}, portNo can be
  * queried using {@link OpenHouseLocalServer#getPort()}. The server can be stopped with {@link
  * OpenHouseLocalServer#stop()}.
+ *
+ * <p>A test that needs the server configured differently from the default — a feature switched on,
+ * say — passes those properties to {@link OpenHouseLocalServer#OpenHouseLocalServer(Map)} and runs
+ * its own instance rather than the shared one. Two instances do not collide: each takes an
+ * OS-assigned port, and Spring Boot gives every context its own uniquely-named in-memory database,
+ * so neither one's schema creation touches the other's data.
  */
 public class OpenHouseLocalServer {
 
   private int port;
   private ConfigurableApplicationContext appContext;
+  private final Map<String, String> properties;
 
   /** Create server with OS-assigned port (determined at startup time). */
   public OpenHouseLocalServer() {
-    this.port = 0;
-    this.appContext = null;
+    this(0, Collections.emptyMap());
   }
 
   public OpenHouseLocalServer(int port) {
+    this(port, Collections.emptyMap());
+  }
+
+  /**
+   * Create server with OS-assigned port and additional Spring properties.
+   *
+   * @param properties applied as Spring default properties, so anything the application's own
+   *     configuration sets explicitly still wins; use this for switches the application leaves
+   *     unset, such as {@code cluster.tables.views.enabled}
+   */
+  public OpenHouseLocalServer(Map<String, String> properties) {
+    this(0, properties);
+  }
+
+  public OpenHouseLocalServer(int port, Map<String, String> properties) {
     this.port = port;
     this.appContext = null;
+    this.properties = new HashMap<>(properties);
   }
 
   /** Start the embedded OH server with tomcat fix */
@@ -37,8 +61,9 @@ public class OpenHouseLocalServer {
   public synchronized void start(boolean applyTomcatFix) {
     if (appContext == null || !appContext.isActive()) {
       SpringApplication application = new SpringApplication(SpringH2TestApplication.class);
-      application.setDefaultProperties(
-          Collections.singletonMap("server.port", String.valueOf(port)));
+      Map<String, Object> defaults = new HashMap<>(properties);
+      defaults.put("server.port", String.valueOf(port));
+      application.setDefaultProperties(defaults);
       if (applyTomcatFix) {
         fixTomcatInstantiation();
       }

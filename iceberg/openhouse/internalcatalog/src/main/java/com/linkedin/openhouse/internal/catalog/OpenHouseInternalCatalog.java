@@ -47,6 +47,19 @@ import org.springframework.stereotype.Component;
  * Iceberg Catalog Implementation for OpenHouse User Table persisted as Iceberg tables. Built on-top
  * of HouseTableService where the Iceberg table root pointer is persisted. A custom implementation
  * can be built on top of this by extending this class and making that bean the primary.
+ *
+ * <h2>Why views are not served from here</h2>
+ *
+ * <p>This class names no type from Iceberg's {@code org.apache.iceberg.view} package, and that is a
+ * constraint rather than an omission. It is a {@code @Component}, and Spring walks a component's
+ * superclass chain while parsing it — so a supertype that is absent from the running classpath
+ * fails context startup outright, before any bean is created. The iceberg-1.2 test fixture boots
+ * this application with Iceberg 1.2, which has no view API at all, and every Spark 3.1 integration
+ * test depends on that server starting.
+ *
+ * <p>The view surface therefore lives in {@link OpenHouseInternalViewCatalog}, which extends
+ * Iceberg's view catalog, is not a component, and is only constructed where views are switched on —
+ * a deployment that by definition runs an Iceberg version that has them.
  */
 @Slf4j
 @Component

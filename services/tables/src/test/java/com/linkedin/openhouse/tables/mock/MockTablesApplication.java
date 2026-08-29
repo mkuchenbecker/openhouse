@@ -2,10 +2,14 @@ package com.linkedin.openhouse.tables.mock;
 
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
+import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseViewsApiHandler;
+import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
+import com.linkedin.openhouse.tables.services.ViewsService;
 import com.linkedin.openhouse.tables.toggle.TableFeatureToggle;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
@@ -57,6 +61,18 @@ public class MockTablesApplication {
   @MockBean OpenHouseInternalCatalog openHouseInternalCatalog;
 
   @MockBean HouseTableRepository houseTableRepository;
+
+  /**
+   * The Iceberg REST views chain is real in mock tests: handler, validator and the disabled service
+   * together are the deployed views-disabled posture the controller tests pin. Wired as an explicit
+   * bean because scanning {@code tables.api.handler} would also pull in the tables handler and its
+   * read-bridge dependencies, which this slim context deliberately omits.
+   */
+  @Bean
+  public ViewsApiHandler viewsApiHandler(
+      ViewsApiValidator viewsApiValidator, ViewsService viewsService) {
+    return new OpenHouseViewsApiHandler(viewsApiValidator, viewsService);
+  }
 
   /**
    * Mock tests scan {@code tables.api.validator}, not {@code tables.api}, so {@code ApiConfig} is

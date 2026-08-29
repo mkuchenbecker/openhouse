@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 import com.linkedin.openhouse.common.api.spec.ErrorResponseBody;
 import com.linkedin.openhouse.common.exception.AlreadyExistsException;
 import com.linkedin.openhouse.common.exception.CodedApiException;
+import com.linkedin.openhouse.common.exception.CorruptEntityTypeException;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
@@ -16,11 +17,13 @@ import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.ResourceGatedByToggledOnFeatureException;
+import com.linkedin.openhouse.common.exception.StorageIntegrityViolationException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import io.swagger.v3.oas.annotations.Hidden;
 import java.util.Arrays;
 import java.util.NoSuchElementException;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -134,21 +137,30 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   @Override
   protected ResponseEntity<Object> handleNoHandlerFoundException(
       NoHandlerFoundException ex, HttpHeaders headers, HttpStatus status, WebRequest request) {
+    ErrorResponseBody errorResponseBody = unresolvedRouteErrorResponseBody(ex, request);
+    return new ResponseEntity<>(errorResponseBody, errorResponseBody.getStatus());
+  }
 
+  /**
+   * The legacy rendering of an unresolved route: a 400 {@link ErrorResponseBody}. Public and static
+   * so a service-local advice that takes precedence for a subset of paths (e.g. the tables
+   * service's Iceberg REST {@code /v1/**} surface) can fall back to the exact same body for every
+   * other path instead of duplicating this template.
+   */
+  public static ErrorResponseBody unresolvedRouteErrorResponseBody(
+      NoHandlerFoundException ex, WebRequest request) {
     String errorMsg =
         String.format(
             "The combination of the method [%s] and Path [%s] cannot be resolved by server. "
                 + "Please check and making sure you are using the right version of API.",
             ((ServletWebRequest) request).getHttpMethod(), request.getDescription(false));
-    ErrorResponseBody errorResponseBody =
-        ErrorResponseBody.builder()
-            .status(HttpStatus.BAD_REQUEST)
-            .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
-            .message(errorMsg)
-            .stacktrace(getAbbreviatedStackTrace(ex))
-            .cause(getExceptionCause(ex))
-            .build();
-    return new ResponseEntity<>(errorResponseBody, errorResponseBody.getStatus());
+    return ErrorResponseBody.builder()
+        .status(HttpStatus.BAD_REQUEST)
+        .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
+        .message(errorMsg)
+        .stacktrace(getAbbreviatedStackTrace(ex))
+        .cause(getExceptionCause(ex))
+        .build();
   }
 
   @Hidden
@@ -404,6 +416,92 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
         exception, errorResponseBody, headers, HttpStatus.BAD_REQUEST, request);
   }
 
+  /**
+   * Storage corruption is a server fault whose diagnostic (the offending column, the stored value,
+   * the converter stack) is operator material, not response material. It is logged here under a
+   * generated correlation id and the client receives a stable generic 500 naming only that id, so
+   * persistence detail never becomes part of the public error contract. The owning service's
+   * persistence boundary translates the ORM wrappers this exception hydrates under before it
+   * crosses into HTTP, so this advice sees the module-owned failure directly and never inspects ORM
+   * vocabulary.
+   */
+  @Hidden
+  @ExceptionHandler(CorruptEntityTypeException.class)
+  protected ResponseEntity<ErrorResponseBody> handleCorruptEntityTypeException(
+      CorruptEntityTypeException corruptEntityTypeException) {
+    return sealedServerError(SealedServerFault.CORRUPT_ENTITY_TYPE, corruptEntityTypeException);
+  }
+
+  /**
+   * The write-path sibling of the corruption arm: an integrity violation the persistence boundary
+   * classified as neither a duplicate key (that is a 409) nor the caller's input (ingress bounds
+   * those). Same sealed shape — constraint detail and stack are logged under the correlation id the
+   * stable body names.
+   */
+  @Hidden
+  @ExceptionHandler(StorageIntegrityViolationException.class)
+  protected ResponseEntity<ErrorResponseBody> handleStorageIntegrityViolationException(
+      StorageIntegrityViolationException storageIntegrityViolationException) {
+    return sealedServerError(
+        SealedServerFault.STORAGE_INTEGRITY_VIOLATION, storageIntegrityViolationException);
+  }
+
+  /**
+   * The faults rendered as a sealed 500, each pairing the client-facing message template with the
+   * server-log note that accompanies the same correlation id. Keeping the two halves in one value
+   * means a caller names the fault rather than passing two adjacent strings whose roles depend on
+   * their order — only the template carries the {@code %s} the id fills.
+   */
+  private enum SealedServerFault {
+    CORRUPT_ENTITY_TYPE(
+        "House Tables could not read the stored entity type occupying the requested key. "
+            + "The offending column, value, and stack trace are in the server log under "
+            + "correlationId=%s",
+        "Corrupt entity type read from storage"),
+
+    STORAGE_INTEGRITY_VIOLATION(
+        "House Tables could not persist the requested change: the write broke a storage "
+            + "constraint. The constraint detail and stack trace are in the server log under "
+            + "correlationId=%s",
+        "Storage integrity violation on write");
+
+    private final String messageTemplate;
+    private final String logNote;
+
+    SealedServerFault(String messageTemplate, String logNote) {
+      this.messageTemplate = messageTemplate;
+      this.logNote = logNote;
+    }
+
+    /** The client-facing message, naming the correlation id the log note carries. */
+    String messageNaming(String correlationId) {
+      return String.format(messageTemplate, correlationId);
+    }
+
+    String logNote() {
+      return logNote;
+    }
+  }
+
+  /**
+   * A server fault whose diagnostic is operator material, not response material: the detail is
+   * logged under a generated correlation id and the client receives a stable generic 500 naming
+   * only that id, with no stack trace and no cause detail.
+   */
+  private ResponseEntity<ErrorResponseBody> sealedServerError(
+      SealedServerFault fault, Throwable exception) {
+    String correlationId = UUID.randomUUID().toString();
+    log.error("{} [correlationId={}]:", fault.logNote(), correlationId, exception);
+    ErrorResponseBody errorResponseBody =
+        ErrorResponseBody.builder()
+            .status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .error(HttpStatus.INTERNAL_SERVER_ERROR.getReasonPhrase())
+            .message(fault.messageNaming(correlationId))
+            .cause(CAUSE_NOT_AVAILABLE)
+            .build();
+    return buildResponseEntity(errorResponseBody);
+  }
+
   @Hidden
   @ExceptionHandler(IllegalArgumentException.class)
   protected ResponseEntity<ErrorResponseBody> handleIllegalArgumentException(
@@ -451,7 +549,7 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
    * @param exception
    * @return String
    */
-  private String getAbbreviatedStackTrace(Throwable exception) {
+  private static String getAbbreviatedStackTrace(Throwable exception) {
     String stackTrace = ExceptionUtils.getStackTrace(exception);
     if (StringUtils.isEmpty(stackTrace)) {
       return null;
@@ -503,7 +601,7 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
     return builder.toString();
   }
 
-  private String getExceptionCause(Throwable exception) {
+  private static String getExceptionCause(Throwable exception) {
     return exception.getCause() != null ? exception.getCause().getMessage() : CAUSE_NOT_AVAILABLE;
   }
 }

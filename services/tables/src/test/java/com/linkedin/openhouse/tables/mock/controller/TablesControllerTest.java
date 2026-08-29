@@ -21,18 +21,19 @@ import com.linkedin.openhouse.common.exception.handler.OpenHouseExceptionHandler
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
+import com.linkedin.openhouse.tables.controller.IcebergRestViewsController;
+import com.linkedin.openhouse.tables.controller.IcebergRestViewsExceptionHandler;
 import com.linkedin.openhouse.tables.controller.TablesController;
-import com.linkedin.openhouse.tables.controller.ViewsController;
 import com.linkedin.openhouse.tables.e2e.h2.ValidationUtilities;
 import com.linkedin.openhouse.tables.mock.RequestConstants;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
-import com.linkedin.openhouse.tables.model.ViewModelConstants;
 import java.io.IOException;
 import java.text.ParseException;
 import java.util.*;
 import javax.servlet.Filter;
 import javax.servlet.http.HttpServletRequest;
 import org.codehaus.jettison.json.JSONException;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,9 @@ public class TablesControllerTest {
 
   @Autowired private TablesController tablesController;
 
-  @Autowired private ViewsController viewsController;
+  @Autowired private IcebergRestViewsController viewsController;
+
+  @Autowired private IcebergRestViewsExceptionHandler viewsExceptionHandler;
 
   @Autowired private OpenHouseExceptionHandler openHouseExceptionHandler;
 
@@ -140,24 +143,18 @@ public class TablesControllerTest {
   }
 
   /**
-   * Adding {@link ViewsController} must not change how a v1 table request is routed. Both
-   * controllers are registered in one dispatcher here, which is the only arrangement in which the
-   * new mappings could shadow or collide with the existing ones, and each assertion checks the
+   * Adding {@link IcebergRestViewsController} must not change how a v1 table request is routed.
+   * Both controllers are registered in one dispatcher here, which is the only arrangement in which
+   * the new mappings could shadow or collide with the existing ones, and each assertion checks the
    * response body, so it fails if a request reaches the wrong handler rather than merely returning
-   * a plausible status.
-   *
-   * <p>This <b>partially</b> satisfies the acceptance criterion. It proves the v1 table route is
-   * unchanged and that views answer only under /v2. It cannot prove the other half, that a real
-   * view's name returns 404 from the table route, because no view is persisted in this PR and the
-   * server has no way to tell a view's name from a missing table until the M2 {@code entityType}
-   * discriminator and the table-only read filter land. A test claiming that today would pass for
-   * the wrong reason.
+   * a plausible status. The Iceberg REST views routes live under {@code /v1/namespaces/...} and
+   * {@code /v1/config}, which collide with nothing under {@code /v1/databases/...}.
    */
   @Test
   public void addingViewsLeavesV1TableRoutingUnchanged() throws Exception {
     MockMvc mvcWithBothControllers =
         MockMvcBuilders.standaloneSetup(tablesController, viewsController)
-            .setControllerAdvice(openHouseExceptionHandler)
+            .setControllerAdvice(viewsExceptionHandler, openHouseExceptionHandler)
             .addInterceptors(new DummyTokenInterceptor())
             .addFilter(new CachingRequestBodyFilter())
             .build();
@@ -172,14 +169,16 @@ public class TablesControllerTest {
         .andExpect(status().isOk())
         .andExpect(content().json(RequestConstants.TEST_GET_TABLE_RESPONSE_BODY.toJson()));
 
-    // The same name under /v2 reaches the views handler instead.
+    // The same name on the Iceberg REST views route reaches the views handler instead: the
+    // stubbed service answers the spec's views-disabled 404 envelope, which no table route emits.
     mvcWithBothControllers
         .perform(
-            MockMvcRequestBuilders.get("/v2/databases/d200/views/my_view")
+            MockMvcRequestBuilders.get("/v1/namespaces/d200/views/my_view")
                 .accept(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer " + jwtAccessToken))
-        .andExpect(status().isOk())
-        .andExpect(content().json(ViewModelConstants.pointerResponse().toJson()));
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.type", Matchers.is("NoSuchViewException")))
+        .andExpect(jsonPath("$.error.message", Matchers.is("Views are disabled")));
 
     // The v1 table route is otherwise unchanged, including its not-found behaviour.
     mvcWithBothControllers

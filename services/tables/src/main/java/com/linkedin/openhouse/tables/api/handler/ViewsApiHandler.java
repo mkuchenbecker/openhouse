@@ -1,73 +1,88 @@
 package com.linkedin.openhouse.tables.api.handler;
 
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
-import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
-import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllViewsResponseBody;
-import com.linkedin.openhouse.tables.api.spec.v0.response.GetViewResponseBody;
 
 /**
- * Layer between the /v2 views REST routes and the view service. Implementations hold no business
- * logic: they validate, map, delegate, map back and pick a status.
+ * Layer between the Iceberg REST views routes and the view service. Implementations hold no
+ * business logic: they parse the wire body with Iceberg's parsers, validate, unwrap the envelope
+ * into catalog-domain types for the service, and serialize the service's result back into the
+ * spec's response documents.
+ *
+ * <p>Bodies are raw JSON strings in both directions — the controllers neither bind nor serialize
+ * through Spring's message converters, so wire compliance is a property of Iceberg's parsers and a
+ * malformed body is a views-surface 400 rather than a global-handler concern.
  */
 public interface ViewsApiHandler {
 
   /**
-   * Read a single view.
+   * Client bootstrap: {@code GET /v1/config}. Served even while views are disabled — bootstrap must
+   * precede the per-route 404s.
    *
-   * @param databaseId database identifier
-   * @param viewId view identifier
-   * @param actingPrincipal authenticated user
-   * @return 200 with the view pointer
+   * @return 200 with the catalog config document, including the explicit endpoints list
    */
-  ApiResponse<GetViewResponseBody> getView(
-      String databaseId, String viewId, String actingPrincipal);
+  ApiResponse<String> getConfig();
 
   /**
-   * List views in a database.
+   * List views in a namespace.
    *
-   * @param databaseId database identifier
-   * @param page zero-based page index
-   * @param size page size
-   * @param sortBy optional single sort field
+   * @param namespace raw decoded namespace path segment
+   * @param pageToken opaque continuation token, or {@code null}
+   * @param pageSize requested page size, or {@code null}
    * @param actingPrincipal authenticated user
-   * @return 200 with a page of sparse identifier-only view bodies
+   * @return 200 with a {@code ListTablesResponse} document
    */
-  ApiResponse<GetAllViewsResponseBody> getAllViews(
-      String databaseId, int page, int size, String sortBy, String actingPrincipal);
+  ApiResponse<String> listViews(
+      String namespace, String pageToken, Integer pageSize, String actingPrincipal);
 
   /**
    * Create a view.
    *
-   * @param databaseId database identifier
-   * @param requestBody the create request
+   * @param namespace raw decoded namespace path segment
+   * @param requestJson raw {@code CreateViewRequest} body, possibly {@code null}
    * @param actingPrincipal authenticated user
-   * @return 201 with the created view pointer
+   * @return 200 with a {@code LoadViewResult} document
    */
-  ApiResponse<GetViewResponseBody> createView(
-      String databaseId, CreateUpdateViewRequestBody requestBody, String actingPrincipal);
+  ApiResponse<String> createView(String namespace, String requestJson, String actingPrincipal);
 
   /**
-   * Replace a view, creating it when it does not exist.
+   * Load a view's complete metadata.
    *
-   * @param databaseId database identifier
-   * @param viewId view identifier
-   * @param requestBody the update request
+   * @param namespace raw decoded namespace path segment
+   * @param view view name
    * @param actingPrincipal authenticated user
-   * @return 201 when the call created the view, otherwise 200
+   * @return 200 with a {@code LoadViewResult} document
    */
-  ApiResponse<GetViewResponseBody> updateView(
-      String databaseId,
-      String viewId,
-      CreateUpdateViewRequestBody requestBody,
-      String actingPrincipal);
+  ApiResponse<String> loadView(String namespace, String view, String actingPrincipal);
 
   /**
-   * Delete a view.
+   * Commit updates to a view (the spec's replace-view operation).
    *
-   * @param databaseId database identifier
-   * @param viewId view identifier
+   * @param namespace raw decoded namespace path segment
+   * @param view view name
+   * @param requestJson raw {@code CommitViewRequest} body, possibly {@code null}
+   * @param actingPrincipal authenticated user
+   * @return 200 with a {@code LoadViewResult} document
+   */
+  ApiResponse<String> replaceView(
+      String namespace, String view, String requestJson, String actingPrincipal);
+
+  /**
+   * Drop a view.
+   *
+   * @param namespace raw decoded namespace path segment
+   * @param view view name
    * @param actingPrincipal authenticated user
    * @return 204 with no body
    */
-  ApiResponse<Void> deleteView(String databaseId, String viewId, String actingPrincipal);
+  ApiResponse<Void> dropView(String namespace, String view, String actingPrincipal);
+
+  /**
+   * Check whether a view exists ({@code HEAD}).
+   *
+   * @param namespace raw decoded namespace path segment
+   * @param view view name
+   * @param actingPrincipal authenticated user
+   * @return 204 with no body when the view exists
+   */
+  ApiResponse<Void> viewExists(String namespace, String view, String actingPrincipal);
 }

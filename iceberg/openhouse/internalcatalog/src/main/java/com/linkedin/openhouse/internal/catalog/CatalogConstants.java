@@ -17,6 +17,16 @@ public final class CatalogConstants {
   public static final String OPENHOUSE_TABLEURI_KEY = "openhouse.tableUri";
   public static final String OPENHOUSE_CLUSTERID_KEY = "openhouse.clusterId";
   public static final String INITIAL_VERSION = "INITIAL_VERSION";
+
+  /**
+   * The House Tables discriminator value marking a row as a view; a table is a null discriminator.
+   *
+   * <p>Here rather than on the view operations class because the Iceberg-1.2 test fixtures need it
+   * and cannot load anything that touches Iceberg's view API, which exists only from 1.5. It is
+   * shared vocabulary, not an implementation detail of the writer.
+   */
+  public static final String VIEW_ENTITY_TYPE = "VIEW";
+
   public static final String LAST_UPDATED_MS = "last-updated-ms";
   public static final String TRANSIENT_RESTORE_PREFIX = "__transient_restore_";
   public static final String TRANSIENT_ADDED_PREFIX = "__transient_added_";

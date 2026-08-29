@@ -101,10 +101,23 @@ public class ClusterProperties {
   private List<String> allowedClientNameValues;
 
   /**
-   * View SQL dialects this deployment accepts on the /v2 views API. A representation, and the
-   * source dialect naming one, is rejected unless its dialect is listed here. Defaults to Spark
+   * View SQL dialects this deployment accepts on the Iceberg REST views API. A representation, and
+   * the source dialect naming one, is rejected unless its dialect is listed here. Defaults to Spark
    * only; supporting another engine is a configuration change rather than a code change.
    */
   @Value("${cluster.tables.views.supported-dialects:spark}")
   private List<String> viewsSupportedDialects;
+
+  /**
+   * Whether this deployment stores views.
+   *
+   * <p>Defaults to <b>false</b>, and the default is the safe one in a specific sense: with views
+   * off, every view route answers the spec's 404 and a stock Iceberg client concludes the catalog
+   * has no view support, so Spark's {@code ResolveViews} falls through to {@code loadTable}. That
+   * is a coherent state for a client to be in. Switching it on mid-flight is likewise safe;
+   * switching it back off strands any views already created, which is why this is a deployment
+   * decision rather than a per-request one.
+   */
+  @Value("${cluster.tables.views.enabled:false}")
+  private boolean viewsEnabled;
 }

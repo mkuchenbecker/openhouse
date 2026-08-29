@@ -222,6 +222,83 @@ public class HouseTableRepositoryImpl implements HouseTableRepository {
     deleteById(houseTablePrimaryKey, true);
   }
 
+  /**
+   * The view-scoped half of this repository.
+   *
+   * <p>House Tables scopes every read and write by entity type, so these are not conveniences over
+   * the table methods above — they are the only correct path for a view. The table-scoped {@code
+   * findById} resolves a view at the key as absent, which would make a freshly created view
+   * invisible to its own refresh, and the table-scoped {@code save} would store the row where a
+   * typed view read cannot see it.
+   *
+   * <p>Error translation, retry policy and timeouts are the table path's, unchanged: the failures
+   * are the same HTTP failures and the meaning of each status does not depend on the entity type.
+   */
+  @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+      value = "NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE",
+      justification = "Handled in switchIfEmpty")
+  @Override
+  public HouseTable saveView(HouseTable entity) {
+    CreateUpdateEntityRequestBodyUserTable requestBody =
+        new CreateUpdateEntityRequestBodyUserTable().entity(houseTableMapper.toUserTable(entity));
+
+    return apiInstance
+        .putUserView(requestBody)
+        .map(EntityResponseBodyUserTable::getEntity)
+        .map(houseTableMapper::toHouseTable)
+        .onErrorResume(this::handleHtsHttpError)
+        .block(Duration.ofSeconds(WRITE_REQUEST_TIMEOUT_SECONDS));
+  }
+
+  @Override
+  public Optional<HouseTable> findViewById(HouseTablePrimaryKey key) {
+    return getHtsRetryTemplate(
+            Arrays.asList(
+                HouseTableRepositoryStateUnknownException.class, IllegalStateException.class))
+        .execute(
+            context ->
+                apiInstance
+                    .getUserView(key.getDatabaseId(), key.getTableId())
+                    .map(EntityResponseBodyUserTable::getEntity)
+                    .map(houseTableMapper::toHouseTable)
+                    .switchIfEmpty(Mono.empty())
+                    .onErrorResume(this::handleHtsHttpError)
+                    .blockOptional(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS)));
+  }
+
+  @Override
+  public void deleteViewById(HouseTablePrimaryKey key) {
+    // No purge flag: soft delete is table-only in House Tables, so a dropped view is gone.
+    getHtsRetryTemplate(Arrays.asList(IllegalStateException.class))
+        .execute(
+            context ->
+                apiInstance
+                    .deleteView(key.getDatabaseId(), key.getTableId())
+                    .onErrorResume(e -> handleHtsHttpError(e).then())
+                    .block());
+  }
+
+  @Override
+  public List<HouseTable> findAllViewsByDatabaseId(String databaseId) {
+    Map<String, String> params = new HashMap<>();
+    if (Strings.isNotEmpty(databaseId)) {
+      params.put("databaseId", databaseId);
+    }
+
+    return getHtsRetryTemplate(
+            Arrays.asList(
+                HouseTableRepositoryStateUnknownException.class, IllegalStateException.class))
+        .execute(
+            context ->
+                apiInstance
+                    .getUserViews(params)
+                    .map(GetAllEntityResponseBodyUserTable::getResults)
+                    .flatMapMany(Flux::fromIterable)
+                    .map(houseTableMapper::toHouseTable)
+                    .collectList()
+                    .block(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS)));
+  }
+
   @Override
   public void deleteById(HouseTablePrimaryKey houseTablePrimaryKey, boolean purge) {
     getHtsRetryTemplate(Arrays.asList(IllegalStateException.class))

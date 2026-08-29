@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.housetables.repository.impl.jdbc;
 
 import com.linkedin.openhouse.housetables.config.db.jdbc.JdbcProviderConfiguration;
+import com.linkedin.openhouse.housetables.model.EntityType;
 import com.linkedin.openhouse.housetables.model.UserTableRow;
 import com.linkedin.openhouse.housetables.model.UserTableRowPrimaryKey;
 import com.linkedin.openhouse.housetables.repository.HtsRepository;
@@ -37,12 +38,57 @@ public interface UserTableHtsJdbcRepository
 
   boolean existsByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(String databaseId, String tableId);
 
-  void deleteByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(String databaseId, String tableId);
+  String COMMON_FILTER_CLAUSES =
+      "(:databaseId IS NULL OR lower(u.databaseId) = lower(:databaseId)) AND "
+          + "(:tableId IS NULL OR lower(u.tableId) = lower(:tableId)) AND "
+          + "(:tableVersion IS NULL OR u.version = :tableVersion) AND "
+          + "(:metadataLocation IS NULL OR u.metadataLocation = :metadataLocation) AND "
+          + "(:storageType IS NULL OR u.storageType = :storageType) AND "
+          + "(:creationTime IS NULL OR u.creationTime = :creationTime)";
+
+  String TABLE = "TABLE";
+
+  String VIEW = "VIEW";
+
+  /**
+   * The null arm is load bearing: a legacy row predates the discriminator and is definitively a
+   * table, so without it every pre-existing table becomes invisible. Do not reduce it to a plain
+   * equality before a verified backfill and a {@code NOT NULL} migration.
+   *
+   * <p>Collation contract, shared with {@link #VIEW_ROW_PREDICATE}: {@code
+   * ddl/0002__pin_entity_type_collation.sql} pins the column to {@code utf8mb4_0900_as_ci}
+   * (case-insensitive, accent-sensitive, NO PAD), under which the ASCII, accented, and padded
+   * spellings classify the same way here as in {@link EntityType#fromName}: case variants match,
+   * accents and padding do not. Under the MySQL 8 server default {@code utf8mb4_0900_ai_ci} a
+   * stored {@code 'TÁBLE'} would match here yet fail hydration, and a PAD SPACE collation would do
+   * the same for {@code 'TABLE '}; the pin removes both divergences. It is a narrowing, not an
+   * equivalence: {@code _as_ci} is strength-2 and still ignores tertiary-only distinctions, so a
+   * width variant like a fullwidth spelling would compare equal in SQL while {@code fromName}
+   * rejects it — no writer of this column produces such values. H2 in tests compares
+   * case-sensitively with NO PAD, which the explicit {@code upper()} folds into the same contract,
+   * so the test and deployed engines agree; the pinned collation and the resulting corrupt-value
+   * taxonomy are verified against a deployed MySQL by the E2E suite introduced alongside this
+   * stack.
+   */
+  String TABLE_ROW_PREDICATE = "(u.entityType IS NULL OR upper(u.entityType) = '" + TABLE + "')";
+
+  String VIEW_ROW_PREDICATE = "upper(u.entityType) = '" + VIEW + "'";
+
+  String PATTERN_KEY_CLAUSES =
+      "lower(u.databaseId) = lower(:databaseId) AND "
+          + "lower(u.tableId) LIKE lower(:tableIdPattern)";
+
+  /** The neutral finder above stays unfiltered so writers can spot a collision at a shared key. */
+  @Query(
+      "SELECT u FROM UserTableRow u WHERE "
+          + "lower(u.databaseId) = lower(:databaseId) AND "
+          + "lower(u.tableId) = lower(:tableId) AND "
+          + TABLE_ROW_PREDICATE)
+  Optional<UserTableRow> findTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableId") String tableId);
 
   @Query("SELECT DISTINCT databaseId FROM UserTableRow")
   Iterable<String> findAllDistinctDatabaseIds();
-
-  Iterable<UserTableRow> findAllByDatabaseIdIgnoreCase(String databaseId);
 
   Iterable<UserTableRow> findAllByDatabaseIdAndTableIdLikeAllIgnoreCase(
       String databaseId, String tableIdPattern);
@@ -52,19 +98,10 @@ public interface UserTableHtsJdbcRepository
           + "(:databaseId IS NULL OR lower(u.databaseId) = lower(:databaseId))")
   Page<String> findAllDistinctDatabaseIds(String databaseId, Pageable pageable);
 
-  Page<UserTableRow> findAllByDatabaseIdIgnoreCase(String databaseId, Pageable pageable);
-
   Page<UserTableRow> findAllByDatabaseIdAndTableIdLikeAllIgnoreCase(
       String databaseId, String tableIdPattern, Pageable pageable);
 
-  @Query(
-      "select DISTINCT u from UserTableRow u where "
-          + "(:databaseId IS NULL OR lower(u.databaseId) = lower(:databaseId)) AND "
-          + "(:tableId IS NULL OR lower(u.tableId) = lower(:tableId)) AND "
-          + "(:tableVersion IS NULL OR u.version = :tableVersion) AND "
-          + "(:metadataLocation IS NULL OR u.metadataLocation = :metadataLocation) AND "
-          + "(:storageType IS NULL OR u.storageType = :storageType) AND "
-          + "(:creationTime IS NULL OR u.creationTime = :creationTime)")
+  @Query("select DISTINCT u from UserTableRow u where " + COMMON_FILTER_CLAUSES)
   Page<UserTableRow> findAllByFilters(
       String databaseId,
       String tableId,
@@ -74,14 +111,7 @@ public interface UserTableHtsJdbcRepository
       Long creationTime,
       Pageable pageable);
 
-  @Query(
-      "select DISTINCT u from UserTableRow u where "
-          + "(:databaseId IS NULL OR lower(u.databaseId) = lower(:databaseId)) AND "
-          + "(:tableId IS NULL OR lower(u.tableId) = lower(:tableId)) AND "
-          + "(:tableVersion IS NULL OR u.version = :tableVersion) AND "
-          + "(:metadataLocation IS NULL OR u.metadataLocation = :metadataLocation) AND "
-          + "(:storageType IS NULL OR u.storageType = :storageType) AND "
-          + "(:creationTime IS NULL OR u.creationTime = :creationTime)")
+  @Query("select DISTINCT u from UserTableRow u where " + COMMON_FILTER_CLAUSES)
   Iterable<UserTableRow> findAllByFilters(
       String databaseId,
       String tableId,
@@ -89,6 +119,142 @@ public interface UserTableHtsJdbcRepository
       String metadataLocation,
       String storageType,
       Long creationTime);
+
+  @Query(
+      "SELECT u FROM UserTableRow u WHERE " + PATTERN_KEY_CLAUSES + " AND " + TABLE_ROW_PREDICATE)
+  Iterable<UserTableRow> findAllTablesByDatabaseIdAndTableIdLikeAllIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableIdPattern") String tableIdPattern);
+
+  @Query(
+      value =
+          "SELECT u FROM UserTableRow u WHERE "
+              + PATTERN_KEY_CLAUSES
+              + " AND "
+              + TABLE_ROW_PREDICATE,
+      countQuery =
+          "SELECT COUNT(u) FROM UserTableRow u WHERE "
+              + PATTERN_KEY_CLAUSES
+              + " AND "
+              + TABLE_ROW_PREDICATE)
+  Page<UserTableRow> findAllTablesByDatabaseIdAndTableIdLikeAllIgnoreCase(
+      @Param("databaseId") String databaseId,
+      @Param("tableIdPattern") String tableIdPattern,
+      Pageable pageable);
+
+  @Query(
+      value =
+          "select DISTINCT u from UserTableRow u where "
+              + COMMON_FILTER_CLAUSES
+              + " AND "
+              + TABLE_ROW_PREDICATE,
+      countQuery =
+          "select COUNT(DISTINCT u) from UserTableRow u where "
+              + COMMON_FILTER_CLAUSES
+              + " AND "
+              + TABLE_ROW_PREDICATE)
+  Page<UserTableRow> findAllTablesByFilters(
+      @Param("databaseId") String databaseId,
+      @Param("tableId") String tableId,
+      @Param("tableVersion") String tableVersion,
+      @Param("metadataLocation") String metadataLocation,
+      @Param("storageType") String storageType,
+      @Param("creationTime") Long creationTime,
+      Pageable pageable);
+
+  @Query(
+      "select DISTINCT u from UserTableRow u where "
+          + COMMON_FILTER_CLAUSES
+          + " AND "
+          + TABLE_ROW_PREDICATE)
+  Iterable<UserTableRow> findAllTablesByFilters(
+      @Param("databaseId") String databaseId,
+      @Param("tableId") String tableId,
+      @Param("tableVersion") String tableVersion,
+      @Param("metadataLocation") String metadataLocation,
+      @Param("storageType") String storageType,
+      @Param("creationTime") Long creationTime);
+
+  @Query(
+      "SELECT u FROM UserTableRow u WHERE "
+          + "lower(u.databaseId) = lower(:databaseId) AND "
+          + "lower(u.tableId) = lower(:tableId) AND "
+          + VIEW_ROW_PREDICATE)
+  Optional<UserTableRow> findViewByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableId") String tableId);
+
+  @Query(
+      "select DISTINCT u from UserTableRow u where "
+          + COMMON_FILTER_CLAUSES
+          + " AND "
+          + VIEW_ROW_PREDICATE)
+  Iterable<UserTableRow> findAllViewsByFilters(
+      @Param("databaseId") String databaseId,
+      @Param("tableId") String tableId,
+      @Param("tableVersion") String tableVersion,
+      @Param("metadataLocation") String metadataLocation,
+      @Param("storageType") String storageType,
+      @Param("creationTime") Long creationTime);
+
+  @Query(
+      value =
+          "select DISTINCT u from UserTableRow u where "
+              + COMMON_FILTER_CLAUSES
+              + " AND "
+              + VIEW_ROW_PREDICATE,
+      countQuery =
+          "select COUNT(DISTINCT u) from UserTableRow u where "
+              + COMMON_FILTER_CLAUSES
+              + " AND "
+              + VIEW_ROW_PREDICATE)
+  Page<UserTableRow> findAllViewsByFilters(
+      @Param("databaseId") String databaseId,
+      @Param("tableId") String tableId,
+      @Param("tableVersion") String tableVersion,
+      @Param("metadataLocation") String metadataLocation,
+      @Param("storageType") String storageType,
+      @Param("creationTime") Long creationTime,
+      Pageable pageable);
+
+  @Query("SELECT u FROM UserTableRow u WHERE " + PATTERN_KEY_CLAUSES + " AND " + VIEW_ROW_PREDICATE)
+  Iterable<UserTableRow> findAllViewsByDatabaseIdAndTableIdLikeAllIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableIdPattern") String tableIdPattern);
+
+  @Query(
+      value =
+          "SELECT u FROM UserTableRow u WHERE "
+              + PATTERN_KEY_CLAUSES
+              + " AND "
+              + VIEW_ROW_PREDICATE,
+      countQuery =
+          "SELECT COUNT(u) FROM UserTableRow u WHERE "
+              + PATTERN_KEY_CLAUSES
+              + " AND "
+              + VIEW_ROW_PREDICATE)
+  Page<UserTableRow> findAllViewsByDatabaseIdAndTableIdLikeAllIgnoreCase(
+      @Param("databaseId") String databaseId,
+      @Param("tableIdPattern") String tableIdPattern,
+      Pageable pageable);
+
+  /** Bulk statements bypass the persistence context, hence the flush and clear. */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "DELETE FROM UserTableRow u WHERE "
+          + "lower(u.databaseId) = lower(:databaseId) AND "
+          + "lower(u.tableId) = lower(:tableId) AND "
+          + TABLE_ROW_PREDICATE)
+  int deleteTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableId") String tableId);
+
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "DELETE FROM UserTableRow u WHERE "
+          + "lower(u.databaseId) = lower(:databaseId) AND "
+          + "lower(u.tableId) = lower(:tableId) AND "
+          + VIEW_ROW_PREDICATE)
+  int deleteViewByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+      @Param("databaseId") String databaseId, @Param("tableId") String tableId);
 
   /*
    * The following methods are required to maintain the generality of the interface {@link com.linkedin.openhouse.housetables.repository.HtsRepository}
@@ -106,18 +272,62 @@ public interface UserTableHtsJdbcRepository
         userTableRowPrimaryKey.getDatabaseId(), userTableRowPrimaryKey.getTableId());
   }
 
-  @Override
-  default void deleteById(UserTableRowPrimaryKey userTableRowPrimaryKey) {
-    deleteByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
-        userTableRowPrimaryKey.getDatabaseId(), userTableRowPrimaryKey.getTableId());
+  /**
+   * Deletes only a NULL or TABLE row, leaving a VIEW at the same key untouched, and returns the
+   * affected-row count so the service maps missing and wrong-type alike to 404. Deliberately not a
+   * neutral delete: the soft-deleted store has no discriminator and must never receive a view.
+   */
+  default int deleteTableById(UserTableRowPrimaryKey key) {
+    return deleteTableByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+        key.getDatabaseId(), key.getTableId());
   }
 
+  /** The mirror of {@link #deleteTableById}: only a VIEW row, never a TABLE or legacy NULL. */
+  default int deleteViewById(UserTableRowPrimaryKey key) {
+    return deleteViewByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
+        key.getDatabaseId(), key.getTableId());
+  }
+
+  /**
+   * The key-addressed generic deletes are sealed because a wrong-type delete is irreversible.
+   * No-arg {@code deleteAll()} stays available: it addresses no key, and test teardown depends on
+   * it.
+   */
+  @Override
+  default void deleteById(UserTableRowPrimaryKey key) {
+    throw new UnsupportedOperationException("Use deleteTableById or deleteViewById");
+  }
+
+  @Override
+  default void delete(UserTableRow entity) {
+    throw new UnsupportedOperationException("Use deleteTableById or deleteViewById");
+  }
+
+  @Override
+  default void deleteAllById(Iterable<? extends UserTableRowPrimaryKey> keys) {
+    throw new UnsupportedOperationException("Use typed single-entity deletion");
+  }
+
+  @Override
+  default void deleteAll(Iterable<? extends UserTableRow> entities) {
+    throw new UnsupportedOperationException("Use typed single-entity deletion");
+  }
+
+  String STAMP_TABLE_TYPE = "u.entityType = '" + TABLE + "' ";
+
+  /** Table-only: views are not renameable, so there is deliberately no {@code renameViewId}. */
   @Transactional
-  @Modifying
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query(
-      "UPDATE UserTableRow table SET table.tableId = :toTableId, table.metadataLocation = :metadataLocation, table.databaseId = :toDatabaseId "
-          + "WHERE lower(table.databaseId) = lower(:fromDatabaseId) AND lower(table.tableId) = lower(:fromTableId)")
-  void renameTableId(
+      "UPDATE UserTableRow u SET "
+          + "u.tableId = :toTableId, "
+          + "u.metadataLocation = :metadataLocation, "
+          + "u.databaseId = :toDatabaseId, "
+          + STAMP_TABLE_TYPE
+          + "WHERE lower(u.databaseId) = lower(:fromDatabaseId) "
+          + "AND lower(u.tableId) = lower(:fromTableId) AND "
+          + TABLE_ROW_PREDICATE)
+  int renameTableId(
       @Param("fromDatabaseId") String fromDatabaseId,
       @Param("fromTableId") String fromTableId,
       @Param("toDatabaseId") String toDatabaseId,

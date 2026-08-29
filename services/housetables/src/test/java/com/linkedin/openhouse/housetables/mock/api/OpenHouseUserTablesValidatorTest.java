@@ -8,6 +8,9 @@ import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTableKey;
 import com.linkedin.openhouse.housetables.api.validator.HouseTablesApiValidator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 
@@ -121,7 +124,7 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because it's the same table name (case-insensitive)
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
   }
 
   @Test
@@ -133,7 +136,7 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because cross-database rename is not supported
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
   }
 
   @Test
@@ -145,6 +148,237 @@ public class OpenHouseUserTablesValidatorTest {
     // Should throw because of invalid table name format
     assertThrows(
         RequestValidationFailureException.class,
-        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, null));
+  }
+
+  /**
+   * Load-bearing: the PUT path relies on Bean Validation on the transport model, so the pattern on
+   * {@code UserTable#entityType} must accept every TABLE/VIEW spelling and reject anything else.
+   */
+  @Test
+  public void validatePutEntityTypeCaseInsensitivelyAndRejectsGarbage() {
+    for (String entityType : new String[] {"VIEW", "view", "ViEw", "TABLE", "table", "TaBlE"}) {
+      UserTable userTable =
+          UserTable.builder()
+              .tableId("tb1")
+              .databaseId("db1")
+              .tableVersion("/tmp/test/opt/metadata.json")
+              .metadataLocation("INITIAL_VERSION")
+              .entityType(entityType)
+              .build();
+
+      assertDoesNotThrow(
+          () -> userTablesHtsApiValidator.validatePutEntity(userTable),
+          "PUT with entityType=" + entityType + " should validate");
+    }
+
+    // Omitting the field entirely stays valid (legacy table writers).
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validatePutEntity(
+                UserTable.builder()
+                    .tableId("tb1")
+                    .databaseId("db1")
+                    .tableVersion("/tmp/test/opt/metadata.json")
+                    .metadataLocation("INITIAL_VERSION")
+                    .build()));
+
+    UserTable garbage =
+        UserTable.builder()
+            .tableId("tb1")
+            .databaseId("db1")
+            .tableVersion("/tmp/test/opt/metadata.json")
+            .metadataLocation("INITIAL_VERSION")
+            .entityType("UNKNOWN")
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(garbage));
+  }
+
+  /**
+   * Transport nullability is load-bearing for rolling deploys: an un-upgraded client sends no
+   * discriminator, and validation must not be what rejects it — the controller has already resolved
+   * it by then.
+   *
+   * <p>Regression guard: the wire field must stay nullable even though the mapper rejects null.
+   */
+  @Test
+  public void validatePutEntityAcceptsATransportNullBeforeNormalization() {
+    UserTable untyped =
+        UserTable.builder()
+            .tableId("tb1")
+            .databaseId("db1")
+            .tableVersion("/tmp/test/opt/metadata.json")
+            .metadataLocation("INITIAL_VERSION")
+            .entityType(null)
+            .build();
+
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validatePutEntity(untyped));
+
+    // And the normalized form the controller hands on is equally valid, for both routes.
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validatePutEntity(
+                untyped.toBuilder().entityType("TABLE").build()));
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validatePutEntity(
+                untyped.toBuilder().entityType("VIEW").build()));
+  }
+
+  /**
+   * Type-scoped by path, so an {@code entityType} filter is ignored rather than rejected. Rejecting
+   * it would be a separate, deliberate choice.
+   *
+   * <p>Regression guard: the validator deliberately has no opinion on {@code entityType}.
+   */
+  @ParameterizedTest
+  @NullSource
+  @ValueSource(strings = {"VIEW", "view", "TABLE", "TaBlE"})
+  public void validateGetEntitiesToleratesAndIgnoresEntityType(String entityType) {
+    UserTable byDatabase = UserTable.builder().databaseId("db1").entityType(entityType).build();
+    assertDoesNotThrow(
+        () -> userTablesHtsApiValidator.validateGetEntities(byDatabase),
+        "query with entityType=" + entityType + " should validate");
+    assertDoesNotThrow(
+        () -> userTablesHtsApiValidator.validateGetEntities(byDatabase, 0, 50, "tableId"));
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Storage length bounds are enforced at ingress: an over-length identifier is the client's 400,
+  // never a database integrity violation dressed up as a 409 or a bare 500. The bounds mirror the
+  // DDL: identifiers are VARCHAR(128), metadata_location is VARCHAR(512).
+  // -------------------------------------------------------------------------------------------
+
+  private static String repeated(int length) {
+    return String.join("", java.util.Collections.nCopies(length, "a"));
+  }
+
+  /** The rename writes exactly one non-key field, and it is bounded like every other write. */
+  @Test
+  public void validateRenameEntityRejectsOverLengthMetadataLocation() {
+    UserTableKey fromKey = UserTableKey.builder().tableId("srcTable").databaseId("testDB").build();
+    UserTableKey toKey = UserTableKey.builder().tableId("dstTable").databaseId("testDB").build();
+
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, "/" + repeated(512)));
+    assertDoesNotThrow(
+        () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey, "/" + repeated(511)));
+  }
+
+  /** storageType persists into a VARCHAR(128) column, so it is bounded at ingress like the ids. */
+  @Test
+  public void validatePutEntityRejectsOverLengthStorageType() {
+    UserTable overLength =
+        UserTable.builder()
+            .databaseId("db1")
+            .tableId("t1")
+            .metadataLocation("/tmp/db1/t1")
+            .storageType(repeated(129))
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(overLength));
+
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validatePutEntity(
+                overLength.toBuilder().storageType(repeated(128)).build()));
+  }
+
+  @Test
+  public void validateGetEntityAcceptsIdentifiersAtTheBound() {
+    UserTableKey key =
+        UserTableKey.builder().databaseId(repeated(128)).tableId(repeated(128)).build();
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validateGetEntity(key));
+  }
+
+  @Test
+  public void validateGetEntityRejectsOverLengthIdentifiers() {
+    UserTableKey longDatabase =
+        UserTableKey.builder().databaseId(repeated(129)).tableId("t1").build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateGetEntity(longDatabase));
+
+    UserTableKey longTable =
+        UserTableKey.builder().databaseId("db1").tableId(repeated(129)).build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validateGetEntity(longTable));
+  }
+
+  /**
+   * The query's databaseId addresses the key column exactly, so it carries the storage bound — on
+   * the plain and the paged overload alike. The tableId filter is a LIKE pattern, a predicate
+   * rather than a stored value, so no length bound applies to it (its search regex still does).
+   */
+  @Test
+  public void validateGetEntitiesBoundsDatabaseIdButNotThePattern() {
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId(repeated(129)).build()));
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId(repeated(129)).build(), 0, 50, "tableId"));
+
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId("db1").tableId(repeated(129)).build()));
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId("db1").tableId(repeated(129)).build(),
+                0,
+                50,
+                "tableId"));
+  }
+
+  @Test
+  public void validatePutEntityRejectsOverLengthFields() {
+    UserTable longIds =
+        UserTable.builder()
+            .databaseId(repeated(129))
+            .tableId(repeated(129))
+            .metadataLocation("/tmp/db1/t1")
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(longIds));
+
+    UserTable longLocation =
+        UserTable.builder()
+            .databaseId("db1")
+            .tableId("t1")
+            .metadataLocation("/" + repeated(512))
+            .build();
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> userTablesHtsApiValidator.validatePutEntity(longLocation));
+  }
+
+  @Test
+  public void validatePutEntityAcceptsFieldsAtTheBound() {
+    UserTable atBound =
+        UserTable.builder()
+            .databaseId(repeated(128))
+            .tableId(repeated(128))
+            .metadataLocation("/" + repeated(511))
+            .build();
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validatePutEntity(atBound));
+  }
+
+  @Test
+  public void validateGetEntitiesToleratesAnUnrecognizedEntityType() {
+    UserTable garbageFilter =
+        UserTable.builder().databaseId("db1").tableId("tb%").entityType("UNKNOWN").build();
+    assertDoesNotThrow(() -> userTablesHtsApiValidator.validateGetEntities(garbageFilter));
   }
 }
