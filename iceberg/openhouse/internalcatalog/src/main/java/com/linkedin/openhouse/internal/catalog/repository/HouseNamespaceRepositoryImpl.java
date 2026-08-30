@@ -34,19 +34,32 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
   private static final int READ_REQUEST_TIMEOUT_SECONDS = 30;
   private static final int WRITE_REQUEST_TIMEOUT_SECONDS = 60;
 
+  /** The subject of a call that is not about one namespace, for error messages. */
+  private static final String ALL_NAMESPACES = "<all namespaces>";
+
   @Autowired private DatabaseApi databaseApi;
 
   @Override
   public <S extends HouseNamespace> S save(S namespace) {
+    String namespaceId = namespace.getNamespaceId();
     CreateUpdateEntityRequestBodyDatabase requestBody =
         new CreateUpdateEntityRequestBodyDatabase().entity(toDatabase(namespace));
     EntityResponseBodyDatabase response =
         databaseApi
             .putDatabase(requestBody)
-            .onErrorResume(HouseNamespaceRepositoryImpl::handleHtsHttpError)
+            .onErrorResume(e -> handleHtsHttpError(e, namespaceId))
             .block(Duration.ofSeconds(WRITE_REQUEST_TIMEOUT_SECONDS));
+    if (response == null || response.getEntity() == null) {
+      // HTS answered without a body, so what it persisted cannot be read back from this response.
+      // Returning null would hand the caller a NullPointerException in place of that fact.
+      throw new HouseTableRepositoryStateUnknownException(
+          String.format(
+              "HTS acknowledged the save of namespace %s without returning the saved entity",
+              namespaceId),
+          null);
+    }
     @SuppressWarnings("unchecked")
-    S saved = (S) toHouseNamespace(response == null ? null : response.getEntity());
+    S saved = (S) toHouseNamespace(response.getEntity());
     return saved;
   }
 
@@ -56,7 +69,7 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
       EntityResponseBodyDatabase response =
           databaseApi
               .getDatabase(namespaceId)
-              .onErrorResume(HouseNamespaceRepositoryImpl::handleHtsHttpError)
+              .onErrorResume(e -> handleHtsHttpError(e, namespaceId))
               .block(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS));
       return Optional.ofNullable(response == null ? null : toHouseNamespace(response.getEntity()));
     } catch (HouseTableNotFoundException e) {
@@ -72,7 +85,10 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
   @Override
   public Iterable<HouseNamespace> findAll() {
     GetAllEntityResponseBodyDatabase response =
-        databaseApi.getDatabases().block(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS));
+        databaseApi
+            .getDatabases()
+            .onErrorResume(e -> handleHtsHttpError(e, ALL_NAMESPACES))
+            .block(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS));
     List<HouseNamespace> namespaces = new ArrayList<>();
     if (response != null && response.getResults() != null) {
       for (Database database : response.getResults()) {
@@ -85,8 +101,8 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
   @Override
   public void deleteById(String namespaceId) {
     databaseApi
-        .deleteDatabase(namespaceId)
-        .onErrorResume(e -> handleHtsHttpError(e).then())
+        .deleteDatabase(namespaceId, null)
+        .onErrorResume(e -> handleHtsHttpError(e, namespaceId).then())
         .block(Duration.ofSeconds(WRITE_REQUEST_TIMEOUT_SECONDS));
   }
 
@@ -98,6 +114,9 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
   private static Database toDatabase(HouseNamespace namespace) {
     return new Database()
         .databaseId(namespace.getNamespaceId())
+        // The version the caller read, carried to HTS so the compare-and-set happens there against
+        // the row rather than against a value HTS re-reads for itself a line before saving.
+        .version(namespace.getVersion())
         .properties(
             namespace.getProperties() == null
                 ? new LinkedHashMap<>()
@@ -114,6 +133,7 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
             : new LinkedHashMap<>(database.getProperties());
     return HouseNamespace.builder()
         .namespaceId(database.getDatabaseId())
+        .version(database.getVersion())
         .properties(properties)
         .creationTime(database.getCreationTime())
         .lastModifiedTime(database.getLastModifiedTime())
@@ -121,27 +141,38 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
   }
 
   /** Same translation contract as {@link HouseTableRepositoryImpl#save}: absence is not failure. */
-  private static <T> Mono<T> handleHtsHttpError(Throwable e) {
+  private static <T> Mono<T> handleHtsHttpError(Throwable e, String namespaceId) {
     if (e instanceof WebClientResponseException.NotFound) {
-      return Mono.error(new HouseTableNotFoundException("", e));
+      return Mono.error(
+          new HouseTableNotFoundException(
+              String.format("Namespace %s does not exist in HTS", namespaceId), e));
     } else if (e instanceof WebClientResponseException.Conflict) {
-      return Mono.error(new HouseTableConcurrentUpdateException("", e));
+      return Mono.error(
+          new HouseTableConcurrentUpdateException(
+              String.format("Namespace %s was updated concurrently in HTS", namespaceId), e));
     } else if (e instanceof WebClientResponseException.BadRequest
         || e instanceof WebClientResponseException.Forbidden
         || e instanceof WebClientResponseException.Unauthorized
         || e instanceof WebClientResponseException.TooManyRequests) {
       return Mono.error(
           new HouseTableCallerException(
-              "[Client side failure]Error status code for HTS:"
-                  + ((WebClientResponseException) e).getStatusCode(),
+              String.format(
+                  "[Client side failure]Error status code for HTS:%s for namespace %s",
+                  ((WebClientResponseException) e).getStatusCode(), namespaceId),
               e));
     } else if (e instanceof WebClientResponseException
         && ((WebClientResponseException) e).getStatusCode().is5xxServerError()) {
       return Mono.error(
           new HouseTableRepositoryStateUnknownException(
-              "Cannot determine if HTS has persisted the proposed change", e));
+              String.format(
+                  "Cannot determine if HTS has persisted the proposed change to namespace %s",
+                  namespaceId),
+              e));
     }
-    return Mono.error(new RuntimeException("UNKNOWN and unhandled failure from HTS:", e));
+    return Mono.error(
+        new HouseTableRepositoryStateUnknownException(
+            String.format("UNKNOWN and unhandled failure from HTS for namespace %s", namespaceId),
+            e));
   }
 
   /* ----  Implement the following as needed. ---- */

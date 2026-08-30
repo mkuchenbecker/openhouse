@@ -4,6 +4,8 @@ import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
+import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
+import com.linkedin.openhouse.tables.repository.impl.BasePreservedKeyChecker;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -12,6 +14,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
 
@@ -61,4 +64,15 @@ public class MockTablesApplication {
    * HouseTableRepository} is.
    */
   @MockBean HouseNamespaceRepository houseNamespaceRepository;
+
+  /**
+   * The namespace service holds namespace properties to the same preserved-key rule as table
+   * properties. The checker lives in {@code tables.repository.impl}, which this context does not
+   * scan, and it must be the real one rather than a mock: a mock would answer "not preserved" to
+   * everything and quietly switch the rule off in every mock test.
+   */
+  @Bean
+  PreservedKeyChecker providePreservedKeyChecker() {
+    return new BasePreservedKeyChecker();
+  }
 }

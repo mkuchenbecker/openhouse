@@ -4,8 +4,6 @@ import com.linkedin.openhouse.housetables.model.DatabaseRow;
 import com.linkedin.openhouse.housetables.repository.HtsRepository;
 import java.util.Optional;
 import org.jetbrains.annotations.NotNull;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,8 +22,6 @@ public interface DatabaseHtsJdbcRepository extends HtsRepository<DatabaseRow, St
   @Transactional
   @Modifying
   void deleteByDatabaseIdIgnoreCase(String databaseId);
-
-  Page<DatabaseRow> findAllByDatabaseIdIgnoreCase(String databaseId, Pageable pageable);
 
   @Override
   default @NotNull Optional<DatabaseRow> findById(String databaseId) {

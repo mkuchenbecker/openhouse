@@ -23,6 +23,13 @@ public class DatabaseKey {
   @Pattern(regexp = ALPHA_NUM_UNDERSCORE_REGEX, message = ALPHA_NUM_UNDERSCORE_ERROR_MSG)
   private String databaseId;
 
+  @Schema(
+      description =
+          "Version of the stored row this operation is conditional on. Absent means unconditional.",
+      example = "1")
+  @JsonProperty(value = "version")
+  private Long version;
+
   public String toJson() {
     return new Gson().toJson(this);
   }

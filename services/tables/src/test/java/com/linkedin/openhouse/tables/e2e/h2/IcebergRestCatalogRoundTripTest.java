@@ -111,6 +111,11 @@ public class IcebergRestCatalogRoundTripTest {
   @LocalServerPort private int port;
 
   @Autowired private AuditHandler<TableAuditEvent> tableAuditHandler;
+
+  @Autowired
+  private com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository
+      houseNamespaceRepository;
+
   @Autowired private MeterRegistry meterRegistry;
 
   private RESTCatalog restCatalog;
@@ -540,12 +545,10 @@ public class IcebergRestCatalogRoundTripTest {
 
   @Test
   void droppingANamespaceThatStillHoldsTablesIsRejected() {
-    // DB1 holds two tables created through the OpenHouse API; its namespace row is created here so
-    // the drop reaches the emptiness check rather than a 404.
+    // DB1 holds two tables created through the OpenHouse API. No namespace row is created here:
+    // creating the table registered one, and a database that predates the namespace store is
+    // derived from its tables anyway. Either way the drop reaches the emptiness check.
     Namespace ns = Namespace.of(DB1);
-    if (!restCatalog.namespaceExists(ns)) {
-      restCatalog.createNamespace(ns);
-    }
 
     assertThatThrownBy(
             () ->
@@ -570,6 +573,199 @@ public class IcebergRestCatalogRoundTripTest {
         .isInstanceOf(HttpClientErrorException.BadRequest.class)
         .hasMessageContaining("ValidationException");
     assertThat(restCatalog.namespaceExists(Namespace.of("icebergrestns5"))).isFalse();
+  }
+
+  /**
+   * B3: a database that exists because tables were written into it is a namespace. Before the fix
+   * only an explicit createNamespace wrote a row, so on a real cluster SHOW NAMESPACES was empty
+   * and GET /namespaces/prod was a 404 while GET /namespaces/prod/tables listed its tables.
+   */
+  @Test
+  void aDatabaseCreatedByWritingATableIsANamespace() {
+    Namespace ns = Namespace.of(DB1);
+    assertThat(restCatalog.namespaceExists(ns)).isTrue();
+    assertThat(restCatalog.listNamespaces()).contains(ns);
+    assertThat(restCatalog.loadNamespaceMetadata(ns)).isNotNull();
+  }
+
+  /**
+   * B3, the other half: a database that predates the namespace store has no row at all. Deleting
+   * the row here is exactly that state, and the namespace API must not deny the database's
+   * existence because of it.
+   */
+  @Test
+  void aDatabaseWithNoStoredRowIsStillANamespace() {
+    String db = "icebergrestderived";
+    createOpenHouseTable(db, "derived_t", SCHEMA_2COL, null, null);
+    Namespace ns = Namespace.of(db);
+    try {
+      // Simulate a database created before the namespace store existed.
+      houseNamespaceRepository.deleteById(db);
+      assertThat(houseNamespaceRepository.findById(db)).isEmpty();
+
+      assertThat(restCatalog.namespaceExists(ns)).isTrue();
+      assertThat(restCatalog.listNamespaces()).contains(ns);
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).isEmpty();
+      // It holds a table, so it is not empty, and that is a 409 rather than the 404 it used to be.
+      assertThatThrownBy(
+              () ->
+                  restTemplate.exchange(
+                      baseUrl() + "/v1/iceberg/namespaces/" + db,
+                      HttpMethod.DELETE,
+                      authorizedRequest(),
+                      String.class))
+          .isInstanceOf(HttpClientErrorException.Conflict.class)
+          .hasMessageContaining("NamespaceNotEmptyException");
+      // Creating it is a conflict: it exists.
+      assertThatThrownBy(() -> createNamespaceOverHttp(db))
+          .isInstanceOf(HttpClientErrorException.Conflict.class)
+          .hasMessageContaining("AlreadyExistsException");
+
+      // Setting a property on it writes the row it never had, without moving anything else.
+      restCatalog.setProperties(ns, Collections.singletonMap("owner", "testuser"));
+      assertThat(houseNamespaceRepository.findById(db)).isPresent();
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).containsEntry("owner", "testuser");
+    } finally {
+      deleteOpenHouseTable(db, "derived_t");
+      houseNamespaceRepository.deleteById(db);
+    }
+  }
+
+  /**
+   * B1: a reserved key inside updates on an existing namespace is a bad request, not a false 404.
+   * The handler used to rewrite every ValidationException from the service into "Namespace does not
+   * exist", which for a namespace that plainly does exist is a statement that is not true.
+   */
+  @Test
+  void aReservedKeyInUpdatesOnAnExistingNamespaceIsABadRequest() {
+    Namespace ns = Namespace.of("icebergrestns6");
+    restCatalog.createNamespace(ns);
+    try {
+      assertThatThrownBy(
+              () ->
+                  updatePropertiesOverHttp(
+                      ns.toString(), "{\"updates\":{\"openhouse.foo\":\"x\"}}"))
+          .isInstanceOf(HttpClientErrorException.BadRequest.class)
+          .hasMessageContaining("ValidationException")
+          .hasMessageContaining("reserved");
+
+      // S5: policies is reserved for the same reason openhouse.* is, via BasePreservedKeyChecker.
+      assertThatThrownBy(
+              () -> updatePropertiesOverHttp(ns.toString(), "{\"updates\":{\"policies\":\"x\"}}"))
+          .isInstanceOf(HttpClientErrorException.BadRequest.class)
+          .hasMessageContaining("ValidationException");
+
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).doesNotContainKey("openhouse.foo");
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  /**
+   * B2: a key in both removals and updates is unprocessable, which is what
+   * UpdateNamespacePropertiesRequest.validate() already says. Its exception shares a simple name
+   * with an unrelated OpenHouse class, so only the other one was mapped and this fell to the
+   * catch-all as a 500 the client could not tell from an outage.
+   */
+  @Test
+  void aKeyInBothRemovalsAndUpdatesIsUnprocessable() {
+    Namespace ns = Namespace.of("icebergrestns7");
+    restCatalog.createNamespace(ns, Collections.singletonMap("owner", "testuser"));
+    try {
+      assertThatThrownBy(
+              () ->
+                  updatePropertiesOverHttp(
+                      ns.toString(),
+                      "{\"removals\":[\"owner\"],\"updates\":{\"owner\":\"other\"}}"))
+          .isInstanceOf(HttpClientErrorException.class)
+          .satisfies(
+              e ->
+                  assertThat(((HttpClientErrorException) e).getStatusCode())
+                      .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY));
+
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).containsEntry("owner", "testuser");
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  /**
+   * B6: repository lookups fold case and listings do not, so a response that echoed the requested
+   * spelling named a namespace no listing contained and that DELETE would then destroy. The stored
+   * name is the answer.
+   */
+  @Test
+  void aNamespaceIsAnsweredForUnderTheNameItIsStoredAs() {
+    Namespace stored = Namespace.of("IcebergRestMixedCase");
+    Namespace requested = Namespace.of("icebergrestmixedcase");
+    restCatalog.createNamespace(stored, Collections.singletonMap("owner", "testuser"));
+    try {
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              baseUrl() + "/v1/iceberg/namespaces/" + requested,
+              HttpMethod.GET,
+              authorizedRequest(),
+              String.class);
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+      assertThat(JsonPath.<List<String>>read(response.getBody(), "$.namespace"))
+          .containsExactly("IcebergRestMixedCase");
+
+      assertThat(restCatalog.listNamespaces()).contains(stored).doesNotContain(requested);
+    } finally {
+      // The drop still resolves case-insensitively; what changed is that the answer no longer
+      // pretends the requested spelling is a namespace of its own.
+      restTemplate.exchange(
+          baseUrl() + "/v1/iceberg/namespaces/" + requested,
+          HttpMethod.DELETE,
+          authorizedRequest(),
+          String.class);
+    }
+    assertThat(restCatalog.listNamespaces()).doesNotContain(stored);
+  }
+
+  /** B7: the property bag is bounded, and a null value is a rejection rather than a lost write. */
+  @Test
+  void namespacePropertiesAreBounded() {
+    Namespace ns = Namespace.of("icebergrestns8");
+    restCatalog.createNamespace(ns);
+    try {
+      StringBuilder tooMany = new StringBuilder("{\"updates\":{");
+      for (int i = 0; i <= 100; i++) {
+        tooMany.append(i == 0 ? "" : ",").append("\"k").append(i).append("\":\"v\"");
+      }
+      tooMany.append("}}");
+      assertThatThrownBy(() -> updatePropertiesOverHttp(ns.toString(), tooMany.toString()))
+          .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+      StringBuilder longValue = new StringBuilder();
+      for (int i = 0; i < 1100; i++) {
+        longValue.append("v");
+      }
+      assertThatThrownBy(
+              () ->
+                  updatePropertiesOverHttp(
+                      ns.toString(), "{\"updates\":{\"k\":\"" + longValue + "\"}}"))
+          .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+      assertThatThrownBy(
+              () -> updatePropertiesOverHttp(ns.toString(), "{\"updates\":{\"k\":null}}"))
+          .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).isEmpty();
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  private void updatePropertiesOverHttp(String namespace, String body) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("Authorization", "Bearer " + authToken);
+    restTemplate.exchange(
+        baseUrl() + "/v1/iceberg/namespaces/" + namespace + "/properties",
+        HttpMethod.POST,
+        new HttpEntity<>(body, headers),
+        String.class);
   }
 
   private void createNamespaceOverHttp(String namespace) {

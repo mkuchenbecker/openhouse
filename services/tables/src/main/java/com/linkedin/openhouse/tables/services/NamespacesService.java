@@ -6,26 +6,38 @@ import java.util.Set;
 import org.apache.iceberg.catalog.Namespace;
 
 /**
- * Service interface for stored namespaces, the resource behind {@code /v1/{prefix}/namespaces}.
+ * Service interface for namespaces, the resource behind {@code /v1/{prefix}/namespaces}.
  *
  * <p>The service speaks Iceberg {@link Namespace} values; the persisted encoding (dot-joined
  * levels) is applied below this seam and never leaks above it.
+ *
+ * <p>A namespace exists here if either store says so: the namespace store holds a row for it, or
+ * the table store holds a table that names it. The second case is every database that predates the
+ * namespace store, and is what keeps this API from denying the existence of databases the rest of
+ * OpenHouse serves. See {@link #ensureNamespace(String)} for the other half of that contract.
  */
 public interface NamespacesService {
 
   /**
    * Create a namespace with an optional set of properties.
    *
-   * @throws com.linkedin.openhouse.common.exception.AlreadyExistsException if it already exists
+   * @throws org.apache.iceberg.exceptions.AlreadyExistsException if it already exists
    * @throws org.apache.iceberg.exceptions.NoSuchNamespaceException if its parent does not exist
    */
-  Map<String, String> createNamespace(
+  NamespaceMetadata createNamespace(
       Namespace namespace, Map<String, String> properties, String actingPrincipal);
+
+  /**
+   * Register {@code databaseId} in the namespace store if it is not there already, so that a
+   * database created by writing a table into it is a namespace this API can see. Idempotent, and
+   * unauthorized on its own: the caller has already been authorized to create the table.
+   */
+  void ensureNamespace(String databaseId);
 
   /**
    * @throws org.apache.iceberg.exceptions.NoSuchNamespaceException if the namespace does not exist
    */
-  Map<String, String> loadNamespaceMetadata(Namespace namespace, String actingPrincipal);
+  NamespaceMetadata loadNamespaceMetadata(Namespace namespace, String actingPrincipal);
 
   boolean namespaceExists(Namespace namespace, String actingPrincipal);
 
@@ -46,6 +58,8 @@ public interface NamespacesService {
 
   /**
    * @throws org.apache.iceberg.exceptions.NoSuchNamespaceException if the namespace does not exist
+   * @throws org.apache.iceberg.exceptions.CommitFailedException if another writer changed the
+   *     namespace concurrently
    */
   NamespacePropertiesUpdateResult updateProperties(
       Namespace namespace,

@@ -74,7 +74,8 @@ public class DatabaseHouseTablesController {
       value = {
         @ApiResponse(responseCode = "200", description = "Database PUT: UPDATED"),
         @ApiResponse(responseCode = "201", description = "Database PUT: CREATED"),
-        @ApiResponse(responseCode = "400", description = "Database PUT: BAD_REQUEST")
+        @ApiResponse(responseCode = "400", description = "Database PUT: BAD_REQUEST"),
+        @ApiResponse(responseCode = "409", description = "Database PUT: CONFLICT")
       })
   @PutMapping(
       value = HTS_DATABASES_GENERAL_ENDPOINT,
@@ -96,13 +97,16 @@ public class DatabaseHouseTablesController {
       value = {
         @ApiResponse(responseCode = "204", description = "Database DELETE: NO_CONTENT"),
         @ApiResponse(responseCode = "400", description = "Database DELETE: BAD_REQUEST"),
-        @ApiResponse(responseCode = "404", description = "Database DELETE: DB_NOT_FOUND")
+        @ApiResponse(responseCode = "404", description = "Database DELETE: DB_NOT_FOUND"),
+        @ApiResponse(responseCode = "409", description = "Database DELETE: CONFLICT")
       })
   @DeleteMapping(value = HTS_DATABASES_GENERAL_ENDPOINT)
   public ResponseEntity<Void> deleteDatabase(
-      @RequestParam(value = "databaseId") String databaseId) {
+      @RequestParam(value = "databaseId") String databaseId,
+      @RequestParam(value = "version", required = false) Long version) {
     com.linkedin.openhouse.common.api.spec.ApiResponse<Void> apiResponse =
-        databaseHtsApiHandler.deleteEntity(DatabaseKey.builder().databaseId(databaseId).build());
+        databaseHtsApiHandler.deleteEntity(
+            DatabaseKey.builder().databaseId(databaseId).version(version).build());
     return new ResponseEntity<>(
         apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
   }

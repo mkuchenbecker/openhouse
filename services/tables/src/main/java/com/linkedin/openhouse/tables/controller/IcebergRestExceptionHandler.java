@@ -4,6 +4,7 @@ import com.linkedin.openhouse.common.exception.RequestValidationFailureException
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.ForbiddenException;
 import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
@@ -43,6 +44,24 @@ public class IcebergRestExceptionHandler {
   @ExceptionHandler(NamespaceNotEmptyException.class)
   public ResponseEntity<ErrorResponse> handleNamespaceNotEmpty(NamespaceNotEmptyException e) {
     return errorResponse(409, e.getMessage(), NamespaceNotEmptyException.class.getSimpleName());
+  }
+
+  @ExceptionHandler(CommitFailedException.class)
+  public ResponseEntity<ErrorResponse> handleCommitFailed(CommitFailedException e) {
+    return errorResponse(409, e.getMessage(), CommitFailedException.class.getSimpleName());
+  }
+
+  /**
+   * Two unrelated exceptions share the simple name {@code UnprocessableEntityException}:
+   * OpenHouse's own, and the one {@code UpdateNamespacePropertiesRequest.validate()} raises for a
+   * key present in both {@code removals} and {@code updates}. Only the first was mapped, so the
+   * second reached the catch-all and a malformed request was reported as a 500 the client could not
+   * tell from an outage.
+   */
+  @ExceptionHandler(org.apache.iceberg.exceptions.UnprocessableEntityException.class)
+  public ResponseEntity<ErrorResponse> handleIcebergUnprocessableEntity(
+      org.apache.iceberg.exceptions.UnprocessableEntityException e) {
+    return errorResponse(422, e.getMessage(), "UnprocessableEntityException");
   }
 
   @ExceptionHandler(UnprocessableEntityException.class)

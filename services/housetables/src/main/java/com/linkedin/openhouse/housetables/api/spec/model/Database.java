@@ -37,6 +37,16 @@ public class Database {
   @JsonProperty(value = "properties")
   private Map<String, String> properties;
 
+  @Schema(
+      description =
+          "Version of the stored row that this write is based on. Absent means \"no row yet\": a"
+              + " write that carries no version creates the row and conflicts (409) if one already"
+              + " exists. A write that carries a version conflicts unless it matches the stored"
+              + " one. Read back from a GET, echoed on the response of a PUT.",
+      example = "1")
+  @JsonProperty(value = "version")
+  private Long version;
+
   @Schema(description = "Creation time of the database in milliseconds.", example = "1651002318265")
   @JsonProperty(value = "creationTime")
   private Long creationTime;
@@ -47,6 +57,10 @@ public class Database {
   @JsonProperty(value = "lastModifiedTime")
   private Long lastModifiedTime;
 
+  /**
+   * Gson drops null-valued map entries, which is why a null property value is rejected upstream
+   * rather than serialized: it would be acknowledged and then not stored.
+   */
   public String toJson() {
     return new Gson().toJson(this);
   }

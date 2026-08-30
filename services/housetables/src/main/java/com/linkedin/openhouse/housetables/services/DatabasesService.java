@@ -18,17 +18,24 @@ public interface DatabasesService {
   List<Database> getAllDatabases();
 
   /**
-   * Create or replace a {@link Database} row.
+   * Create or replace a {@link Database} row, conditional on {@link Database#getVersion()}: a null
+   * version asserts that no row exists yet, a non-null one asserts that the stored row is at that
+   * version.
    *
    * @return a pair of the saved object and a boolean that is true when an existing row was
    *     overwritten, so the HTTP layer can render 200-vs-201 without decoding a boolean.
+   * @throws com.linkedin.openhouse.common.exception.EntityConcurrentModificationException when the
+   *     assertion does not hold, which the HTTP layer renders as 409
    */
   Pair<Database, Boolean> putDatabase(Database database);
 
   /**
-   * Delete the row for {@code databaseId}.
+   * Delete the row for {@code databaseId}, optionally conditional on {@code version}.
    *
+   * @param version the version the delete is based on, or null for an unconditional delete
    * @throws com.linkedin.openhouse.common.exception.NoSuchEntityException when no row exists
+   * @throws com.linkedin.openhouse.common.exception.EntityConcurrentModificationException when
+   *     {@code version} is supplied and does not match the stored row
    */
-  void deleteDatabase(String databaseId);
+  void deleteDatabase(String databaseId, Long version);
 }

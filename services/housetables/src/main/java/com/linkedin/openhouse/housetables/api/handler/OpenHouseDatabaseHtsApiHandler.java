@@ -1,13 +1,18 @@
 package com.linkedin.openhouse.housetables.api.handler;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
+
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.utils.NamespacePropertiesValidator;
 import com.linkedin.openhouse.housetables.api.spec.model.Database;
 import com.linkedin.openhouse.housetables.api.spec.model.DatabaseKey;
 import com.linkedin.openhouse.housetables.api.spec.response.EntityResponseBody;
 import com.linkedin.openhouse.housetables.api.spec.response.GetAllEntityResponseBody;
 import com.linkedin.openhouse.housetables.services.DatabasesService;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
@@ -26,9 +31,10 @@ public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
   /**
    * The persisted namespace charset. It is the House Table column's own precondition, not a
    * restated copy of the Tables Service namespace rule; the owning validator there stays the source
-   * of truth for what a namespace may be.
+   * of truth for what a namespace may be. The pattern itself is the one every other House Tables
+   * identifier is held to, referenced rather than restated so the two cannot drift apart.
    */
-  private static final Pattern DATABASE_ID_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+  private static final Pattern DATABASE_ID_PATTERN = Pattern.compile(ALPHA_NUM_UNDERSCORE_REGEX);
 
   private static final int MAX_DATABASE_ID_LENGTH = 128;
 
@@ -60,6 +66,7 @@ public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
   @Override
   public ApiResponse<EntityResponseBody<Database>> putEntity(Database database) {
     validateDatabaseId(database == null ? null : database.getDatabaseId());
+    validateProperties(database.getProperties());
     Pair<Database, Boolean> result = databasesService.putDatabase(database);
     return ApiResponse.<EntityResponseBody<Database>>builder()
         .httpStatus(result.getSecond() ? HttpStatus.OK : HttpStatus.CREATED)
@@ -70,8 +77,19 @@ public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
   @Override
   public ApiResponse<Void> deleteEntity(DatabaseKey key) {
     validateDatabaseId(key == null ? null : key.getDatabaseId());
-    databasesService.deleteDatabase(key.getDatabaseId());
+    databasesService.deleteDatabase(key.getDatabaseId(), key.getVersion());
     return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
+  }
+
+  /**
+   * The size contract of the property bag, checked here as well as at the Tables Service ingress:
+   * House Tables is reachable independently, so a bound only the caller enforces is not a bound.
+   */
+  private static void validateProperties(java.util.Map<String, String> properties) {
+    List<String> violations = new ArrayList<>(NamespacePropertiesValidator.violations(properties));
+    if (!violations.isEmpty()) {
+      throw new RequestValidationFailureException(violations);
+    }
   }
 
   private static void validateDatabaseId(String databaseId) {

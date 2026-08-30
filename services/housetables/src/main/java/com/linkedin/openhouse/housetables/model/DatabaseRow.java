@@ -35,8 +35,16 @@ public class DatabaseRow {
 
   @Version Long version;
 
+  /**
+   * The width is owned by {@code schema.sql} ({@code MEDIUMTEXT}), not by this annotation: House
+   * Tables runs with {@code ddl-auto=none}, so nothing declared here ever reaches a database. The
+   * previous {@code length = 8192} read as a bound and enforced nothing. The bound that does hold
+   * is {@link com.linkedin.openhouse.common.utils.NamespacePropertiesValidator}, applied at both
+   * boundaries; the column is deliberately wider so a property bag at that limit cannot be
+   * truncated by the overhead of its JSON encoding.
+   */
   @Convert(converter = PropertiesConverter.class)
-  @Column(length = 8192)
+  @Column(columnDefinition = "MEDIUMTEXT")
   Map<String, String> properties;
 
   Long creationTime;

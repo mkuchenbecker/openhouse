@@ -23,6 +23,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.types.Types;
@@ -166,6 +167,47 @@ public class IcebergRestCatalogControllerTest {
         .andExpect(status().isNoContent());
 
     verify(icebergRestApiHandler).tableExists(ICEBERG_REST_PREFIX, "db", "tb1");
+  }
+
+  /**
+   * B4: a namespace write that lost a race is a conflict the client can retry, not a 500. The
+   * service raises CommitFailedException for it and nothing was mapping that.
+   */
+  @Test
+  public void testConcurrentNamespaceUpdateIsAConflict() throws Exception {
+    when(icebergRestNamespaceApiHandler.updateProperties(
+            eq(ICEBERG_REST_PREFIX), eq("db"), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new CommitFailedException("Namespace db was modified concurrently"));
+
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    "/v1/{prefix}/namespaces/db/properties", ICEBERG_REST_PREFIX)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"updates\":{\"owner\":\"user\"}}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error.type").value("CommitFailedException"));
+  }
+
+  /**
+   * B2: the exception UpdateNamespacePropertiesRequest.validate() raises for a key in both removals
+   * and updates shares a simple name with an unrelated OpenHouse class. Only the other one was
+   * mapped, so this fell to the catch-all as a 500.
+   */
+  @Test
+  public void testIcebergUnprocessableEntityIsA422() throws Exception {
+    when(icebergRestNamespaceApiHandler.updateProperties(
+            eq(ICEBERG_REST_PREFIX), eq("db"), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(
+            new org.apache.iceberg.exceptions.UnprocessableEntityException(
+                "Invalid namespace properties update"));
+
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    "/v1/{prefix}/namespaces/db/properties", ICEBERG_REST_PREFIX)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"updates\":{\"owner\":\"user\"}}"))
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.error.type").value("UnprocessableEntityException"));
   }
 
   private static TableMetadata testMetadata(String location) {

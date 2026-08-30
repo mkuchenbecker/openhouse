@@ -38,15 +38,69 @@ Tables Service owns the namespace API contract (`NamespacesService`), the House 
 the record (`database_row`, `/hts/databases`), and `HouseNamespaceRepository` is the seam between
 them.
 
+### What "stored" means for a database that predates the namespace store
+
+A namespace exists if **either** store says so, and the two answers are composed in
+`NamespacesServiceImpl`:
+
+1. **The namespace store has a row for it.** Every namespace created through `POST
+   /v1/{prefix}/namespaces` gets one. So does every database a table has been written into since
+   this change landed: `TablesServiceImpl.putTable` calls `NamespacesService.ensureNamespace` on the
+   path that creates a table in a database, which registers the row idempotently. Writing the first
+   table into a database is what creates that database in OpenHouse, so it is also what creates its
+   namespace record.
+2. **The table store holds a table that names it.** This is every database created *before* this
+   change. It has no row, and it is still a namespace: `SHOW NAMESPACES` lists it,
+   `namespaceExists` answers true, `GET /namespaces/{it}` returns it with an empty property map,
+   and `DELETE` reports `409 NamespaceNotEmpty` because a derived name exists precisely because a
+   table occupies it. The derivation is the same one `GET /databases` has always used
+   (`OpenHouseInternalRepository.findAllIds`).
+
+The practical consequences of a database being known only by derivation:
+
+- Its property map reads as empty, because there is nowhere yet for a property to live.
+- The first `POST /namespaces/{it}/properties` writes its row on the way through, after which it is
+  a stored namespace like any other. Nothing else about it changes and no data moves.
+- `POST /v1/{prefix}/namespaces` for it is a `409 AlreadyExists`, as it should be: it exists.
+
+No backfill job runs, and none is needed for correctness. A bulk backfill would only let the derived
+branch be deleted; it is a performance change, not a behavioural one, and it belongs with the
+migration-state machinery that this change deliberately does not build.
+
 Iceberg response types use a narrowly scoped Spring `HttpMessageConverter`. Errors are translated
 by controller-scoped advice into the standard Iceberg error envelope.
 
 ## Compatibility and limitations
 
 - Only single-level namespaces are supported. The depth cap is the cluster property
-  `cluster.tables.namespace.max-depth`, which defaults to 1.
-- Namespace properties are a free-form string map. Keys prefixed `openhouse.` are server-owned and
-  rejected on write.
+  `cluster.tables.namespace.max-depth`, which defaults to 1. **Setting it to anything else fails
+  startup**, with a message naming the seams nesting would need. Raising the property today would
+  widen one validator and nothing below it: the encoded form of a two-level namespace contains a
+  `.`, which `/hts/databases` rejects; `NamespaceUtil.isTableNamespace` still means "exactly one
+  level"; the metadata-table discriminator of the design's section 5.4 is absent; the namespace
+  store has no `childrenOf` range query; and `/v1` does not route nested paths. A startup error is
+  the honest form of that, in place of a `500` on the first two-level create.
+- `listNamespaces` reads the whole namespace store and the whole derived database list. That is
+  bounded by the same limit `GET /databases` has always had, and it is unpaged: raising the number
+  of databases a cluster can serve needs the design's `childrenOf(encodedParent)` range query,
+  which is a new House Tables route and a client regeneration. Listing the children of a non-empty
+  namespace short-circuits to empty at the shipped depth, so `dropNamespace` never depends on that
+  scan.
+- Namespace properties are bounded: at most 100 entries, 1 KiB per entry and 8 KiB in total,
+  counted as UTF-8 key plus value bytes. A `null` property value is rejected rather than treated as
+  a removal. The bounds are enforced at the Tables Service ingress and again at the House Tables
+  boundary, which is reachable on its own.
+- A namespace write is a compare-and-set on the version the writer read. Two concurrent updates do
+  not both succeed: the loser gets `409 CommitFailedException`, and two concurrent creates of the
+  same namespace resolve to one `201` and one `409`.
+- Namespace property keys are held to the same preserved-key rule as table properties
+  (`BasePreservedKeyChecker`): keys prefixed `openhouse.`, and `policies`, are server-owned and
+  rejected on write with `400 ValidationException`. A reserved key inside `updates` on an existing
+  namespace is a `400`, never a `404` — the namespace does exist, and saying otherwise would be
+  false.
+- Namespace lookup is case-insensitive but listing is not, so `GET`/`POST` responses name the
+  **stored** namespace rather than echoing the requested spelling. `GET /namespaces/mydb` for a
+  stored `MyDb` answers with `MyDb`.
 - `listNamespaces` returns the complete listing in one page and never issues a continuation token.
   An empty `pageToken` (which every Iceberg Java client since 1.6.0 sends) is accepted.
 - Dropping a namespace that still holds tables or child namespaces is a `409`
