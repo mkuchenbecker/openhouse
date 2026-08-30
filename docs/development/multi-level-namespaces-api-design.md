@@ -62,8 +62,11 @@ the boundary too, or it becomes an accident of whichever component happens to me
 `rest-support-sequencing.md` §2.1 is the inventory this document turns into a design. Two of its
 sub-blockers are stated wrongly, and correcting them removes work rather than adding it.
 
-**"Dot-join vs `%1F`" is not one decision.** §2.1 frames the encoding as a single choice between
-Iceberg's wire separator and dot-joining. There are two encodings with two different owners:
+**"Dot-join vs `%1F`" is not one decision.** §2.1 gets the first half right: it calls `%1F`
+*Iceberg's own wire encoding*, which it is. The defect is the sentence immediately after —
+"whichever is chosen, it becomes the HTS key format permanently the moment a client creates a
+nested namespace over REST" — which puts the wire form and the persisted form in one slot and so
+invites `%1F` into `house_table.database_id`. There are two encodings with two different owners:
 
 - The **wire** encoding is fixed by the spec. The `namespace` path parameter and the `parent` query
   parameter are `%1F`-separated, servers *must* accept `0x1F` regardless of what they advertise,
@@ -79,8 +82,10 @@ OpenHouse code sees it. §3 decides the second; the first is not a decision.
 direct opposition: admitting `.` into a level destroys the injectivity that makes the encoding
 usable as a primary key. They are also not coupled to the defect §2.1 cites them for. The
 reference test `testLoadTableWithNonExistingNamespace` fails because a syntactically invalid
-identifier draws `400 IllegalArgumentException` where the spec requires `404`. That is an
-**error-mapping** contract (§5.7), fixable without touching the charset — and Iceberg's own
+identifier draws `400 IllegalArgumentException` where the test requires `404` carrying
+`type = NoSuchTableException`. The type matters as much as the code, because Iceberg's client
+switches on it — see §5.2. That is an **error-mapping** contract, fixable without touching the
+charset — and Iceberg's own
 `CatalogTests` exposes `supportsNamesWithDot()` and `supportsNamesWithSlashes()` precisely so a
 server can decline the wider charset and still conform.
 
@@ -122,7 +127,8 @@ server can decline the wider charset and still conform.
   `RESTUtil` own request/response construction, exactly as PR #34 already does for `loadTable`, so
   the OpenHouse handler owns zero protocol logic.
 - **S3 — Off by default.** The change is inert until an operator raises the depth cap, so it can
-  merge ahead of the REST write path without a rollout plan.
+  merge ahead of the REST write path without a rollout plan. This requires the `/v1` identifier
+  pattern to be gated on the cap and not merely widened alongside it; §5.1 states why.
 - **S4 — The `/v1` estate keeps working.** Jobs, the optimizer and the Spark plugin address tables
   through `/v1/databases/{databaseId}/...`; a nested table should not be invisible to retention and
   compaction.
@@ -161,8 +167,13 @@ server can decline the wider charset and still conform.
   there is no `renameNamespace`). It would also require moving storage under the recommended
   layout.
 - **X2 — Backfill of existing implicit databases**, and whether they are materialized eagerly or
-  lazily. That is WS2's decision about the store; this boundary is satisfied either way, because
-  §6's invariant is stated over the *encoding*, not over row existence.
+  lazily. That is WS2's decision about the store, and PR #56 has made it: §5.8's registrar makes
+  populate-on-write the floor and explicit backfill the ceiling. This boundary is **not** satisfied
+  either way, and an earlier draft claiming so was wrong: eager-vs-lazy decides whether `/v1`
+  `createTable` into a fresh database starts returning `404`, and none of I1–I12 can detect that
+  break, because all twelve are stated over encoding, paths, ACL subjects and `isValidIdentifier`.
+  What this document therefore owes is a contract row rather than a fresh decision — §5.2 pins `/v1`
+  `createTable` to implicit creation, citing PR #56 §5.6.
 - **X3 — The commit path.** `requirements`/`updates`, staged create, transactions. Block B of the
   sequencing analysis.
 - **X4 — Multi-level namespaces for views.** The view routes take the same `{namespace}` path
@@ -198,9 +209,19 @@ metric tag, and it cannot appear in the `/v1` route that the jobs and optimizer 
 
 The cost of A is W5: `.` becomes structurally reserved, so OpenHouse can never support a namespace
 level containing a dot. That is a real and permanent narrowing, and it is the one thing a reviewer
-should push on. It is acceptable because the current charset already excludes `.`, Iceberg's
-reference suite has a capability flag for declining it, and no OpenHouse client can be relying on
-a character the validator has always rejected.
+should push on. It has a second half, less obvious and worth naming because it escapes this
+repository. `TableUri.toString` (`TableUri.java:26-34`) composes
+`clusterId + "." + databaseId + "." + tableId`, so for namespace `a.b` the URI is `cluster.a.b.tbl`
+— four fields, three dots, and no way to split them back apart. No parser for that value exists in
+this repository, so depth 1 is unaffected and nothing here breaks; but the URI is published as the
+reserved table property `openhouse.tableUri`, so it crosses to consumers this design cannot see,
+and any of them that splits on `.` is relying on a shape dot-joining makes ambiguous.
+
+Both halves are acceptable for the same reason: the current charset already excludes `.`, Iceberg's
+reference suite has a capability flag for declining it, and no OpenHouse client can be relying on a
+character the validator has always rejected. The `TableUri` half is called out separately because
+its blast radius is outside this repository, which is exactly the kind of consequence a one-way
+door should state rather than discover.
 
 ### 3.1 Subordinate decisions this constrains
 
@@ -216,7 +237,11 @@ a character the validator has always rejected.
 | Precedence | reserved `openhouse.*` > table-local > nearest ancestor | Deepest-wins-over-local; merge; error on conflict | §5.8 |
 | Provenance on read | Effective map + one reserved key `openhouse.inheritedProperties` | Second properties map (wire extension); no provenance | §5.8 |
 | Privilege inheritance | None | Inherit down the tree | W1, appendix D |
-| `/v1` `databaseId` pattern | Widened to `^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$` | Left depth-1-only | §5.1 |
+| `/v1` `databaseId` pattern | Widened to `^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$`, **gated on `max-depth > 1`** | Widened unconditionally (breaks S3); left depth-1-only | §5.1 |
+| HTS wire charset | `databaseId` widens on the HTS wire too — seven enforcement points, two services, one change | Treating the HTS repository as an unchanged seam | §5.5 |
+| `tableId` charset | Unchanged, `^[a-zA-Z0-9_]+$`, at every seam | Widening it alongside `databaseId` (destroys M3 and §5.4) | §5.5 |
+| Immediate-children query | `childrenOf(encodedParent)` as a range over WS2's `databaseId` ordering | Point lookup only; full-table scan and filter | §5.5 |
+| `Namespace` construction | Only via `NamespaceUtil.decode`, at every seam that sees a `databaseId` string | `Namespace.of(databaseId)` — a one-level namespace containing dots | §5.3, I15 |
 
 ---
 
@@ -279,7 +304,7 @@ that exist. That mechanism is the contract's enforcement; nothing here is adviso
 | Method & path | operationId | Request | Success | Privilege |
 |---|---|---|---|---|
 | `GET /v1/{prefix}/namespaces?parent&pageToken&pageSize` | `listNamespaces` | — | `200 ListNamespacesResponse` | authenticated |
-| `POST /v1/{prefix}/namespaces` | `createNamespace` | `CreateNamespaceRequest` | `200 CreateNamespaceResponse` | `CREATE_TABLE` on the parent (`SYSTEM_ADMIN` at the root) |
+| `POST /v1/{prefix}/namespaces` | `createNamespace` | `CreateNamespaceRequest` | `200 CreateNamespaceResponse` | `CREATE_TABLE` on the parent; `CREATE_TABLE` at the root (§5.6) |
 | `GET /v1/{prefix}/namespaces/{namespace}` | `loadNamespaceMetadata` | — | `200 GetNamespaceResponse` | `GET_TABLE_METADATA` |
 | `HEAD /v1/{prefix}/namespaces/{namespace}` | `namespaceExists` | — | `204` | `GET_TABLE_METADATA` |
 | `DELETE /v1/{prefix}/namespaces/{namespace}` | `dropNamespace` | — | `204` | `DELETE_TABLE` |
@@ -302,16 +327,53 @@ tree. `parent=a%1Fb` → the immediate children of `a.b`, each returned as a ful
 NoSuchNamespaceException`. This is the one place where "one level" is the spec's own wording and
 must not be read as "everything below".
 
-**`/v1` legacy routes.** `OpenHouseTablesApiValidator` and `OpenHouseDatabasesApiValidator` widen
-`databaseId` from `ALPHA_NUM_UNDERSCORE_REGEX` to a dot-joined form
-`^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$`. This is **strictly additive**: every string that validates
-today still validates, unchanged; every string this newly admits was previously a `400` naming a
-resource that could not exist. Doing it is what keeps S4 — a nested table stays visible to
-retention, compaction, and the Spark plugin, all of which address tables through
-`/v1/databases/{databaseId}/tables/{tableId}`. Declining it is the alternative in appendix E, and
-its cost is that nested tables become invisible to every data-management job in the fleet.
-`GET /v1/databases` then returns dot-joined encoded namespaces, which for every existing
-depth-1 database is the identical string it returns today.
+**`/v1` legacy routes.** The jobs scheduler, the optimizer's retention/compaction/orphan-deletion
+apps and the Spark plugin all address tables as `/v1/databases/{databaseId}/tables/{tableId}`, so
+`databaseId` has to admit a dot-joined encoded namespace or a nested table is invisible to every
+data-management job in the fleet (S4). Declining it altogether is the alternative in appendix E.
+Three things have to hold together, and the first is where an earlier draft of this document was
+wrong.
+
+**(i) The widening is gated on the depth cap.** `databaseId` widens from
+`ALPHA_NUM_UNDERSCORE_REGEX` to `^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$` **only when
+`cluster.tables.namespace.max-depth > 1`**; at the shipped default of 1 the pattern is byte-identical
+to today's. Unconditional widening would break S3 on the day it merged, and the reason is subtle
+enough to state: the `/v1` seam does not build multi-level namespaces. `OpenHouseInternalRepositoryImpl`
+builds `Namespace.of(databaseId)` — a **one-level** namespace whose level text contains dots — and
+Iceberg's `Namespace.of` rejects only the null byte (1.5.2 `Namespace.java:38-51`), so the dots pass.
+`isTableNamespace` then counts one level and approves. With the pattern widened unconditionally,
+`POST /v1/databases/a.b.c.d/tables/t` would succeed at `max-depth=1`, and "a literal no-op until an
+operator raises it" would be false from the first commit. The gate closes it at the default; §5.3's
+construction rule closes it once the cap *is* raised. Widening remains **strictly additive** in the
+raised configuration: every string that validates today still validates unchanged, and every string
+newly admitted was previously a `400` naming a resource that could not exist.
+
+**(ii) Only `databaseId` widens, and it widens in two services.** `tableId` stays
+`^[a-zA-Z0-9_]+$` everywhere. And the widening is not local to the Tables Service: House Tables
+re-validates `databaseId` against the same regex on its own wire, so §5.1 alone would 400 every
+nested-table write at the HTS boundary. That is a cross-service contract change and §5.5 owns it,
+enforcement point by enforcement point.
+
+**(iii) The edit target is a new helper, not the existing one.** On `pr44` both
+`OpenHouseTablesApiValidator` and `OpenHouseDatabasesApiValidator` delegate to
+`ApiValidatorUtil.validateIdentifier` (`ApiValidatorUtil.java:78-86`), which has ten call sites in
+main source spanning `databaseId`, `tableId`, and the view surface's `namespace` and `name`.
+Widening *that* helper would widen table and view names too, destroying M3 and §5.4's discriminator.
+The widening therefore introduces a separate
+`ApiValidatorUtil.validateNamespaceIdentifier(fieldName, value, failures)` and moves exactly the
+namespace-shaped call sites onto it:
+
+| Call site (`pr44`) | Field | Moves? |
+|---|---|---|
+| `OpenHouseDatabasesApiValidator.java:48` | `databaseId` | **Yes** |
+| `OpenHouseTablesApiValidator.java:510` | `databaseId` | **Yes** |
+| `OpenHouseTablesApiValidator.java:514` | `tableId` | No — `tableId` never widens |
+| `OpenHouseViewsApiValidator.java:109`, `:117`, `:129`, `:161` | view `namespace` | **Yes, with X4** — the view routes take the same path parameter and inherit this decision mechanically, but the views backend is PR #44's, so these four move when X4 is taken up |
+| `OpenHouseViewsApiValidator.java:110`, `:162` | `view` | No |
+| `OpenHouseViewsApiValidator.java:130` | view `name` | No |
+
+`GET /v1/databases` then returns dot-joined encoded namespaces, which for every existing depth-1
+database is the identical string it returns today.
 
 ### 5.2 The handler seam
 
@@ -330,8 +392,10 @@ public interface IcebergRestNamespaceApiHandler {
 Sibling of PR #34's `IcebergRestApiHandler`, same package, same `@ConditionalOnProperty`.
 
 **Owns:** the wire↔domain translation. It is the **only** place `RESTUtil.decodeNamespace` and
-`RESTUtil.encodeNamespace` are called, and the only place `Namespace` is constructed from an
-untrusted string. It resolves the acting principal
+`RESTUtil.encodeNamespace` are called, and the only place a `Namespace` is built from a *wire*
+string. (The other producer of `Namespace` values is `NamespaceUtil.decode`, which owns everything
+built from a persisted or `/v1` string — §5.3. Between them they are exhaustive, which is what I15
+asserts.) It resolves the acting principal
 (`AuthenticationUtils.extractAuthenticatedUserPrincipal`) and delegates to
 `org.apache.iceberg.rest.CatalogHandlers` for document construction, so that
 `UpdateNamespacePropertiesResponse`'s `updated`/`removed`/`missing` partition is Iceberg's
@@ -340,25 +404,57 @@ semantics rather than ours (S2).
 **Must not decide:** the persisted encoding (that is `NamespaceUtil`'s, invoked below it);
 authorization outcomes (that is the service layer's); property resolution (§5.8).
 
-**Error contract** — these mappings are the boundary, not a suggestion:
+**Error contract** — these mappings are the boundary, not a suggestion. The `type` field is not
+decoration: Iceberg's client selects the exception it throws from it, and it selects differently per
+route family, so `type` and message are pinned wherever `CatalogTests` asserts on them.
 
-| Condition | Exception | HTTP | `IcebergErrorResponse.type` |
-|---|---|---|---|
-| Namespace absent, on any route that names one | `NoSuchNamespaceException` | 404 | `NoSuchNamespaceException` |
-| **Namespace syntactically invalid** (bad charset, over depth cap, over length) **on a read route** | `NoSuchNamespaceException` | **404** | `NoSuchNamespaceException` |
-| Namespace syntactically invalid on `createNamespace` | `ValidationException` | 400 | `ValidationException` |
-| `createNamespace` on an existing namespace | `AlreadyExistsException` | 409 | `AlreadyExistsException` |
-| `createNamespace` whose parent does not exist | `NoSuchNamespaceException` | 404 | `NoSuchNamespaceException` |
-| `dropNamespace` on a namespace holding tables, views, or child namespaces | `NamespaceNotEmptyException` | 409 | `NamespaceNotEmptyException` |
-| A key appears in both `removals` and `updates` | `IllegalArgumentException` (from Iceberg's own request validation) | **422** | `UnprocessableEntityException` |
-| Reserved (`openhouse.`-prefixed) key in `updates` | `ValidationException` | 400 | `ValidationException` |
-| Principal lacks the privilege | `AccessDeniedException` | 403 | `NotAuthorizedException` |
+| Condition | Route family | Exception | HTTP | `IcebergErrorResponse.type` | Message |
+|---|---|---|---|---|---|
+| Namespace absent | namespace routes | `NoSuchNamespaceException` | 404 | `NoSuchNamespaceException` | `Namespace does not exist: <ns>` — asserted, `CatalogTests.java:264-266` |
+| **Namespace absent or syntactically invalid** (bad charset, over depth cap, over length) | **table routes** (`loadTable`, `tableExists`, `listTables`) | `NoSuchTableException` | **404** | **`NoSuchTableException`** | `Table does not exist: <encoded-ns>.<table>` — asserted, `CatalogTests.java:974-975` |
+| **Namespace syntactically invalid** | namespace **read** routes | `NoSuchNamespaceException` | **404** | `NoSuchNamespaceException` | `Namespace does not exist: <ns>` |
+| Namespace syntactically invalid | `createNamespace` | `ValidationException` | 400 | `ValidationException` | — |
+| `createNamespace` on an existing namespace | `createNamespace` | `AlreadyExistsException` | 409 | `AlreadyExistsException` | — |
+| `createNamespace` whose parent does not exist | `createNamespace` | `NoSuchNamespaceException` | 404 | `NoSuchNamespaceException` | — |
+| `dropNamespace` on a namespace holding tables, views, or child namespaces | `dropNamespace` | `NamespaceNotEmptyException` | 409 | `NamespaceNotEmptyException` | must contain `is not empty` — asserted, `CatalogTests.java:422-424` and `:455-457` |
+| A key appears in both `removals` and `updates` | `updateProperties` | `IllegalArgumentException` (from Iceberg's own request validation) | **422** | `UnprocessableEntityException` | — |
+| Reserved (`openhouse.`-prefixed) key in `updates` | `updateProperties` | `ValidationException` | 400 | `ValidationException` | — |
+| Principal lacks the privilege | all | `AccessDeniedException` | 403 | **`ForbiddenException`** | — |
+| `createTable` into a namespace with no stored row | `/v1` `POST /v1/databases/{db}/tables` | — | **201, no error** | — | the database is created implicitly; see below |
+| `createTable` into a namespace that does not exist | REST `createTable` | `NoSuchNamespaceException` | 404 | `NoSuchNamespaceException` | per spec |
 
-Row 2 is the fix for `BLOCKED_IDENTIFIER_CHARSET`. **A read route never returns 400 for a
-well-formed URL naming a resource that cannot exist** — the distinction between "you asked wrongly"
-and "it isn't there" belongs to write routes only. Errors on these routes carry the
-`IcebergErrorResponse` envelope, never OpenHouse's `ErrorResponseBody`, and never a serialized
-stack trace.
+**Why the invalid-namespace rows split by route family.**
+`ErrorHandlers.TableErrorHandler.accept` (Iceberg 1.11.0, `ErrorHandlers.java:145-155`) throws
+`NoSuchNamespaceException` when `type` is `NoSuchNamespaceException` and `NoSuchTableException`
+otherwise, while `testLoadTableWithNonExistingNamespace` (`CatalogTests.java:969-976`) asserts
+`NoSuchTableException` with a message starting `Table does not exist: `. So mandating
+`type = NoSuchNamespaceException` on a *table* route — which an earlier draft of this document did —
+selects exactly the branch that makes a conformant client throw the wrong exception, and fails the
+test the mapping exists to retire. `NoSuchNamespaceException` is the correct type only on the
+namespace routes and on `createTable`, where the client uses a namespace-shaped handler.
+
+Nothing new is needed on the emitting side. PR #34's handler already throws
+`new NoSuchTableException("Table does not exist: %s.%s", databaseId, table)`
+(`OpenHouseIcebergRestApiHandler.java:101`), and `IcebergRestExceptionHandler.java:25-26` already
+maps it to `404` with that type. The only change is letting a syntactically invalid `databaseId`
+*reach* that path instead of being converted to a `400` by the validator first. The `403` row is the
+same kind of correction in the other direction: `DefaultErrorHandler.accept`
+(`ErrorHandlers.java:342-345`) maps `401` to `NotAuthorizedException` and `403` to
+`ForbiddenException`, and `IcebergRestExceptionHandler.java:40-42` already emits `ForbiddenException`.
+
+**A read route never returns 400 for a well-formed URL naming a resource that cannot exist** — the
+distinction between "you asked wrongly" and "it isn't there" belongs to write routes only. Errors on
+these routes carry the `IcebergErrorResponse` envelope, never OpenHouse's `ErrorResponseBody`, and
+never a serialized stack trace.
+
+**`/v1` `createTable` keeps implicit database creation; REST `createTable` does not.** Today the
+database is implicit: `TablesServiceImpl.java:144-145` checks `CREATE_TABLE` on the `databaseId` and
+the database materializes as a side effect of the first table. That does not change here, and it is
+not this document's decision to make — PR #56 §5.6 states that the consumer may not assume, before
+its migration state S8, that any existing `DatabasesService` method can fail with a "database not
+found", and PR #56 §5.8's registrar makes populate-on-write the floor, so the row appears without
+`/v1` having to ask for it. REST `createTable` returns `404` per spec. The two surfaces differ
+deliberately; X2 records that the difference is a citation rather than a new decision.
 
 ### 5.3 The internal-catalog seam
 
@@ -376,7 +472,8 @@ boolean           namespaceExists(Namespace ns);
 ```
 
 Implementing this SPI is also what lets `listTables(Namespace.empty())` stop being the
-"anti-pattern" its own TODO comment calls it.
+"anti-pattern" its own TODO comment calls it — PR #56 §5.9.2 deletes that arm at migration state
+S9, and appendix G records what goes with it.
 
 `NamespaceUtil` becomes the single seam it was written to be, and gains the encoder:
 
@@ -396,7 +493,33 @@ observable behaviour anywhere (S3) — this is the mechanism by which the sequen
 branch. Recommended value when enabled: **6**, subordinate to the hard 128-character encoded-length
 cap of §5.5.
 
-**Owns:** the encoding, the depth and charset predicates, and the `isValidIdentifier` verdict.
+`isTableNamespace` **widens**; it is not a rename. Today it is
+`namespace.levels().length == MAX_NAMESPACE_DEPTH` — an equality — and it becomes
+`1 <= depth <= maxDepth`. The two are the same predicate at `maxDepth == 1`, which is why the change
+is invisible at the default, but above 1 it is a genuine change of meaning at every call site,
+`isValidIdentifier` (§5.4) included. Calling it a rename would hide the one place the widening bites.
+
+**Where `Namespace` is constructed, and by what.** A seam is only a seam if nothing bypasses it, and
+on the `/v1` estate everything does. `OpenHouseInternalRepositoryImpl` builds
+`Namespace.of(databaseId)` at `:847`, `:860`, `:876` and `:977`, and
+`TableIdentifier.of(databaseId, tableId)` at `:117`, `:797`, `:817`, `:833`, `:840`, `:935` and
+`:967-968`. Every one of those is a **one-level** namespace whose level text contains dots —
+`Namespace.of("a.b")`, never `Namespace.of("a","b")` — because Iceberg's `Namespace.of` rejects only
+the null byte (1.5.2 `Namespace.java:38-51`). The inverse seam has the same shape:
+`OpenHouseInternalCatalog.java:108`, `:112`, `:121` and `:125` rebuild
+`TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId())` straight from the persisted
+key. That is a decode, performed by `TableIdentifier.of` rather than by `NamespaceUtil.decode`.
+
+The rule, therefore: **every `Namespace` and every `TableIdentifier` built from a `databaseId`
+string, and every one built from a `HouseTable` row, is built through `NamespaceUtil.decode`.**
+`Namespace.of` and the varargs `TableIdentifier.of` are not called on a value that came from a
+`databaseId` column, a `/v1` path segment, or an HTS response. Two things depend on this and nothing
+else provides them: the depth cap is otherwise unenforceable on `/v1` (the cap counts levels, and
+these values always have exactly one, whatever they spell), and N1's `decode(encode(ns)).equals(ns)`
+otherwise fails for every namespace the `/v1` path constructs. I15 pins it as a testable rule.
+
+**Owns:** the encoding, the depth and charset predicates, the `isValidIdentifier` verdict, and — by
+I15 — sole authorship of every `Namespace` the internal catalog sees.
 **Must not decide:** HTTP status codes, authorization, or property resolution. It throws Iceberg's
 own exceptions and the handler maps them.
 
@@ -457,6 +580,14 @@ retired.
 with `400 ValidationException` at the tables validator, so it holds for the `/v1` route and the
 REST route alike. Defects 2 and 3 retired.
 
+Rule (b) is needed on the `/v1` route specifically; at the SPI seam predicate (a) already suffices.
+`BaseMetastoreCatalogTableBuilder`'s constructor asserts
+`Preconditions.checkArgument(isValidIdentifier(identifier), ...)` (`BaseMetastoreCatalog.java:148-149`),
+and (a) makes that false for a metadata-table name at depth ≥ 2, so an in-JVM create is already
+impossible. What (b) adds is the *boundary's* answer: a `400` raised at the validator with a message
+naming the rule, instead of an `IllegalArgumentException` surfacing from inside the commit path. It
+is an error-contract rule that happens to also be a prohibition, not a second prohibition.
+
 **Why the `>= 2` branch is safe, and why it is the only one.** It is the single place this design
 branches on namespace depth, and it exists for a reason that is checkable rather than
 aesthetic: **at depth 1 the identifier space has an installed base with defined behaviour; at
@@ -474,27 +605,88 @@ restated for this seam, and is directly testable as such.
 separate path segments, already split by the client, and the spec has no metadata-table route —
 Iceberg clients build metadata tables locally from the loaded `TableMetadata`. The ambiguity is
 purely an artifact of the in-JVM `Catalog` SPI, where a flat dotted `TableIdentifier` must be
-parsed. Rule (b) exists to keep that SPI sound; rule (a) exists to keep it fast.
+parsed. Rule (a) is what keeps that SPI both sound and fast; rule (b) is what makes the `/v1`
+boundary say so in the right status code.
 
 ### 5.5 The HTS repository and storage-path seams
 
-**HTS repository.** `HouseTablePrimaryKey.databaseId` and every
-`HouseTableRepository.*ByDatabaseId(String databaseId, ...)` signature is **unchanged**. What
-changes is the documented meaning of the parameter: it is *the encoded namespace*, not *a database
-name*. The repository must not split, parse, or interpret it — it is an opaque key. Two obligations
-follow:
+**HTS repository — a cross-service contract change, not an unchanged seam.**
+`HouseTablePrimaryKey.databaseId` and every `HouseTableRepository.*ByDatabaseId(String databaseId,
+...)` *signature* is unchanged, and what changes at that signature is the documented meaning of the
+parameter: it is *the encoded namespace*, not *a database name*, and the repository must not split,
+parse, or interpret it. But calling the seam itself unchanged, as an earlier draft did, is wrong.
+`HouseTableRepositoryImpl` is not a repository — it is a generated HTTP client
+(`housetables.client.api.UserTableApi`) to a **separately deployed service**, and that service
+re-validates `databaseId` against `^[a-zA-Z0-9_]+$` on its own wire. Ship §5.1's widening alone and
+every nested-table write is a `400` at the HTS boundary, surfacing to the caller at commit time as
+an opaque server-side failure.
+
+Nine enforcement points carry the charset for `databaseId`, and §5.1 reaches only two of them —
+the path-parameter checks in `OpenHouseDatabasesApiValidator` and `OpenHouseTablesApiValidator`.
+The other seven are below. All nine widen together, in one change, across two services; that is the
+contract:
+
+| # | Enforcement point | Service | Kind |
+|---|---|---|---|
+| 1 | `UserTableKey.java:33` | House Tables | `@Pattern`, primary key |
+| 2 | `UserTable.java:37` | House Tables | `@Pattern`, entity |
+| 3 | `SoftDeletedUserTableKey.java:31` | House Tables | `@Pattern` |
+| 4 | `TableToggleStatusKey.java:23` | House Tables | `@Pattern` |
+| 5 | `OpenHouseUserTableHtsApiValidator.java:27` | House Tables | imperative, `validateGetEntity` |
+| 6 | `OpenHouseUserTableHtsApiValidator.java:117` | House Tables | imperative, query validation |
+| 7 | `CreateUpdateTableRequestBody.java:47` | Tables | `@Pattern`, `/v1` request body |
+
+**Only `databaseId` widens.** The `tableId` `@Pattern` sitting beside each of the above
+(`UserTableKey.java:23`, `UserTable.java:27`, `SoftDeletedUserTableKey.java:23`,
+`TableToggleStatusKey.java:31`, `OpenHouseUserTableHtsApiValidator.java:33`,
+`CreateUpdateTableRequestBody.java:39`) stays `^[a-zA-Z0-9_]+$`. Widening it would admit a dot into a
+table name, which makes the persisted `(databaseId, tableId)` pair non-injective as a rendering of
+`namespace.table` (M3) and destroys §5.4's metadata-table discriminator, since `db.tbl.snapshots`
+would stop being distinguishable from a table literally named `tbl.snapshots`. This is the sharpest
+place in the design where "widen the charset" must not be read as one edit. I14 checks the widened
+half; the property test behind M3 checks the unwidened one.
+
+Two obligations follow at the column:
 
 - **Length.** `database_id VARCHAR(128)`. The boundary rejects an encoded namespace longer than 128
   characters with `400 ValidationException` before it reaches the repository. Silent truncation at
   a primary key would be a data-corruption bug, and this is the real bound on depth.
 - **Collation.** Case-sensitivity of namespace comparison is whatever the `database_id` column
   collation already gives depth-1 databases, applied to the whole encoded string. This design
-  introduces no normalization of its own — see OQ-5.
+  introduces no normalization of its own; OQ-5 records the audit PR #56 owns.
 
-Namespace rows themselves (properties, existence, parent links) are WS2's entity. The contract this
-boundary places on it: **a namespace's key is `encode(ns)`**, the same string that appears in
-`house_table.database_id`, so that "does namespace `a.b` contain tables" is a prefix or equality
-question over one column family and never a join across two encodings.
+**What this boundary requires of WS2's namespace store.** Namespace rows themselves (properties,
+existence, parent links) are WS2's entity. Three things are required of it. They are requirements
+rather than assumptions because §5.1's routes cannot be implemented without them, and WS1 and WS2
+ship together, so a dependency here is a seam to name rather than a defect to route around.
+
+*The key.* **`databaseId` bytes are unchanged for every database that exists today, and the
+namespace store's key is `encode(ns)` — the same string that appears in `house_table.database_id`,
+for every namespace at every depth.** (PR #56 carries this sentence verbatim; it is the shared
+handoff.) It is what makes "does namespace `a.b` contain tables" a question over one column family
+rather than a join across two encodings.
+
+*`childrenOf(encodedParent)` — the immediate children, not the subtree.* §5.1's
+`listNamespaces?parent=` must return immediate children as *full* namespaces, which is what
+`testListNestedNamespaces` (`CatalogTests.java:504-548`) asserts: with `parent.child1` and
+`parent.child2` created, `listNamespaces(parent)` must equal exactly
+`[["parent","child1"], ["parent","child2"]]`. PR #56 §5.7 offers only point lookup (`databaseExists`)
+plus a complete list ordered by `databaseId`. That ordering is sufficient, which is why this is a
+contract addition and not a new store: under dot-join `.` is `0x2E` and sorts below every character
+in `[0-9A-Z_a-z]` (`0x30`–`0x7A`), and `/` is `0x2F`, so a parent's whole subtree is the contiguous
+range `[parent + ".", parent + "/")`. `childrenOf` is therefore a **range**, not a scan. Contiguity
+gives the *subtree*, so the second half must be stated rather than assumed: the range is filtered to
+rows with no further `.` after the prefix. WS2 owns the ordering that makes it a range; WS1 owns the
+no-further-separator filter. The range holds under any collation that orders `.` below the
+identifier charset — every ASCII-ordered and every UCA-derived collation does — which is one more
+reason the collation is pinned rather than inherited (OQ-5).
+
+*`dropNamespace`'s emptiness answer is composed here.* Emptiness spans two stores, and PR #56 §5.7
+offers neither predicate: `databaseExists(id)` answers existence, which is not emptiness. This
+boundary composes it — `hasTables` from `HouseTableRepository.findAllByDatabaseId(encode(ns))`,
+`hasChildNamespaces` from `childrenOf(encode(ns))`, non-empty is the disjunction. OQ-6 fixes the
+verdict (`409` for either kind of occupant); this fixes who computes it, which is the part a
+contract mismatch would otherwise leave to whichever side implemented last.
 
 **Storage path.** `BaseStorage.allocateTableLocation(databaseId, tableId, tableUUID, creator,
 props)` is **unchanged, including its signature**, and continues to produce
@@ -536,9 +728,15 @@ understand namespace nesting would be a change to code we cannot see. That is th
 argument for W1.
 
 Privilege mapping for the six routes is in §5.1. `createNamespace` checks `CREATE_TABLE` on the
-*parent* namespace (and `SYSTEM_ADMIN` when creating a top-level namespace, matching who can
-create a database today); `dropNamespace` checks `DELETE_TABLE` on the namespace itself. No
-privilege check walks the tree.
+*parent* namespace, and `CREATE_TABLE` at the root when creating a top-level namespace.
+`CREATE_TABLE` at the root is what actually matches who can create a database today:
+`TablesServiceImpl.java:144-145` checks `CREATE_TABLE` on the `databaseId` and the database
+materializes as a side effect of the first table. There is no `SYSTEM_ADMIN` check on database
+creation for a root-level rule to mirror — `SYSTEM_ADMIN` exists in `Privileges` but is used only
+for replica-table updates (`AuthorizationUtils.java:65`) — so requiring it at the root would be a
+new restriction dressed as a status-quo mapping. If the owner wants root creation held to a higher
+bar than table creation, that is a deliberate asymmetry to state, not one to inherit by mis-citation.
+`dropNamespace` checks `DELETE_TABLE` on the namespace itself. No privilege check walks the tree.
 
 **The asymmetry, stated plainly.** Properties inherit; privileges do not. So a principal who can
 edit namespace `a` can set a property that takes effect in tables under `a.b` that they may not be
@@ -550,8 +748,8 @@ over what gets created beneath it — but it is a judgment call and it is OQ-3.
 
 Charset per level `^[a-zA-Z0-9_]+$` (W5); depth `1..cluster.tables.namespace.max-depth`; encoded
 length ≤ 128. Empty namespace is legal only as the internal "all databases" sentinel in
-`validateOperationNamespace` and is never addressable over REST (`supportsEmptyNamespace()` stays
-`false`). Validation lives in `NamespaceUtil` and nowhere else; the handler maps its
+`validateOperationNamespace`, is never addressable over REST (`supportsEmptyNamespace()` stays
+`false`), and is transitional — PR #56 removes it at migration state S9 (appendix G). Validation lives in `NamespaceUtil` and nowhere else; the handler maps its
 `ValidationException` per the §5.2 table, and in particular maps it to **404 on read routes**.
 
 ### 5.8 Property inheritance as a contract
@@ -575,6 +773,45 @@ same rule: the REST handler before returning `LoadTableResponse`, and `TablesSer
 returning `GetTableResponseBody.tableProperties`. It is **not** applied inside
 `OpenHouseInternalCatalog`, for reasons developed in appendix C.
 
+**The request-side counterpart, which is not optional.** A projection on the response is only half a
+contract. On `/v1` the projected map comes straight back in the next request, and two pieces of
+existing code then either write it down or reject it outright. Both are on the path every retention
+and compaction job already takes, so this is the hot path, not an edge.
+
+`OpenHouseInternalRepositoryImpl.checkIfPreservedTblPropsModified` (`:484-503`) throws
+`ALTER_RESERVED_TBLPROPS` when the preserved keys of the existing table differ from those in the
+provided body, and `BasePreservedKeyChecker.isKeyPreserved` (`:21-22`) makes every
+`openhouse.`-prefixed key preserved. `openhouse.inheritedProperties` is never persisted, so
+`existing` can never contain it while `provided` always will after a GET. Every `/v1` GET→PUT beneath
+a propertied ancestor would fail — hard, with a reserved-property error — which is the provenance key
+breaking read-modify-write on the surface that has the most of it.
+
+`InternalRepositoryUtils.alterPropIfNeeded` (`:46-71`) is a whole-document replace: keys in the
+provided map and absent from the existing one are `set`, keys in the existing map and absent from the
+provided one are `remove`d. So inherited *user* keys returned in the effective map are written into
+the table's own `metadata.json` on the first ordinary update. Inheritance degrades to
+copy-on-first-write on the primary surface, through code that already exists, violating I11 with no
+new line written anywhere.
+
+The rule: **the `/v1` write path subtracts the resolved ancestor map and drops
+`openhouse.inheritedProperties` from the provided properties before `checkIfPreservedTblPropsModified`
+and `alterPropIfNeeded` see them.** Subtraction, not filtering by key name: a key whose provided
+value *differs* from the inherited value is a deliberate local pin and survives, while a key whose
+provided value equals the value the server just served is not a write at all. I13 states this as a
+round-trip invariant, which is the form it can be tested in.
+
+**What this costs, stated rather than hidden: pinning is not expressible on `/v1`.** A `/v1` PUT
+carries a whole property map and no diff, so "pin this key to the value I was served" and "echo back
+what I was served" are the same bytes on the wire. Subtraction has to read them the same way, and it
+reads them as the echo, because the echo is what every existing client and every maintenance job
+sends and a pin is what nobody has ever sent. Pinning stays expressible where the wire distinguishes
+it: the REST `updateProperties` request carries an explicit `updates` map, and a key named there is a
+write whatever its value. If `/v1` ever needs an explicit pin, the affordance is a new one, not a
+reinterpretation of the round trip.
+
+This is strictly larger than OQ-4, which admits only `replaceTable`. `replaceTable` is the case where
+pinning is correct and merely surprising; the `/v1` GET→PUT is the case where it is a defect.
+
 **Precedence, highest first.** (1) Reserved `openhouse.*` properties — server-computed per entity
 (`openhouse.tableId`, `openhouse.databaseId`, `openhouse.tableUri`, `openhouse.tableUUID`,
 `openhouse.clusterId`, `openhouse.tableVersion`). Never inherited, never overridable, and rejected
@@ -586,9 +823,11 @@ ancestor's value. No merge, no union, no error. Deterministic and explainable in
 which is the property that matters for something a user will debug at 3am.
 
 **Override: yes, by setting a local value.** A table sets the key locally and its value wins at any
-depth. Setting a local value equal to the currently inherited value is **not** a no-op — it pins
-the value, so a later namespace edit does not move it. That is deliberate: it is the only way a
-table can insulate itself.
+depth. Setting a local value equal to the currently inherited value is **not** a no-op — it pins the
+value, so a later namespace edit does not move it. That is deliberate: it is the only way a table can
+insulate itself. The pin is expressible on any surface that names the key it is writing, which is the
+REST `updateProperties` request; it is *not* expressible in a `/v1` whole-map PUT, for the reason
+given above.
 
 **Un-set: no (W4).** A table cannot make an inherited key absent. `remove-properties` on a key the
 table holds locally returns the key to its *inherited* value, not to absent — and the response
@@ -643,11 +882,16 @@ Stated so it can be a test, not a promise. Let `n` be any namespace with `n.leve
 | I9 | `loadTable(n.t.<metadataType>)` performs the same number of HTS round trips as before (zero) | catalog test with a counting repository stub |
 | I10 | For a table whose ancestors carry no properties, `returned(properties) == persisted(properties)` and `openhouse.inheritedProperties` is absent | tables service test |
 | I11 | `persisted(properties) == local(properties)` at every depth — no inherited value is ever written | repository test |
-| I12 | With `cluster.tables.namespace.max-depth=1` (the default), every namespace-related behaviour is identical to the pre-change build | the existing 660-test tables suite, run unmodified |
+| I12 | With `cluster.tables.namespace.max-depth=1` (the default), every namespace-related behaviour is identical to the pre-change build | the existing tables suite (`services/tables/src/test`), run unmodified at the default cap |
+| I13 | A `/v1` GET→PUT round trip on an unmodified table writes no property, for **any** set of ancestor properties — no `metadata.json` commit, no `ALTER_RESERVED_TBLPROPS`, no inherited key promoted to local | tables e2e, parameterized over ancestor property sets (§5.8) |
+| I14 | Every HTS API surface accepts `encode(ns)` for every legal `ns` — every enforcement point named in §5.5, exercised through the generated client rather than in-process, because the boundary being checked is an HTTP one | HTS API test plus a cross-service test through `HouseTableRepositoryImpl` |
+| I15 | No `Namespace` or `TableIdentifier` reaching the internal catalog is built by `Namespace.of` / `TableIdentifier.of` from a `databaseId` string, a `/v1` path segment or a `HouseTable` row; every such value goes through `NamespaceUtil.decode` | a construction rule over `services/tables` and `iceberg/openhouse/internalcatalog`, plus a behavioural test that `POST /v1/databases/a.b.c.d/tables/t` is rejected at `max-depth=1` |
 
 I12 is the strongest of these and the cheapest: at the shipped default the whole change is inert,
 so the existing suite *is* the regression guard, and I1–I11 are what must additionally hold once an
-operator raises the cap.
+operator raises the cap. I12 is a claim about the **default configuration only**. It is a different
+run of the build from §7's conformance gate, which requires the cap raised, and §7 states the
+configuration it needs rather than leaving the two claims to be read as one.
 
 Two negative invariants complete the set:
 
@@ -668,6 +912,27 @@ WS2's namespace store behind it, which is why that dependency is stated at the t
 true`, **`supportsNestedNamespaces() → true`**. `supportsEmptyNamespace()`,
 `supportsNamesWithDot()` and `supportsNamesWithSlashes()` stay `false` (W5).
 
+**The configuration this gate runs under, which is not the shipped default.**
+`tests/iceberg-rest-catalog-compat` runs with `cluster.tables.namespace.max-depth` **raised to the
+OQ-1 value of 6**, not at the shipped default of 1. That has to be stated, because at the default
+the two multi-level tests do not skip — they *fail*. `testListNestedNamespaces`
+(`CatalogTests.java:504-548`) and `testDropNamespaceWithNestedNamespace` (`:436-471`) each
+`assumeThat(supportsNestedNamespaces()).isTrue()` and then call
+`createNamespace(Namespace.of("parent","child1"))`; with the flag flipped true the assumption
+passes, and with the cap at 1 the create is rejected. Flipping `supportsNestedNamespaces()` is a
+claim about a *configuration*, not about the build, and the flag and the cap have to move together
+or the suite is red.
+
+So there are two claims here and they are separate runs of the build. Neither substitutes for the
+other:
+
+| Claim | Configuration | What it guards |
+|---|---|---|
+| **I12** | `max-depth=1`, the shipped default | Regression. The existing tables suite is the guard; the compat module's nested tests are not part of it, and the compat module does not run at this cap. |
+| **§7** | `max-depth=6`, compat module only | Conformance. Requires WS2's namespace store behind it, and says nothing about behaviour at the default. |
+
+The nineteen, and what each one is waiting on:
+
 | Test | Blocker retired by |
 |---|---|
 | `testCreateNamespace` | `createNamespace` route + `SupportsNamespaces` (§5.1, §5.3) |
@@ -676,7 +941,7 @@ true`, **`supportsNestedNamespaces() → true`**. `supportsEmptyNamespace()`,
 | `testLoadNamespaceMetadata` | `loadNamespaceMetadata` route |
 | `testSetNamespaceProperties` | `updateProperties` route |
 | `testUpdateNamespaceProperties` | `updateProperties` route |
-| `testUpdateAndSetNamespaceProperties` | `CatalogHandlers.updateNamespaceProperties` partition (S2) |
+| `testUpdateAndSetNamespaceProperties` | `updateProperties` route, called twice — the test issues two `setProperties` calls and asserts each is a *subset* of what `loadNamespaceMetadata` returns (`CatalogTests.java:319-343`); it never exercises the `updated`/`removed`/`missing` partition |
 | `testSetNamespacePropertiesNamespaceDoesNotExist` | `NoSuchNamespaceException → 404` (§5.2) |
 | `testRemoveNamespaceProperties` | `removals` semantics (§5.8) |
 | `testRemoveNamespacePropertiesNamespaceDoesNotExist` | `NoSuchNamespaceException → 404` |
@@ -694,12 +959,20 @@ Honest accounting: the last two become *skips*, not passes. That is a legitimate
 posture — Iceberg supplies the flags for exactly this — but it should not be counted as two more
 green tests.
 
-**One test outside the nineteen changes category.** `testLoadTableWithNonExistingNamespace` is
-currently disabled under `BLOCKED_IDENTIFIER_CHARSET`. §5.2's rule — a read route returns 404, not
-400, for a syntactically invalid namespace — retires that blocker. The test still needs
-`createTable`, so its `@Disabled` reason moves from `BLOCKED_IDENTIFIER_CHARSET` to
-`NEEDS_CREATE_TABLE` rather than disappearing. Moving a reason is progress that the disabled count
-does not show, and the reason string is the roadmap, so it should be moved rather than left stale.
+**One test outside the nineteen goes green, rather than changing category.**
+`testLoadTableWithNonExistingNamespace` is currently disabled under `BLOCKED_IDENTIFIER_CHARSET`.
+§5.2's rule — a **table** route returns `404` with `type = NoSuchTableException`, not `400`, for a
+syntactically invalid namespace — retires that blocker outright, and there is no second blocker
+behind it: the test body creates nothing. It asserts `tableExists` is false, then that `loadTable`
+throws `NoSuchTableException` with a message starting `Table does not exist: `
+(`CatalogTests.java:969-976`). So its `@Disabled` **disappears**; it does not move to
+`NEEDS_CREATE_TABLE`, as an earlier draft of this section claimed.
+
+The emitting side already exists — `OpenHouseIcebergRestApiHandler.java:101` throws exactly that
+exception with exactly that message, and `IcebergRestExceptionHandler.java:25-26` maps it to `404`
+with that type — so the whole of the change is letting an invalid `databaseId` reach that path
+instead of the validator's `400`. It is counted separately from the nineteen because it is a table
+route, not a namespace one.
 
 **Multi-level-specific coverage is thin**, and it is worth saying so: only two of the nineteen
 actually exercise nesting. The invariants in §6 — particularly I8, I9 and I12 — carry more of the
@@ -710,16 +983,17 @@ not reach at all.
 
 ## 8. Open questions
 
-Each carries a recommended default, so none of these blocks the next phase; each is a place where
-the owner's answer should override mine.
+Each carries a recommended default — or, where a sibling design has already answered it, a
+citation that closes it — so none of these blocks the next phase. Each is a place where the owner's
+answer should override mine.
 
 | # | Question | Recommended default |
 |---|---|---|
 | **OQ-1** | What is `cluster.tables.namespace.max-depth` when an operator enables nesting? | **6**, subordinate to the hard 128-character encoded-length cap of §5.5. Deep enough for `org.team.domain.dataset`-style hierarchies, shallow enough that the length cap is rarely the thing a user hits first. |
 | **OQ-2** | Should a table be able to *tombstone* an inherited property, not merely shadow it? | **No in v1** (W4, appendix C4). Shadowing with a local value — including the empty string — covers the realistic cases, and no spec verb expresses a tombstone, so it would be reachable only through the OpenHouse API. Addable later without changing anything specified here. |
 | **OQ-3** | Properties inherit but privileges do not. Is that asymmetry acceptable? | **Yes for v1** (W1, appendix D). It is consistent with OpenHouse's existing model, where a database-level `CREATE_TABLE` grant already implies control over what is created beneath it. But it is the single judgment call in this document most worth challenging, because it cannot be reversed once inherited access exists in the wild. |
-| **OQ-4** | `replaceTable` carries the full effective property map, which pins every inherited value into the table's local map. Accept or diff? | **Accept and document.** Nothing observable changes at that instant; the alternative guesses at intent and would silently discard a deliberate pin. |
-| **OQ-5** | Is namespace comparison case-sensitive at depth ≥ 2? | **Inherit whatever `database_id`'s column collation already gives depth-1 databases**, applied to the whole encoded string. This design introduces no normalization of its own — but the effective collation should be confirmed against the production HTS schema rather than assumed from `schema.sql`, and `OpenHouseInternalCatalog.renameTable`'s existing `equalsIgnoreCase` case-preservation rule needs re-reading in a dotted world. |
+| **OQ-4** | `replaceTable` carries the full effective property map, which pins every inherited value into the table's local map. Accept or diff? | **Accept and document** — for `replaceTable`, where the client is deliberately restating the whole table. Nothing observable changes at that instant, and the alternative guesses at intent and would silently discard a deliberate pin. This is narrower than it first looked: the `/v1` GET→PUT is the *same* shape and is **not** accepted, because there the client is not restating anything. §5.8's request-side rule subtracts the resolved ancestor map on that path, and I13 tests it. What remains open is only whether `replaceTable` should be brought under the same subtraction for consistency. |
+| **OQ-5** | Is namespace comparison case-sensitive at depth ≥ 2? | **Resolved by citation; no longer open.** PR #56 §5.2 #12 has closed it, and harder than this document framed it: the derived `/v1/databases` path `distinct()`s in **Java** over exact strings while every HTS table lookup is `…IgnoreCase…` and the MySQL collation folds case, so two tables spelling their database differently in case are listed twice today and once after — a pre-existing data inconsistency, not a code question. PR #56 §5.9.1 therefore makes a case-variant audit (`GROUP BY BINARY database_id` against a case-folded grouping) a **pre-migration** obligation that no later state can repair. This design inherits that answer and adds no normalization of its own. **One audit site to contribute back, which PR #56's inventory does not list:** `OpenHouseInternalCatalog.renameTable` (`:217-220`) preserves the source spelling when `from.namespace().toString().equalsIgnoreCase(to.namespace().toString())` — a case-insensitive comparison over the *whole encoded namespace*, which under dot-join makes `A.b` and `a.B` the same rename target at every depth. It belongs in the S0 audit alongside `DatabasesServiceImpl.getAllDatabases()` and `findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase`. |
 | **OQ-6** | `dropNamespace` on a namespace containing only *child namespaces* (no tables) — empty or not empty? | **Not empty → `409 NamespaceNotEmptyException`.** This is what `testDropNamespaceWithNestedNamespace` asserts, and cascade is unrecoverable. It also settles decision 5 of the sequencing analysis's own list, in the non-cascading direction. |
 | **OQ-7** | Does a namespace get an entry in `GET /v1/databases` before any table exists in it? | **Yes** once WS2 stores namespaces — an empty namespace is exactly the thing the current derived-database model cannot represent. Worth confirming no `/v1` client treats "listed" as "has tables". |
 
@@ -775,12 +1049,25 @@ storage backend OpenHouse supports.
 
 **C1 — Resolve inside `OpenHouseInternalCatalog.loadTable`, so every catalog consumer sees
 inherited values.** Attractive because it needs no change at two separate serialization points.
-Rejected on two grounds. It puts a namespace-store read on the hot path of every table load,
-including the metadata-table loads §5.4 works to keep free. Worse, it creates a read-modify-write
-promotion hazard: a client that loads a table and commits a full property map back — which is what
-`replaceTable` does — would silently promote every inherited value into the table's local map,
-converting inheritance into a one-time copy. Resolving *above* the catalog keeps the catalog's
-view of a table equal to what is persisted, which is the property that makes I11 checkable.
+Rejected on the read-modify-write promotion hazard, which is now the whole of the argument: a client
+that loads a table and commits a full property map back would silently promote every inherited value
+into the table's local map, converting inheritance into a one-time copy. §5.8 shows this is not
+hypothetical — `alterPropIfNeeded` is exactly that client and `checkIfPreservedTblPropsModified`
+turns the provenance key into a hard failure — and resolving *above* the catalog is what keeps the
+hazard addressable at one seam instead of baked into the catalog's own view of a table, which is the
+property that makes I11 checkable at all.
+
+**The hot-path ground an earlier draft gave here does not hold, and is withdrawn.** Resolving at the
+serialization boundary is the same hot path one layer up; it is not cheaper by being higher, and per
+request it is *dearer*, because a list response resolves once per element rather than once per load.
+That cost belongs in the design rather than in a rejected alternative. Two things bound it, both
+already available. Within a response, the ancestor chain is a function of the namespace, and on `/v1`
+a page is single-namespace by construction, so the chain is resolved **once per response** and shared
+across elements — a page of 1000 tables under a depth-6 namespace is 6 ancestor lookups, not 6000.
+Across responses, PR #56 §5.4's database cache already holds the property map the resolution reads,
+so the steady state is a cache read per level rather than a store read. Where that cache is not
+available, the resolver carries a request-scoped memo of `encode(ancestor) → properties`; that memo
+is the floor, and it is a requirement on the implementation phase rather than an open question.
 
 **C2 — Materialize inherited properties into `metadata.json` at write time.** Simplest to read and
 worst to own: a namespace property edit becomes a commit per table beneath it (unbounded fan-out,
@@ -846,7 +1133,10 @@ than an API-shape gap, and it would not surface as an error anywhere.
 The widening itself is provably additive: the new pattern
 `^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$` accepts a superset, and every string it newly accepts was
 previously a `400` for a resource that could not exist. No currently-valid request changes
-behaviour, which is M1 for this seam.
+behaviour, which is M1 for this seam. Additive is not the same as inert, though, which is why §5.1
+gates the pattern on `max-depth > 1`: at the default cap the newly accepted strings are not
+unreachable, they are reachable and wrong, because the `/v1` seam builds a one-level namespace out
+of whatever the segment spells.
 
 ### F. What `CatalogTests` does not cover here
 
@@ -869,7 +1159,16 @@ Worth knowing before treating the harness as sufficient validation:
 | **Encoded namespace** | `String.join(".", levels)` — the persisted form: HTS `database_id`, storage path component, ACL subject, `/v1` path segment. |
 | **Wire namespace** | `RESTUtil.encodeNamespace(ns)` — `%1F`-separated, URL-encoded per level. Only the handler seam sees it. |
 | **Table namespace** | A namespace that may host a base table: depth `1..max-depth`. |
-| **Operation namespace** | The `Namespace` argument to a namespace-scoped catalog method; depth `0..max-depth`, where empty is the internal "all databases" sentinel. |
+| **Operation namespace** | The `Namespace` argument to a namespace-scoped catalog method; depth `0..max-depth`, where empty is the internal "all databases" sentinel. **Transitional** — see below. |
 | **Local property** | A property in a table's own `metadata.json`. The only thing ever persisted. |
 | **Effective property** | What a read returns: ancestors ⊕ local ⊕ reserved. Never persisted. |
 | **Reserved property** | `openhouse.`-prefixed, or `policies`. Server-owned, rejected on write, never inherited. |
+
+**The empty-namespace sentinel does not survive the migration.** `listTables(Namespace.empty())`'s
+"all databases" arm — the one its own `TODO` calls an anti-pattern — is removed at PR #56's migration
+state **S9** (PR #56 §5.2 #14 and §5.9.2), and `NamespaceUtil.validateOperationNamespace`'s depth-0
+arm goes with it: once `listNamespaces` exists, no caller needs "every database" spelled as an empty
+namespace. After S9, "operation namespace" and "table namespace" differ only in their upper bound,
+and §5.7's "legal only as the internal sentinel" clause has nothing left to except. Recorded here
+rather than in §5.3 because it is a definition that expires, and a reader meeting the term later
+should not have to reconstruct why.
