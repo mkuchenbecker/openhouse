@@ -152,7 +152,7 @@ server can decline the wider charset and still conform.
 - **W4 — Tombstoning an inherited property from a table.** A table shadows an inherited key by
   setting a local value; it cannot make the key absent. Basis: the spec has no verb for it, and
   `remove-properties` on a key not in the local map is a no-op in Iceberg's own semantics.
-  Appendix C.
+  Appendix C. Confirmed by owner ruling; §5.8 states the ordering that makes shadowing sufficient.
 - **W5 — Widening the identifier charset.** Levels stay `^[a-zA-Z0-9_]+$`.
   `supportsNamesWithDot()` and `supportsNamesWithSlashes()` stay `false`. Basis: admitting `.`
   destroys M3 under the recommended encoding, and the reference suite sanctions declining.
@@ -812,6 +812,49 @@ reinterpretation of the round trip.
 This is strictly larger than OQ-4, which admits only `replaceTable`. `replaceTable` is the case where
 pinning is correct and merely surprising; the `/v1` GET→PUT is the case where it is a defect.
 
+**The sanctioned ordering, and why the missing `/v1` pin verb is a shape rather than a gap: set the
+value per table first, then set the namespace default.** This is the supported workflow for rolling
+out a namespace-level default, and it is the reason the absence of a `/v1` pin affordance is not
+something a later round should try to close. A reader who meets the subtraction rule cold will read
+it as an unfinished defect; it is not.
+
+1. **Set the value on each table that needs it, individually, while no ancestor carries the key.**
+   The resolved ancestor map has no entry for that key, so subtraction removes nothing and the value
+   is persisted as an ordinary local property. This is a plain `/v1` write — no named-key surface,
+   no new verb.
+2. **Set the namespace property afterwards**, as the default for everything that did not opt in. A
+   namespace property edit rewrites no `metadata.json`, so step 1's local values are untouched by it.
+3. **From then on the local value wins**, by the precedence order below: table-local outranks
+   nearest-ancestor on read, and on write the provided value now *differs* from the inherited one,
+   so subtraction reads it as the deliberate local value it is and every subsequent `/v1` GET→PUT
+   leaves it alone. The state is stable, not merely correct once.
+
+What the ordering buys is that a pin never has to be distinguished from an echo: at the moment the
+value is written there is nothing to echo. "Pinning is not expressible on `/v1`" is precisely the
+statement that a `/v1` client cannot pin a value it was *served* — it says nothing about a value the
+client sets *before* the ancestor exists, which is local from the moment it lands.
+
+**One boundary of that workflow, stated so nobody meets it in production.** If the namespace default
+is later set to *exactly* the value a table already holds locally, the table's local entry becomes
+byte-identical to the inherited one, and the next ordinary `/v1` GET→PUT subtracts it —
+`alterPropIfNeeded` then sees the key absent from the provided map and present in the existing one,
+and removes it. Nothing observable changes at that instant, because the effective value is the same
+either way; but the table stops holding its own value and will follow later edits to the namespace
+default. A table that must hold a value the namespace *also* holds needs the named-key REST route,
+which is the same conclusion as the paragraph above. This is the table-level twin of appendix C's
+`replaceTable` sharp edge, running in the opposite direction.
+
+**The reverse ordering — default set first, then one table must diverge.** This is the case an
+operator will actually hit, and it is a supported `/v1` operation that needs no new surface. The
+client GETs the table, changes the key to the value it wants, and PUTs the whole map back: the
+provided value differs from the inherited one, so subtraction leaves it and it persists locally.
+Returning that table to the default is expressible too — drop the key from the PUT body entirely,
+and `alterPropIfNeeded` removes the local entry, after which the table inherits again. Exactly one
+thing is not expressible on `/v1` in this direction: freezing a table at the *current* default so
+that a later namespace edit does not move it, since that write is byte-identical to the echo. That
+one needs the REST properties route, which names the key it writes. And making an inherited key
+*absent* is not expressible on any surface (W4).
+
 **Precedence, highest first.** (1) Reserved `openhouse.*` properties — server-computed per entity
 (`openhouse.tableId`, `openhouse.databaseId`, `openhouse.tableUri`, `openhouse.tableUUID`,
 `openhouse.clusterId`, `openhouse.tableVersion`). Never inherited, never overridable, and rejected
@@ -827,12 +870,15 @@ depth. Setting a local value equal to the currently inherited value is **not** a
 value, so a later namespace edit does not move it. That is deliberate: it is the only way a table can
 insulate itself. The pin is expressible on any surface that names the key it is writing, which is the
 REST `updateProperties` request; it is *not* expressible in a `/v1` whole-map PUT, for the reason
-given above.
+given above — which is what the per-table-then-default ordering above is for.
 
 **Un-set: no (W4).** A table cannot make an inherited key absent. `remove-properties` on a key the
 table holds locally returns the key to its *inherited* value, not to absent — and the response
 reports it under `removed`, because the local entry genuinely was removed. Appendix C develops the
-tombstone alternative and why it is not worth its wire surface in v1.
+tombstone alternative and why it is not worth its wire surface in v1. This is **settled by owner
+ruling**, not a pending recommendation: `/v1` deliberately carries neither a pin verb nor a tombstone
+verb, the named-key REST properties route carries the pin, and the per-table-then-default ordering
+above is what makes that sufficient. It was formerly OQ-2 and is no longer an open question.
 
 **Provenance on read: the effective map plus one reserved key.** `LoadTableResult.metadata.properties`,
 `GetNamespaceResponse.properties`, and `GetTableResponseBody.tableProperties` all carry the
@@ -990,12 +1036,18 @@ answer should override mine.
 | # | Question | Recommended default |
 |---|---|---|
 | **OQ-1** | What is `cluster.tables.namespace.max-depth` when an operator enables nesting? | **6**, subordinate to the hard 128-character encoded-length cap of §5.5. Deep enough for `org.team.domain.dataset`-style hierarchies, shallow enough that the length cap is rarely the thing a user hits first. |
-| **OQ-2** | Should a table be able to *tombstone* an inherited property, not merely shadow it? | **No in v1** (W4, appendix C4). Shadowing with a local value — including the empty string — covers the realistic cases, and no spec verb expresses a tombstone, so it would be reachable only through the OpenHouse API. Addable later without changing anything specified here. |
 | **OQ-3** | Properties inherit but privileges do not. Is that asymmetry acceptable? | **Yes for v1** (W1, appendix D). It is consistent with OpenHouse's existing model, where a database-level `CREATE_TABLE` grant already implies control over what is created beneath it. But it is the single judgment call in this document most worth challenging, because it cannot be reversed once inherited access exists in the wild. |
 | **OQ-4** | `replaceTable` carries the full effective property map, which pins every inherited value into the table's local map. Accept or diff? | **Accept and document** — for `replaceTable`, where the client is deliberately restating the whole table. Nothing observable changes at that instant, and the alternative guesses at intent and would silently discard a deliberate pin. This is narrower than it first looked: the `/v1` GET→PUT is the *same* shape and is **not** accepted, because there the client is not restating anything. §5.8's request-side rule subtracts the resolved ancestor map on that path, and I13 tests it. What remains open is only whether `replaceTable` should be brought under the same subtraction for consistency. |
 | **OQ-5** | Is namespace comparison case-sensitive at depth ≥ 2? | **Resolved by citation; no longer open.** PR #56 §5.2 #12 has closed it, and harder than this document framed it: the derived `/v1/databases` path `distinct()`s in **Java** over exact strings while every HTS table lookup is `…IgnoreCase…` and the MySQL collation folds case, so two tables spelling their database differently in case are listed twice today and once after — a pre-existing data inconsistency, not a code question. PR #56 §5.9.1 therefore makes a case-variant audit (`GROUP BY BINARY database_id` against a case-folded grouping) a **pre-migration** obligation that no later state can repair. This design inherits that answer and adds no normalization of its own. **One audit site to contribute back, which PR #56's inventory does not list:** `OpenHouseInternalCatalog.renameTable` (`:217-220`) preserves the source spelling when `from.namespace().toString().equalsIgnoreCase(to.namespace().toString())` — a case-insensitive comparison over the *whole encoded namespace*, which under dot-join makes `A.b` and `a.B` the same rename target at every depth. It belongs in the S0 audit alongside `DatabasesServiceImpl.getAllDatabases()` and `findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase`. |
 | **OQ-6** | `dropNamespace` on a namespace containing only *child namespaces* (no tables) — empty or not empty? | **Not empty → `409 NamespaceNotEmptyException`.** This is what `testDropNamespaceWithNestedNamespace` asserts, and cascade is unrecoverable. It also settles decision 5 of the sequencing analysis's own list, in the non-cascading direction. |
 | **OQ-7** | Does a namespace get an entry in `GET /v1/databases` before any table exists in it? | **Yes** once WS2 stores namespaces — an empty namespace is exactly the thing the current derived-database model cannot represent. Worth confirming no `/v1` client treats "listed" as "has tables". |
+
+**OQ-2 is closed and no longer listed.** It asked whether a table should be able to *tombstone* an
+inherited property rather than merely shadow it. The owner has ruled: the `/v1` surface deliberately
+has no pin verb and no tombstone verb, the REST properties route — which names the key it writes —
+has the pin, and §5.8's per-table-then-default ordering is what makes that sufficient. v1 ships
+shadowing only (W4). The remaining numbering is left as it was so that citations to OQ-3–OQ-7
+elsewhere in this document and in review still resolve.
 
 ## Appendix
 
@@ -1086,7 +1138,10 @@ no spec verb maps onto: a stock client's `remove-properties` cannot express "and
 against the parent", so the feature would be reachable only through the OpenHouse API, which
 defeats the point. Shadowing with a local value covers the realistic cases (the empty string is
 expressible), and the tombstone can be added later without changing anything specified here.
-Recorded as OQ-2.
+**Closed by owner ruling** rather than merely recommended, and closed together with the absence of a
+`/v1` pin verb, which is the same question from the other side: neither verb exists on `/v1`, the
+named-key REST route carries the pin, and §5.8's per-table-then-default ordering is what makes that
+enough. Formerly OQ-2.
 
 **C5 — Namespace overrides that beat the table (`table-override.<key>`).** Iceberg's own
 vocabulary and the right eventual answer for governance-mandated properties. Deferred (W3), with
