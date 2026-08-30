@@ -8,6 +8,7 @@ import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.config.BaseApplicationConfig;
 import com.linkedin.openhouse.common.provider.HttpConnectionPoolProviderConfig;
+import com.linkedin.openhouse.housetables.client.api.DatabaseApi;
 import com.linkedin.openhouse.housetables.client.api.ToggleStatusApi;
 import com.linkedin.openhouse.housetables.client.api.UserTableApi;
 import com.linkedin.openhouse.housetables.client.invoker.ApiClient;
@@ -57,6 +58,16 @@ public class MainApplicationConfig extends BaseApplicationConfig {
   @Bean
   public UserTableApi provideApiInstance() {
     return new UserTableApi(getHtsConfiguredApiClient());
+  }
+
+  /**
+   * This bean is injected within {@link
+   * com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepositoryImpl}, the namespace
+   * store's HTS-backed implementation.
+   */
+  @Bean
+  public DatabaseApi provideDatabaseApiInstance() {
+    return new DatabaseApi(getHtsConfiguredApiClient());
   }
 
   /**

@@ -55,7 +55,10 @@ public class TablesServiceImpl implements TablesService {
 
   @Autowired TableUUIDGenerator tableUUIDGenerator;
 
+  @Autowired NamespacesService namespacesService;
+
   @Autowired ReadBridgeStripProtection readBridgeStripProtection;
+
   /**
    * Lookup a table by databaseId and tableId in OpenHouse's Internal Catalog.
    *
@@ -143,6 +146,11 @@ public class TablesServiceImpl implements TablesService {
       // Check if table creator has the privilege to create a table in this DB.
       authorizationUtils.checkDatabasePrivilege(
           databaseId, tableCreatorUpdater, Privileges.CREATE_TABLE);
+      // Writing the first table into a database is what creates that database in OpenHouse, so it
+      // is also what has to create its namespace record. Without this, the namespace API would
+      // answer "no such namespace" for a database whose tables it is willing to list. Idempotent,
+      // and already authorized by the CREATE_TABLE check above.
+      namespacesService.ensureNamespace(databaseId);
     }
 
     // FIXME: save method redundantly issue existence check after findById is called above

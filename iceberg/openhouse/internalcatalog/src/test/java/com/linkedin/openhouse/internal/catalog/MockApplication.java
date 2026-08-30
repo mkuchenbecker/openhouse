@@ -1,6 +1,8 @@
 package com.linkedin.openhouse.internal.catalog;
 
 import com.linkedin.openhouse.cluster.storage.StorageManager;
+import com.linkedin.openhouse.housetables.client.api.DatabaseApi;
+import com.linkedin.openhouse.housetables.client.invoker.ApiClient;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOConfig;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import java.io.IOException;
@@ -31,6 +33,18 @@ public class MockApplication {
   @MockBean FileIOManager fileIOManager;
 
   @MockBean FileIOConfig fileIOConfig;
+
+  /**
+   * {@code HouseNamespaceRepositoryImpl} is a component of this package and autowires a {@link
+   * DatabaseApi}. Without a bean for it every Spring context in this module fails to load, which is
+   * what was happening: all 26 of the module's context-backed tests were red. Tests that actually
+   * exercise the namespace repository override this with a {@code @Primary} bean pointed at their
+   * own mock server.
+   */
+  @Bean
+  DatabaseApi provideDefaultDatabaseApi() {
+    return new DatabaseApi(new ApiClient());
+  }
 
   static final FsPermission FS_PERMISSION =
       new FsPermission(FsAction.ALL, FsAction.NONE, FsAction.NONE);

@@ -99,4 +99,14 @@ public class ClusterProperties {
   // string
   @Value("${cluster.tables.allowed-client-name-values:}")
   private List<String> allowedClientNameValues;
+
+  @Value("${cluster.tables.iceberg-rest.enabled:false}")
+  private boolean clusterTablesIcebergRestEnabled;
+
+  /**
+   * Maximum number of levels a namespace may have. The shipped default of 1 keeps OpenHouse a
+   * mono-namespace catalog, so raising it is the only thing that turns nesting on.
+   */
+  @Value("${cluster.tables.namespace.max-depth:1}")
+  private int clusterTablesNamespaceMaxDepth;
 }

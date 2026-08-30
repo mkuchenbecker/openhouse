@@ -1,0 +1,72 @@
+/**
+ * Runs Apache Iceberg's reference CatalogTests suite (from the iceberg-core test-jar) against
+ * OpenHouse's read-only Iceberg REST facade.
+ *
+ * This module deliberately does NOT use the shared openhouse.* convention plugins:
+ *  - the rest of the repository compiles at Java 8, while Iceberg 1.7+ (where CatalogTests was
+ *    introduced) requires Java 11+, so this module manages its own compatibility level;
+ *  - the server runtime keeps its pinned com.linkedin.iceberg 1.5.2 fork. The Apache Iceberg
+ *    1.11.0 dependency below is test-scoped to this module only and never touches the service
+ *    runtime classpath.
+ *
+ * The service under test is booted in-process from the relocated ("uber") tables-test-fixtures
+ * jar, whose shadow step moves the 1.5.2 fork's org.apache.iceberg classes to
+ * openhouse.relocated.org.apache.iceberg. That relocation is what lets the stock 1.11 client and
+ * the 1.5.2-based server coexist in one JVM.
+ */
+plugins {
+  id 'java'
+}
+
+// Iceberg 1.11.0 publishes Gradle module metadata declaring Java 17, so this module compiles at 17.
+java {
+  sourceCompatibility = JavaVersion.VERSION_17
+  targetCompatibility = JavaVersion.VERSION_17
+}
+
+ext {
+  icebergClientVersion = '1.11.0'
+}
+
+dependencies {
+  // The OpenHouse tables service under test, as the relocated uber jar. transitive=false keeps
+  // the unrelocated dependency graph (including the com.linkedin.iceberg 1.5.2 fork classes that
+  // would collide with the stock client below) off this module's classpath.
+  testImplementation(project(path: ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12',
+      configuration: 'shadow')) {
+    transitive = false
+  }
+
+  // Stock Apache Iceberg REST client plus the reference catalog test suite. CatalogTests lives in
+  // the iceberg-core "tests" classifier jar; its helpers live in the iceberg-api "tests" jar.
+  testImplementation "org.apache.iceberg:iceberg-api:${icebergClientVersion}"
+  testImplementation "org.apache.iceberg:iceberg-core:${icebergClientVersion}"
+  testImplementation "org.apache.iceberg:iceberg-bundled-guava:${icebergClientVersion}"
+  testImplementation "org.apache.iceberg:iceberg-api:${icebergClientVersion}:tests"
+  testImplementation "org.apache.iceberg:iceberg-core:${icebergClientVersion}:tests"
+
+  // Runtime pieces the uber jar deliberately does not bundle (same set the fixtures module and
+  // libs/datalayout use when they boot OpenHouseLocalServer).
+  testRuntimeOnly('org.apache.hadoop:hadoop-common:3.2.0') {
+    exclude group: 'io.netty'
+    exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+    exclude group: 'log4j'
+  }
+  testRuntimeOnly 'org.slf4j:slf4j-simple:1.7.36'
+  testRuntimeOnly 'org.eclipse.jetty:jetty-server:11.0.2'
+
+  // The uber jar's shadow step merges META-INF resources with a first-file-wins policy, which
+  // drops most of spring-boot-autoconfigure's auto-configuration registrations
+  // (META-INF/spring/...AutoConfiguration.imports and the EnableAutoConfiguration key in
+  // META-INF/spring.factories). Spring classes are not relocated in the uber jar, so putting the
+  // real (same-version) autoconfigure jar on the classpath restores the registration files;
+  // SpringFactoriesLoader and ImportCandidates aggregate them across all classpath entries.
+  testRuntimeOnly 'org.springframework.boot:spring-boot-autoconfigure:2.7.8'
+}
+
+test {
+  // The embedded Tomcat needs this on Java 9+ (same flag the fixtures module sets).
+  if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
+    jvmArgs '--add-opens=java.base/java.net=ALL-UNNAMED'
+  }
+}

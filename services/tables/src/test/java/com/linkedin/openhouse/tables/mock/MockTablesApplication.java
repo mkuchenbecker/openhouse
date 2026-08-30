@@ -1,11 +1,14 @@
 package com.linkedin.openhouse.tables.mock;
 
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
+import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
+import com.linkedin.openhouse.tables.repository.impl.BasePreservedKeyChecker;
 import com.linkedin.openhouse.tables.toggle.TableFeatureToggle;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
@@ -57,6 +60,25 @@ public class MockTablesApplication {
   @MockBean OpenHouseInternalCatalog openHouseInternalCatalog;
 
   @MockBean HouseTableRepository houseTableRepository;
+
+  /**
+   * {@code NamespacesServiceImpl} is component-scanned from {@code
+   * com.linkedin.openhouse.tables.services} above, and the namespace store is an HTS-backed
+   * repository the mock context has no server to answer. Mocked here for the same reason {@link
+   * HouseTableRepository} is.
+   */
+  @MockBean HouseNamespaceRepository houseNamespaceRepository;
+
+  /**
+   * The namespace service holds namespace properties to the same preserved-key rule as table
+   * properties. The checker lives in {@code tables.repository.impl}, which this context does not
+   * scan, and it must be the real one rather than a mock: a mock would answer "not preserved" to
+   * everything and quietly switch the rule off in every mock test.
+   */
+  @Bean
+  PreservedKeyChecker providePreservedKeyChecker() {
+    return new BasePreservedKeyChecker();
+  }
 
   /**
    * Mock tests scan {@code tables.api.validator}, not {@code tables.api}, so {@code ApiConfig} is

@@ -57,3 +57,23 @@ CREATE TABLE IF NOT EXISTS soft_deleted_user_table_row (
     purge_after_ms      BIGINT          NOT NULL,
     PRIMARY KEY (database_id, table_id, deleted_at_ms)
 );
+
+-- Databases are the stored form of a namespace. The primary key is the encoded namespace, the same
+-- bytes that appear in user_table_row.database_id for every database that exists today.
+--
+-- OBLIGATION: database_row.database_id must carry the SAME collation as user_table_row.database_id
+-- in every environment. The two columns are two halves of one key space -- "does namespace n hold
+-- tables" is asked by comparing them -- so if one folds case and the other does not, a namespace
+-- can be loaded under a spelling that no listing contains and dropped by a name nobody created.
+-- No collation is pinned here on purpose: user_table_row above does not pin one either, and pinning
+-- only this one would be the fastest way to break the equality the obligation is about. When
+-- user_table_row's collation is pinned, pin this one to the same value in the same change.
+CREATE TABLE IF NOT EXISTS database_row (
+    database_id         VARCHAR (128)     NOT NULL,
+    version             BIGINT            ,
+    properties          MEDIUMTEXT        ,
+    creation_time       BIGINT            DEFAULT NULL,
+    last_modified_time  BIGINT            DEFAULT NULL,
+    ETL_TS              DATETIME(6)       DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (database_id)
+);
