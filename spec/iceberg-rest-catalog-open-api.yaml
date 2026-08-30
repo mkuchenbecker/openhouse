@@ -278,6 +278,7 @@ paths:
         translate into `GET /namespaces?parent=accounting%1Ftax` and must return a namespace, ["accounting", "tax", "paid"].
         If `parent` is not provided, all top-level namespaces should be listed.
       operationId: listNamespaces
+      x-openhouse-support: supported
       parameters:
         - $ref: '#/components/parameters/page-token'
         - $ref: '#/components/parameters/page-size'
@@ -330,6 +331,7 @@ paths:
         Create a namespace, with an optional set of properties.
         The server might also add properties, such as `last_modified_time` etc.
       operationId: createNamespace
+      x-openhouse-support: supported
       requestBody:
         required: true
         content:
@@ -373,6 +375,7 @@ paths:
         - Catalog API
       summary: Load the metadata properties for a namespace
       operationId: loadNamespaceMetadata
+      x-openhouse-support: supported
       description: Return all stored metadata properties for a given namespace
       responses:
         200:
@@ -404,6 +407,7 @@ paths:
         - Catalog API
       summary: Check if a namespace exists
       operationId: namespaceExists
+      x-openhouse-support: supported
       description:
         Check if a namespace exists. The response does not contain a body.
       responses:
@@ -436,6 +440,7 @@ paths:
         - Catalog API
       summary: Drop a namespace from the catalog. Namespace must be empty.
       operationId: dropNamespace
+      x-openhouse-support: supported
       parameters:
         - $ref: '#/components/parameters/idempotency-key'
       responses:
@@ -482,6 +487,7 @@ paths:
         - Catalog API
       summary: Set or remove properties on a namespace
       operationId: updateProperties
+      x-openhouse-support: supported
       parameters:
         - $ref: '#/components/parameters/idempotency-key'
       description:

@@ -1,0 +1,172 @@
+package com.linkedin.openhouse.tables.api.handler.impl;
+
+import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
+
+import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
+import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
+import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
+import com.linkedin.openhouse.tables.services.NamespacePropertiesUpdateResult;
+import com.linkedin.openhouse.tables.services.NamespacesService;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.exceptions.ValidationException;
+import org.apache.iceberg.rest.RESTUtil;
+import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
+import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
+import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
+import org.apache.iceberg.rest.responses.GetNamespaceResponse;
+import org.apache.iceberg.rest.responses.ListNamespacesResponse;
+import org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+/**
+ * Default Iceberg REST namespace adapter, backed by {@link NamespacesService}.
+ *
+ * <p>Owns the wire-to-domain translation only: {@link RESTUtil} decodes the {@code 0x1F}-separated
+ * wire form, the service owns authorization and the existence policy, and the persisted
+ * (dot-joined) encoding is applied below both.
+ */
+@Component
+@ConditionalOnProperty(value = "cluster.tables.iceberg-rest.enabled", havingValue = "true")
+public class OpenHouseIcebergRestNamespaceApiHandler implements IcebergRestNamespaceApiHandler {
+
+  private final NamespacesService namespacesService;
+
+  public OpenHouseIcebergRestNamespaceApiHandler(NamespacesService namespacesService) {
+    this.namespacesService = namespacesService;
+  }
+
+  @Override
+  public ListNamespacesResponse listNamespaces(
+      String prefix, String parent, String pageToken, Integer pageSize) {
+    validatePrefix(prefix);
+    validateSinglePageRequest(pageToken);
+    // An empty parent is "no parent" per the spec's backward-compatibility note, and an empty
+    // pageToken is what every Iceberg Java client since 1.6.0 sends: neither is an error.
+    Namespace parentNamespace =
+        parent == null || parent.isEmpty() ? Namespace.empty() : RESTUtil.decodeNamespace(parent);
+    List<Namespace> namespaces =
+        onReadRoute(
+            parentNamespace, () -> namespacesService.listNamespaces(parentNamespace, principal()));
+    return ListNamespacesResponse.builder().addAll(namespaces).build();
+  }
+
+  @Override
+  public CreateNamespaceResponse createNamespace(String prefix, CreateNamespaceRequest request) {
+    validatePrefix(prefix);
+    request.validate();
+    Namespace namespace = request.namespace();
+    Map<String, String> properties =
+        namespacesService.createNamespace(
+            namespace,
+            request.properties() == null ? Collections.emptyMap() : request.properties(),
+            principal());
+    return CreateNamespaceResponse.builder()
+        .withNamespace(namespace)
+        .setProperties(properties)
+        .build();
+  }
+
+  @Override
+  public GetNamespaceResponse loadNamespaceMetadata(String prefix, String namespace) {
+    validatePrefix(prefix);
+    Namespace decoded = RESTUtil.decodeNamespace(namespace);
+    Map<String, String> properties =
+        onReadRoute(decoded, () -> namespacesService.loadNamespaceMetadata(decoded, principal()));
+    return GetNamespaceResponse.builder().withNamespace(decoded).setProperties(properties).build();
+  }
+
+  @Override
+  public void namespaceExists(String prefix, String namespace) {
+    validatePrefix(prefix);
+    Namespace decoded = RESTUtil.decodeNamespace(namespace);
+    boolean exists =
+        onReadRoute(decoded, () -> namespacesService.namespaceExists(decoded, principal()));
+    if (!exists) {
+      throw new NoSuchNamespaceException("Namespace does not exist: %s", decoded);
+    }
+  }
+
+  @Override
+  public void dropNamespace(String prefix, String namespace) {
+    validatePrefix(prefix);
+    Namespace decoded = RESTUtil.decodeNamespace(namespace);
+    onReadRoute(
+        decoded,
+        () -> {
+          namespacesService.dropNamespace(decoded, principal());
+          return null;
+        });
+  }
+
+  @Override
+  public UpdateNamespacePropertiesResponse updateProperties(
+      String prefix, String namespace, UpdateNamespacePropertiesRequest request) {
+    validatePrefix(prefix);
+    request.validate();
+    Namespace decoded = RESTUtil.decodeNamespace(namespace);
+    Set<String> removals =
+        request.removals() == null
+            ? Collections.emptySet()
+            : new LinkedHashSet<>(request.removals());
+    Map<String, String> updates =
+        request.updates() == null ? Collections.emptyMap() : request.updates();
+    Set<String> overlap = new HashSet<>(removals);
+    overlap.retainAll(updates.keySet());
+    if (!overlap.isEmpty()) {
+      throw new UnprocessableEntityException(
+          String.format(
+              "The following property keys were included in both removals and updates: %s",
+              overlap));
+    }
+    NamespacePropertiesUpdateResult result =
+        onReadRoute(
+            decoded,
+            () -> namespacesService.updateProperties(decoded, removals, updates, principal()));
+    return UpdateNamespacePropertiesResponse.builder()
+        .addUpdated(result.getUpdated())
+        .addRemoved(result.getRemoved())
+        .addMissing(result.getMissing())
+        .build();
+  }
+
+  /**
+   * A route that names an existing namespace never answers "you asked wrongly" — a syntactically
+   * invalid namespace names a resource that cannot exist, so it is a 404 with the same message and
+   * type an absent one gets. The distinction between malformed and missing belongs to create.
+   */
+  private static <T> T onReadRoute(Namespace namespace, java.util.function.Supplier<T> operation) {
+    try {
+      return operation.get();
+    } catch (ValidationException e) {
+      throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
+    }
+  }
+
+  private static String principal() {
+    return extractAuthenticatedUserPrincipal();
+  }
+
+  private static void validatePrefix(String prefix) {
+    if (!IcebergRestApiHandler.ICEBERG_REST_PREFIX.equals(prefix)) {
+      throw new IllegalArgumentException("Unsupported Iceberg REST prefix");
+    }
+  }
+
+  /**
+   * This catalog returns the complete listing in one page and never issues a continuation token, so
+   * the only page token it can honour is the empty one every client sends on the first request.
+   */
+  private static void validateSinglePageRequest(String pageToken) {
+    if (pageToken != null && !pageToken.isEmpty()) {
+      throw new IllegalArgumentException("Invalid Iceberg REST page token");
+    }
+  }
+}

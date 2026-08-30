@@ -11,8 +11,10 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.CatalogTests;
+import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -34,15 +36,16 @@ import org.junit.jupiter.params.provider.ValueSource;
  * to sit on the same classpath. The server runtime is not upgraded by this module; the 1.11
  * dependency is test-scoped only.
  *
- * <p>The facade currently implements four endpoints: {@code GET /v1/config}, list tables, load
- * table, and table exists (HEAD). {@link CatalogTests} has 101 test methods and almost all of them
- * create namespaces or tables through the catalog under test, which a read-only facade cannot do.
- * Every test the facade cannot honestly satisfy is therefore overridden and disabled with a reason
- * naming the missing endpoint or blocking defect; the set of {@code @Disabled} reasons below is the
- * implementation roadmap for the facade. Five further tests skip themselves through the suite's
- * built-in capability flags ({@code supportsEmptyNamespace()}, {@code requiresNamespaceCreate()}).
- * As endpoints are added to the facade, deleting the corresponding overrides re-enables the
- * reference tests for them.
+ * <p>The facade currently implements {@code GET /v1/config}, the six namespace routes (create,
+ * load, exists, drop, list and update properties) and the read-only table routes (list tables, load
+ * table, table exists). {@link CatalogTests} has 101 test methods and most of the remaining ones
+ * create tables through the catalog under test, which this facade cannot yet do. Every test the
+ * facade cannot honestly satisfy is therefore overridden and disabled with a reason naming the
+ * missing endpoint or blocking defect; the set of {@code @Disabled} reasons below is the
+ * implementation roadmap for the facade. Further tests skip themselves through the suite's built-in
+ * capability flags ({@code supportsEmptyNamespace()}, {@code supportsNestedNamespaces()}, {@code
+ * supportsNamesWithDot()}, {@code supportsNamesWithSlashes()}). As endpoints are added to the
+ * facade, deleting the corresponding overrides re-enables the reference tests for them.
  */
 public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> {
 
@@ -52,23 +55,11 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   private static RESTCatalog restCatalog;
   private static String authToken;
 
-  private static final String NEEDS_CREATE_NAMESPACE =
-      "needs createNamespace endpoint (POST /v1/{prefix}/namespaces); the read-only facade exposes no namespace endpoints";
-
-  private static final String NEEDS_LIST_NAMESPACES =
-      "needs listNamespaces endpoint (GET /v1/{prefix}/namespaces); when it is not advertised the 1.11 client short-circuits listNamespaces() to an empty list, so namespace assertions cannot run";
-
-  private static final String NEEDS_LOAD_NAMESPACE =
-      "needs loadNamespaceMetadata endpoint (GET /v1/{prefix}/namespaces/{namespace}) plus createNamespace for setup";
-
-  private static final String NEEDS_NAMESPACE_PROPERTIES =
-      "needs updateNamespaceProperties endpoint (POST /v1/{prefix}/namespaces/{namespace}/properties) plus createNamespace for setup";
-
-  private static final String NEEDS_DROP_NAMESPACE =
-      "needs dropNamespace endpoint (DELETE /v1/{prefix}/namespaces/{namespace}) plus createNamespace for setup";
-
   private static final String NEEDS_CREATE_TABLE =
       "needs createTable endpoint (POST /v1/{prefix}/namespaces/{namespace}/tables) to create the fixture table";
+
+  private static final String NEEDS_CREATE_TABLE_FOR_NAMESPACE_ASSERTION =
+      "needs createTable endpoint (POST /v1/{prefix}/namespaces/{namespace}/tables); the namespace behaviour this test asserts on is implemented, but the test reaches it by creating a table through the catalog under test";
 
   private static final String NEEDS_COMMIT_TABLE =
       "needs commitTable endpoint (POST /v1/{prefix}/namespaces/{namespace}/tables/{table}) plus createTable for setup";
@@ -117,6 +108,23 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
     }
   }
 
+  /**
+   * {@link CatalogTests} assumes a catalog that starts each test empty, and every namespace test
+   * asserts as much before it does anything. The server here is shared across the class, so the
+   * namespaces a test creates are dropped again once it finishes.
+   */
+  @AfterEach
+  void dropNamespacesCreatedByTest() {
+    for (Namespace namespace : restCatalog.listNamespaces()) {
+      try {
+        restCatalog.dropNamespace(namespace);
+      } catch (RuntimeException e) {
+        // A namespace that is not empty belongs to a test that left occupants behind; the next
+        // test's own assertions will report that far more precisely than a failure here would.
+      }
+    }
+  }
+
   @Override
   protected RESTCatalog catalog() {
     return restCatalog;
@@ -127,19 +135,22 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
     return buildRestCatalog(catalogName, additionalProperties);
   }
 
-  /** OpenHouse databases are implicit; the facade has no createNamespace endpoint. */
+  /** Namespaces are stored objects: a table's namespace has to be created before the table is. */
   @Override
   protected boolean requiresNamespaceCreate() {
-    return false;
+    return true;
   }
 
-  /** OpenHouse namespaces carry no user-settable properties over this facade. */
+  /** Stored namespaces carry a user-settable property map. */
   @Override
   protected boolean supportsNamespaceProperties() {
-    return false;
+    return true;
   }
 
-  /** OpenHouse database identifiers are single-level. */
+  /**
+   * OpenHouse ships with {@code cluster.tables.namespace.max-depth} at 1, so namespaces are
+   * single-level and the two nesting tests skip themselves on this flag.
+   */
   @Override
   protected boolean supportsNestedNamespaces() {
     return false;
@@ -197,129 +208,17 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   // ---------------------------------------------------------------------------------------------
 
   @Override
-  @Disabled(NEEDS_CREATE_NAMESPACE)
-  @Test
-  public void testCreateNamespace() {
-    super.testCreateNamespace();
-  }
-
-  @Override
-  @Disabled(NEEDS_CREATE_NAMESPACE)
-  @Test
-  public void testCreateExistingNamespace() {
-    super.testCreateExistingNamespace();
-  }
-
-  @Override
-  @Disabled(NEEDS_CREATE_NAMESPACE)
-  @Test
-  public void testCreateNamespaceWithProperties() {
-    super.testCreateNamespaceWithProperties();
-  }
-
-  @Override
-  @Disabled(NEEDS_LOAD_NAMESPACE)
-  @Test
-  public void testLoadNamespaceMetadata() {
-    super.testLoadNamespaceMetadata();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testSetNamespaceProperties() {
-    super.testSetNamespaceProperties();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testUpdateNamespaceProperties() {
-    super.testUpdateNamespaceProperties();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testUpdateAndSetNamespaceProperties() {
-    super.testUpdateAndSetNamespaceProperties();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testSetNamespacePropertiesNamespaceDoesNotExist() {
-    super.testSetNamespacePropertiesNamespaceDoesNotExist();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testRemoveNamespaceProperties() {
-    super.testRemoveNamespaceProperties();
-  }
-
-  @Override
-  @Disabled(NEEDS_NAMESPACE_PROPERTIES)
-  @Test
-  public void testRemoveNamespacePropertiesNamespaceDoesNotExist() {
-    super.testRemoveNamespacePropertiesNamespaceDoesNotExist();
-  }
-
-  @Override
-  @Disabled(NEEDS_DROP_NAMESPACE)
-  @Test
-  public void testDropNamespace() {
-    super.testDropNamespace();
-  }
-
-  @Override
-  @Disabled(NEEDS_DROP_NAMESPACE)
-  @Test
-  public void testDropNonexistentNamespace() {
-    super.testDropNonexistentNamespace();
-  }
-
-  @Override
-  @Disabled(NEEDS_DROP_NAMESPACE)
+  @Disabled(NEEDS_CREATE_TABLE_FOR_NAMESPACE_ASSERTION)
   @Test
   public void testDropNonEmptyNamespace() {
     super.testDropNonEmptyNamespace();
   }
 
   @Override
-  @Disabled(NEEDS_DROP_NAMESPACE)
+  @Disabled(NEEDS_CREATE_TABLE_FOR_NAMESPACE_ASSERTION)
   @Test
-  public void testDropNamespaceWithNestedNamespace() {
-    super.testDropNamespaceWithNestedNamespace();
-  }
-
-  @Override
-  @Disabled(NEEDS_LIST_NAMESPACES)
-  @Test
-  public void testListNamespaces() {
-    super.testListNamespaces();
-  }
-
-  @Override
-  @Disabled(NEEDS_LIST_NAMESPACES)
-  @Test
-  public void testListNestedNamespaces() {
-    super.testListNestedNamespaces();
-  }
-
-  @Override
-  @Disabled(NEEDS_CREATE_NAMESPACE)
-  @Test
-  public void testNamespaceWithSlash() {
-    super.testNamespaceWithSlash();
-  }
-
-  @Override
-  @Disabled(NEEDS_CREATE_NAMESPACE)
-  @Test
-  public void testNamespaceWithDot() {
-    super.testNamespaceWithDot();
+  public void tableCreationWithoutNamespace() {
+    super.tableCreationWithoutNamespace();
   }
 
   @Override
@@ -509,13 +408,6 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   @Test
   public void testListTables() {
     super.testListTables();
-  }
-
-  @Override
-  @Disabled(NEEDS_LIST_NAMESPACES)
-  @Test
-  public void testListNonExistingNamespace() {
-    super.testListNonExistingNamespace();
   }
 
   @Override

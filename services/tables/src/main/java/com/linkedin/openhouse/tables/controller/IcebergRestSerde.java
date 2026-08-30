@@ -7,6 +7,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
+import java.io.IOException;
+import java.io.InputStream;
 import org.apache.iceberg.rest.RESTSerializers;
 
 /** Serde helper for Iceberg REST payloads that require kebab-case and Iceberg serializers. */
@@ -22,6 +24,14 @@ final class IcebergRestSerde {
   }
 
   private IcebergRestSerde() {}
+
+  static <T> T fromJson(InputStream body, Class<T> type) {
+    try {
+      return MAPPER.readValue(body, type);
+    } catch (IOException e) {
+      throw new IllegalArgumentException("Malformed Iceberg REST request payload", e);
+    }
+  }
 
   static String toJson(Object payload) {
     try {

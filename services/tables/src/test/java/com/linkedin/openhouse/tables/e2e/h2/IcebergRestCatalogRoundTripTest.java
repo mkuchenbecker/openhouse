@@ -158,6 +158,12 @@ public class IcebergRestCatalogRoundTripTest {
     List<String> endpoints = JsonPath.read(response.getBody(), "$.endpoints");
     assertThat(endpoints)
         .containsExactly(
+            "GET /v1/{prefix}/namespaces",
+            "POST /v1/{prefix}/namespaces",
+            "GET /v1/{prefix}/namespaces/{namespace}",
+            "HEAD /v1/{prefix}/namespaces/{namespace}",
+            "DELETE /v1/{prefix}/namespaces/{namespace}",
+            "POST /v1/{prefix}/namespaces/{namespace}/properties",
             "GET /v1/{prefix}/namespaces/{namespace}/tables",
             "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
@@ -425,6 +431,166 @@ public class IcebergRestCatalogRoundTripTest {
     assertThat(eventCaptor.getValue().getDatabaseName()).isEqualTo(DB1);
     assertThat(eventCaptor.getValue().getTableName()).isEqualTo(T1);
     assertThat(eventCaptor.getValue().getOperationType()).isEqualTo(OperationType.READ);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Namespaces
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void namespaceCreateLoadListDropRoundTrip() {
+    Namespace ns = Namespace.of("icebergrestns1");
+
+    assertThat(restCatalog.namespaceExists(ns)).isFalse();
+    restCatalog.createNamespace(ns, Collections.singletonMap("owner", "testuser"));
+
+    assertThat(restCatalog.namespaceExists(ns)).isTrue();
+    assertThat(restCatalog.loadNamespaceMetadata(ns)).containsEntry("owner", "testuser");
+    assertThat(restCatalog.listNamespaces()).contains(ns);
+
+    assertThat(restCatalog.dropNamespace(ns)).isTrue();
+    assertThat(restCatalog.namespaceExists(ns)).isFalse();
+    assertThat(restCatalog.listNamespaces()).doesNotContain(ns);
+  }
+
+  @Test
+  void namespacePropertiesAreSetAndRemoved() {
+    Namespace ns = Namespace.of("icebergrestns2");
+    restCatalog.createNamespace(ns);
+    try {
+      restCatalog.setProperties(ns, Collections.singletonMap("owner", "testuser"));
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).containsEntry("owner", "testuser");
+
+      restCatalog.removeProperties(ns, Collections.singleton("owner"));
+      assertThat(restCatalog.loadNamespaceMetadata(ns)).doesNotContainKey("owner");
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  @Test
+  void updatePropertiesPartitionsUpdatedRemovedAndMissing() {
+    Namespace ns = Namespace.of("icebergrestns3");
+    restCatalog.createNamespace(ns, Collections.singletonMap("owner", "testuser"));
+    try {
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.set("Authorization", "Bearer " + authToken);
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              baseUrl() + "/v1/iceberg/namespaces/" + ns + "/properties",
+              HttpMethod.POST,
+              new HttpEntity<>(
+                  "{\"removals\":[\"owner\",\"absent\"],\"updates\":{\"team\":\"openhouse\"}}",
+                  headers),
+              String.class);
+
+      assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+      assertThat(JsonPath.<List<String>>read(response.getBody(), "$.updated"))
+          .containsExactly("team");
+      assertThat(JsonPath.<List<String>>read(response.getBody(), "$.removed"))
+          .containsExactly("owner");
+      assertThat(JsonPath.<List<String>>read(response.getBody(), "$.missing"))
+          .containsExactly("absent");
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  @Test
+  void creatingAnExistingNamespaceConflicts() {
+    Namespace ns = Namespace.of("icebergrestns4");
+    restCatalog.createNamespace(ns);
+    try {
+      assertThatThrownBy(() -> createNamespaceOverHttp(ns.toString()))
+          .isInstanceOf(HttpClientErrorException.Conflict.class)
+          .hasMessageContaining("AlreadyExistsException")
+          .hasMessageContaining("Namespace already exists");
+    } finally {
+      restCatalog.dropNamespace(ns);
+    }
+  }
+
+  @Test
+  void loadingAMissingNamespaceIsNotFound() {
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/icebergrestmissing",
+                    HttpMethod.GET,
+                    authorizedRequest(),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.NotFound.class)
+        .hasMessageContaining("NoSuchNamespaceException")
+        .hasMessageContaining("Namespace does not exist: icebergrestmissing");
+  }
+
+  @Test
+  void aNamespaceOutsideTheIdentifierCharsetReadsAsMissingRatherThanMalformed() {
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/not-a-legal-name",
+                    HttpMethod.GET,
+                    authorizedRequest(),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.NotFound.class)
+        .hasMessageContaining("Namespace does not exist: not-a-legal-name");
+  }
+
+  @Test
+  void droppingANamespaceThatStillHoldsTablesIsRejected() {
+    // DB1 holds two tables created through the OpenHouse API; its namespace row is created here so
+    // the drop reaches the emptiness check rather than a 404.
+    Namespace ns = Namespace.of(DB1);
+    if (!restCatalog.namespaceExists(ns)) {
+      restCatalog.createNamespace(ns);
+    }
+
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/" + DB1,
+                    HttpMethod.DELETE,
+                    authorizedRequest(),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.Conflict.class)
+        .hasMessageContaining("NamespaceNotEmptyException")
+        .hasMessageContaining("is not empty");
+
+    assertThat(restCatalog.namespaceExists(ns)).isTrue();
+  }
+
+  @Test
+  void reservedNamespacePropertiesCannotBeWrittenByAClient() {
+    assertThatThrownBy(
+            () ->
+                createNamespaceOverHttp(
+                    "icebergrestns5", "\"properties\":{\"openhouse.reserved\":\"nope\"}"))
+        .isInstanceOf(HttpClientErrorException.BadRequest.class)
+        .hasMessageContaining("ValidationException");
+    assertThat(restCatalog.namespaceExists(Namespace.of("icebergrestns5"))).isFalse();
+  }
+
+  private void createNamespaceOverHttp(String namespace) {
+    createNamespaceOverHttp(namespace, null);
+  }
+
+  private void createNamespaceOverHttp(String namespace, String extraJsonFields) {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setContentType(MediaType.APPLICATION_JSON);
+    headers.set("Authorization", "Bearer " + authToken);
+    String body =
+        "{\"namespace\":[\""
+            + namespace
+            + "\"]"
+            + (extraJsonFields == null ? "" : "," + extraJsonFields)
+            + "}";
+    restTemplate.exchange(
+        baseUrl() + "/v1/iceberg/namespaces",
+        HttpMethod.POST,
+        new HttpEntity<>(body, headers),
+        String.class);
   }
 
   // ---------------------------------------------------------------------------

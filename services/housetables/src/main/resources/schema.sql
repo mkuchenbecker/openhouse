@@ -57,3 +57,15 @@ CREATE TABLE IF NOT EXISTS soft_deleted_user_table_row (
     purge_after_ms      BIGINT          NOT NULL,
     PRIMARY KEY (database_id, table_id, deleted_at_ms)
 );
+
+-- Databases are the stored form of a namespace. The primary key is the encoded namespace, the same
+-- bytes that appear in user_table_row.database_id for every database that exists today.
+CREATE TABLE IF NOT EXISTS database_row (
+    database_id         VARCHAR (128)     NOT NULL,
+    version             BIGINT            ,
+    properties          MEDIUMTEXT        ,
+    creation_time       BIGINT            DEFAULT NULL,
+    last_modified_time  BIGINT            DEFAULT NULL,
+    ETL_TS              DATETIME(6)       DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (database_id)
+);

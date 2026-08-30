@@ -1,13 +1,21 @@
 package com.linkedin.openhouse.tables.controller;
 
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
+import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.generated.iceberg.api.CatalogApiApi;
 import com.linkedin.openhouse.tables.generated.iceberg.api.ConfigurationApiApi;
 import com.linkedin.openhouse.tables.generated.iceberg.model.CatalogConfig;
 import com.linkedin.openhouse.tables.generated.iceberg.model.ListTablesResponse;
 import io.swagger.v3.oas.annotations.Hidden;
 import java.util.Optional;
+import java.util.UUID;
+import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
+import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
+import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
+import org.apache.iceberg.rest.responses.GetNamespaceResponse;
+import org.apache.iceberg.rest.responses.ListNamespacesResponse;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
+import org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -26,8 +34,13 @@ public class IcebergRestCatalogController implements CatalogApiApi, Configuratio
 
   private final IcebergRestApiHandler icebergRestApiHandler;
 
-  public IcebergRestCatalogController(IcebergRestApiHandler icebergRestApiHandler) {
+  private final IcebergRestNamespaceApiHandler icebergRestNamespaceApiHandler;
+
+  public IcebergRestCatalogController(
+      IcebergRestApiHandler icebergRestApiHandler,
+      IcebergRestNamespaceApiHandler icebergRestNamespaceApiHandler) {
     this.icebergRestApiHandler = icebergRestApiHandler;
+    this.icebergRestNamespaceApiHandler = icebergRestNamespaceApiHandler;
   }
 
   @Override
@@ -71,5 +84,49 @@ public class IcebergRestCatalogController implements CatalogApiApi, Configuratio
   public ResponseEntity<Void> tableExists(String prefix, String namespace, String table) {
     icebergRestApiHandler.tableExists(prefix, namespace, table);
     return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<ListNamespacesResponse> listNamespaces(
+      String prefix, String pageToken, Integer pageSize, String parent) {
+    return ResponseEntity.ok(
+        icebergRestNamespaceApiHandler.listNamespaces(prefix, parent, pageToken, pageSize));
+  }
+
+  @Override
+  public ResponseEntity<CreateNamespaceResponse> createNamespace(
+      String prefix, CreateNamespaceRequest createNamespaceRequest, UUID idempotencyKey) {
+    return ResponseEntity.ok(
+        icebergRestNamespaceApiHandler.createNamespace(prefix, createNamespaceRequest));
+  }
+
+  @Override
+  public ResponseEntity<GetNamespaceResponse> loadNamespaceMetadata(
+      String prefix, String namespace) {
+    return ResponseEntity.ok(
+        icebergRestNamespaceApiHandler.loadNamespaceMetadata(prefix, namespace));
+  }
+
+  @Override
+  public ResponseEntity<Void> namespaceExists(String prefix, String namespace) {
+    icebergRestNamespaceApiHandler.namespaceExists(prefix, namespace);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> dropNamespace(String prefix, String namespace, UUID idempotencyKey) {
+    icebergRestNamespaceApiHandler.dropNamespace(prefix, namespace);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<UpdateNamespacePropertiesResponse> updateProperties(
+      String prefix,
+      String namespace,
+      UpdateNamespacePropertiesRequest updateNamespacePropertiesRequest,
+      UUID idempotencyKey) {
+    return ResponseEntity.ok(
+        icebergRestNamespaceApiHandler.updateProperties(
+            prefix, namespace, updateNamespacePropertiesRequest));
   }
 }

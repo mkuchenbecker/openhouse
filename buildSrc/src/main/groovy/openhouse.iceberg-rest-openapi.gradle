@@ -20,6 +20,12 @@ def icebergTypeMap = [
     'IcebergErrorResponse=org.apache.iceberg.rest.responses.ErrorResponse',
     'LoadTableResult=org.apache.iceberg.rest.responses.LoadTableResponse',
     'TableIdentifier=org.apache.iceberg.catalog.TableIdentifier',
+    'CreateNamespaceRequest=org.apache.iceberg.rest.requests.CreateNamespaceRequest',
+    'UpdateNamespacePropertiesRequest=org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest',
+    'CreateNamespaceResponse=org.apache.iceberg.rest.responses.CreateNamespaceResponse',
+    'GetNamespaceResponse=org.apache.iceberg.rest.responses.GetNamespaceResponse',
+    'ListNamespacesResponse=org.apache.iceberg.rest.responses.ListNamespacesResponse',
+    'UpdateNamespacePropertiesResponse=org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse',
 ].join(',')
 
 configurations {

@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.tables.mock;
 
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import org.springframework.boot.SpringApplication;
@@ -52,4 +53,12 @@ public class MockTablesApplication {
   @MockBean OpenHouseInternalCatalog openHouseInternalCatalog;
 
   @MockBean HouseTableRepository houseTableRepository;
+
+  /**
+   * {@code NamespacesServiceImpl} is component-scanned from {@code
+   * com.linkedin.openhouse.tables.services} above, and the namespace store is an HTS-backed
+   * repository the mock context has no server to answer. Mocked here for the same reason {@link
+   * HouseTableRepository} is.
+   */
+  @MockBean HouseNamespaceRepository houseNamespaceRepository;
 }

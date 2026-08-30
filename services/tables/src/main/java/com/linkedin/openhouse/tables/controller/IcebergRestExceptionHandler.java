@@ -1,10 +1,14 @@
 package com.linkedin.openhouse.tables.controller;
 
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.ForbiddenException;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
@@ -29,6 +33,26 @@ public class IcebergRestExceptionHandler {
   @ExceptionHandler(NoSuchNamespaceException.class)
   public ResponseEntity<ErrorResponse> handleNoSuchNamespace(NoSuchNamespaceException e) {
     return errorResponse(404, e.getMessage(), NoSuchNamespaceException.class.getSimpleName());
+  }
+
+  @ExceptionHandler(AlreadyExistsException.class)
+  public ResponseEntity<ErrorResponse> handleAlreadyExists(AlreadyExistsException e) {
+    return errorResponse(409, e.getMessage(), AlreadyExistsException.class.getSimpleName());
+  }
+
+  @ExceptionHandler(NamespaceNotEmptyException.class)
+  public ResponseEntity<ErrorResponse> handleNamespaceNotEmpty(NamespaceNotEmptyException e) {
+    return errorResponse(409, e.getMessage(), NamespaceNotEmptyException.class.getSimpleName());
+  }
+
+  @ExceptionHandler(UnprocessableEntityException.class)
+  public ResponseEntity<ErrorResponse> handleUnprocessableEntity(UnprocessableEntityException e) {
+    return errorResponse(422, e.getMessage(), "UnprocessableEntityException");
+  }
+
+  @ExceptionHandler(ValidationException.class)
+  public ResponseEntity<ErrorResponse> handleValidation(ValidationException e) {
+    return errorResponse(400, e.getMessage(), ValidationException.class.getSimpleName());
   }
 
   @ExceptionHandler({RequestValidationFailureException.class, IllegalArgumentException.class})

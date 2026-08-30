@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
+import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
 import com.linkedin.openhouse.tables.controller.IcebergRestExceptionHandler;
 import com.linkedin.openhouse.tables.controller.IcebergRestHttpMessageConverter;
@@ -44,10 +45,14 @@ public class IcebergRestCatalogControllerTest {
 
   @Mock private IcebergRestApiHandler icebergRestApiHandler;
 
+  @Mock private IcebergRestNamespaceApiHandler icebergRestNamespaceApiHandler;
+
   @BeforeEach
   public void setup() {
     mvc =
-        MockMvcBuilders.standaloneSetup(new IcebergRestCatalogController(icebergRestApiHandler))
+        MockMvcBuilders.standaloneSetup(
+                new IcebergRestCatalogController(
+                    icebergRestApiHandler, icebergRestNamespaceApiHandler))
             .setControllerAdvice(new IcebergRestExceptionHandler())
             .setMessageConverters(
                 new IcebergRestHttpMessageConverter(),

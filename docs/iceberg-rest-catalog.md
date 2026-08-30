@@ -1,7 +1,8 @@
 # Iceberg REST catalog
 
-OpenHouse exposes a read-only Apache Iceberg REST Catalog facade for new clients while preserving
-the existing OpenHouse APIs and business behavior.
+OpenHouse exposes an Apache Iceberg REST Catalog facade for new clients while preserving the
+existing OpenHouse APIs and business behavior. Namespaces are writable through it; tables are still
+read-only.
 
 ## Enablement
 
@@ -13,6 +14,12 @@ cluster.tables.iceberg-rest.enabled=true
 
 `GET /v1/config` returns the `iceberg` route prefix and advertises only the implemented endpoints:
 
+- `GET /v1/{prefix}/namespaces`
+- `POST /v1/{prefix}/namespaces`
+- `GET /v1/{prefix}/namespaces/{namespace}`
+- `HEAD /v1/{prefix}/namespaces/{namespace}`
+- `DELETE /v1/{prefix}/namespaces/{namespace}`
+- `POST /v1/{prefix}/namespaces/{namespace}/properties`
 - `GET /v1/{prefix}/namespaces/{namespace}/tables`
 - `GET /v1/{prefix}/namespaces/{namespace}/tables/{table}`
 - `HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}`
@@ -21,22 +28,38 @@ cluster.tables.iceberg-rest.enabled=true
 
 The OpenAPI-generated interfaces own the HTTP contract. `IcebergRestCatalogController` is a thin
 Spring MVC adapter, and `IcebergRestApiHandler` translates the Iceberg protocol to existing
-`TablesApiHandler` and `OpenHouseInternalCatalog` behavior. The facade does not add business rules
-or change the existing OpenHouse endpoints.
+`TablesApiHandler` and `OpenHouseInternalCatalog` behavior. `IcebergRestNamespaceApiHandler` does the
+same for the namespace routes, over `NamespacesService`. The facade does not add business rules or
+change the existing OpenHouse endpoints.
+
+Namespaces are stored objects. A namespace is persisted by dot-joining its levels, so at the shipped
+depth its key is the `databaseId` string byte for byte and existing databases are unaffected. The
+Tables Service owns the namespace API contract (`NamespacesService`), the House Tables Service owns
+the record (`database_row`, `/hts/databases`), and `HouseNamespaceRepository` is the seam between
+them.
 
 Iceberg response types use a narrowly scoped Spring `HttpMessageConverter`. Errors are translated
 by controller-scoped advice into the standard Iceberg error envelope.
 
 ## Compatibility and limitations
 
-- Only single-level namespaces are supported.
+- Only single-level namespaces are supported. The depth cap is the cluster property
+  `cluster.tables.namespace.max-depth`, which defaults to 1.
+- Namespace properties are a free-form string map. Keys prefixed `openhouse.` are server-owned and
+  rejected on write.
+- `listNamespaces` returns the complete listing in one page and never issues a continuation token.
+  An empty `pageToken` (which every Iceberg Java client since 1.6.0 sends) is accepted.
+- Dropping a namespace that still holds tables or child namespaces is a `409`
+  (`NamespaceNotEmptyException`); there is no cascade.
+- A namespace read route never answers `400` for a well-formed URL naming a namespace that cannot
+  exist: a syntactically invalid namespace is a `404`, the same as an absent one.
 - The optional `warehouse` configuration hint does not select a different OpenHouse warehouse.
 - List responses support opaque continuation tokens and page sizes from 1 through 1000.
 - Table loads return all snapshots. The `snapshots=refs` projection is explicitly unsupported.
 - The Iceberg 1.11 `referenced-by` query parameter is accepted and ignored.
 - Access delegation may be requested, but this read-only version does not vend credentials.
 - Conditional ETag responses are not currently emitted.
-- Namespace, table-write, view, transaction, credential, and OAuth endpoints are not advertised.
+- Table-write, view, transaction, credential, and OAuth endpoints are not advertised.
 
 Existing OpenHouse APIs remain supported. Client migrations can therefore be incremental.
 

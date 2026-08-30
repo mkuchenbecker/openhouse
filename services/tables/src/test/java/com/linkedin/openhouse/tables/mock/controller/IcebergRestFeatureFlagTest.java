@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
+import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -36,6 +37,11 @@ public class IcebergRestFeatureFlagTest {
     @Bean
     IcebergRestApiHandler icebergRestApiHandler() {
       return mock(IcebergRestApiHandler.class);
+    }
+
+    @Bean
+    IcebergRestNamespaceApiHandler icebergRestNamespaceApiHandler() {
+      return mock(IcebergRestNamespaceApiHandler.class);
     }
   }
 }
