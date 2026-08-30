@@ -9,7 +9,18 @@ from pyiceberg.catalog.rest import RestCatalog
 
 DATABASE_ID = "d3"
 BASE_URL = "http://localhost:8000"
+# Golden for the list `GET /v1/config` advertises, kept in lockstep with
+# IcebergRestOpenHouseSupport.SUPPORTED_ENDPOINTS (generated from the OpenAPI spec) and with the
+# Java goldens in OpenHouseIcebergRestApiHandlerTest and IcebergRestCatalogRoundTripTest.
+# Compared for exact set equality below: a route that appears without being added here, or is
+# added here without being served, fails the smoke test.
 EXPECTED_ENDPOINTS = {
+    "GET /v1/{prefix}/namespaces",
+    "POST /v1/{prefix}/namespaces",
+    "GET /v1/{prefix}/namespaces/{namespace}",
+    "HEAD /v1/{prefix}/namespaces/{namespace}",
+    "DELETE /v1/{prefix}/namespaces/{namespace}",
+    "POST /v1/{prefix}/namespaces/{namespace}/properties",
     "GET /v1/{prefix}/namespaces/{namespace}/tables",
     "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
     "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
