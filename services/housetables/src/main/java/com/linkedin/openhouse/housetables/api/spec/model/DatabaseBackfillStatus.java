@@ -76,8 +76,10 @@ public class DatabaseBackfillStatus {
 
   @Schema(
       description =
-          "A bounded sample of the databases the last verification found missing, for diagnosis."
-              + " Never the whole set.")
+          "A bounded sample of the databases a verification found missing, for diagnosis. Never the"
+              + " whole set, and empty on every response but a verification's own: the count is"
+              + " durable, the names are not, so a later status read reports how many were missing"
+              + " without repeating which.")
   @JsonProperty(value = "missingSample")
   private List<String> missingSample;
 

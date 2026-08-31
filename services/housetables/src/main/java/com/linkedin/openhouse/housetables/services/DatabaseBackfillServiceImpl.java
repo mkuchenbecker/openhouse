@@ -137,6 +137,10 @@ public class DatabaseBackfillServiceImpl implements DatabaseBackfillService {
       }
     } while (slice.hasNext());
 
+    // Soft-deleted tables live in their own table and are not part of this projection, which is
+    // the same set the namespace API derives existence from: a database whose only tables are
+    // soft-deleted is not derived, so its absence from the store is not a gap.
+    //
     // Verification always starts at the beginning and never consults the watermark: it is the pass
     // that has to be able to contradict the scan, so it may not inherit the scan's belief about
     // what is already done.
@@ -217,6 +221,11 @@ public class DatabaseBackfillServiceImpl implements DatabaseBackfillService {
         .build();
   }
 
+  /**
+   * Deliberately asymmetric: a page size below 1 cannot be honoured at all and is the caller's
+   * mistake, while one above the cap is a request this can serve — in pages of {@link
+   * #MAX_PAGE_SIZE}, which is a resource bound and not a contract the caller needs to know.
+   */
   private static int boundedPageSize(int pageSize) {
     if (pageSize < 1) {
       throw new IllegalArgumentException("pageSize must be at least 1, was " + pageSize);

@@ -115,6 +115,7 @@ public class DatabaseBackfillTest {
     givenTable("beta", "t1");
     backfillService.backfill(10);
     List<Long> versionsBefore = storedVersions();
+    Mockito.clearInvocations(databasesService);
 
     DatabaseBackfillStatus rerun = backfillService.backfill(10);
 
@@ -123,6 +124,7 @@ public class DatabaseBackfillTest {
     Assertions.assertEquals(
         Lists.newArrayList("alpha", "beta"), storedDatabaseIds(), "and creates no duplicates");
     Assertions.assertEquals(versionsBefore, storedVersions(), "and rewrites no row");
+    Mockito.verify(databasesService, Mockito.never()).putDatabase(Mockito.any());
   }
 
   @Test
@@ -200,6 +202,27 @@ public class DatabaseBackfillTest {
         backfillService.status().getVerifiedCompleteTimeMs(), "and it is durable");
   }
 
+  /**
+   * The gap that matters is the one a verification cannot see. A pass that read only its first page
+   * would report the store complete while a database on the second has no row, and the marker it
+   * left behind would be the exact failure the marker exists to prevent.
+   */
+  @Test
+  public void verificationSeesAGapPastTheFirstPage() {
+    givenTable("alpha", "t1");
+    givenTable("beta", "t1");
+    givenTable("gamma", "t1");
+    databasesService.putDatabase(Database.builder().databaseId("alpha").build());
+    databasesService.putDatabase(Database.builder().databaseId("beta").build());
+
+    DatabaseBackfillStatus status = backfillService.verify(1);
+
+    Assertions.assertEquals(3, status.getDatabasesScanned(), "every page was read");
+    Assertions.assertEquals(1L, status.getMissingCount());
+    Assertions.assertEquals(Lists.newArrayList("gamma"), status.getMissingSample());
+    Assertions.assertNull(status.getVerifiedCompleteTimeMs());
+  }
+
   @Test
   public void verificationWithdrawsACompletenessItCanNoLongerSee() {
     givenTable("alpha", "t1");
@@ -240,6 +263,8 @@ public class DatabaseBackfillTest {
         .andExpect(jsonPath("$.verifiedCompleteTimeMs").doesNotExist());
     Assertions.assertEquals(
         Collections.emptyList(), storedDatabaseIds(), "reading the status runs nothing");
+    Assertions.assertEquals(
+        0, backfillStateRepository.count(), "and leaves behind no state saying it did");
 
     mvc.perform(MockMvcRequestBuilders.post(BACKFILL_ENDPOINT).param("pageSize", "100"))
         .andExpect(status().isOk())

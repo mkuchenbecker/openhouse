@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS database_row (
 );
 
 -- Durable state of the backfill that gives every database in user_table_row a row in database_row.
--- Exactly one row lives here, under id = 'database_row'.
+-- Exactly one row lives here, under id = 'database_row_backfill'.
 --
 -- watermark is the resume point of a scan in flight, and is cleared by the scan that reaches the
 -- end. scan_complete_time_ms says a scan RAN. verified_complete_time_ms says a pass read the store

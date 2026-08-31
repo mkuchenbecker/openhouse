@@ -42,7 +42,7 @@ import lombok.NoArgsConstructor;
 public class DatabaseBackfillRow {
 
   /** The primary key of the one row this table holds. */
-  public static final String SINGLETON_ID = "database_row";
+  public static final String SINGLETON_ID = "database_row_backfill";
 
   @Id String id;
 
