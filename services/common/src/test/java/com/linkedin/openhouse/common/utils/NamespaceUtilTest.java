@@ -16,8 +16,9 @@ public class NamespaceUtilTest {
    * The depth-1 half of the compatibility claim: with the property at its shipped default, every
    * answer is the one the hardcoded constant used to give.
    *
-   * <p>Calibration: changing {@code ==} to {@code >=} in {@code isTableNamespace} leaves the first
-   * three assertions passing and turns the last two red.
+   * <p>Calibration: dropping the {@code depth <= maxDepth} clause from {@code isTableNamespace}
+   * leaves the first three assertions passing and turns the last two red; dropping the {@code depth
+   * >= 1} clause turns the second red.
    */
   @Test
   public void testIsTableNamespaceAtTheDefaultDepthMatchesTheHardcodedRule() {
@@ -30,16 +31,35 @@ public class NamespaceUtilTest {
   }
 
   /**
-   * Raising the property moves the predicate, which is the point of wiring it. A table namespace is
-   * exactly the configured depth, so raising the bound moves the level tables live at rather than
-   * widening it to a range.
+   * Raising the property widens the predicate to a range rather than moving a single admitted
+   * depth. {@code max-depth} is a ceiling: a table may live in any namespace from one level up to
+   * it. This is the assertion the previous "exactly {@code maxDepth}" rule got backwards — under it
+   * the first assertion here was false, which means raising a live cluster's max-depth to 2 would
+   * have stopped every existing one-level database from hosting a table.
+   *
+   * <p>Calibration: restoring {@code levels().length == maxDepth} turns the shallower-than-max
+   * assertions red and leaves the at-max and beyond-max ones passing.
    */
   @Test
-  public void testIsTableNamespaceFollowsTheConfiguredDepth() {
-    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("db"), 2));
+  public void testIsTableNamespaceAdmitsEveryDepthUpToTheConfiguredMaximum() {
+    // Shallower than the maximum: still a namespace, still hosts tables.
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("db"), 2));
+    // At the maximum.
     Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b"), 2));
+    // Beyond the maximum.
     Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c"), 2));
+
+    // And the same shape one level up, where there are two admitted depths below the maximum.
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("db"), 3));
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b"), 3));
     Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c"), 3));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c", "d"), 3));
+
+    // The floor does not move with the ceiling: the empty namespace has no database to host a
+    // table in, at any configured depth.
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.empty(), 2));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.empty(), 3));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(null, 3));
   }
 
   @Test

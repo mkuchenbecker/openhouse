@@ -36,6 +36,11 @@ public interface NamespacesService {
    * <p>Its failure is the table write's failure. Nothing derives a database's existence from its
    * tables any more, so a table whose database was never registered is a table in a database that
    * does not exist.
+   *
+   * @throws org.apache.iceberg.exceptions.NoSuchNamespaceException if {@code databaseId} names a
+   *     nested namespace whose parent does not exist. Registering it would leave a child no listing
+   *     walk can reach; the caller must create the parent first. Cannot arise at the shipped
+   *     max-depth of 1, where every namespace is a root.
    */
   void ensureNamespace(String databaseId);
 

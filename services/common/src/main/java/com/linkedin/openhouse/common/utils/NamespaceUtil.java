@@ -10,10 +10,10 @@ import org.apache.iceberg.exceptions.ValidationException;
 /**
  * Helpers that encode OpenHouse's namespace contract for {@link Namespace} arguments.
  *
- * <p>OpenHouse currently identifies base tables with {@code database.table}, so a "table namespace"
- * is exactly one level (the database) and an "operation namespace" — the {@code Namespace} argument
- * to a database-scoped catalog method — is at most one level (with the empty namespace acting as a
- * sentinel for "across all databases").
+ * <p>A "table namespace" is a namespace that can hold a base table: non-empty and no deeper than
+ * the configured maximum. An "operation namespace" — the {@code Namespace} argument to a
+ * database-scoped catalog method — is the same bound with the empty namespace additionally
+ * permitted, because callers use it as a sentinel for "across all databases".
  *
  * <p>The two predicates are intentionally separate concepts, not stricter/looser flavors of the
  * same rule. If OpenHouse ever changes its namespace shape (e.g. to support {@code
@@ -32,15 +32,25 @@ public final class NamespaceUtil {
    * fallbacks, longer-namespace lookups, etc.). The empty namespace is not a table namespace
    * because there is no database under which to place the table.
    *
-   * <p>A table namespace is exactly {@code maxDepth} levels rather than "at most": a table lives at
-   * the deepest level the catalog admits, so a shallower namespace is a container, not a table's
-   * parent. At the shipped {@code maxDepth} of 1 that is the same predicate as before — exactly one
-   * level — which is the whole compatibility claim of wiring this to configuration.
+   * <p>The depth rule is a closed range: at least one level, at most {@code maxDepth}. {@code
+   * maxDepth} is a ceiling on how deep a namespace may be, not a depth every table's namespace must
+   * have. Iceberg's model is that a namespace may be any depth and a table lives in whichever
+   * namespace holds it, so requiring exactly {@code maxDepth} would make raising the property stop
+   * every existing one-level database from hosting tables, and would make a table in a two-level
+   * namespace unaddressable on a cluster configured for three.
+   *
+   * <p>At the shipped {@code maxDepth} of 1 the range collapses to exactly one level, which is the
+   * predicate this has always applied and the whole compatibility claim of wiring it to
+   * configuration.
    *
    * @param maxDepth the value of the {@code cluster.tables.namespace.max-depth} cluster property
    */
   public static boolean isTableNamespace(Namespace namespace, int maxDepth) {
-    return namespace != null && namespace.levels().length == maxDepth;
+    if (namespace == null) {
+      return false;
+    }
+    int depth = namespace.levels().length;
+    return depth >= 1 && depth <= maxDepth;
   }
 
   /**
