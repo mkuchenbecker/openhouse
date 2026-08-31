@@ -169,6 +169,45 @@ public class NamespaceUtilTest {
         ValidationException.class, () -> NamespaceUtil.validate(Namespace.of(""), 1));
   }
 
+  /**
+   * The reason a namespace was refused is reported, not left for the caller to work out by
+   * re-applying the rules. A caller that has to re-derive "was that the depth bound?" has restated
+   * the bound, and a restated rule is one that can disagree with the one that actually fired.
+   */
+  @Test
+  public void testValidateReportsWhichRuleTheNamespaceBroke() {
+    Assertions.assertEquals(NamespaceUtil.Rejection.EMPTY, rejectionOf(Namespace.empty(), 1));
+    Assertions.assertEquals(NamespaceUtil.Rejection.EMPTY, rejectionOf(null, 1));
+    Assertions.assertEquals(
+        NamespaceUtil.Rejection.TOO_DEEP, rejectionOf(Namespace.of("a", "b"), 1));
+    Assertions.assertEquals(
+        NamespaceUtil.Rejection.ILLEGAL_LEVEL, rejectionOf(Namespace.of("not-legal"), 1));
+    StringBuilder tooLong = new StringBuilder();
+    for (int i = 0; i <= NamespaceUtil.MAX_ENCODED_NAMESPACE_LENGTH; i++) {
+      tooLong.append("a");
+    }
+    Assertions.assertEquals(
+        NamespaceUtil.Rejection.TOO_LONG, rejectionOf(Namespace.of(tooLong.toString()), 1));
+  }
+
+  /**
+   * A namespace that breaks two rules is reported by the first one checked, so a caller branching
+   * on the reason sees what it would have seen from applying the same rules in the same order. A
+   * three-level namespace whose levels are also illegal is too deep, not illegally spelled.
+   */
+  @Test
+  public void testTheFirstBrokenRuleIsTheOneReported() {
+    Assertions.assertEquals(
+        NamespaceUtil.Rejection.TOO_DEEP, rejectionOf(Namespace.of("not-legal", "also-not"), 1));
+  }
+
+  private static NamespaceUtil.Rejection rejectionOf(Namespace namespace, int maxDepth) {
+    return Assertions.assertThrows(
+            NamespaceUtil.InvalidNamespaceException.class,
+            () -> NamespaceUtil.validate(namespace, maxDepth))
+        .rejection();
+  }
+
   @Test
   public void testValidateRejectsAnEncodedNamespaceWiderThanTheColumn() {
     StringBuilder tooLong = new StringBuilder();

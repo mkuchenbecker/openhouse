@@ -8,6 +8,7 @@ import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableExcepti
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.exception.TableMetadataFileNotFoundException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import lombok.extern.slf4j.Slf4j;
@@ -107,23 +108,21 @@ public class IcebergRestExceptionHandler {
   }
 
   /**
-   * The same condition as above, one wrapper further out. {@code
-   * OpenHouseInternalTableOperations.refreshMetadata} catches Iceberg's {@code NotFoundException}
-   * and re-throws it as {@link InvalidTableMetadataException}, so a table whose metadata.json has
-   * gone missing never reached the mapping above and fell through to the catch-all: the read
-   * answered 500, which tells a client "the catalog is broken, retry later" for a table that is
-   * simply pointing at a file that is not there.
+   * The same condition as above, one wrapper further out. A table whose metadata.json has gone
+   * missing is reported by the catalog as {@link TableMetadataFileNotFoundException}, and it is a
+   * missing resource for the same reason the bare Iceberg exception above is -- the wrapper does
+   * not change what happened, only who is telling us.
    *
-   * <p>Only an absent file is a 404. {@code InvalidTableMetadataException} also carries genuinely
-   * corrupt metadata -- a metadata.json that parsed into something invalid -- and that is a server
-   * problem, not a missing resource, so it keeps the catch-all's 500.
+   * <p>The wider {@link InvalidTableMetadataException} is deliberately not mapped here. It carries
+   * metadata that is present but unreadable, which is a server problem rather than a missing
+   * resource, and it keeps the catch-all's 500. This edge no longer decides which of the two it is
+   * by unwrapping {@code getCause()}: the catalog knew at the point of failure and says so in the
+   * type it throws.
    */
-  @ExceptionHandler(InvalidTableMetadataException.class)
-  public ResponseEntity<ErrorResponse> handleInvalidTableMetadata(InvalidTableMetadataException e) {
-    if (e.getCause() instanceof org.apache.iceberg.exceptions.NotFoundException) {
-      return errorResponse(404, e.getMessage(), "NotFoundException");
-    }
-    return handleDefault(e);
+  @ExceptionHandler(TableMetadataFileNotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleMissingMetadataFile(
+      TableMetadataFileNotFoundException e) {
+    return errorResponse(404, e.getMessage(), "NotFoundException");
   }
 
   @ExceptionHandler(NamespaceNotEmptyException.class)

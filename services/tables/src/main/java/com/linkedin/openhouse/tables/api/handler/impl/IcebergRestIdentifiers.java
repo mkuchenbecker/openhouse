@@ -65,17 +65,29 @@ final class IcebergRestIdentifiers {
    * 404 an absent namespace gets, worded the same way.
    */
   static void requireHoldable(Namespace namespace, int maxDepth) {
-    if (namespace != null && namespace.levels().length > maxDepth) {
-      throw new NoSuchNamespaceException(
-          maxDepth == 1
-              ? "Only single-level namespaces are supported"
-              : String.format("Only namespaces up to %s levels deep are supported", maxDepth));
-    }
     try {
       NamespaceUtil.validate(namespace, maxDepth);
-    } catch (ValidationException e) {
-      throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
+    } catch (NamespaceUtil.InvalidNamespaceException e) {
+      throw e.rejection() == NamespaceUtil.Rejection.TOO_DEEP
+          ? new NoSuchNamespaceException(tooDeepMessage(maxDepth))
+          : new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
+  }
+
+  /**
+   * The depth refusal's wording, which is the whole reason this route family distinguishes the
+   * reason at all.
+   *
+   * <p>The bound itself is not restated here. Whether a namespace is too deep is {@link
+   * NamespaceUtil#validate}'s to decide and it reports which rule fired; this method only chooses
+   * the sentence. When the bound is stated twice -- once to pick the wording and once inside the
+   * validator -- the two are free to disagree, and the one a client sees is not the one that
+   * actually gated the request.
+   */
+  private static String tooDeepMessage(int maxDepth) {
+    return maxDepth == 1
+        ? "Only single-level namespaces are supported"
+        : String.format("Only namespaces up to %s levels deep are supported", maxDepth);
   }
 
   /**

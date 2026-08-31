@@ -9,6 +9,7 @@ import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.cluster.storage.local.LocalStorage;
 import com.linkedin.openhouse.cluster.storage.local.LocalStorageClient;
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
+import com.linkedin.openhouse.common.exception.TableMetadataFileNotFoundException;
 import com.linkedin.openhouse.internal.catalog.cache.TableMetadataCache;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.mapper.HouseTableMapper;
@@ -30,8 +31,8 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.apache.commons.compress.utils.Lists;
 import org.apache.hadoop.conf.Configuration;
@@ -65,6 +67,8 @@ import org.apache.iceberg.common.DynFields;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
+import org.apache.iceberg.exceptions.NotFoundException;
+import org.apache.iceberg.exceptions.RuntimeIOException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
@@ -73,6 +77,9 @@ import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -356,8 +363,7 @@ public class OpenHouseInternalTableOperationsTest {
     try (FSDataOutputStream out = fs.create(baseFsPath, true)) {
       out.write(TableMetadataParser.toJson(buildable).getBytes());
     }
-    TableMetadata base =
-        TableMetadataParser.read(new HadoopFileIO(new Configuration()), basePath);
+    TableMetadata base = TableMetadataParser.read(new HadoopFileIO(new Configuration()), basePath);
 
     Map<String, String> properties = new HashMap<>();
     properties.put(
@@ -376,7 +382,8 @@ public class OpenHouseInternalTableOperationsTest {
 
     try (MockedStatic<TableMetadataParser> ignoreWriteMock =
         Mockito.mockStatic(TableMetadataParser.class)) {
-      Assertions.assertDoesNotThrow(() -> openHouseInternalTableOperations.doCommit(base, metadata));
+      Assertions.assertDoesNotThrow(
+          () -> openHouseInternalTableOperations.doCommit(base, metadata));
 
       Mockito.verify(mockHouseTableMapper).toHouseTable(tblMetadataCaptor.capture(), Mockito.any());
       Map<String, String> committed = tblMetadataCaptor.getValue().properties();
@@ -2186,13 +2193,177 @@ public class OpenHouseInternalTableOperationsTest {
         () -> openHouseInternalTableOperations.refreshMetadata(metadataFile.toString()));
   }
 
-  /** Verifies that a missing metadata file is surfaced as InvalidTableMetadataException. */
+  /**
+   * Verifies that a missing metadata file is surfaced as the named subtype, and therefore still as
+   * an InvalidTableMetadataException for every caller that catches the supertype.
+   *
+   * <p>The location has to be a metadata file name a commit could actually have written. Iceberg
+   * decides the compression codec from the file name before it opens anything, so a location that
+   * is not named {@code *.metadata.json} never reaches storage and never produces the absence this
+   * test is about -- see {@link #testRefreshMetadataMalformedLocationIsNotReportedAsMissing}.
+   */
   @Test
   void testRefreshMetadataMissingFileThrowsInvalidTableMetadataException() {
-    String nonExistentPath = "/tmp/non-existent-" + UUID.randomUUID() + "/metadata.json";
+    String nonExistentPath =
+        "/tmp/non-existent-" + UUID.randomUUID() + "/00000-" + UUID.randomUUID() + ".metadata.json";
+
+    InvalidTableMetadataException e =
+        Assertions.assertThrows(
+            TableMetadataFileNotFoundException.class,
+            () -> openHouseInternalTableOperations.refreshMetadata(nonExistentPath));
+    Assertions.assertInstanceOf(NotFoundException.class, e.getCause());
+  }
+
+  /**
+   * A location that is not a metadata file name at all is refused by Iceberg before storage is
+   * consulted, so it is not evidence about whether the file is there and must not be reported as a
+   * missing file -- that would answer 404 for a table whose HTS row is malformed.
+   */
+  @Test
+  void testRefreshMetadataMalformedLocationIsNotReportedAsMissing() {
+    String malformedLocation = "/tmp/non-existent-" + UUID.randomUUID() + "/metadata.json";
+
+    InvalidTableMetadataException e =
+        Assertions.assertThrows(
+            InvalidTableMetadataException.class,
+            () -> openHouseInternalTableOperations.refreshMetadata(malformedLocation));
+    Assertions.assertFalse(
+        e instanceof TableMetadataFileNotFoundException,
+        "a location Iceberg rejected before reading is not a missing file: " + e.getMessage());
+  }
+
+  /**
+   * Metadata that is present but does not parse is a different fact from metadata that is not
+   * there, and must not arrive as the missing-file subtype -- the REST edge answers 404 for one and
+   * 500 for the other purely on the type.
+   */
+  @Test
+  void testRefreshMetadataUnreadableFileIsNotReportedAsMissing() throws IOException {
+    java.nio.file.Path metadataFile =
+        Files.createTempDirectory("unreadable-metadata-test").resolve("00001-abc.metadata.json");
+    Files.write(metadataFile, "{\"not\": \"table metadata\"}".getBytes());
+
+    InvalidTableMetadataException e =
+        Assertions.assertThrows(
+            InvalidTableMetadataException.class,
+            () -> openHouseInternalTableOperations.refreshMetadata(metadataFile.toString()));
+    Assertions.assertFalse(
+        e instanceof TableMetadataFileNotFoundException,
+        "an unreadable file is not a missing file: " + e.getMessage());
+  }
+
+  /**
+   * An outcome the first read settled is read exactly once. Retrying cannot change the answer --
+   * nothing in the read path changes what is at the location -- so the client must not be made to
+   * wait out a dependency-failure budget for it. At the shipped budget that wait is around ninety
+   * seconds, which is why this asserts the read count and not only the elapsed time.
+   */
+  @ParameterizedTest
+  @MethodSource("settledMetadataLoadFailures")
+  void testASettledMetadataLoadFailureIsNotRetried(String name, RuntimeException settled) {
+    CountingTableMetadataCache counting =
+        new CountingTableMetadataCache(
+            location -> {
+              throw settled;
+            });
+    OpenHouseInternalTableOperations ops = operationsBackedBy(counting);
 
     Assertions.assertThrows(
         InvalidTableMetadataException.class,
-        () -> openHouseInternalTableOperations.refreshMetadata(nonExistentPath));
+        () -> ops.refreshMetadata("/tmp/settled-" + UUID.randomUUID() + "/00000-a.metadata.json"));
+
+    // The read count, not the elapsed time, is what this asserts. Wall clock on a shared build
+    // machine is not a fact about the code, but attempts are: the twenty-attempt budget is spent
+    // on Iceberg's exponential backoff, so one read is the whole of the latency claim.
+    Assertions.assertEquals(1, counting.attempts(), name + " must be read exactly once");
+  }
+
+  private static Stream<Arguments> settledMetadataLoadFailures() {
+    return Stream.of(
+        Arguments.of(
+            "an absent file", new NotFoundException("Failed to open input stream for file: x")),
+        Arguments.of(
+            "a location that is not a metadata file name",
+            new IllegalArgumentException("x is not a valid metadata file")),
+        Arguments.of(
+            "metadata naming a schema it does not carry",
+            new IllegalArgumentException("Cannot find schema with current-schema-id=6")),
+        Arguments.of("metadata Iceberg rejects", new ValidationException("Cannot parse metadata")),
+        Arguments.of(
+            "a table the read cannot place", new IllegalStateException("Cannot find table")));
+  }
+
+  /**
+   * The other half of the same rule: storage failing to answer is exactly what the retry budget is
+   * for, and narrowing the missing-file case must not have narrowed that away too.
+   */
+  @Test
+  void testTransientStorageFailureIsStillRetried() {
+    CountingTableMetadataCache counting =
+        new CountingTableMetadataCache(
+            location -> {
+              throw new RuntimeIOException(
+                  new IOException("connection reset by peer"), "Failed to read %s", location);
+            },
+            BASE_TABLE_METADATA);
+    OpenHouseInternalTableOperations ops = operationsBackedBy(counting);
+
+    ops.refreshMetadata("/tmp/transient-" + UUID.randomUUID() + "/metadata.json");
+
+    Assertions.assertEquals(
+        2, counting.attempts(), "a storage failure that is not an absent file must be retried");
+  }
+
+  private OpenHouseInternalTableOperations operationsBackedBy(TableMetadataCache cache) {
+    return new OpenHouseInternalTableOperations(
+        mockHouseTableRepository,
+        new HadoopFileIO(new Configuration()),
+        mockHouseTableMapper,
+        TEST_TABLE_IDENTIFIER,
+        new MetricsReporter(new SimpleMeterRegistry(), "TEST_CATALOG", Lists.newArrayList()),
+        fileIOManager,
+        cache);
+  }
+
+  /**
+   * A cache that counts load attempts and fails them, so a test can assert how many reads a given
+   * failure costs rather than how long the whole call took.
+   *
+   * <p>The supplier the production cache would call is deliberately not invoked: the point of these
+   * tests is the retry decision above the file system, not the file system.
+   */
+  private static final class CountingTableMetadataCache implements TableMetadataCache {
+    private final java.util.function.Function<String, TableMetadata> failure;
+    private final TableMetadata succeedAfterFirstAttemptWith;
+    private int attempts;
+
+    CountingTableMetadataCache(java.util.function.Function<String, TableMetadata> failure) {
+      this(failure, null);
+    }
+
+    CountingTableMetadataCache(
+        java.util.function.Function<String, TableMetadata> failure,
+        TableMetadata succeedAfterFirstAttemptWith) {
+      this.failure = failure;
+      this.succeedAfterFirstAttemptWith = succeedAfterFirstAttemptWith;
+    }
+
+    int attempts() {
+      return attempts;
+    }
+
+    @Override
+    public TableMetadata load(String metadataLocation, Supplier<TableMetadata> metadataLoader) {
+      attempts++;
+      if (succeedAfterFirstAttemptWith != null && attempts > 1) {
+        return succeedAfterFirstAttemptWith;
+      }
+      return failure.apply(metadataLocation);
+    }
+
+    @Override
+    public TableMetadata seed(String metadataLocation, TableMetadata tableMetadata) {
+      return tableMetadata;
+    }
   }
 }

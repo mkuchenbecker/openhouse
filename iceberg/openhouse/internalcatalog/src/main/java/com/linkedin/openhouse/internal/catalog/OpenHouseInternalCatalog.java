@@ -131,7 +131,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
   public List<TableIdentifier> listTables(Namespace namespace) {
     NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     rejectCrossDatabaseListing(namespace);
-    return houseTableRepository.findAllByDatabaseId(namespace.toString()).stream()
+    return houseTableRepository.findAllByDatabaseId(NamespaceUtil.encode(namespace)).stream()
         .map(
             houseTable ->
                 NamespaceUtil.tableIdentifier(houseTable.getDatabaseId(), houseTable.getTableId()))
@@ -142,7 +142,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
     NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     rejectCrossDatabaseListing(namespace);
     return houseTableRepository
-        .findAllByDatabaseId(namespace.toString(), pageable)
+        .findAllByDatabaseId(NamespaceUtil.encode(namespace), pageable)
         .map(
             houseTable ->
                 NamespaceUtil.tableIdentifier(houseTable.getDatabaseId(), houseTable.getTableId()));
@@ -171,7 +171,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
    */
   public Page<HouseTable> listHouseTables(Namespace namespace, Pageable pageable) {
     NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
-    return houseTableRepository.findAllByDatabaseId(namespace.toString(), pageable);
+    return houseTableRepository.findAllByDatabaseId(NamespaceUtil.encode(namespace), pageable);
   }
 
   /**
@@ -183,7 +183,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
   public Optional<HouseTable> findHouseTable(TableIdentifier identifier) {
     HouseTablePrimaryKey primaryKey =
         HouseTablePrimaryKey.builder()
-            .databaseId(identifier.namespace().toString())
+            .databaseId(NamespaceUtil.encode(identifier.namespace()))
             .tableId(identifier.name())
             .build();
     try {
@@ -203,7 +203,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
     HouseTablePrimaryKey primaryKey =
         HouseTablePrimaryKey.builder()
-            .databaseId(identifier.namespace().toString())
+            .databaseId(NamespaceUtil.encode(identifier.namespace()))
             .tableId(identifier.name())
             .build();
     String tableLocation = getTableBaseLocation(houseTable, identifier);
@@ -255,9 +255,10 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
     // Preserve existing case if databases are the same
     String toDatabaseName =
-        from.namespace().toString().equalsIgnoreCase(to.namespace().toString())
-            ? from.namespace().toString()
-            : to.namespace().toString();
+        NamespaceUtil.encode(from.namespace())
+                .equalsIgnoreCase(NamespaceUtil.encode(to.namespace()))
+            ? NamespaceUtil.encode(from.namespace())
+            : NamespaceUtil.encode(to.namespace());
 
     TableUri tableUri =
         TableUri.builder()
@@ -289,7 +290,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
     try {
       return houseTableRepository
-          .searchSoftDeletedTables(namespace.toString(), tableId, pageable)
+          .searchSoftDeletedTables(NamespaceUtil.encode(namespace), tableId, pageable)
           .map(
               houseTable ->
                   SoftDeletedTableDto.builder()
@@ -303,7 +304,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
       throw new RuntimeException(
           String.format(
               "Failed to search soft deleted tables with namespace %s and tableId %s",
-              namespace.toString(), tableId),
+              NamespaceUtil.encode(namespace), tableId),
           e);
     }
   }
@@ -360,20 +361,21 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
       houseTable =
           houseTableRepository.findById(
               HouseTablePrimaryKey.builder()
-                  .databaseId(tableIdentifier.namespace().toString())
+                  .databaseId(NamespaceUtil.encode(tableIdentifier.namespace()))
                   .tableId(tableIdentifier.name())
                   .build());
     } catch (HouseTableNotFoundException e) {
       log.info(
           "House table entry not found {}.{}",
-          tableIdentifier.namespace().toString(),
+          NamespaceUtil.encode(tableIdentifier.namespace()),
           tableIdentifier.name());
     }
     StorageType.Type type =
         houseTable.isPresent()
             ? storageType.fromString(houseTable.get().getStorageType())
             : storageSelector
-                .selectStorage(tableIdentifier.namespace().toString(), tableIdentifier.name())
+                .selectStorage(
+                    NamespaceUtil.encode(tableIdentifier.namespace()), tableIdentifier.name())
                 .getType();
 
     return fileIOManager.getFileIO(type);

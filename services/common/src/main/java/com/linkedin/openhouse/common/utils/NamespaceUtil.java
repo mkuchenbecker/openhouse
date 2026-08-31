@@ -265,31 +265,82 @@ public final class NamespaceUtil {
   }
 
   /**
+   * Which of {@link #validate}'s rules a namespace broke.
+   *
+   * <p>A caller that answers differently per rule -- the {@code /v1} facade words a depth refusal
+   * differently from every other unusable name -- reads this instead of restating the rule to work
+   * out which one fired. Restating it is how the bound comes to be stated in two places and how the
+   * two come to disagree.
+   */
+  public enum Rejection {
+    /** No namespace at all, so no database under which anything could live. */
+    EMPTY,
+    /** More levels than the cluster is configured to hold. */
+    TOO_DEEP,
+    /** A level outside the identifier charset. */
+    ILLEGAL_LEVEL,
+    /** An encoded form too long for the {@code database_id} column. */
+    TOO_LONG
+  }
+
+  /**
+   * The failure {@link #validate} raises, carrying {@link #rejection()} alongside the message.
+   *
+   * <p>It stays a {@link ValidationException}: every existing catch of the supertype keeps catching
+   * it, and every message is byte for byte what it was, so only a caller that wants to distinguish
+   * the rules has to know this type exists.
+   */
+  public static class InvalidNamespaceException extends ValidationException {
+    private final Rejection rejection;
+
+    private InvalidNamespaceException(Rejection rejection, String message, Object... args) {
+      super(message, args);
+      this.rejection = rejection;
+    }
+
+    /** The rule the namespace broke. */
+    public Rejection rejection() {
+      return rejection;
+    }
+  }
+
+  /**
    * Validate that {@code namespace} is a legal OpenHouse namespace: non-empty, no deeper than
    * {@code maxDepth}, every level within the identifier charset, and an encoded form that fits the
    * {@code database_id} column.
    *
-   * @throws ValidationException if any of those does not hold
+   * <p>The rules are checked in the order they are listed, so a namespace that breaks more than one
+   * is reported by the first -- which is what lets a caller branch on {@link Rejection} and get the
+   * same answer it would have got from checking the same rules itself, in the same order.
+   *
+   * @throws InvalidNamespaceException (a {@link ValidationException}) if any of those does not hold
    */
   public static void validate(Namespace namespace, int maxDepth) {
     if (namespace == null || namespace.isEmpty()) {
-      throw new ValidationException("Namespace cannot be empty");
+      throw new InvalidNamespaceException(Rejection.EMPTY, "Namespace cannot be empty");
     }
     if (namespace.levels().length > maxDepth) {
-      throw new ValidationException(
+      throw new InvalidNamespaceException(
+          Rejection.TOO_DEEP,
           "Namespace %s is deeper than the configured maximum depth of %s",
-          encode(namespace), maxDepth);
+          encode(namespace),
+          maxDepth);
     }
     for (String level : namespace.levels()) {
       if (!LEVEL_PATTERN.matcher(level).matches()) {
-        throw new ValidationException(
-            "Namespace level %s must match %s", level, LEVEL_PATTERN.pattern());
+        throw new InvalidNamespaceException(
+            Rejection.ILLEGAL_LEVEL,
+            "Namespace level %s must match %s",
+            level,
+            LEVEL_PATTERN.pattern());
       }
     }
     if (encode(namespace).length() > MAX_ENCODED_NAMESPACE_LENGTH) {
-      throw new ValidationException(
+      throw new InvalidNamespaceException(
+          Rejection.TOO_LONG,
           "Namespace %s exceeds the maximum encoded length of %s",
-          encode(namespace), MAX_ENCODED_NAMESPACE_LENGTH);
+          encode(namespace),
+          MAX_ENCODED_NAMESPACE_LENGTH);
     }
   }
 }
