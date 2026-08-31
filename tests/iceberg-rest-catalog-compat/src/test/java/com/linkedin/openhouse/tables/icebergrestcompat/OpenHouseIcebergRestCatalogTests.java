@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,7 +18,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -83,23 +81,14 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   private static final String FORMAT_VERSION_CHOSEN_BY_CATALOG =
       "OpenHouse creates every table at the format version its cluster is configured for and ignores the format-version a create carries; this test asserts the created table is at the requested version";
 
-  private static final String CLIENT_TABLE_DEFAULTS_NOT_SENT =
-      "catalog-level table-default.* properties do not reach the created table through this facade, though table-override.* ones do. The write path stores every non-preserved property a create request carries -- pinned by IcebergRestCatalogWriteTest#createStoresThePropertiesTheRequestCarries -- so the defaults are lost before the request is sent; where in the 1.11 client's create-request assembly is not yet diagnosed";
-
-  private static final String COMMIT_FAILURE_MESSAGE_TEXT =
-      "the precondition is evaluated and the commit correctly fails with 409 CommitFailedException; the assertion is on message text. The suite expects the 'Cannot commit' wording Iceberg's own local commit path produces, and a server that validates UpdateRequirements returns the specification's 'Requirement failed: ...' text instead";
-
   private static final String COLUMN_DEFAULTS_NOT_STORED =
       "OpenHouse does not store Iceberg column default values (ReadBridgeStripProtection strips them), so the created table's schema comes back without the default this test sets";
 
   private static final String INTERMEDIATE_SCHEMAS_NOT_KEPT =
       "OpenHouse keeps a table's intermediate schema history only for replica tables, so a create transaction that adds two schemas lands as one and the current schema id is 0 rather than 1";
 
-  private static final String MISSING_METADATA_FILE_IS_A_500 =
-      "known read-path defect, untouched by the write routes: when the metadata.json a table points at is gone, loadTable fails with 500 rather than 404. The failure reaches the facade as an exception it does not map and falls through to the catch-all";
-
-  private static final String STALE_UPDATES_NOT_A_CONFLICT =
-      "a schema update built against a stale base cannot be applied to the current metadata, and the applier reports that as an invalid argument (400) rather than as the commit conflict (409) this test expects";
+  private static final String CONCURRENT_COMMIT_DELETES_A_COLUMN =
+      "the conflict this test sets up is created by deleting a column, and OpenHouse declines that (DECLINES_SCHEMA_NARROWING): the concurrent commit is refused with 400 before the stale commit under test is ever sent. The refusal arrives from the applier rather than from BaseIcebergSchemaValidator -- a 1.11 client sends add-schema with no last-column-id and the 1.5.2 applier reads the narrowed schema's own highest field id, so the update is rejected as 'Invalid last column ID: 1 < 2' -- but either way the commit does not land. The stale-commit half of this test is exercised, and passes, in testUpdateTableSchemaAssignmentConflict, whose concurrent commit adds a column instead";
 
   @BeforeAll
   static void startServerAndCatalog() {
@@ -216,12 +205,34 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
     return false;
   }
 
+  /**
+   * The catalog-level table properties {@link CatalogTests}'s default- and override-property tests
+   * assert about. They are configuration of the catalog under test, not of the server: the Iceberg
+   * REST client reads {@code table-default.*} and {@code table-override.*} out of its own merged
+   * properties (client-supplied ones merged over whatever {@code GET /v1/config} returned) and puts
+   * them into the create request it sends. Iceberg's own REST harness ({@code
+   * TestRESTCatalog#initCatalog}) configures exactly these five, and a catalog that does not carry
+   * them cannot satisfy the four tests that name their values -- there is nowhere else for {@code
+   * catalog-default-key1} to come from.
+   *
+   * <p>{@code override-key3} deliberately appears in both maps: the suite uses it to pin that an
+   * override outranks a default of the same name.
+   */
+  private static final Map<String, String> CATALOG_LEVEL_TABLE_PROPERTIES =
+      Map.of(
+          CatalogProperties.TABLE_DEFAULT_PREFIX + "default-key1", "catalog-default-key1",
+          CatalogProperties.TABLE_DEFAULT_PREFIX + "default-key2", "catalog-default-key2",
+          CatalogProperties.TABLE_DEFAULT_PREFIX + "override-key3", "catalog-default-key3",
+          CatalogProperties.TABLE_OVERRIDE_PREFIX + "override-key3", "catalog-override-key3",
+          CatalogProperties.TABLE_OVERRIDE_PREFIX + "override-key4", "catalog-override-key4");
+
   private static RESTCatalog buildRestCatalog(
       String catalogName, Map<String, String> additionalProperties) {
     RESTCatalog catalog = new RESTCatalog();
     Map<String, String> properties = new HashMap<>();
     properties.put(CatalogProperties.URI, "http://localhost:" + server.getPort());
     properties.put(CatalogProperties.WAREHOUSE_LOCATION, "openhouse");
+    properties.putAll(CATALOG_LEVEL_TABLE_PROPERTIES);
     if (authToken != null) {
       properties.put("token", authToken);
       properties.put("header.Authorization", "Bearer " + authToken);
@@ -430,48 +441,6 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   }
 
   @Override
-  @Disabled(CLIENT_TABLE_DEFAULTS_NOT_SENT)
-  @Test
-  public void testDefaultTableProperties() {
-    super.testDefaultTableProperties();
-  }
-
-  @Override
-  @Disabled(CLIENT_TABLE_DEFAULTS_NOT_SENT)
-  @Test
-  public void testDefaultTablePropertiesCreateTransaction() {
-    super.testDefaultTablePropertiesCreateTransaction();
-  }
-
-  @Override
-  @Disabled(CLIENT_TABLE_DEFAULTS_NOT_SENT)
-  @Test
-  public void testOverrideTableProperties() {
-    super.testOverrideTableProperties();
-  }
-
-  @Override
-  @Disabled(CLIENT_TABLE_DEFAULTS_NOT_SENT)
-  @Test
-  public void testOverrideTablePropertiesCreateTransaction() {
-    super.testOverrideTablePropertiesCreateTransaction();
-  }
-
-  @Override
-  @Disabled(COMMIT_FAILURE_MESSAGE_TEXT)
-  @Test
-  public void testUUIDValidation() {
-    super.testUUIDValidation();
-  }
-
-  @Override
-  @Disabled(COMMIT_FAILURE_MESSAGE_TEXT)
-  @Test
-  public void testUpdateTableSchemaAssignmentConflict() {
-    super.testUpdateTableSchemaAssignmentConflict();
-  }
-
-  @Override
   @Disabled(COLUMN_DEFAULTS_NOT_STORED)
   @Test
   public void testCreateTableWithDefaultColumnValue() {
@@ -486,14 +455,7 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   }
 
   @Override
-  @Disabled(MISSING_METADATA_FILE_IS_A_500)
-  @Test
-  public void testLoadTableWithMissingMetadataFile(@TempDir Path tempDir) throws IOException {
-    super.testLoadTableWithMissingMetadataFile(tempDir);
-  }
-
-  @Override
-  @Disabled(STALE_UPDATES_NOT_A_CONFLICT)
+  @Disabled(CONCURRENT_COMMIT_DELETES_A_COLUMN)
   @Test
   public void testUpdateTableSchemaConflict() {
     super.testUpdateTableSchemaConflict();

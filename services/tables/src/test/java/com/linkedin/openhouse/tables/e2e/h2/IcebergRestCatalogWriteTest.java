@@ -13,9 +13,11 @@ import java.util.Map;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.Transaction;
+import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.RESTCatalog;
@@ -167,6 +169,33 @@ public class IcebergRestCatalogWriteTest {
     table.updateSchema().addColumn("added", Types.StringType.get()).commit();
 
     assertThat(restCatalog.loadTable(identifier).schema().findField("added")).isNotNull();
+  }
+
+  /**
+   * A commit built on a base another commit has since moved past is a conflict, not a malformed
+   * request. The distinction is the whole of what an Iceberg client does next: it refreshes and
+   * retries a 409, and gives up permanently on a 400. The message matters as much as the status --
+   * the client hands the server's own words to the caller, so they have to say the commit did not
+   * happen, not only which precondition failed.
+   */
+  @Test
+  void aStaleCommitIsAConflictThatSaysTheCommitDidNotHappen() {
+    TableIdentifier identifier = TableIdentifier.of(DB, "stale_commit_t");
+    Table table = restCatalog.buildTable(identifier, SCHEMA).create();
+    UpdateSchema stale = table.updateSchema().addColumn("first", Types.StringType.get());
+
+    restCatalog
+        .loadTable(identifier)
+        .updateSchema()
+        .addColumn("second", Types.StringType.get())
+        .commit();
+
+    assertThatThrownBy(stale::commit)
+        .isInstanceOf(CommitFailedException.class)
+        .hasMessageContaining("Cannot commit")
+        .hasMessageContaining("Requirement failed");
+    assertThat(restCatalog.loadTable(identifier).schema().findField("first")).isNull();
+    assertThat(restCatalog.loadTable(identifier).schema().findField("second")).isNotNull();
   }
 
   @Test
