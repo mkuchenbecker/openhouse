@@ -2,6 +2,8 @@ package com.linkedin.openhouse.housetables.api.spec.model;
 
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_ERROR_MSG;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.NAMESPACE_ID_ERROR_MSG;
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.NAMESPACE_ID_REGEX;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.gson.Gson;
@@ -34,7 +36,7 @@ public class UserTable {
       example = "my_database")
   @JsonProperty(value = "databaseId")
   @NotEmpty(message = "databaseId cannot be empty")
-  @Pattern(regexp = ALPHA_NUM_UNDERSCORE_REGEX, message = ALPHA_NUM_UNDERSCORE_ERROR_MSG)
+  @Pattern(regexp = NAMESPACE_ID_REGEX, message = NAMESPACE_ID_ERROR_MSG)
   private String databaseId;
 
   @Schema(

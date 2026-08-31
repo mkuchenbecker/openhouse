@@ -38,6 +38,7 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Component;
@@ -67,6 +68,18 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Autowired TableMetadataCache tableMetadataCache;
 
+  /**
+   * The configured namespace depth, read straight from {@code cluster.tables.namespace.max-depth}
+   * rather than from a hardcoded constant in {@link NamespaceUtil}. Initialised to the shipped
+   * default so a directly-constructed catalog (as opposed to a Spring-wired one) behaves as it
+   * always has; Spring overwrites it when the property is set.
+   */
+  @Value(
+      "${cluster.tables.namespace.max-depth:"
+          + NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH_LITERAL
+          + "}")
+  int maxNamespaceDepth = NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH;
+
   @Override
   protected TableOperations newTableOps(TableIdentifier tableIdentifier) {
     FileIO fileIO = resolveFileIO(tableIdentifier);
@@ -84,7 +97,8 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Override
   protected boolean isValidIdentifier(TableIdentifier tableIdentifier) {
-    return tableIdentifier != null && NamespaceUtil.isTableNamespace(tableIdentifier.namespace());
+    return tableIdentifier != null
+        && NamespaceUtil.isTableNamespace(tableIdentifier.namespace(), maxNamespaceDepth);
   }
 
   @Override
@@ -99,7 +113,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
-    NamespaceUtil.validateOperationNamespace(namespace);
+    NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     rejectCrossDatabaseListing(namespace);
     return houseTableRepository.findAllByDatabaseId(namespace.toString()).stream()
         .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()))
@@ -107,7 +121,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
   }
 
   public Page<TableIdentifier> listTables(Namespace namespace, Pageable pageable) {
-    NamespaceUtil.validateOperationNamespace(namespace);
+    NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     rejectCrossDatabaseListing(namespace);
     return houseTableRepository
         .findAllByDatabaseId(namespace.toString(), pageable)
@@ -136,7 +150,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
    * HTS-resident columns (e.g. tableLocation) without an extra metadata.json load per table.
    */
   public Page<HouseTable> listHouseTables(Namespace namespace, Pageable pageable) {
-    NamespaceUtil.validateOperationNamespace(namespace);
+    NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     return houseTableRepository.findAllByDatabaseId(namespace.toString(), pageable);
   }
 
@@ -251,7 +265,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   public Page<SoftDeletedTableDto> searchSoftDeletedTables(
       Namespace namespace, String tableId, Pageable pageable) {
-    NamespaceUtil.validateOperationNamespace(namespace);
+    NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
 
     try {
       return houseTableRepository

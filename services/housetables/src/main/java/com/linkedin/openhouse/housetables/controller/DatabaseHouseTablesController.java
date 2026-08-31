@@ -27,6 +27,7 @@ public class DatabaseHouseTablesController {
 
   private static final String HTS_DATABASES_GENERAL_ENDPOINT = "/hts/databases";
   private static final String HTS_DATABASES_QUERY_ENDPOINT = "/hts/databases/query";
+  private static final String HTS_DATABASES_CHILDREN_ENDPOINT = "/hts/databases/children";
 
   @Autowired private DatabaseHtsApiHandler databaseHtsApiHandler;
 
@@ -62,6 +63,32 @@ public class DatabaseHouseTablesController {
   public ResponseEntity<GetAllEntityResponseBody<Database>> getDatabases() {
     com.linkedin.openhouse.common.api.spec.ApiResponse<GetAllEntityResponseBody<Database>>
         apiResponse = databaseHtsApiHandler.getEntities();
+    return new ResponseEntity<>(
+        apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
+  }
+
+  @Operation(
+      summary = "List the direct children of a Database.",
+      description =
+          "Returns the Database House Table entries exactly one namespace level below databaseId,"
+              + " ordered by databaseId. Grandchildren are excluded and the parent is not returned."
+              + " A parent with no children, including one that does not exist, yields an empty"
+              + " list.",
+      tags = {"Database"})
+  @ApiResponses(
+      value = {
+        @ApiResponse(responseCode = "200", description = "Database GET: OK"),
+        @ApiResponse(responseCode = "400", description = "Database GET: BAD_REQUEST")
+      })
+  @GetMapping(
+      value = HTS_DATABASES_CHILDREN_ENDPOINT,
+      produces = {"application/json"})
+  public ResponseEntity<GetAllEntityResponseBody<Database>> getDatabaseChildren(
+      @RequestParam(value = "databaseId") String databaseId) {
+    com.linkedin.openhouse.common.api.spec.ApiResponse<GetAllEntityResponseBody<Database>>
+        apiResponse =
+            databaseHtsApiHandler.getChildEntities(
+                DatabaseKey.builder().databaseId(databaseId).build());
     return new ResponseEntity<>(
         apiResponse.getResponseBody(), apiResponse.getHttpHeaders(), apiResponse.getHttpStatus());
   }

@@ -39,6 +39,8 @@ public class DatabaseHouseTablesTest {
 
   private static final String ENDPOINT = "/hts/databases";
 
+  private static final String CHILDREN_ENDPOINT = "/hts/databases/children";
+
   @Autowired DatabasesService databasesService;
 
   @Autowired DatabaseHtsJdbcRepository databaseRepository;
@@ -310,6 +312,124 @@ public class DatabaseHouseTablesTest {
     // House Tables is reachable independently of the Tables Service, so it re-validates.
     mvc.perform(
             MockMvcRequestBuilders.get(ENDPOINT)
+                .param("databaseId", "not-legal")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isBadRequest());
+  }
+
+  /**
+   * The seam that made an encoded multi-level namespace unable to cross the wire at all. A '.' is
+   * now inside the /hts/databases charset, end to end: accepted on the write, readable back, and
+   * listable.
+   */
+  @Test
+  public void anEncodedMultiLevelNamespaceCrossesTheHtsBoundary() throws Exception {
+    CreateUpdateEntityRequestBody<Database> body =
+        CreateUpdateEntityRequestBody.<Database>builder()
+            .entity(Database.builder().databaseId("parent.child").build())
+            .build();
+
+    mvc.perform(
+            MockMvcRequestBuilders.put(ENDPOINT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(new Gson().toJson(body))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.entity.databaseId", is("parent.child")));
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(ENDPOINT)
+                .param("databaseId", "parent.child")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.entity.databaseId", is("parent.child")));
+  }
+
+  /**
+   * The widening added the separator and nothing else. Each of these was rejected before and must
+   * still be; a charset that let one of them through would be a widening, not a separator.
+   */
+  @Test
+  public void theWidenedCharsetStillRejectsEverythingElse() throws Exception {
+    for (String rejected :
+        new String[] {"not-legal", "has space", "db;drop", "db/sub", "a.", ".a"}) {
+      mvc.perform(
+              MockMvcRequestBuilders.get(ENDPOINT)
+                  .param("databaseId", rejected)
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isBadRequest());
+    }
+  }
+
+  /**
+   * The listing primitive nesting needs. Direct children only: a grandchild is in the subtree but
+   * is not a child, the parent is not its own child, and a namespace whose name merely starts with
+   * the parent's is not underneath it at all.
+   *
+   * <p>Calibration: dropping the {@code isDirectChild} filter in the service adds {@code a.b.c} to
+   * the result and turns this red; widening the range's upper bound to the end of the key space
+   * adds {@code ab} and {@code b}.
+   */
+  @Test
+  public void childrenOfReturnsTheDirectChildrenAndNothingElse() {
+    for (String namespaceId :
+        new String[] {"a", "a.b", "a.c", "a.b.c", "ab", "ab.d", "b", "a_x", "a_x.y"}) {
+      databasesService.putDatabase(Database.builder().databaseId(namespaceId).build());
+    }
+
+    Assertions.assertEquals(
+        Arrays.asList("a.b", "a.c"),
+        databasesService.getChildDatabases("a").stream()
+            .map(Database::getDatabaseId)
+            .collect(Collectors.toList()));
+    Assertions.assertEquals(
+        Collections.singletonList("a.b.c"),
+        databasesService.getChildDatabases("a.b").stream()
+            .map(Database::getDatabaseId)
+            .collect(Collectors.toList()));
+    Assertions.assertEquals(
+        Collections.singletonList("a_x.y"),
+        databasesService.getChildDatabases("a_x").stream()
+            .map(Database::getDatabaseId)
+            .collect(Collectors.toList()),
+        "an underscore in the parent name is a literal, not a LIKE wildcard");
+    Assertions.assertTrue(databasesService.getChildDatabases("a.c").isEmpty(), "a leaf has none");
+  }
+
+  /**
+   * Listing the children of a namespace that is not there is an empty list, not a 404: existence is
+   * the Tables Service's question, and answering it here would give one call two failure modes for
+   * the same state.
+   */
+  @Test
+  public void childrenOfAnAbsentParentIsEmptyRatherThanNotFound() throws Exception {
+    Assertions.assertTrue(databasesService.getChildDatabases("nothing_here").isEmpty());
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(CHILDREN_ENDPOINT)
+                .param("databaseId", "nothing_here")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.results.length()", is(0)));
+  }
+
+  /** The route exists, is charset-validated like the rest of the surface, and returns the rows. */
+  @Test
+  public void theChildrenRouteAnswersOverHttp() throws Exception {
+    databasesService.putDatabase(Database.builder().databaseId("p").build());
+    databasesService.putDatabase(Database.builder().databaseId("p.q").build());
+    databasesService.putDatabase(Database.builder().databaseId("p.q.r").build());
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(CHILDREN_ENDPOINT)
+                .param("databaseId", "p")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.results.length()", is(1)))
+        .andExpect(jsonPath("$.results[0].databaseId", is("p.q")));
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(CHILDREN_ENDPOINT)
                 .param("databaseId", "not-legal")
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isBadRequest());

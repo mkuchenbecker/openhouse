@@ -2,6 +2,7 @@ package com.linkedin.openhouse.housetables.services;
 
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.NoSuchEntityException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.housetables.api.spec.model.Database;
 import com.linkedin.openhouse.housetables.model.DatabaseRow;
 import com.linkedin.openhouse.housetables.repository.impl.jdbc.DatabaseHtsJdbcRepository;
@@ -46,6 +47,22 @@ public class DatabasesServiceImpl implements DatabasesService {
   public List<Database> getAllDatabases() {
     return StreamSupport.stream(databaseRepository.findAll().spliterator(), false)
         .map(DatabasesServiceImpl::toDatabase)
+        .sorted(Comparator.comparing(Database::getDatabaseId))
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public List<Database> getChildDatabases(String parentDatabaseId) {
+    Iterable<DatabaseRow> subtree =
+        databaseRepository.findAllByDatabaseIdGreaterThanEqualAndDatabaseIdLessThan(
+            NamespaceUtil.subtreeLowerBound(parentDatabaseId),
+            NamespaceUtil.subtreeUpperBound(parentDatabaseId));
+    return StreamSupport.stream(subtree.spliterator(), false)
+        .map(DatabasesServiceImpl::toDatabase)
+        // The range is the whole subtree; this is what makes it the children. Counting separators
+        // in Java rather than adding a second SQL pattern keeps the depth rule collation-free and
+        // out of reach of LIKE's treatment of the underscore that the charset admits.
+        .filter(d -> NamespaceUtil.isDirectChild(parentDatabaseId, d.getDatabaseId()))
         .sorted(Comparator.comparing(Database::getDatabaseId))
         .collect(Collectors.toList());
   }

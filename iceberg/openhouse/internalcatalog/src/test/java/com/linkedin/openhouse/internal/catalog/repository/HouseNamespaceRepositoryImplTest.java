@@ -278,6 +278,61 @@ public class HouseNamespaceRepositoryImplTest {
         .hasMessageContaining(NAMESPACE_ID);
   }
 
+  /**
+   * The store's listing primitive on the wire. It has to reach the children route rather than be
+   * derived from {@code findAll()} in this process, or listing one namespace's children costs the
+   * whole catalog; and the parent has to reach HTS as the {@code databaseId} parameter, because
+   * that is the only thing that tells HTS which subtree to scan.
+   *
+   * <p>Calibration: pointing the implementation at {@code getDatabases()} leaves the mapping
+   * assertion green and turns the path assertion red.
+   */
+  @Test
+  public void childrenOfCallsTheChildrenRouteAndMapsTheRows() throws InterruptedException {
+    enqueue(
+        200,
+        "{\"results\":["
+            + new Gson().toJson(new Database().databaseId("parent.a").version(1L))
+            + ","
+            + new Gson().toJson(new Database().databaseId("parent.b").version(2L))
+            + "]}");
+
+    assertThat(repository.childrenOf("parent"))
+        .extracting(HouseNamespace::getNamespaceId)
+        .containsExactly("parent.a", "parent.b");
+
+    RecordedRequest request = mockHtsServer.takeRequest();
+    assertThat(request.getMethod()).isEqualTo("GET");
+    assertThat(request.getPath()).startsWith("/hts/databases/children");
+    assertThat(request.getPath()).contains("databaseId=parent");
+  }
+
+  /** No children is an empty list, not a null the caller has to guard. */
+  @Test
+  public void childrenOfAnswersAnEmptyListWhenThereAreNone() {
+    enqueue(200, "{\"results\":[]}");
+    assertThat(repository.childrenOf("parent")).isEmpty();
+  }
+
+  /** Failures translate the same way every other read on this seam does. */
+  @Test
+  public void childrenOfTranslatesEveryFailure() {
+    enqueue(404, "");
+    assertThatThrownBy(() -> repository.childrenOf("parent"))
+        .isInstanceOf(HouseTableNotFoundException.class)
+        .hasMessageContaining("parent");
+
+    for (int status : new int[] {400, 401, 403, 429}) {
+      enqueue(status, "");
+      assertThatThrownBy(() -> repository.childrenOf("parent"))
+          .isInstanceOf(HouseTableCallerException.class);
+    }
+
+    enqueue(500, "");
+    assertThatThrownBy(() -> repository.childrenOf("parent"))
+        .isInstanceOf(HouseTableRepositoryStateUnknownException.class);
+  }
+
   private static HouseNamespace houseNamespace() {
     return HouseNamespace.builder()
         .namespaceId(NAMESPACE_ID)

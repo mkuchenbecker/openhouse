@@ -13,6 +13,9 @@ public interface DatabaseHtsApiHandler {
 
   ApiResponse<GetAllEntityResponseBody<Database>> getEntities();
 
+  /** The direct children of the namespace named by {@code parentKey}, one level deeper only. */
+  ApiResponse<GetAllEntityResponseBody<Database>> getChildEntities(DatabaseKey parentKey);
+
   ApiResponse<EntityResponseBody<Database>> putEntity(Database database);
 
   ApiResponse<Void> deleteEntity(DatabaseKey key);

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.NamespaceStoreCompleteness;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -420,6 +422,14 @@ public class NamespacesServiceImplTest {
         throw new AssertionError("findAll() must not be reached on this path");
       }
       return new ArrayList<>(rows.values());
+    }
+
+    @Override
+    public List<HouseNamespace> childrenOf(String encodedParent) {
+      return rows.values().stream()
+          .filter(
+              namespace -> NamespaceUtil.isDirectChild(encodedParent, namespace.getNamespaceId()))
+          .collect(Collectors.toList());
     }
 
     @Override

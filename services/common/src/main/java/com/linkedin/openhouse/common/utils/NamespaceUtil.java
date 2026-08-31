@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.common.utils;
 
+import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import java.util.regex.Pattern;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.ValidationException;
@@ -21,54 +22,88 @@ public final class NamespaceUtil {
   private NamespaceUtil() {}
 
   /**
-   * Maximum number of namespace levels OpenHouse accepts. A "table namespace" is exactly this deep;
-   * an "operation namespace" is at most this deep. Adjust here if OpenHouse ever extends its
-   * namespace contract (e.g. to support {@code catalog.database.table}).
-   */
-  private static final int MAX_NAMESPACE_DEPTH = 1;
-
-  /**
-   * Returns whether {@code namespace} can host an OpenHouse base table.
+   * Returns whether {@code namespace} can host an OpenHouse base table under a catalog configured
+   * with {@code maxDepth} namespace levels.
    *
    * <p>Used by {@code isValidIdentifier(...)} to gate which {@link
    * org.apache.iceberg.catalog.TableIdentifier}s are treated as base tables (vs. metadata-table
    * fallbacks, longer-namespace lookups, etc.). The empty namespace is not a table namespace
    * because there is no database under which to place the table.
+   *
+   * <p>A table namespace is exactly {@code maxDepth} levels rather than "at most": a table lives at
+   * the deepest level the catalog admits, so a shallower namespace is a container, not a table's
+   * parent. At the shipped {@code maxDepth} of 1 that is the same predicate as before — exactly one
+   * level — which is the whole compatibility claim of wiring this to configuration.
+   *
+   * @param maxDepth the value of the {@code cluster.tables.namespace.max-depth} cluster property
    */
-  public static boolean isTableNamespace(Namespace namespace) {
-    return namespace != null && namespace.levels().length == MAX_NAMESPACE_DEPTH;
+  public static boolean isTableNamespace(Namespace namespace, int maxDepth) {
+    return namespace != null && namespace.levels().length == maxDepth;
   }
 
   /**
    * Validate that {@code namespace} is a legal argument to a database-scoped catalog operation
-   * (e.g. {@code listTables}, {@code searchSoftDeletedTables}).
+   * (e.g. {@code listTables}, {@code searchSoftDeletedTables}) under a catalog configured with
+   * {@code maxDepth} namespace levels.
    *
    * <p>The empty namespace is permitted because callers use it as a sentinel for "across all
    * databases" (e.g. {@code listTables(Namespace.empty())}).
    *
+   * @param maxDepth the value of the {@code cluster.tables.namespace.max-depth} cluster property
    * @throws ValidationException if {@code namespace} cannot be used as an operation argument
    */
-  public static void validateOperationNamespace(Namespace namespace) {
-    if (namespace.levels().length > MAX_NAMESPACE_DEPTH) {
+  public static void validateOperationNamespace(Namespace namespace, int maxDepth) {
+    if (namespace.levels().length > maxDepth) {
+      // "one" rather than "1" at the shipped depth. This is a live rejection message, worded
+      // identically by the client-side OpenHouseCatalog, and wiring the bound to configuration is
+      // not supposed to be observable at depth 1 — not even here.
+      String depth = maxDepth == 1 ? "one" : Integer.toString(maxDepth);
       throw new ValidationException(
-          "Input namespace has more than one levels " + String.join(".", namespace.levels()));
+          "Input namespace has more than "
+              + depth
+              + " levels "
+              + String.join(".", namespace.levels()));
     }
   }
 
   /**
-   * Default value of the {@code cluster.tables.namespace.max-depth} cluster property. At this
-   * default OpenHouse is a mono-namespace catalog and every persisted namespace is a database name,
-   * byte for byte identical to what it is today.
+   * Default value of the {@code cluster.tables.namespace.max-depth} cluster property, as a
+   * compile-time String constant so a {@code @Value} placeholder default can name it rather than
+   * spell the number a second time.
    */
-  public static final int DEFAULT_MAX_NAMESPACE_DEPTH = MAX_NAMESPACE_DEPTH;
+  public static final String DEFAULT_MAX_NAMESPACE_DEPTH_LITERAL = "1";
+
+  /**
+   * The same default as an int. At this default OpenHouse is a mono-namespace catalog and every
+   * persisted namespace is a database name, byte for byte identical to what it is today.
+   */
+  public static final int DEFAULT_MAX_NAMESPACE_DEPTH =
+      Integer.parseInt(DEFAULT_MAX_NAMESPACE_DEPTH_LITERAL);
 
   /** The width of {@code house_table.database_id}, and therefore of an encoded namespace. */
   public static final int MAX_ENCODED_NAMESPACE_LENGTH = 128;
 
-  /** Per-level identifier charset. {@code .} is structurally reserved as the encoding separator. */
-  private static final Pattern LEVEL_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+  /**
+   * Per-level identifier charset. {@code .} is structurally reserved as the encoding separator.
+   * Taken from {@link ValidatorConstants} rather than restated, so a level cannot be legal here and
+   * illegal at the seam that carries it across the wire.
+   */
+  private static final Pattern LEVEL_PATTERN =
+      Pattern.compile(ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX);
 
   private static final String SEPARATOR = ".";
+
+  private static final char SEPARATOR_CHAR = '.';
+
+  /**
+   * The character immediately after {@link #SEPARATOR} in code point order, used as the exclusive
+   * upper bound of a subtree range.
+   */
+  private static final String SEPARATOR_SUCCESSOR = "/";
+
+  /** The charset of an encoded namespace: {@link #LEVEL_PATTERN} levels joined by the separator. */
+  private static final Pattern NAMESPACE_ID_PATTERN =
+      Pattern.compile(ValidatorConstants.NAMESPACE_ID_REGEX);
 
   /**
    * Encode a namespace for persistence by dot-joining its levels. {@code
@@ -80,6 +115,60 @@ public final class NamespaceUtil {
    */
   public static String encode(Namespace namespace) {
     return String.join(SEPARATOR, namespace.levels());
+  }
+
+  /**
+   * Whether {@code encodedNamespace} is within the charset every seam that carries an encoded
+   * namespace enforces: one or more identifier levels, separated by the {@code .} the encoder
+   * writes.
+   *
+   * <p>This is deliberately NOT the table-id charset. A table id must stay free of {@code .} so
+   * that {@code db.table.history} keeps exactly one reading, and the two charsets are separate
+   * constants for that reason. Every namespace call site moved onto this predicate together: a
+   * charset one service widens and another does not is an identifier one accepts and the other
+   * rejects.
+   *
+   * <p>At depth 1 an encoded namespace has no separator, so this accepts and rejects exactly what
+   * {@code ALPHA_NUM_UNDERSCORE_REGEX} did — the {@code .} is the only addition.
+   */
+  public static boolean isValidNamespaceIdentifier(String encodedNamespace) {
+    return encodedNamespace != null && NAMESPACE_ID_PATTERN.matcher(encodedNamespace).matches();
+  }
+
+  /**
+   * Inclusive lower bound of the range of encoded namespaces in the subtree under {@code
+   * encodedParent}: every descendant is encoded as the parent, the separator, and at least one more
+   * character.
+   *
+   * <p>{@code encodedParent} itself sorts strictly below this bound, so the parent is never its own
+   * child.
+   */
+  public static String subtreeLowerBound(String encodedParent) {
+    return encodedParent + SEPARATOR;
+  }
+
+  /**
+   * Exclusive upper bound of that range. {@code .} is {@code 0x2E} and the character after it is
+   * {@code /} ({@code 0x2F}), which no level may contain, so {@code [parent + ".", parent + "/")}
+   * is exactly the set of strings with {@code parent + "."} as a prefix — the subtree, no more and
+   * no less. Expressing the subtree as a bounded range rather than a {@code LIKE} prefix matters:
+   * the identifier charset admits {@code _}, which SQL {@code LIKE} reads as a single-character
+   * wildcard, so {@code LIKE 'my_db.%'} would also match {@code myXdb.a}.
+   */
+  public static String subtreeUpperBound(String encodedParent) {
+    return encodedParent + SEPARATOR_SUCCESSOR;
+  }
+
+  /**
+   * Whether {@code encodedCandidate} is a direct child of {@code encodedParent} — in the subtree,
+   * and exactly one level deeper. Grandchildren are in the range but not children.
+   */
+  public static boolean isDirectChild(String encodedParent, String encodedCandidate) {
+    String prefix = subtreeLowerBound(encodedParent);
+    return encodedCandidate != null
+        && encodedCandidate.startsWith(prefix)
+        && encodedCandidate.indexOf(SEPARATOR_CHAR, prefix.length()) < 0
+        && encodedCandidate.length() > prefix.length();
   }
 
   /** Inverse of {@link #encode(Namespace)} over a persisted (or {@code /v1}) namespace string. */

@@ -20,7 +20,7 @@ public class TableToggleStatusKey {
       example = "my_database")
   @JsonProperty(value = "databaseId")
   @NotEmpty(message = "databaseId cannot be empty")
-  @Pattern(regexp = ALPHA_NUM_UNDERSCORE_REGEX, message = ALPHA_NUM_UNDERSCORE_ERROR_MSG)
+  @Pattern(regexp = NAMESPACE_ID_REGEX, message = NAMESPACE_ID_ERROR_MSG)
   String databaseId;
 
   @Schema(

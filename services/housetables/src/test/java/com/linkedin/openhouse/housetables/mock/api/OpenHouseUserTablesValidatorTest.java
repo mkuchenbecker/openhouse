@@ -147,4 +147,44 @@ public class OpenHouseUserTablesValidatorTest {
         RequestValidationFailureException.class,
         () -> userTablesHtsApiValidator.validateRenameEntity(fromKey, toKey));
   }
+
+  /**
+   * The two imperative namespace charset checks on the /hts/tables surface, widened with the rest.
+   * They read {@code databaseId} out of two different shapes — the key and the query bean — and
+   * both had to move, or an encoded namespace would be gettable and not searchable.
+   */
+  @Test
+  public void anEncodedMultiLevelDatabaseIdIsAcceptedByBothUserTableCallSites() {
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntity(
+                UserTableKey.builder().tableId("tbl1").databaseId("a.b").build()));
+    assertDoesNotThrow(
+        () ->
+            userTablesHtsApiValidator.validateGetEntities(
+                UserTable.builder().databaseId("a.b").build()));
+  }
+
+  /** ...and the table id on the same key did not move with it. */
+  @Test
+  public void aTableIdWithASeparatorIsStillRejected() {
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            userTablesHtsApiValidator.validateGetEntity(
+                UserTableKey.builder().tableId("tbl.history").databaseId("a.b").build()));
+  }
+
+  /** Everything the narrow charset rejected in a databaseId is still rejected. */
+  @Test
+  public void theWidenedDatabaseIdCharsetStillRejectsWhatItRejectedBefore() {
+    for (String rejected : new String[] {"db%", "not-legal", "has space", "a.", ".a"}) {
+      assertThrows(
+          RequestValidationFailureException.class,
+          () ->
+              userTablesHtsApiValidator.validateGetEntity(
+                  UserTableKey.builder().tableId("tbl1").databaseId(rejected).build()),
+          "databaseId " + rejected + " must still be rejected");
+    }
+  }
 }

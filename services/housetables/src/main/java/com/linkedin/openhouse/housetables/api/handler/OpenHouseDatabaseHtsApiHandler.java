@@ -1,10 +1,10 @@
 package com.linkedin.openhouse.housetables.api.handler;
 
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
-
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
+import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.utils.NamespacePropertiesValidator;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.housetables.api.spec.model.Database;
 import com.linkedin.openhouse.housetables.api.spec.model.DatabaseKey;
 import com.linkedin.openhouse.housetables.api.spec.response.EntityResponseBody;
@@ -13,7 +13,6 @@ import com.linkedin.openhouse.housetables.services.DatabasesService;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Pattern;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
 import org.springframework.http.HttpStatus;
@@ -27,14 +26,6 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
-
-  /**
-   * The persisted namespace charset. It is the House Table column's own precondition, not a
-   * restated copy of the Tables Service namespace rule; the owning validator there stays the source
-   * of truth for what a namespace may be. The pattern itself is the one every other House Tables
-   * identifier is held to, referenced rather than restated so the two cannot drift apart.
-   */
-  private static final Pattern DATABASE_ID_PATTERN = Pattern.compile(ALPHA_NUM_UNDERSCORE_REGEX);
 
   private static final int MAX_DATABASE_ID_LENGTH = 128;
 
@@ -59,6 +50,18 @@ public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
         .responseBody(
             GetAllEntityResponseBody.<Database>builder()
                 .results(databasesService.getAllDatabases())
+                .build())
+        .build();
+  }
+
+  @Override
+  public ApiResponse<GetAllEntityResponseBody<Database>> getChildEntities(DatabaseKey parentKey) {
+    validateDatabaseId(parentKey == null ? null : parentKey.getDatabaseId());
+    return ApiResponse.<GetAllEntityResponseBody<Database>>builder()
+        .httpStatus(HttpStatus.OK)
+        .responseBody(
+            GetAllEntityResponseBody.<Database>builder()
+                .results(databasesService.getChildDatabases(parentKey.getDatabaseId()))
                 .build())
         .build();
   }
@@ -92,15 +95,21 @@ public class OpenHouseDatabaseHtsApiHandler implements DatabaseHtsApiHandler {
     }
   }
 
+  /**
+   * The persisted namespace charset. It is the House Table column's own precondition, not a
+   * restated copy of the Tables Service namespace rule; the owning validator there stays the source
+   * of truth for what a namespace may be. The pattern itself is the one every other seam that
+   * carries an encoded namespace is held to, referenced rather than restated so the two cannot
+   * drift apart.
+   */
   private static void validateDatabaseId(String databaseId) {
-    if (databaseId == null
-        || !DATABASE_ID_PATTERN.matcher(databaseId).matches()
+    if (!NamespaceUtil.isValidNamespaceIdentifier(databaseId)
         || databaseId.length() > MAX_DATABASE_ID_LENGTH) {
       throw new RequestValidationFailureException(
           Collections.singletonList(
               String.format(
                   "databaseId [%s] must match %s and be at most %s characters",
-                  databaseId, DATABASE_ID_PATTERN.pattern(), MAX_DATABASE_ID_LENGTH)));
+                  databaseId, ValidatorConstants.NAMESPACE_ID_REGEX, MAX_DATABASE_ID_LENGTH)));
     }
   }
 }

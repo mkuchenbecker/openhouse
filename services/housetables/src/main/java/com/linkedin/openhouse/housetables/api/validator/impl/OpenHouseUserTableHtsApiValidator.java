@@ -4,6 +4,7 @@ import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.*;
 
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTable;
 import com.linkedin.openhouse.housetables.api.spec.model.UserTableKey;
 import com.linkedin.openhouse.housetables.api.validator.HouseTablesApiValidator;
@@ -24,11 +25,10 @@ public class OpenHouseUserTableHtsApiValidator
   @Override
   public void validateGetEntity(UserTableKey userTableKey) {
     List<String> validationFailures = new ArrayList<>();
-    if (!userTableKey.getDatabaseId().matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+    if (!NamespaceUtil.isValidNamespaceIdentifier(userTableKey.getDatabaseId())) {
       validationFailures.add(
           String.format(
-              "databaseId provided: %s, %s",
-              userTableKey.getDatabaseId(), ALPHA_NUM_UNDERSCORE_ERROR_MSG));
+              "databaseId provided: %s, %s", userTableKey.getDatabaseId(), NAMESPACE_ID_ERROR_MSG));
     }
     if (!userTableKey.getTableId().matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
       validationFailures.add(
@@ -114,11 +114,10 @@ public class OpenHouseUserTableHtsApiValidator
     }
 
     if (userTable.getDatabaseId() != null
-        && !userTable.getDatabaseId().matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+        && !NamespaceUtil.isValidNamespaceIdentifier(userTable.getDatabaseId())) {
       validationFailures.add(
           String.format(
-              "databaseId provided: %s, %s",
-              userTable.getDatabaseId(), ALPHA_NUM_UNDERSCORE_ERROR_MSG));
+              "databaseId provided: %s, %s", userTable.getDatabaseId(), NAMESPACE_ID_ERROR_MSG));
     }
 
     if (userTable.getTableId() != null) {
