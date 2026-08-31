@@ -5,6 +5,7 @@ import static com.linkedin.openhouse.common.security.AuthenticationUtils.extract
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
@@ -20,10 +21,8 @@ import java.util.LinkedHashSet;
 import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.CatalogHandlers;
-import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.ReportMetricsRequest;
@@ -69,11 +68,12 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   public ListTablesResponse listTables(
       String prefix, String namespace, String pageToken, Integer pageSize) {
     validatePrefix(prefix);
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
+    Namespace icebergNamespace =
+        IcebergRestIdentifiers.readNamespace(namespace, maxNamespaceDepth());
     PageCursor cursor = decodePageToken(pageToken, pageSize);
     ApiResponse<GetAllTablesResponseBody> response =
         tablesApiHandler.searchTables(
-            icebergNamespace.level(0),
+            NamespaceUtil.encode(icebergNamespace),
             cursor.getPage(),
             cursor.getPageSize(),
             "tableId",
@@ -125,8 +125,8 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     // OpenHouse could never hold is a create into a namespace that does not exist (404), and the
     // table name itself is left for the service layer's validator to reject and describe (400),
     // because a create names a table that does not exist yet.
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
-    IcebergRestIdentifiers.requireHoldable(icebergNamespace, maxNamespaceDepth());
+    Namespace icebergNamespace =
+        IcebergRestIdentifiers.readNamespace(namespace, maxNamespaceDepth());
     return tableWriteAdapter.createTable(
         icebergNamespace, request, extractAuthenticatedUserPrincipal());
   }
@@ -198,14 +198,19 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     validatePrefix(prefix);
   }
 
-  /** Existence check that speaks the REST specification's vocabulary, and authorizes the read. */
+  /**
+   * Existence check that speaks the REST specification's vocabulary, and authorizes the read.
+   *
+   * <p>The database id is the whole namespace encoded, not its first level: at depth 1 those are
+   * the same string, and above it only the encoded form names the namespace the table actually
+   * lives in.
+   */
   private void requireTable(TableIdentifier identifier) {
+    String databaseId = NamespaceUtil.encode(identifier.namespace());
     try {
-      tablesApiHandler.getTable(
-          identifier.namespace().level(0), identifier.name(), extractAuthenticatedUserPrincipal());
+      tablesApiHandler.getTable(databaseId, identifier.name(), extractAuthenticatedUserPrincipal());
     } catch (NoSuchUserTableException e) {
-      throw new NoSuchTableException(
-          "Table does not exist: %s.%s", identifier.namespace().level(0), identifier.name());
+      throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, identifier.name());
     }
   }
 
@@ -217,14 +222,6 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     if (!ICEBERG_REST_PREFIX.equals(prefix)) {
       throw new IllegalArgumentException("Unsupported Iceberg REST prefix");
     }
-  }
-
-  private static Namespace decodeSingleLevelNamespace(String encodedNamespace) {
-    Namespace namespace = RESTUtil.decodeNamespace(encodedNamespace);
-    if (namespace.isEmpty() || namespace.levels().length != 1) {
-      throw new NoSuchNamespaceException("Only single-level namespaces are supported");
-    }
-    return namespace;
   }
 
   /**

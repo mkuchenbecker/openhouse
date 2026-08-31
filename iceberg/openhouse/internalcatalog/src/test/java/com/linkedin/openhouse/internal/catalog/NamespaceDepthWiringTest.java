@@ -91,19 +91,68 @@ public class NamespaceDepthWiringTest {
   }
 
   /**
-   * Raising the property moves both predicates. This is the whole point of the wiring, and the
+   * Raising the property widens both predicates. This is the whole point of the wiring, and the
    * assertion that would go green on its own if the constant were still hardcoded.
+   *
+   * <p>{@code max-depth} is a ceiling, not a required depth: at 2 a table may live in a one-level
+   * namespace or a two-level one, and only three levels is out of range. The one-level assertion
+   * below used to expect {@code false}, on the reading that a table lives at the deepest level the
+   * catalog admits. That reading is not Iceberg's — a namespace may be any depth and a table lives
+   * in whichever namespace holds it — and it made raising a cluster's max-depth a catalog-wide
+   * breakage, because every database that already existed is one level and would have stopped being
+   * able to host tables the moment the property moved. The empty namespace stays out: there is no
+   * database under which to place the table.
    */
   @Test
-  public void raisingTheDepthMovesBothPredicates() {
+  public void raisingTheDepthWidensBothPredicatesToARange() {
     OpenHouseInternalCatalog catalog = catalogAtDepth(2);
     assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("a", "b"), "t"))).isTrue();
-    assertThat(catalog.isValidIdentifier(TableIdentifier.of("db", "t"))).isFalse();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of("db", "t"))).isTrue();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("a", "b", "c"), "t")))
+        .isFalse();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.empty(), "t"))).isFalse();
 
     assertThatThrownBy(() -> catalog.listHouseTables(Namespace.of("a", "b", "c"), null))
         .isInstanceOf(ValidationException.class);
     assertThatThrownBy(() -> catalog.listHouseTables(Namespace.of("a", "b"), null))
         .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(() -> catalog.listHouseTables(Namespace.of("db"), null))
+        .isInstanceOf(NullPointerException.class);
+  }
+
+  /**
+   * The range holds with room to spare above and below. At depth 3 there are two admitted depths
+   * under the ceiling, which is where an "exactly the configured depth" rule stops being merely
+   * restrictive and starts making namespaces unaddressable: a table in {@code a.b} could not be
+   * named at all on a cluster configured for three.
+   */
+  @Test
+  public void everyDepthUpToTheMaximumHostsTables() {
+    OpenHouseInternalCatalog catalog = catalogAtDepth(3);
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of("db", "t"))).isTrue();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("a", "b"), "t"))).isTrue();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("a", "b", "c"), "t")))
+        .isTrue();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("a", "b", "c", "d"), "t")))
+        .isFalse();
+  }
+
+  /**
+   * Widening the base-table range does not widen it over identifiers Iceberg reads as metadata
+   * tables. At depth 2 the two clauses of {@code isValidIdentifier} now overlap — {@code db.tbl} is
+   * both a legal table namespace and deep enough for the discriminator — and the discriminator is
+   * what decides. Without it, raising the depth would silently change what {@code db.tbl.history}
+   * resolves to.
+   */
+  @Test
+  public void theMetadataTableDiscriminatorStillWinsInsideTheRange() {
+    OpenHouseInternalCatalog catalog = catalogAtDepth(2);
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("db", "tbl"), "history")))
+        .isFalse();
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of(Namespace.of("db", "tbl"), "t")))
+        .isTrue();
+    // One level up it is a base table called "history", as it has always been.
+    assertThat(catalog.isValidIdentifier(TableIdentifier.of("db", "history"))).isTrue();
   }
 
   /**

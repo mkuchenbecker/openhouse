@@ -8,7 +8,6 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.ValidationException;
-import org.apache.iceberg.rest.RESTUtil;
 
 /**
  * The one place the Iceberg REST facade decides what an identifier on a route means.
@@ -32,9 +31,18 @@ final class IcebergRestIdentifiers {
 
   private IcebergRestIdentifiers() {}
 
-  /** Decode the wire form; nothing here judges whether the namespace is one OpenHouse can hold. */
+  /**
+   * Decode the wire form; nothing here judges whether the namespace is one OpenHouse can hold.
+   *
+   * <p>Two encodings meet at this seam and must not be confused. On the wire the Iceberg REST spec
+   * joins a multi-level namespace with the {@code 0x1F} unit separator, which {@link
+   * IcebergRestNamespaceWireForm} decodes; in storage OpenHouse joins the same levels with {@code
+   * .}, which {@link NamespaceUtil#encode} writes. Every {@code /v1} route -- namespace routes and
+   * table routes alike -- reads its namespace through here, so the wire form is understood in one
+   * place rather than once per route family.
+   */
   static Namespace decode(String encodedNamespace) {
-    return RESTUtil.decodeNamespace(encodedNamespace);
+    return IcebergRestNamespaceWireForm.decode(encodedNamespace);
   }
 
   /**
@@ -47,8 +55,22 @@ final class IcebergRestIdentifiers {
     return namespace;
   }
 
-  /** As {@link #readNamespace}, for a namespace already decoded by the caller. */
+  /**
+   * As {@link #readNamespace}, for a namespace already decoded by the caller.
+   *
+   * <p>A namespace deeper than the cluster allows is answered in the words the single-level routes
+   * have always used, because widening the bound to a configured depth must not change what a
+   * client sees while the configuration has not moved. Every other unusable name -- a level outside
+   * the identifier charset, an encoded form too long for the {@code database_id} column -- is the
+   * 404 an absent namespace gets, worded the same way.
+   */
   static void requireHoldable(Namespace namespace, int maxDepth) {
+    if (namespace != null && namespace.levels().length > maxDepth) {
+      throw new NoSuchNamespaceException(
+          maxDepth == 1
+              ? "Only single-level namespaces are supported"
+              : String.format("Only namespaces up to %s levels deep are supported", maxDepth));
+    }
     try {
       NamespaceUtil.validate(namespace, maxDepth);
     } catch (ValidationException e) {

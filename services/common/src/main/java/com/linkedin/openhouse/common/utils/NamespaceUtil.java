@@ -2,16 +2,18 @@ package com.linkedin.openhouse.common.utils;
 
 import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import java.util.regex.Pattern;
+import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.ValidationException;
 
 /**
  * Helpers that encode OpenHouse's namespace contract for {@link Namespace} arguments.
  *
- * <p>OpenHouse currently identifies base tables with {@code database.table}, so a "table namespace"
- * is exactly one level (the database) and an "operation namespace" — the {@code Namespace} argument
- * to a database-scoped catalog method — is at most one level (with the empty namespace acting as a
- * sentinel for "across all databases").
+ * <p>A "table namespace" is a namespace that can hold a base table: non-empty and no deeper than
+ * the configured maximum. An "operation namespace" — the {@code Namespace} argument to a
+ * database-scoped catalog method — is the same bound with the empty namespace additionally
+ * permitted, because callers use it as a sentinel for "across all databases".
  *
  * <p>The two predicates are intentionally separate concepts, not stricter/looser flavors of the
  * same rule. If OpenHouse ever changes its namespace shape (e.g. to support {@code
@@ -30,15 +32,25 @@ public final class NamespaceUtil {
    * fallbacks, longer-namespace lookups, etc.). The empty namespace is not a table namespace
    * because there is no database under which to place the table.
    *
-   * <p>A table namespace is exactly {@code maxDepth} levels rather than "at most": a table lives at
-   * the deepest level the catalog admits, so a shallower namespace is a container, not a table's
-   * parent. At the shipped {@code maxDepth} of 1 that is the same predicate as before — exactly one
-   * level — which is the whole compatibility claim of wiring this to configuration.
+   * <p>The depth rule is a closed range: at least one level, at most {@code maxDepth}. {@code
+   * maxDepth} is a ceiling on how deep a namespace may be, not a depth every table's namespace must
+   * have. Iceberg's model is that a namespace may be any depth and a table lives in whichever
+   * namespace holds it, so requiring exactly {@code maxDepth} would make raising the property stop
+   * every existing one-level database from hosting tables, and would make a table in a two-level
+   * namespace unaddressable on a cluster configured for three.
+   *
+   * <p>At the shipped {@code maxDepth} of 1 the range collapses to exactly one level, which is the
+   * predicate this has always applied and the whole compatibility claim of wiring it to
+   * configuration.
    *
    * @param maxDepth the value of the {@code cluster.tables.namespace.max-depth} cluster property
    */
   public static boolean isTableNamespace(Namespace namespace, int maxDepth) {
-    return namespace != null && namespace.levels().length == maxDepth;
+    if (namespace == null) {
+      return false;
+    }
+    int depth = namespace.levels().length;
+    return depth >= 1 && depth <= maxDepth;
   }
 
   /**
@@ -171,9 +183,85 @@ public final class NamespaceUtil {
         && encodedCandidate.length() > prefix.length();
   }
 
+  /**
+   * The shallowest namespace at which an identifier can be read as a metadata table.
+   *
+   * <p>Iceberg addresses a table's metadata tables by appending the type to the table's own
+   * identifier, so {@code db.tbl.history} is the {@code history} metadata table of {@code db.tbl}
+   * and its namespace is {@code db.tbl} — two levels. One level below that, {@code db.history}, is
+   * a table called {@code history} in the database {@code db}, and always has been.
+   */
+  private static final int METADATA_TABLE_MIN_NAMESPACE_DEPTH = 2;
+
+  /**
+   * Whether {@code name} is one of Iceberg's metadata table types.
+   *
+   * <p>The set is read from {@link MetadataTableType} rather than restated here, so a metadata
+   * table Iceberg adds in a later release cannot quietly become a creatable table name. The lookup
+   * is case-insensitive because {@link MetadataTableType#from} is, and because that is the reading
+   * Iceberg itself will apply to the same string.
+   */
+  public static boolean isMetadataTableName(String name) {
+    return name != null && MetadataTableType.from(name) != null;
+  }
+
+  /**
+   * Whether {@code identifier} names a metadata table rather than a base table.
+   *
+   * <p>Once namespaces can nest, {@code db.tbl.history} has two possible readings: the {@code
+   * history} metadata table of {@code db.tbl}, or a base table named {@code history} in the
+   * namespace {@code db.tbl}. This predicate picks the first, and {@link
+   * #collidesWithMetadataTable} is what makes that choice safe rather than arbitrary — a base table
+   * that would occupy such an identifier is refused at creation, so the second reading names
+   * nothing that can exist.
+   *
+   * <p>The depth floor is what keeps this inert at the shipped depth of 1: there, every base table
+   * identifier has a one-level namespace, so {@code db.history} is a table named {@code history}
+   * and stays one. Only {@code db.tbl.history}, which was already a metadata-table identifier
+   * before nesting, clears the floor.
+   */
+  public static boolean isMetadataTableIdentifier(TableIdentifier identifier) {
+    return identifier != null
+        && identifier.namespace().levels().length >= METADATA_TABLE_MIN_NAMESPACE_DEPTH
+        && isMetadataTableName(identifier.name());
+  }
+
+  /**
+   * Whether creating a table {@code tableId} under {@code encodedNamespace} would occupy an
+   * identifier {@link #isMetadataTableIdentifier} reads as a metadata table.
+   *
+   * <p>Deliberately the same predicate, applied to the identifier the create would produce, rather
+   * than a second rule stated in parallel: the admission rule and the reading it protects cannot
+   * drift apart if there is only one of them.
+   */
+  public static boolean collidesWithMetadataTable(String encodedNamespace, String tableId) {
+    if (encodedNamespace == null
+        || encodedNamespace.isEmpty()
+        || tableId == null
+        || tableId.isEmpty()) {
+      return false;
+    }
+    return isMetadataTableIdentifier(TableIdentifier.of(decode(encodedNamespace), tableId));
+  }
+
   /** Inverse of {@link #encode(Namespace)} over a persisted (or {@code /v1}) namespace string. */
   public static Namespace decode(String encodedNamespace) {
     return Namespace.of(encodedNamespace.split("\\.", -1));
+  }
+
+  /**
+   * The identifier of the table {@code tableId} inside the namespace {@code encodedNamespace}.
+   *
+   * <p>{@code TableIdentifier.of(encodedNamespace, tableId)} would be wrong once namespaces nest:
+   * it reads the whole encoded namespace as a single level, so {@code ("db.sub", "t")} would name a
+   * table in a one-level namespace literally called {@code db.sub} — an identifier the catalog's
+   * depth predicate then rejects. Decoding first is what makes the levels come back.
+   *
+   * <p>At depth 1 an encoded namespace has no separator, so this produces exactly the identifier
+   * the two-string overload does, level for level.
+   */
+  public static TableIdentifier tableIdentifier(String encodedNamespace, String tableId) {
+    return TableIdentifier.of(decode(encodedNamespace), tableId);
   }
 
   /**

@@ -15,8 +15,6 @@ import java.util.Map;
 import java.util.Set;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
-import org.apache.iceberg.exceptions.ValidationException;
-import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
 import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
@@ -29,9 +27,9 @@ import org.springframework.stereotype.Component;
 /**
  * Default Iceberg REST namespace adapter, backed by {@link NamespacesService}.
  *
- * <p>Owns the wire-to-domain translation only: {@link RESTUtil} decodes the {@code 0x1F}-separated
- * wire form, the service owns authorization and the existence policy, and the persisted
- * (dot-joined) encoding is applied below both.
+ * <p>Owns the wire-to-domain translation only: {@link IcebergRestNamespaceWireForm} decodes the
+ * {@code 0x1F}-separated wire form, the service owns authorization and the existence policy, and
+ * the persisted (dot-joined) encoding is applied below both.
  */
 @Component
 @ConditionalOnProperty(value = "cluster.tables.iceberg-rest.enabled", havingValue = "true")
@@ -132,7 +130,7 @@ public class OpenHouseIcebergRestNamespaceApiHandler implements IcebergRestNames
    *
    * <p>The rule lives in {@link IcebergRestIdentifiers}, which the table routes read too, so that a
    * name cannot be answerable on one route and malformed on another. It covers the identifier only:
-   * it deliberately does not span the service call, where a {@link ValidationException} means
+   * it deliberately does not span the service call, where a {@link org.apache.iceberg.exceptions.ValidationException} means
    * something else entirely (a reserved property key, an oversized property bag) and owes the
    * client a 400 that says so.
    */

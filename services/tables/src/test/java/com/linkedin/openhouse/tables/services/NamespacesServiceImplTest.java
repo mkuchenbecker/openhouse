@@ -71,22 +71,87 @@ public class NamespacesServiceImplTest {
   }
 
   /**
-   * B8: raising cluster.tables.namespace.max-depth widens one validator and nothing below it, so a
-   * cluster that asks for nesting has to be told at startup rather than on the first two-level
-   * create, where it would have arrived as a 500 out of /hts/databases.
+   * Replaces the startup guard this slice removes. The guard refused any max-depth but 1 and named
+   * the five seams nesting needed; the seams now exist, so the same configuration has to be
+   * accepted end to end instead of refused. Anything less than a create/list/load/drop round trip
+   * would leave "accepted" meaning only "did not throw at startup".
    */
   @Test
-  void aMaxDepthAboveOneIsRefusedAtStartupWithTheSeamsNamed() {
+  void aNestedNamespaceIsCreatedListedLoadedAndDropped() {
     Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
-    assertThatThrownBy(() -> service.rejectUnimplementedNamespaceDepth())
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("cluster.tables.namespace.max-depth is 2")
-        .hasMessageContaining("/hts/databases")
-        .hasMessageContaining("isTableNamespace")
-        .hasMessageContaining("childrenOf");
+    service.createNamespace(Namespace.of("db"), Collections.emptyMap(), PRINCIPAL);
 
-    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(1);
-    assertThatCode(() -> service.rejectUnimplementedNamespaceDepth()).doesNotThrowAnyException();
+    NamespaceMetadata created =
+        service.createNamespace(
+            Namespace.of("db", "sub"), Collections.singletonMap("owner", "a"), PRINCIPAL);
+    assertThat(created.getNamespace()).isEqualTo(Namespace.of("db", "sub"));
+    assertThat(repository.findById("db.sub")).isPresent();
+
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL))
+        .containsExactly(Namespace.of("db", "sub"));
+    assertThat(service.loadNamespaceMetadata(Namespace.of("db", "sub"), PRINCIPAL).getProperties())
+        .containsEntry("owner", "a");
+    assertThat(service.namespaceExists(Namespace.of("db", "sub"), PRINCIPAL)).isTrue();
+
+    // The parent is occupied while the child is there, and free once it is gone.
+    assertThatThrownBy(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL))
+        .isInstanceOf(NamespaceNotEmptyException.class);
+    service.dropNamespace(Namespace.of("db", "sub"), PRINCIPAL);
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL)).isEmpty();
+    assertThatCode(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL))
+        .doesNotThrowAnyException();
+  }
+
+  /**
+   * The nested listing has to come from the store's range query rather than a filtered findAll(),
+   * and it has to stop at the direct children: a grandchild is in the subtree range but is not a
+   * child of the parent that was asked about.
+   *
+   * <p>Calibration: filtering findAll() instead trips the stub's findAll() assertion; dropping the
+   * direct-child filter from the stub's childrenOf turns the grandchild into a third element.
+   */
+  @Test
+  void aNestedListingComesFromTheRangeQueryAndStopsAtDirectChildren() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(3);
+    repository.save(namespace("db"));
+    repository.save(namespace("db.a"));
+    repository.save(namespace("db.b"));
+    repository.save(namespace("db.a.deep"));
+    repository.save(namespace("dbx"));
+    repository.failOnFindAll = true;
+
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL))
+        .containsExactlyInAnyOrder(Namespace.of("db", "a"), Namespace.of("db", "b"));
+  }
+
+  /**
+   * The top-level listing is the one that still reads the store, and it must answer with the roots
+   * rather than everything the store holds.
+   */
+  @Test
+  void theTopLevelListingAnswersWithRootsOnly() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+    repository.save(namespace("db"));
+    repository.save(namespace("db.sub"));
+
+    assertThat(service.listNamespaces(Namespace.empty(), PRINCIPAL))
+        .containsExactly(Namespace.of("db"));
+  }
+
+  /** The configured depth is a bound, not a suggestion: one level past it is a validation error. */
+  @Test
+  void aNamespaceDeeperThanTheConfiguredMaximumIsRejected() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+    service.createNamespace(Namespace.of("db"), Collections.emptyMap(), PRINCIPAL);
+    service.createNamespace(Namespace.of("db", "sub"), Collections.emptyMap(), PRINCIPAL);
+
+    assertThatThrownBy(
+            () ->
+                service.createNamespace(
+                    Namespace.of("db", "sub", "deeper"), Collections.emptyMap(), PRINCIPAL))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("db.sub.deeper");
+    assertThat(repository.findById("db.sub.deeper")).isEmpty();
   }
 
   /**
@@ -373,6 +438,95 @@ public class NamespacesServiceImplTest {
     assertThat(service.namespaceExists(Namespace.of("db"), PRINCIPAL)).isTrue();
   }
 
+  /**
+   * The table-create path may not register a child whose parent has no row. Such a row is an orphan
+   * — {@code listNamespaces()} enumerates roots and then walks down, so a namespace whose root is
+   * missing is reachable from no listing at all, and the namespace API cannot drop what it cannot
+   * see.
+   *
+   * <p>It refuses rather than creating {@code a} on the way. Iceberg's reference suite is the
+   * specification: {@code CatalogTests#tableCreationWithoutNamespace} requires a catalog with
+   * {@code requiresNamespaceCreate()} — which OpenHouse's facade declares — to answer a table
+   * create into a namespace that does not exist with {@link NoSuchNamespaceException}, and no test
+   * in the suite creates an ancestor implicitly; {@code testListNestedNamespaces} and {@code
+   * testDropNamespaceWithNestedNamespace} both create the parent explicitly first.
+   *
+   * <p>Calibration: this passes vacuously if the refusal comes from somewhere other than the parent
+   * check, so the second half creates the parent and asserts the very same call then succeeds.
+   * Deleting {@code requireParentExists(namespace)} from {@code ensureNamespace} turns the first
+   * half red and leaves the second passing; making it create the ancestors instead does the same.
+   */
+  @Test
+  void ensureNamespaceRefusesAnOrphanAndNamesTheMissingParent() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+
+    assertThatThrownBy(() -> service.ensureNamespace("a.b"))
+        .isInstanceOf(NoSuchNamespaceException.class)
+        // The whole message, not a substring: "a" appears in almost anything this could throw,
+        // including the refusal for "a.b" itself, and the caller has to be told which namespace to
+        // create.
+        .hasMessage("Namespace does not exist: a");
+    assertThat(repository.rows).isEmpty();
+
+    service.createNamespace(Namespace.of("a"), Collections.emptyMap(), PRINCIPAL);
+    assertThatCode(() -> service.ensureNamespace("a.b")).doesNotThrowAnyException();
+    assertThat(service.namespaceExists(Namespace.of("a", "b"), PRINCIPAL)).isTrue();
+  }
+
+  /**
+   * The refusal must not leave the ancestor behind as a side effect of having looked for it. An
+   * implicitly created ancestor is what this rejects, and a partial one is worse than either
+   * outcome.
+   */
+  @Test
+  void ensureNamespaceCreatesNoAncestorWhenItRefuses() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(3);
+
+    assertThatThrownBy(() -> service.ensureNamespace("a.b.c"))
+        .isInstanceOf(NoSuchNamespaceException.class);
+    assertThat(repository.rows).isEmpty();
+
+    // A grandparent alone is not enough: the immediate parent is the row a listing walk needs.
+    service.createNamespace(Namespace.of("a"), Collections.emptyMap(), PRINCIPAL);
+    assertThatThrownBy(() -> service.ensureNamespace("a.b.c"))
+        .isInstanceOf(NoSuchNamespaceException.class)
+        .hasMessage("Namespace does not exist: a.b");
+    assertThat(repository.rows).hasSize(1);
+  }
+
+  /**
+   * Depth-1 identity for the parent check. At the shipped configuration every namespace is a root,
+   * so this is unreachable and registering a database is byte for byte what it was: one row, no
+   * extra store read, no refusal.
+   *
+   * <p>Calibration: dropping the {@code levels().length <= 1} early return from {@code
+   * requireParentExists} turns nothing here red on its own — a one-level namespace's {@code
+   * parentOrSelf} is itself, which does not exist yet — so the assertion that carries the weight is
+   * the read count: a depth-1 registration must issue exactly the one lookup it always did.
+   */
+  @Test
+  void ensureNamespaceAtTheShippedDepthIsUnchanged() {
+    repository.findByIdCalls = 0;
+    service.ensureNamespace("db");
+    assertThat(repository.rows).hasSize(1);
+    assertThat(repository.findByIdCalls).isEqualTo(1);
+    assertThat(service.namespaceExists(Namespace.of("db"), PRINCIPAL)).isTrue();
+  }
+
+  /**
+   * A table written into a namespace that is already registered is the common case, and it must not
+   * pay for the parent check at all — the existing-row short circuit runs first, so a child whose
+   * parent was later dropped still serves its own table writes rather than failing them.
+   */
+  @Test
+  void ensureNamespaceSkipsTheParentCheckForANamespaceThatAlreadyExists() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+    repository.save(namespace("a.b"));
+
+    assertThatCode(() -> service.ensureNamespace("a.b")).doesNotThrowAnyException();
+    assertThat(repository.rows).hasSize(1);
+  }
+
   private static HouseNamespace namespace(String namespaceId) {
     return HouseNamespace.builder()
         .namespaceId(namespaceId)
@@ -388,6 +542,7 @@ public class NamespacesServiceImplTest {
    */
   private static final class StubNamespaceRepository implements HouseNamespaceRepository {
     private final Map<String, HouseNamespace> rows = new LinkedHashMap<>();
+    private int findByIdCalls;
     private boolean failOnFindAll;
     private boolean rejectNextSave;
     private Long lastSavedVersion;
@@ -408,6 +563,7 @@ public class NamespacesServiceImplTest {
 
     @Override
     public Optional<HouseNamespace> findById(String namespaceId) {
+      findByIdCalls++;
       return Optional.ofNullable(rows.get(key(namespaceId)));
     }
 

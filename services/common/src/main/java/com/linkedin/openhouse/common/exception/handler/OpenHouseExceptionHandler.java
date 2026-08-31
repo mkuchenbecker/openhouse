@@ -240,6 +240,31 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   }
 
   /**
+   * A table write into a nested database whose parent namespace does not exist is refused with
+   * Iceberg's {@link org.apache.iceberg.exceptions.NoSuchNamespaceException}. Without this mapping
+   * it reaches the catch-all below and a client error the caller can fix — create the parent first
+   * — is reported as a 500 they cannot tell from an outage.
+   *
+   * <p>The Iceberg REST facade maps the same exception itself, in {@code
+   * IcebergRestExceptionHandler}, which is scoped to its own controller at highest precedence; this
+   * one covers the native {@code /v1/databases} routes, which had no mapping for it at all.
+   */
+  @Hidden
+  @ExceptionHandler(org.apache.iceberg.exceptions.NoSuchNamespaceException.class)
+  protected ResponseEntity<ErrorResponseBody> handleNoSuchNamespace(
+      org.apache.iceberg.exceptions.NoSuchNamespaceException noSuchNamespaceException) {
+    ErrorResponseBody errorResponseBody =
+        ErrorResponseBody.builder()
+            .status(HttpStatus.NOT_FOUND)
+            .error(HttpStatus.NOT_FOUND.getReasonPhrase())
+            .message(noSuchNamespaceException.getMessage())
+            .stacktrace(getAbbreviatedStackTrace(noSuchNamespaceException))
+            .cause(getExceptionCause(noSuchNamespaceException))
+            .build();
+    return buildResponseEntity(errorResponseBody);
+  }
+
+  /**
    * Note the difference between {@link
    * OpenHouseExceptionHandler#handleEntityExists(com.linkedin.openhouse.common.exception.AlreadyExistsException)
    * }

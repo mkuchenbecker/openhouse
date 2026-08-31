@@ -18,6 +18,7 @@ import com.linkedin.openhouse.common.exception.RequestValidationFailureException
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.SnapshotsUtil;
@@ -114,7 +115,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   public TableDto save(TableDto tableDto) {
     long startTime = System.currentTimeMillis();
     TableIdentifier tableIdentifier =
-        TableIdentifier.of(tableDto.getDatabaseId(), tableDto.getTableId());
+        NamespaceUtil.tableIdentifier(tableDto.getDatabaseId(), tableDto.getTableId());
     Table table;
     Schema writeSchema = IcebergSchemaHelper.getSchemaFromSchemaJson(tableDto.getSchema());
     boolean existed =
@@ -806,7 +807,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   public Optional<TableDto> findById(TableDtoPrimaryKey tableDtoPrimaryKey) {
     Table table;
     TableIdentifier tableId =
-        TableIdentifier.of(tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId());
+        NamespaceUtil.tableIdentifier(
+            tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId());
     try {
       table = catalog.loadTable(tableId);
     } catch (NoSuchTableException exception) {
@@ -826,7 +828,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
     return ((OpenHouseInternalCatalog) catalog)
         .findHouseTable(
-            TableIdentifier.of(tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()))
+            NamespaceUtil.tableIdentifier(
+                tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()))
         .map(
             houseTable ->
                 TableDto.builder()
@@ -842,14 +845,16 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Override
   public boolean existsById(TableDtoPrimaryKey tableDtoPrimaryKey) {
     return catalog.tableExists(
-        TableIdentifier.of(tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()));
+        NamespaceUtil.tableIdentifier(
+            tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()));
   }
 
   @Timed(metricKey = MetricsConstant.REPO_TABLE_DELETE_TIME)
   @Override
   public void deleteById(TableDtoPrimaryKey tableDtoPrimaryKey) {
     catalog.dropTable(
-        TableIdentifier.of(tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()),
+        NamespaceUtil.tableIdentifier(
+            tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()),
         true);
   }
 
@@ -922,7 +927,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Override
   public void delete(TableDto entity) {
     /** Temporarily implemented for testing purposes. Need further work before productionization. */
-    catalog.dropTable(TableIdentifier.of(entity.getDatabaseId(), entity.getTableId()));
+    catalog.dropTable(NamespaceUtil.tableIdentifier(entity.getDatabaseId(), entity.getTableId()));
   }
 
   @Override
@@ -954,8 +959,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Override
   public void rename(TableDtoPrimaryKey from, TableDtoPrimaryKey to) {
     catalog.renameTable(
-        TableIdentifier.of(from.getDatabaseId(), from.getTableId()),
-        TableIdentifier.of(to.getDatabaseId(), to.getTableId()));
+        NamespaceUtil.tableIdentifier(from.getDatabaseId(), from.getTableId()),
+        NamespaceUtil.tableIdentifier(to.getDatabaseId(), to.getTableId()));
   }
 
   @Timed(metricKey = MetricsConstant.REPO_TABLE_SEARCH_SOFT_DELETED_TIME)

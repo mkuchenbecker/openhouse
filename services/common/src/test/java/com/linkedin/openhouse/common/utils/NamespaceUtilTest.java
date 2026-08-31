@@ -1,7 +1,11 @@
 package com.linkedin.openhouse.common.utils;
 
 import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
+import java.util.Arrays;
+import java.util.Locale;
+import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -12,8 +16,9 @@ public class NamespaceUtilTest {
    * The depth-1 half of the compatibility claim: with the property at its shipped default, every
    * answer is the one the hardcoded constant used to give.
    *
-   * <p>Calibration: changing {@code ==} to {@code >=} in {@code isTableNamespace} leaves the first
-   * three assertions passing and turns the last two red.
+   * <p>Calibration: dropping the {@code depth <= maxDepth} clause from {@code isTableNamespace}
+   * leaves the first three assertions passing and turns the last two red; dropping the {@code depth
+   * >= 1} clause turns the second red.
    */
   @Test
   public void testIsTableNamespaceAtTheDefaultDepthMatchesTheHardcodedRule() {
@@ -26,16 +31,35 @@ public class NamespaceUtilTest {
   }
 
   /**
-   * Raising the property moves the predicate, which is the point of wiring it. A table namespace is
-   * exactly the configured depth, so raising the bound moves the level tables live at rather than
-   * widening it to a range.
+   * Raising the property widens the predicate to a range rather than moving a single admitted
+   * depth. {@code max-depth} is a ceiling: a table may live in any namespace from one level up to
+   * it. This is the assertion the previous "exactly {@code maxDepth}" rule got backwards — under it
+   * the first assertion here was false, which means raising a live cluster's max-depth to 2 would
+   * have stopped every existing one-level database from hosting a table.
+   *
+   * <p>Calibration: restoring {@code levels().length == maxDepth} turns the shallower-than-max
+   * assertions red and leaves the at-max and beyond-max ones passing.
    */
   @Test
-  public void testIsTableNamespaceFollowsTheConfiguredDepth() {
-    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("db"), 2));
+  public void testIsTableNamespaceAdmitsEveryDepthUpToTheConfiguredMaximum() {
+    // Shallower than the maximum: still a namespace, still hosts tables.
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("db"), 2));
+    // At the maximum.
     Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b"), 2));
+    // Beyond the maximum.
     Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c"), 2));
+
+    // And the same shape one level up, where there are two admitted depths below the maximum.
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("db"), 3));
+    Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b"), 3));
     Assertions.assertTrue(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c"), 3));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.of("a", "b", "c", "d"), 3));
+
+    // The floor does not move with the ceiling: the empty namespace has no database to host a
+    // table in, at any configured depth.
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.empty(), 2));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(Namespace.empty(), 3));
+    Assertions.assertFalse(NamespaceUtil.isTableNamespace(null, 3));
   }
 
   @Test
@@ -289,5 +313,88 @@ public class NamespaceUtilTest {
     Assertions.assertFalse(
         "myXdb.child".compareTo(lower) >= 0 && "myXdb.child".compareTo(upper) < 0);
     Assertions.assertFalse(NamespaceUtil.isDirectChild("my_db", "myXdb.child"));
+  }
+
+  /**
+   * The discriminator's whole job: {@code a.b.history} is a metadata table, {@code db.history} is a
+   * table someone created and called {@code history}. The depth floor is the only thing separating
+   * them, so it is asserted from both sides.
+   *
+   * <p>Calibration: dropping the depth floor turns the second block red; keeping the floor but
+   * matching the namespace's last level instead of the identifier's name turns the first block red.
+   */
+  @Test
+  public void testIsMetadataTableIdentifierNeedsBothDepthAndAMetadataName() {
+    Assertions.assertTrue(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "history")));
+    Assertions.assertTrue(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "snapshots")));
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "sales")));
+
+    // Depth 1 is the shipped configuration, and there a metadata-table name is just a name.
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(TableIdentifier.of(Namespace.of("db"), "history")));
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("db"), "snapshots")));
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableIdentifier(null));
+  }
+
+  /**
+   * The set of metadata table names is Iceberg's, not a list copied into OpenHouse. Asserting over
+   * {@code MetadataTableType.values()} is what makes a type added upstream a covered case rather
+   * than a silently creatable table name.
+   */
+  @Test
+  public void testEveryIcebergMetadataTableTypeIsRecognised() {
+    Assertions.assertTrue(MetadataTableType.values().length > 0);
+    Arrays.stream(MetadataTableType.values())
+        .forEach(
+            type -> {
+              String lower = type.name().toLowerCase(Locale.ROOT);
+              Assertions.assertTrue(
+                  NamespaceUtil.isMetadataTableName(lower), "not recognised: " + lower);
+              Assertions.assertTrue(NamespaceUtil.isMetadataTableName(type.name()));
+              Assertions.assertTrue(
+                  NamespaceUtil.isMetadataTableIdentifier(
+                      TableIdentifier.of(Namespace.of("a", "b"), lower)));
+            });
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableName("histories"));
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableName(null));
+  }
+
+  /**
+   * The create-time admission rule reads the encoded namespace the write actually carries, so the
+   * question it asks is the same one the catalog will ask of the resulting identifier.
+   */
+  @Test
+  public void testCollidesWithMetadataTableFollowsTheEncodedNamespaceDepth() {
+    Assertions.assertTrue(NamespaceUtil.collidesWithMetadataTable("a.b", "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("db", "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("a.b", "histories"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable(null, "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("a.b", null));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("", "history"));
+  }
+
+  /**
+   * A table identifier built from an encoded namespace has to get its levels back, and at depth 1
+   * has to be the identifier the two-string overload produces -- byte for byte, level for level.
+   *
+   * <p>Calibration: using {@code TableIdentifier.of(encoded, tableId)} instead leaves the depth-1
+   * assertion green and turns the nested one red, which is exactly the bug the helper exists for.
+   */
+  @Test
+  public void testTableIdentifierDecodesTheNamespaceAndIsIdenticalAtDepthOne() {
+    Assertions.assertEquals(
+        TableIdentifier.of("db", "t"), NamespaceUtil.tableIdentifier("db", "t"));
+    Assertions.assertEquals(
+        TableIdentifier.of(Namespace.of("a", "b"), "t"), NamespaceUtil.tableIdentifier("a.b", "t"));
+    Assertions.assertEquals(
+        2, NamespaceUtil.tableIdentifier("a.b", "t").namespace().levels().length);
   }
 }

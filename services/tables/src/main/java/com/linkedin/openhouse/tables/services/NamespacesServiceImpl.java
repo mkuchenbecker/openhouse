@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import javax.annotation.PostConstruct;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -67,28 +66,6 @@ public class NamespacesServiceImpl implements NamespacesService {
 
   @Autowired NamespaceStoreReadGate namespaceStoreReadGate;
 
-  /**
-   * Nesting is not implemented, and a cluster that asks for it must be told so at startup rather
-   * than discover it as a 500 on the first two-level create. Raising the property today widens
-   * {@link NamespaceUtil#validate} and nothing else: {@code /hts/databases} rejects the dot in the
-   * encoded form, {@link NamespaceUtil#isTableNamespace} still means "exactly one level", the
-   * design's metadata-table discriminator (§5.4) is absent, and {@code /v1} rejects nested paths.
-   */
-  @PostConstruct
-  void rejectUnimplementedNamespaceDepth() {
-    int maxDepth = clusterProperties.getClusterTablesNamespaceMaxDepth();
-    if (maxDepth != NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH) {
-      throw new IllegalStateException(
-          String.format(
-              "cluster.tables.namespace.max-depth is %s, but only %s is implemented. Nesting needs,"
-                  + " at least: an encoded namespace the /hts/databases charset accepts (the '.'"
-                  + " separator is rejected today), a depth-aware isTableNamespace, the"
-                  + " metadata-table discriminator of design section 5.4, a childrenOf range query"
-                  + " on the namespace store, and nested-path routing on /v1.",
-              maxDepth, NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH));
-    }
-  }
-
   @Override
   public NamespaceMetadata createNamespace(
       Namespace namespace, Map<String, String> properties, String actingPrincipal) {
@@ -117,12 +94,41 @@ public class NamespacesServiceImpl implements NamespacesService {
     return metadata(saved);
   }
 
+  /**
+   * The parent check is what keeps the namespace tree connected. Registering {@code a.b} while
+   * {@code a} has no row would leave a child whose parent does not exist: no listing walk starts at
+   * a root that is not there, so the database would be invisible to {@code listNamespaces}, and
+   * undroppable through the namespace API — the same orphan that failing a registration silently
+   * used to produce, arrived at through the table-create path instead.
+   *
+   * <p>It refuses rather than creating the missing ancestors. Iceberg's reference suite is the
+   * specification here, and {@code CatalogTests#tableCreationWithoutNamespace} pins that a catalog
+   * requiring namespace creation answers a table create into a namespace that does not exist with
+   * {@link NoSuchNamespaceException} rather than conjuring the namespace; nothing in the suite
+   * creates a nested namespace implicitly — {@code testListNestedNamespaces} and {@code
+   * testDropNamespaceWithNestedNamespace} both create the parent explicitly first. Refusing is also
+   * the only reversible answer: an implicitly created ancestor turns a typo into a permanent
+   * namespace that nothing will ever clean up.
+   *
+   * <p>Unreachable at the shipped max-depth of 1, where every namespace is a root and this returns
+   * before looking at anything. That also means the check cannot misfire on a cluster whose
+   * namespace store was never backfilled: a nested namespace can only be reached through {@code
+   * createNamespace}, which is gated on the store being authoritative and enforces the same rule,
+   * so there is no unbackfilled cluster that has one.
+   *
+   * @throws NoSuchNamespaceException if the database's parent namespace does not exist
+   */
   @Override
   public void ensureNamespace(String databaseId) {
-    String namespaceId = NamespaceUtil.encode(Namespace.of(databaseId));
+    // decode(), not Namespace.of(): a nested databaseId arrives encoded, and Namespace.of("a.b")
+    // would read it as a single level literally named "a.b" — an identifier with no parent to
+    // check, which is exactly the check being added here.
+    Namespace namespace = NamespaceUtil.decode(databaseId);
+    String namespaceId = NamespaceUtil.encode(namespace);
     if (houseNamespaceRepository.findById(namespaceId).isPresent()) {
       return;
     }
+    requireParentExists(namespace);
     long now = System.currentTimeMillis();
     try {
       houseNamespaceRepository.save(
@@ -177,25 +183,31 @@ public class NamespacesServiceImpl implements NamespacesService {
       // the unpaged findAll() below.
       return Collections.emptyList();
     }
+    if (hasParent) {
+      // The store's own range query, not findAll() filtered here: listing one namespace's children
+      // must cost the children, not the catalog. It returns direct children only, so there is
+      // nothing left to narrow.
+      List<Namespace> children = new ArrayList<>();
+      for (HouseNamespace child :
+          houseNamespaceRepository.childrenOf(NamespaceUtil.encode(parent))) {
+        children.add(NamespaceUtil.decode(child.getNamespaceId()));
+      }
+      return children;
+    }
+    // The roots have no parent to range over, so they are the one listing that still reads the
+    // whole store. At every shipped depth that is the listing callers already pay for today.
     Set<String> encoded = new LinkedHashSet<>();
     for (HouseNamespace stored : houseNamespaceRepository.findAll()) {
       encoded.add(stored.getNamespaceId());
     }
-    String prefix = hasParent ? NamespaceUtil.encode(parent) + "." : "";
-    int depth = hasParent ? parent.levels().length : 0;
-    List<Namespace> children = new ArrayList<>();
+    List<Namespace> roots = new ArrayList<>();
     for (String namespaceId : encoded) {
-      if (!namespaceId.startsWith(prefix)) {
-        continue;
-      }
       Namespace candidate = NamespaceUtil.decode(namespaceId);
-      // Immediate children only: the contiguous prefix range gives the subtree, this filters it
-      // down to the level the spec asks for.
-      if (candidate.levels().length == depth + 1) {
-        children.add(candidate);
+      if (candidate.levels().length == 1) {
+        roots.add(candidate);
       }
     }
-    return children;
+    return roots;
   }
 
   @Override

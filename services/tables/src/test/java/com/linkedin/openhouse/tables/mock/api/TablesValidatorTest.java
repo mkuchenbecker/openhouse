@@ -94,6 +94,48 @@ public class TablesValidatorTest {
                     .build()));
   }
 
+  /**
+   * The create-time admission rule that keeps {@code db.sub.history} from having two readings. It
+   * has to be inert at depth 1, where {@code history} is just a table name, and it has to cover a
+   * rename as well as a create -- a rename is the other way a table comes to occupy an identifier,
+   * and the catalog's rename does not re-check the destination.
+   *
+   * <p>Calibration: removing the depth floor from {@code isMetadataTableIdentifier} turns the two
+   * depth-1 assertions red; dropping the check from {@code validateRenameTable} turns the last one
+   * red and leaves the rest green.
+   */
+  @Test
+  public void validateAMetadataTableNameIsRefusedOnlyInsideANestedNamespace() {
+    assertDoesNotThrow(
+        () -> tablesApiValidator.validateCreateTable("c", "d", metadataNamedTable("d", "history")));
+    assertDoesNotThrow(() -> tablesApiValidator.validateRenameTable("d", "t", "d", "history"));
+
+    assertThrows(
+        RequestValidationFailureException.class,
+        () ->
+            tablesApiValidator.validateCreateTable(
+                "c", "d.sub", metadataNamedTable("d.sub", "history")));
+    assertDoesNotThrow(
+        () ->
+            tablesApiValidator.validateCreateTable(
+                "c", "d.sub", metadataNamedTable("d.sub", "histories")));
+    assertThrows(
+        RequestValidationFailureException.class,
+        () -> tablesApiValidator.validateRenameTable("d.sub", "t", "d.sub", "snapshots"));
+  }
+
+  private static CreateUpdateTableRequestBody metadataNamedTable(
+      String databaseId, String tableId) {
+    return CreateUpdateTableRequestBody.builder()
+        .databaseId(databaseId)
+        .tableId(tableId)
+        .clusterId("c")
+        .schema(HEALTH_SCHEMA_LITERAL)
+        .tableProperties(ImmutableMap.of())
+        .baseTableVersion("base")
+        .build();
+  }
+
   @Test
   public void validateTooLongTableOrDbId() {
     String tooLongDbId = generateId(130);

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.handler.impl.IcebergRestTableWriteAdapter;
@@ -54,7 +55,10 @@ public class OpenHouseIcebergRestApiHandlerTest {
     // make every identifier illegal -- which would pass the 404 assertions below for the wrong
     // reason. Set the shipped depth explicitly.
     ClusterProperties clusterProperties = new ClusterProperties();
-    ReflectionTestUtils.setField(clusterProperties, "clusterTablesNamespaceMaxDepth", 1);
+    ReflectionTestUtils.setField(
+        clusterProperties,
+        "clusterTablesNamespaceMaxDepth",
+        NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH);
     handler =
         new OpenHouseIcebergRestApiHandler(
             tablesApiHandler, openHouseInternalCatalog, tableWriteAdapter, clusterProperties);
