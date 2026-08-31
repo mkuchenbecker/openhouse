@@ -47,6 +47,60 @@ Verified; violating these costs hours.
 - `spotlessCheck` fails on `main` on a file the fork sync added. Inherited, not ours; `enforceCheck
   = false` keeps it out of CI, but it trips the local hook on any branch that merges `main`.
 
+## Progress — 2026-08-31
+
+Every branch below is code from this session. **None is merged to `main`.** CI is scoped
+`branches: [main]`, so a pull request targeting any other branch runs no checks at all: only
+PR #60 carries real CI, and every other number here is from a local Gradle run on JDK 17.
+The conformance suite itself lives only on the namespace stack, not on `main`.
+
+| Goal | State | PRs |
+|---|---|---|
+| 1 — database data model | **Implemented** | #59 → #61 → #63 |
+| 2 — multi-level namespaces | **Implemented** | #64 → #65 → #67 |
+| 3 — write path | **Implemented** | #60 → #62 → #66 |
+| 4 — remaining REST surface | In progress | rename/register/metrics in flight |
+
+**The scoreboard: 15 → 43 executing, 0 failures**, measured on the write stack
+(`claude/ws3-rest-write-routes`). The nesting stack independently reports 17 executing. The two
+stacks have not yet been merged, so **the combined figure is not yet known** — that merge and its
+measurement is the next verification owed.
+
+`claude/integration-rest-write` is the working branch that merges the namespace/facade stack with
+the commit-engine stack. It needs remaking once the nesting and rename slices land.
+
+### What the remaining 42 disabled tests are
+
+Counted from the tree on `claude/ws3-rest-write-routes`, not from this document.
+
+| Kind | Count | Owner |
+|---|---|---|
+| Route not built — rename 6, register 2, metrics 1 | 9 | Goal 4, in flight |
+| Genuine defects — `CLIENT_TABLE_DEFAULTS_NOT_SENT` 4, `COMMIT_FAILURE_MESSAGE_TEXT` 2, `MISSING_METADATA_FILE_IS_A_500` 1, `STALE_UPDATES_NOT_A_CONFLICT` 1 | 8 | queued |
+| **Capabilities OpenHouse declines** — partition evolution 10, schema narrowing 8, catalog-chosen location 3, catalog-chosen format version 2, column defaults 1, intermediate schemas 1 | **25** | **owner decision** |
+
+A further 12 self-skip on the suite's own capability flags. 43 + 42 + 12 = 97.
+
+**The target of 97 executing is only reachable if OpenHouse adopts the 25 declined capabilities.**
+That is a product decision, not engineering work. If OpenHouse genuinely declines them, the honest
+target is roughly 60 executing, with every decline recorded and — wherever the suite offers a
+capability flag — expressed as a flag rather than an `@Disabled`, so the suite skips them
+legitimately instead of carrying them as a to-do list that will never be done.
+
+### Lessons this programme paid for
+
+1. **A brief that points an agent at 90–140KB of design documents produces nothing.** Two agents ran
+   seven hours and never got past reading. Short, explicit reading lists; forbid the big documents;
+   one narrow scope; require a push inside the first hour.
+2. **Do not idle between slices.** Waiting on a decision that only affects a later step cost hours.
+   Where two stacks need combining, merge them on a working branch and verify — that needs no
+   permission and is not a merge to `main`.
+3. **A test that would pass vacuously must be calibrated by mutation.** Several real defects were
+   caught only because a test was proven able to fail: the backfill's verification never traversed
+   its paging loop, and would have marked an incomplete store complete.
+
+---
+
 ## Where the 78 remaining disabled tests sit
 
 | Block | Tests | Workstream |
@@ -67,7 +121,14 @@ Verified; violating these costs hours.
 
 # WS1 — The database gets its own data model
 
-**Status: not implemented.** `database_row` exists as a table, with a repository, service and
+**Status: IMPLEMENTED** — PRs #59, #61, #63, unmerged. Registration on every table-creating path
+(the audit found three, not the two expected: `putTable`, `putIcebergSnapshots`, `restoreTable`); a
+backfill with keyset paging, a resumable watermark and a verified-complete marker distinct from
+"a scan ran"; the derived fallback deleted from all six read paths; and a read gate that refuses
+loudly on an unverified store rather than reporting zero databases. Registration is fatal again now
+that the store is authoritative. The description below is the original problem statement.
+
+`database_row` existed as a table, with a repository, service and
 `/hts/databases` routes. It is **not the source of truth.** Every read path in
 `NamespacesServiceImpl` is `stored OR derived`, falling back to `searchTables(...)` /
 `findAllIds()` against the *table* store when no row exists. A database's existence is still a
@@ -135,7 +196,17 @@ function of whether it has tables — which is the exact thing this workstream e
 
 # WS2 — Multi-level namespacing
 
-**Status: not implemented, and actively refused.** `NamespacesServiceImpl.rejectUnimplementedNamespaceDepth`
+**Status: IMPLEMENTED** — PRs #64, #65, #67, unmerged. The startup guard is deleted,
+`supportsNestedNamespaces()` is `true`, and the two nesting reference tests execute and pass
+(15 → 17 on that stack). Two bugs found that were in no plan: Iceberg 1.5.2's
+`RESTUtil.decodeNamespace` splits on the literal text `"%1F"`, but Spring hands over path variables
+already percent-decoded, so every nested route answered 404; and `renameTable` did not re-check its
+destination, so a table could be renamed into an identifier a create refuses. `isTableNamespace`
+now means `1 <= depth <= max-depth` — a ceiling, not a required depth — and a create into a missing
+parent is refused rather than creating ancestors implicitly. The description below is the original
+problem statement.
+
+`NamespacesServiceImpl.rejectUnimplementedNamespaceDepth`
 throws at startup for any `max-depth` but 1. What exists is the *encoding* only: `NamespaceUtil.encode`
 dot-joins levels, `encode(Namespace.of("db")) == "db"` byte-for-byte, so depth-1 is unaffected and
 the one-way door is closed. That is the foundation, not the feature.
@@ -178,7 +249,22 @@ the one-way door is closed. That is the foundation, not the feature.
 
 # WS3 — REST commit semantics: the write path
 
-**Status: zero code.** `commitTable` → 0 non-test files. `UpdateRequirement` → 0. No write
+**Status: IMPLEMENTED** — PRs #60, #62, #66. #60 is the one branch in this programme with real CI,
+and it is green. The engine (`UpdateRequirementValidator`, `MetadataUpdateApplier`) landed with no
+callers, then under the existing `/v1` path as a behaviour-preserving refactor the existing suite
+validated, then behind REST `createTable` / staged create / `updateTable` / `dropTable`.
+**15 → 43 executing, 0 failures.** Three defects found along the way that no plan predicted:
+`RESTCatalog.listTables()` could never have succeeded, because every Iceberg client since 1.6.0
+sends an empty `pageToken=` and the table route answered 400; unmapped exceptions reported 500 on
+commits, which an Iceberg client reads as `CommitStateUnknownException` — "the write may or may not
+have landed"; and the policy merge had to read the raw JSON, because the server's
+`Policies.sharingEnabled` is a primitive where the client's is boxed, so merging off the parsed
+object would silently unshare a table. Confirmed empirically: the transaction reference tests use
+the single-table API, so 11 pass with no `/v1/transactions/commit` route at all. Known divergence:
+`purgeRequested=false` is accepted and ignored, because OpenHouse has one drop and it purges.
+The description below is the original problem statement.
+
+`commitTable` → 0 non-test files. `UpdateRequirement` → 0. No write
 operation is advertised in `/v1/config`. **This is 62 of the 78 remaining tests** and the single
 largest distance to the goal.
 
@@ -236,7 +322,13 @@ largest distance to the goal.
 
 # WS4 — The remaining REST surface
 
-**Status: 22 of 32 operations unimplemented.** Ten are served: config, three table reads, six
+**Status: in progress.** The write routes landed with Goal 3, so config, three table reads, six
+namespace routes, `createTable` (with staged create), `updateTable` and `dropTable` are served and
+advertised. `rename`/`register`/`reportMetrics` are in flight. Views (8), scan planning (4) and
+credentials/auth (3) remain — the last two were never designed and still need a recorded decision.
+The description below is the original problem statement.
+
+Ten were served: config, three table reads, six
 namespace routes.
 
 **Done when:** every one of the 32 is implemented or carries a recorded, reviewed decision not to
