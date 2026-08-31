@@ -113,7 +113,21 @@ by controller-scoped advice into the standard Iceberg error envelope.
 - The Iceberg 1.11 `referenced-by` query parameter is accepted and ignored.
 - Access delegation may be requested, but this read-only version does not vend credentials.
 - Conditional ETag responses are not currently emitted.
-- Table-write, view, transaction, credential, and OAuth endpoints are not advertised.
+- Renaming a table is supported within a database and refused across databases. The rule is the
+  `/v1` API's own (`OpenHouseTablesApiValidator.validateRenameTable`), which the REST route calls
+  rather than reimplements, and the specification permits a server to refuse a cross-namespace
+  move. The refusal is a `400` carrying that validator's sentence. A rename into a namespace that
+  does not exist is a `404`, decided before the refusal, so a typo is never reported as an
+  unsupported capability.
+- Registering an existing metadata file is **not** supported and
+  `POST /v1/{prefix}/namespaces/{namespace}/register` is not advertised. OpenHouse allocates every
+  table's location itself and its only drop purges everything under that location, so adopting a
+  metadata file the catalog did not write would give it authority to delete files it never placed,
+  carrying state that never passed the write path's checks.
+- The metrics route accepts a report and discards it, which the specification permits. There is no
+  sink for scan or commit reports. The table is not looked up, so a report about a table that does
+  not exist is accepted like any other and the route never answers `404`.
+- View, transaction, credential, and OAuth endpoints are not advertised.
 
 Existing OpenHouse APIs remain supported. Client migrations can therefore be incremental.
 

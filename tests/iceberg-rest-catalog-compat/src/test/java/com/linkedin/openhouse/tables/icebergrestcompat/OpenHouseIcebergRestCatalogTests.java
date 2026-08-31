@@ -41,12 +41,12 @@ import org.junit.jupiter.params.provider.ValueSource;
  * drop, list and update properties), the read-only table routes (list tables, load table, table
  * exists), the table write routes (create, including staged create; commit; drop; rename) and the
  * metrics-reporting route, which accepts a report and discards it. Every test the facade cannot
- * honestly satisfy is overridden and disabled with a reason. No reason left here names a route
- * that is merely missing: each names a capability OpenHouse deliberately declines -- registering
- * a metadata file it does not own, partition-spec evolution, schema narrowing, a client-chosen
- * table location or format version -- or a divergence in wording rather than behaviour. None of
- * them will be deleted by adding an endpoint, and each says exactly what the catalog does instead.
- * Further tests skip themselves through the suite's built-in capability flags ({@code
+ * honestly satisfy is overridden and disabled with a reason. No reason left here names a route that
+ * is merely missing: each names a capability OpenHouse deliberately declines -- registering a
+ * metadata file it does not own, partition-spec evolution, schema narrowing, a client-chosen table
+ * location or format version -- or a divergence in wording rather than behaviour. None of them will
+ * be deleted by adding an endpoint, and each says exactly what the catalog does instead. Further
+ * tests skip themselves through the suite's built-in capability flags ({@code
  * supportsEmptyNamespace()}, {@code supportsNestedNamespaces()}, {@code supportsNamesWithDot()},
  * {@code supportsNamesWithSlashes()}).
  */

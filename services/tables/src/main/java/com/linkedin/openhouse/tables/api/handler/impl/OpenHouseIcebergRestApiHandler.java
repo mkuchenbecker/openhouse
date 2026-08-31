@@ -175,21 +175,22 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
    * <p>OpenHouse has nowhere to put a client's scan or commit report: there is no sink for them in
    * the service, and inventing one -- a table, a log, a metric -- would be a storage decision with
    * a retention policy attached, made here as a side effect of adding a route. The specification
-   * permits a server to accept a report and do nothing with it, and that is exactly what this
-   * does. It is not a stub awaiting an implementation; a client that sends a report gets the 204
-   * the contract promises, and nothing reads the report.
+   * permits a server to accept a report and do nothing with it, and that is exactly what this does.
+   * It is not a stub awaiting an implementation; a client that sends a report gets the 204 the
+   * contract promises, and nothing reads the report.
    *
    * <p>The route exists so that {@code /v1/config} can advertise {@code POST
    * .../tables/{table}/metrics} truthfully. A 1.11 client that sees it advertised pairs its own
    * reporter with a {@code RESTMetricsReporter} pointed here; a client that does not see it keeps
-   * only its own. Advertising a route this facade did not serve would be worse than not
-   * advertising it, which is why the endpoint list is generated from the same spec markers the
-   * routes are.
+   * only its own. Advertising a route this facade did not serve would be worse than not advertising
+   * it, which is why the endpoint list is generated from the same spec markers the routes are.
    *
    * <p>The table is deliberately not looked up. The specification lists 404 for a report about a
    * table that does not exist, and this route never answers it: a lookup would cost a read and an
-   * authorization check per scan, on behalf of a report that is discarded either way. A report
-   * about a table that is not there is accepted and discarded like any other.
+   * authorization check per scan, on behalf of a report that is discarded either way. Nothing leaks
+   * by skipping it, because the answer is 204 whether the table is there or not -- the route has no
+   * way to say anything about the catalog's contents. A report about a table that is not there is
+   * accepted and discarded like any other.
    */
   @Override
   public void reportMetrics(

@@ -175,7 +175,12 @@ public class IcebergRestCatalogRoundTripTest {
             "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-            "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
+            "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "POST /v1/{prefix}/tables/rename",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics");
+    assertThat(endpoints)
+        .as("a route OpenHouse declines must not be advertised")
+        .doesNotContain("POST /v1/{prefix}/namespaces/{namespace}/register");
     assertThat(meterRegistry.get("http.server.requests").tag("uri", "/v1/config").timer().count())
         .isGreaterThan(0);
   }

@@ -218,13 +218,16 @@ public class IcebergRestTableWriteAdapter {
   /**
    * Serves {@code POST /v1/{prefix}/tables/rename}.
    *
-   * <p><b>Why this one route goes through the API handler.</b> Create and commit assemble a
-   * request body the {@code /v1} API has no way to express, so they call the services directly.
-   * Rename does not: it is the same four identifiers on both APIs, and its rules -- including the
-   * one that matters most here -- live in {@link
+   * <p><b>Why this one route goes through the API handler.</b> Create and commit assemble a request
+   * body the {@code /v1} API has no way to express, so they call the services directly. Rename does
+   * not: it is the same four identifiers on both APIs, and its rules -- including the one that
+   * matters most here -- live in {@link
    * com.linkedin.openhouse.tables.api.validator.TablesApiValidator#validateRenameTable}. Calling
    * {@link TablesApiHandler#renameTable} runs that validator, so a REST caller is held to exactly
-   * the rules an OpenHouse caller is, and the rules stay written down once.
+   * the rules an OpenHouse caller is, and the rules stay written down once. It also puts the rename
+   * back under {@code TableAuditAspect}, whose pointcut is on {@code TablesApiHandler.renameTable}:
+   * a REST rename emits the same RENAME_FROM/RENAME_TO audit pair a {@code /v1} rename does, which
+   * a call straight to the service would have skipped silently.
    *
    * <p><b>Renames across databases.</b> OpenHouse declines them: the validator refuses a rename
    * whose target database differs from its source, and this route does not widen that. The REST
@@ -236,17 +239,15 @@ public class IcebergRestTableWriteAdapter {
    *
    * <p><b>What this route does add.</b> The destination namespace is checked for existence first.
    * The specification requires 404 for a rename into a namespace that does not exist, and without
-   * that check a cross-database rename into a namespace that was never created would be reported
-   * as the cross-database refusal -- telling a client its request was unsupported when in truth it
-   * had a typo. Ordering the checks this way is also what makes the two answers distinguishable at
-   * all: "there is no such namespace" is a fact about the catalog, "renames do not cross
-   * databases" is a fact about OpenHouse.
+   * that check a cross-database rename into a namespace that was never created would be reported as
+   * the cross-database refusal -- telling a client its request was unsupported when in truth it had
+   * a typo. Ordering the checks this way is also what makes the two answers distinguishable at all:
+   * "there is no such namespace" is a fact about the catalog, "renames do not cross databases" is a
+   * fact about OpenHouse.
    */
-  public void renameTable(
-      TableIdentifier source, TableIdentifier destination, String principal) {
+  public void renameTable(TableIdentifier source, TableIdentifier destination, String principal) {
     if (!namespacesService.namespaceExists(destination.namespace(), principal)) {
-      throw new NoSuchNamespaceException(
-          "Namespace does not exist: %s", destination.namespace());
+      throw new NoSuchNamespaceException("Namespace does not exist: %s", destination.namespace());
     }
     try {
       tablesApiHandler.renameTable(
@@ -257,13 +258,14 @@ public class IcebergRestTableWriteAdapter {
           principal);
     } catch (NoSuchUserTableException e) {
       // Same condition, the specification's wording -- see createTable above for why the phrasing
-      // has to be the contract's rather than OpenHouse's.
+      // has to be the contract's rather than OpenHouse's. The table named is taken from the
+      // exception rather than assumed to be the source, so that if a rename ever fails on some
+      // other table the message says which one; the cause is carried so the descent survives.
       throw new NoSuchTableException(
-          "Table does not exist: %s.%s", source.namespace().level(0), source.name());
+          e, "Table does not exist: %s.%s", e.getDatabaseId(), e.getTableId());
     } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
       throw new AlreadyExistsException(
-          "Table already exists: %s.%s",
-          destination.namespace().level(0), destination.name());
+          e, "Table already exists: %s.%s", destination.namespace().level(0), destination.name());
     }
   }
 
