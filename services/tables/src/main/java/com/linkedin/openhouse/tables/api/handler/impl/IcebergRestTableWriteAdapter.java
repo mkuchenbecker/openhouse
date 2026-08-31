@@ -4,6 +4,7 @@ import static com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtil
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
@@ -31,8 +32,10 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.CatalogHandlers;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -113,7 +116,17 @@ public class IcebergRestTableWriteAdapter {
       Namespace namespace, CreateTableRequest request, String principal) {
     request.validate();
     String databaseId = namespace.level(0);
-    if (!namespacesService.namespaceExists(namespace, principal)) {
+    // A namespace OpenHouse's charset cannot express is one that does not exist, not a malformed
+    // request: the client asked for a table under a namespace, and the answer is that the namespace
+    // is not there. Asking the service instead would raise a request-validation failure and the
+    // client would be told its create was malformed when the namespace was simply absent.
+    boolean exists;
+    try {
+      exists = namespacesService.namespaceExists(namespace, principal);
+    } catch (RequestValidationFailureException | ValidationException e) {
+      exists = false;
+    }
+    if (!exists) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
 
@@ -128,7 +141,15 @@ public class IcebergRestTableWriteAdapter {
             /*baseTableVersion*/ CatalogConstants.INITIAL_VERSION,
             /*stageCreate*/ request.stageCreate());
 
-    TableDto saved = tablesService.putTable(body, principal, /*failOnExist*/ true, true).getFirst();
+    TableDto saved;
+    try {
+      saved = tablesService.putTable(body, principal, /*failOnExist*/ true, true).getFirst();
+    } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+      // Same condition, the specification's wording. A stock client reads this message, and
+      // OpenHouse's own phrasing ("Table db.tbl already exists") is not the one the REST contract
+      // and its conformance suite name.
+      throw new AlreadyExistsException("Table already exists: %s.%s", databaseId, request.name());
+    }
 
     TableIdentifier identifier = TableIdentifier.of(namespace, request.name());
     if (request.stageCreate()) {
@@ -159,8 +180,15 @@ public class IcebergRestTableWriteAdapter {
     TableIdentifier identifier = TableIdentifier.of(namespace, tableId);
 
     TableMetadata base = loadBase(databaseId, tableId, principal);
-    if (base == null && !assertsTableDoesNotExist(request.requirements())) {
+    boolean completesStagedCreate = assertsTableDoesNotExist(request.requirements());
+    if (base == null && !completesStagedCreate) {
       throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, tableId);
+    }
+    if (base != null && completesStagedCreate) {
+      // The specification's assert-create failing means someone else created the table while this
+      // transaction was open. That is "already exists", not a generic precondition failure, and the
+      // difference is what tells a client to stop rather than refresh and retry.
+      throw new AlreadyExistsException("Table already exists: %s.%s", databaseId, tableId);
     }
 
     TableMetadata updated =
@@ -189,14 +217,19 @@ public class IcebergRestTableWriteAdapter {
   /**
    * Serves {@code DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}}.
    *
-   * <p>OpenHouse has exactly one drop, and it purges: the House Tables row is removed and every
-   * file under the table's location is deleted. That is what the specification's {@code
-   * purgeRequested=true} asks for. It is <em>not</em> what {@code purgeRequested=false} asks for --
-   * the specification's unpurged drop deregisters the table and leaves its files alone -- and this
-   * facade cannot offer that, because the underlying drop takes no such option. The parameter is
-   * therefore accepted and has no effect, and the divergence is recorded in the conformance suite
-   * rather than hidden: {@code testDropTableWithoutPurge}, which asserts that the data files
-   * survive the drop, stays disabled with that as its reason.
+   * <p>OpenHouse has exactly one drop, and it purges. {@code TablesService.deleteTable} removes the
+   * House Tables row outright -- not into the soft-deleted table, which only a caller asking for a
+   * soft delete reaches, and which nothing on this path does -- and then deletes every file under
+   * the table's own location, which is also why {@code restoreTable} cannot bring a REST-dropped
+   * table back.
+   *
+   * <p>So {@code purgeRequested=true} is honoured exactly: data and metadata go. {@code
+   * purgeRequested=false} is <em>not</em>: the specification's unpurged drop deregisters the table
+   * and leaves its files alone, and this facade cannot offer that because the underlying drop takes
+   * no such option. The parameter is accepted and has no effect. The conformance suite's {@code
+   * testDropTableWithoutPurge} passes regardless, because the data file it checks for lives outside
+   * the table's location and so is not what OpenHouse's purge deletes -- it does not exercise the
+   * divergence, and should not be read as evidence the divergence is absent.
    */
   public void dropTable(Namespace namespace, String tableId, String principal) {
     String databaseId = namespace.level(0);

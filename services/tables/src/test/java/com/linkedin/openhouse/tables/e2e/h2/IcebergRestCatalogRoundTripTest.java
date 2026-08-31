@@ -171,7 +171,10 @@ public class IcebergRestCatalogRoundTripTest {
             "DELETE /v1/{prefix}/namespaces/{namespace}",
             "POST /v1/{prefix}/namespaces/{namespace}/properties",
             "GET /v1/{prefix}/namespaces/{namespace}/tables",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables",
             "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
     assertThat(meterRegistry.get("http.server.requests").tag("uri", "/v1/config").timer().count())
         .isGreaterThan(0);
@@ -203,6 +206,25 @@ public class IcebergRestCatalogRoundTripTest {
 
     assertThat(db1Tables).extracting(TableIdentifier::name).contains(T1, T2).doesNotContain(T3);
     assertThat(db2Tables).extracting(TableIdentifier::name).contains(T3).doesNotContain(T1, T2);
+  }
+
+  /**
+   * Every Iceberg Java client since 1.6.0 sends {@code pageToken=} on a first list request. It used
+   * to be answered with 400, which made {@code RESTCatalog.listTables()} fail against this facade
+   * outright -- the namespace list route already read it as "the first page".
+   */
+  @Test
+  void listTablesAcceptsTheEmptyPageTokenClientsSend() {
+    ResponseEntity<String> response =
+        restTemplate.exchange(
+            baseUrl() + "/v1/iceberg/namespaces/" + DB1 + "/tables?pageToken=",
+            HttpMethod.GET,
+            authorizedRequest(),
+            String.class);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    List<String> names = JsonPath.read(response.getBody(), "$.identifiers[*].name");
+    assertThat(names).contains(T1, T2);
   }
 
   @Test

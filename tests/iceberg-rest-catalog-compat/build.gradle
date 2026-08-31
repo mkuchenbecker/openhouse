@@ -70,3 +70,12 @@ test {
     jvmArgs '--add-opens=java.base/java.net=ALL-UNNAMED'
   }
 }
+
+// Server-side failures are logged by the in-process service, not by the client that saw the HTTP
+// status, so the standard streams are the only place the cause of a 5xx is visible.
+test {
+  testLogging {
+    showStandardStreams = true
+    exceptionFormat = 'full'
+  }
+}
