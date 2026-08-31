@@ -40,11 +40,13 @@ import org.springframework.stereotype.Component;
  * an opaque key it must not parse.
  *
  * <p>Existence is composed from two stores. The namespace store holds a row for every namespace
- * created through this API and for every database a table has been written into since the store
- * landed ({@link #ensureNamespace}). A database older than that has no row, and is derived from the
- * table store instead — the same derivation {@code GET /databases} has always used. Without that
- * second source this API would report that {@code prod} does not exist while {@code GET
- * /namespaces/prod/tables} listed its tables.
+ * created through this API, and for a database created by a table write it holds a row only if that
+ * write's registration succeeded ({@link #ensureNamespace}): registration is best-effort while the
+ * store is not the source of truth, so a caller may swallow its failure and still create the table.
+ * A database older than the store has no row at all. Either way the row may be missing, and
+ * existence is then derived from the table store instead — the same derivation {@code GET
+ * /databases} has always used. Without that second source this API would report that {@code prod}
+ * does not exist while {@code GET /namespaces/prod/tables} listed its tables.
  */
 @Component
 public class NamespacesServiceImpl implements NamespacesService {

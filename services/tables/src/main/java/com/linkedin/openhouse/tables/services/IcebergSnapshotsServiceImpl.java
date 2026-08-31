@@ -15,16 +15,20 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
 
   @Autowired TablesService tablesService;
+
+  @Autowired NamespacesService namespacesService;
 
   @Autowired OpenHouseInternalRepository openHouseInternalRepository;
 
@@ -89,6 +93,11 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
     } else {
       authorizationUtils.checkDatabasePrivilege(
           databaseId, tableCreatorUpdater, Privileges.CREATE_TABLE);
+      // A snapshot commit against a table that does not exist yet creates it, and with it the
+      // database it names, exactly as TablesServiceImpl.putTable does. Registering here is what
+      // keeps that database from being a table-only database the namespace store has never heard
+      // of. Idempotent, and already authorized by the CREATE_TABLE check above.
+      registerNamespace(databaseId);
     }
     try {
       tableDtoToSave = readBridgeStripProtection.prepare(tableDto.orElse(null), tableDtoToSave);
@@ -115,6 +124,33 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
               icebergSnapshotRequestBody.getBaseTableVersion(),
               "The requested table has been modified/created by other processes."),
           ce);
+    }
+  }
+
+  /**
+   * Registration runs before the table write, so a failed write leaves an unreferenced database row
+   * rather than a table whose database does not exist; the reverse order cannot be repaired by
+   * anything the caller sees.
+   *
+   * <p>A registration failure is logged and swallowed because the namespace store is not yet the
+   * source of truth for a database's existence — reads still derive it from the table store, so a
+   * missing row costs nothing a client can observe, while failing the write would break table
+   * creation over a store that is not load-bearing. This must become fatal once the store is the
+   * source of truth and the derived fallback is deleted — here and in its twin, {@code
+   * TablesServiceImpl#registerNamespace}, which the same flip has to reach.
+   *
+   * <p>Concurrent registration of the same database is already the store's problem to absorb, and
+   * is pinned by {@code NamespacesServiceImplTest#ensureNamespaceIsIdempotent}.
+   */
+  private void registerNamespace(String databaseId) {
+    try {
+      namespacesService.ensureNamespace(databaseId);
+    } catch (Exception e) {
+      log.warn(
+          "Failed to register database {} in the namespace store while creating a table through a"
+              + " snapshot commit; the table write continues.",
+          databaseId,
+          e);
     }
   }
 

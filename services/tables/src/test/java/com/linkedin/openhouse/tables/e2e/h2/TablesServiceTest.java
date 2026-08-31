@@ -17,6 +17,7 @@ import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
@@ -57,6 +58,8 @@ public class TablesServiceTest {
   @Autowired TablesService tablesService;
 
   @Autowired OpenHouseInternalRepository openHouseInternalRepository;
+
+  @Autowired HouseNamespaceRepository houseNamespaceRepository;
 
   @Autowired StorageManager storageManager;
 
@@ -1003,6 +1006,49 @@ public class TablesServiceTest {
     result = tablesService.searchSoftDeletedTables(restoreDbId, null, 0, 10, null);
     Assertions.assertNotNull(result);
     Assertions.assertEquals(0, result.getContent().size());
+  }
+
+  /**
+   * Restoring a table puts a live table back into a database, and that database may have no
+   * namespace row: dropping the last table and then dropping the emptied namespace deletes it, and
+   * a database that predates the namespace store never had one. Either way the restored table would
+   * otherwise name a database the namespace store has never heard of.
+   */
+  @Test
+  public void testRestoreTableRegistersItsNamespace() {
+    String restoreDbId = TABLE_DTO.getDatabaseId() + "_restore_ns";
+    long deletedAtMs = System.currentTimeMillis();
+
+    HouseTable softDeletedTable =
+        HouseTable.builder()
+            .tableId(TABLE_DTO.getTableId())
+            .databaseId(restoreDbId)
+            .tableLocation(TABLE_DTO.getTableLocation())
+            .tableVersion(TABLE_DTO.getTableVersion())
+            .tableCreator(TABLE_DTO.getTableCreator())
+            .lastModifiedTime(TABLE_DTO.getLastModifiedTime())
+            .creationTime(TABLE_DTO.getCreationTime())
+            .deletedAtMs(deletedAtMs)
+            .purgeAfterMs(System.currentTimeMillis() + 86400000)
+            .build();
+    HouseTablesH2Repository.softDeletedTables.put(
+        SoftDeletedTablePrimaryKey.builder()
+            .databaseId(restoreDbId)
+            .tableId(TABLE_DTO.getTableId())
+            .deletedAtMs(deletedAtMs)
+            .build(),
+        softDeletedTable);
+
+    Assertions.assertFalse(
+        houseNamespaceRepository.findById(restoreDbId).isPresent(),
+        "Precondition: the database being restored into has no namespace row");
+
+    tablesService.restoreTable(restoreDbId, TABLE_DTO.getTableId(), deletedAtMs, TEST_USER);
+
+    Assertions.assertTrue(
+        houseNamespaceRepository.findById(restoreDbId).isPresent(),
+        "Restoring a table must register the database it is restored into");
+    houseNamespaceRepository.deleteById(restoreDbId);
   }
 
   @Test
