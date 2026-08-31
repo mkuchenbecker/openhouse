@@ -30,6 +30,9 @@ public class TableDtoMappingTest {
           "stageCreate",
           "stageReplace",
           "replaceCommit",
+          // Like the three above it, a per-commit control flag rather than table state: it says how
+          // this write arrived, not anything House Tables stores about the table.
+          "restCommit",
           "jsonSnapshots",
           "snapshotRefs",
           "policies",

@@ -30,6 +30,7 @@ import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -320,6 +321,72 @@ public class OpenHouseInternalTableOperationsTest {
 
       // The racing snapshot must never have been persisted out of existence.
       Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    }
+  }
+
+  /**
+   * The other half of the stale-base contract: the same divergence, from a commit that arrived
+   * through the Iceberg REST facade, must NOT abort.
+   *
+   * <p>The check above defends a base the client declared for itself, which only a whole-document
+   * client does. A REST client states its preconditions as {@code UpdateRequirement}s, and the
+   * facade has already checked them against the base it loaded; re-deriving a declared base for
+   * this check would invent a precondition the client never stated and fail commits the
+   * specification says must succeed. {@link CatalogConstants#IS_REST_COMMIT_KEY} is how a commit
+   * says which kind it is.
+   *
+   * <p>The marker is deliberately tested against a commit that <em>does</em> carry a diverging
+   * {@code COMMIT_KEY}. A REST commit does not carry one today -- the repository stamps the marker
+   * in its place -- so a test built on the absence of {@code COMMIT_KEY} would pass whether or not
+   * the seam existed, and would go on passing if a later change started stamping one.
+   */
+  @Test
+  void testDoCommitDoesNotDefendADeclaredBaseOnTheIcebergRestPath() throws IOException {
+    List<Snapshot> testSnapshots = IcebergTestUtil.getSnapshots();
+    Snapshot known = testSnapshots.get(0);
+
+    java.nio.file.Path tmpDir = Files.createTempDirectory("oh-rest-commit-seam");
+    String basePath = tmpDir.resolve("00010-catalog-base.metadata.json").toString();
+    TableMetadata buildable =
+        TableMetadata.buildFrom(BASE_TABLE_METADATA)
+            .setBranchSnapshot(known, SnapshotRef.MAIN_BRANCH)
+            .build();
+    Path baseFsPath = new Path(basePath);
+    FileSystem fs = baseFsPath.getFileSystem(new Configuration());
+    try (FSDataOutputStream out = fs.create(baseFsPath, true)) {
+      out.write(TableMetadataParser.toJson(buildable).getBytes());
+    }
+    TableMetadata base =
+        TableMetadataParser.read(new HadoopFileIO(new Configuration()), basePath);
+
+    Map<String, String> properties = new HashMap<>();
+    properties.put(
+        CatalogConstants.SNAPSHOTS_JSON_KEY,
+        SnapshotsUtil.serializedSnapshots(Collections.singletonList(known)));
+    properties.put(
+        CatalogConstants.SNAPSHOTS_REFS_KEY,
+        SnapshotsUtil.serializeMap(IcebergTestUtil.createMainBranchRefPointingTo(known)));
+    properties.put(getCanonicalFieldName("tableLocation"), TEST_LOCATION);
+    properties.put(
+        CatalogConstants.COMMIT_KEY,
+        "/test/openhouse/test_db/test_table/00001-some-other-base.metadata.json");
+    properties.put(CatalogConstants.IS_REST_COMMIT_KEY, "true");
+
+    TableMetadata metadata = base.replaceProperties(properties);
+
+    try (MockedStatic<TableMetadataParser> ignoreWriteMock =
+        Mockito.mockStatic(TableMetadataParser.class)) {
+      Assertions.assertDoesNotThrow(() -> openHouseInternalTableOperations.doCommit(base, metadata));
+
+      Mockito.verify(mockHouseTableMapper).toHouseTable(tblMetadataCaptor.capture(), Mockito.any());
+      Map<String, String> committed = tblMetadataCaptor.getValue().properties();
+      Assertions.assertFalse(
+          committed.containsKey(CatalogConstants.IS_REST_COMMIT_KEY),
+          "The marker is a doCommit-local signal and must never reach a metadata.json");
+      Assertions.assertFalse(
+          committed.containsKey(CatalogConstants.COMMIT_KEY),
+          "A declared base is stripped on both paths, whether or not it was acted on");
+      Mockito.verify(mockHouseTableRepository, Mockito.times(1)).save(Mockito.eq(mockHouseTable));
     }
   }
 

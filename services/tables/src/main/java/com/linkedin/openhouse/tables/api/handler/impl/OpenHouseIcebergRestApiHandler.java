@@ -4,9 +4,7 @@ import static com.linkedin.openhouse.common.security.AuthenticationUtils.extract
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
-import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
-import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
@@ -19,13 +17,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashSet;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
-import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.CatalogHandlers;
 import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
@@ -43,9 +39,6 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   static final int DEFAULT_PAGE_SIZE = 100;
   static final int MAX_PAGE_SIZE = 1000;
   private static final String PAGE_TOKEN_VERSION = "v1";
-
-  private static final Pattern TABLE_NAME_PATTERN =
-      Pattern.compile(ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX);
 
   private final TablesApiHandler tablesApiHandler;
   private final OpenHouseInternalCatalog openHouseInternalCatalog;
@@ -110,7 +103,8 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     }
     // Iceberg 1.11 loadTable may send referenced-by for view-load chains; Phase 1 ignores it.
 
-    TableIdentifier identifier = readTableIdentifier(namespace, table);
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
     requireTable(identifier);
     return CatalogHandlers.loadTable(openHouseInternalCatalog, identifier);
   }
@@ -118,25 +112,29 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   @Override
   public void tableExists(String prefix, String namespace, String table) {
     validatePrefix(prefix);
-    requireTable(readTableIdentifier(namespace, table));
+    requireTable(IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth()));
   }
 
   @Override
   public LoadTableResponse createTable(
       String prefix, String namespace, CreateTableRequest request, String accessDelegation) {
     validatePrefix(prefix);
-    // A create names a table that does not exist yet, so an unusable name is the client's mistake
-    // to correct (400) rather than a table that happens to be absent (404); the identifier is left
-    // for the service layer's own validator to reject and describe.
+    // The namespace is judged here, not by the service layer: a create into a namespace whose name
+    // OpenHouse could never hold is a create into a namespace that does not exist (404), and the
+    // table name itself is left for the service layer's validator to reject and describe (400),
+    // because a create names a table that does not exist yet.
+    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
+    IcebergRestIdentifiers.requireHoldable(icebergNamespace, maxNamespaceDepth());
     return tableWriteAdapter.createTable(
-        decodeSingleLevelNamespace(namespace), request, extractAuthenticatedUserPrincipal());
+        icebergNamespace, request, extractAuthenticatedUserPrincipal());
   }
 
   @Override
   public LoadTableResponse updateTable(
       String prefix, String namespace, String table, UpdateTableRequest request) {
     validatePrefix(prefix);
-    TableIdentifier identifier = readTableIdentifier(namespace, table);
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
     return tableWriteAdapter.updateTable(
         identifier.namespace(), identifier.name(), request, extractAuthenticatedUserPrincipal());
   }
@@ -144,9 +142,13 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   @Override
   public void dropTable(String prefix, String namespace, String table, Boolean purgeRequested) {
     validatePrefix(prefix);
-    TableIdentifier identifier = readTableIdentifier(namespace, table);
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
     tableWriteAdapter.dropTable(
-        identifier.namespace(), identifier.name(), extractAuthenticatedUserPrincipal());
+        identifier.namespace(),
+        identifier.name(),
+        purgeRequested,
+        extractAuthenticatedUserPrincipal());
   }
 
   /** Existence check that speaks the REST specification's vocabulary, and authorizes the read. */
@@ -160,35 +162,14 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     }
   }
 
+  private int maxNamespaceDepth() {
+    return clusterProperties.getClusterTablesNamespaceMaxDepth();
+  }
+
   private static void validatePrefix(String prefix) {
     if (!ICEBERG_REST_PREFIX.equals(prefix)) {
       throw new IllegalArgumentException("Unsupported Iceberg REST prefix");
     }
-  }
-
-  /**
-   * Decode and validate the table a route names.
-   *
-   * <p>A route that names an existing table never answers "you asked wrongly": an identifier
-   * OpenHouse's charset cannot express names a table that cannot exist, which is a 404 with the
-   * same type and message an absent table gets. Reaching the service layer with such an identifier
-   * produced a 400 instead, which told a client its request was malformed when what it had actually
-   * done was look for something that is not there -- and, for {@code tableExists}, turned "no" into
-   * an error. This is the table-route counterpart of the namespace handler's {@code readNamespace}.
-   */
-  private TableIdentifier readTableIdentifier(String encodedNamespace, String table) {
-    Namespace namespace = RESTUtil.decodeNamespace(encodedNamespace);
-    try {
-      NamespaceUtil.validate(namespace, clusterProperties.getClusterTablesNamespaceMaxDepth());
-      if (table == null || !TABLE_NAME_PATTERN.matcher(table).matches()) {
-        throw new ValidationException(
-            "Table name %s must match %s", table, TABLE_NAME_PATTERN.pattern());
-      }
-    } catch (ValidationException e) {
-      throw new NoSuchTableException(
-          "Table does not exist: %s.%s", NamespaceUtil.encode(namespace), table);
-    }
-    return TableIdentifier.of(namespace, table);
   }
 
   private static Namespace decodeSingleLevelNamespace(String encodedNamespace) {

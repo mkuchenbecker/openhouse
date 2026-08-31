@@ -3,7 +3,6 @@ package com.linkedin.openhouse.tables.api.handler.impl;
 import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
-import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.services.NamespaceMetadata;
@@ -131,20 +130,15 @@ public class OpenHouseIcebergRestNamespaceApiHandler implements IcebergRestNames
   /**
    * Decode and validate the namespace a route names.
    *
-   * <p>A route that names an existing namespace never answers "you asked wrongly" — a syntactically
-   * invalid namespace names a resource that cannot exist, so it is a 404 with the same message and
-   * type an absent one gets. That mapping covers the identifier only: it deliberately does not span
-   * the service call, where a {@link ValidationException} means something else entirely (a reserved
-   * property key, an oversized property bag) and owes the client a 400 that says so.
+   * <p>The rule lives in {@link IcebergRestIdentifiers}, which the table routes read too, so that a
+   * name cannot be answerable on one route and malformed on another. It covers the identifier only:
+   * it deliberately does not span the service call, where a {@link ValidationException} means
+   * something else entirely (a reserved property key, an oversized property bag) and owes the
+   * client a 400 that says so.
    */
   private Namespace readNamespace(String namespace) {
-    Namespace decoded = RESTUtil.decodeNamespace(namespace);
-    try {
-      NamespaceUtil.validate(decoded, clusterProperties.getClusterTablesNamespaceMaxDepth());
-    } catch (ValidationException e) {
-      throw new NoSuchNamespaceException("Namespace does not exist: %s", decoded);
-    }
-    return decoded;
+    return IcebergRestIdentifiers.readNamespace(
+        namespace, clusterProperties.getClusterTablesNamespaceMaxDepth());
   }
 
   private static String principal() {

@@ -4,7 +4,6 @@ import static com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtil
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
-import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
@@ -35,7 +34,6 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
-import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.CatalogHandlers;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -116,17 +114,9 @@ public class IcebergRestTableWriteAdapter {
       Namespace namespace, CreateTableRequest request, String principal) {
     request.validate();
     String databaseId = namespace.level(0);
-    // A namespace OpenHouse's charset cannot express is one that does not exist, not a malformed
-    // request: the client asked for a table under a namespace, and the answer is that the namespace
-    // is not there. Asking the service instead would raise a request-validation failure and the
-    // client would be told its create was malformed when the namespace was simply absent.
-    boolean exists;
-    try {
-      exists = namespacesService.namespaceExists(namespace, principal);
-    } catch (RequestValidationFailureException | ValidationException e) {
-      exists = false;
-    }
-    if (!exists) {
+    // The namespace's own name has already been judged by the route (IcebergRestIdentifiers), so
+    // what remains is whether it exists.
+    if (!namespacesService.namespaceExists(namespace, principal)) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
 
@@ -143,7 +133,10 @@ public class IcebergRestTableWriteAdapter {
 
     TableDto saved;
     try {
-      saved = tablesService.putTable(body, principal, /*failOnExist*/ true, true).getFirst();
+      saved =
+          tablesService
+              .putTable(body, principal, /*failOnExist*/ true, /*icebergRestCommit*/ true)
+              .getFirst();
     } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
       // Same condition, the specification's wording. A stock client reads this message, and
       // OpenHouse's own phrasing ("Table db.tbl already exists") is not the one the REST contract
@@ -154,9 +147,9 @@ public class IcebergRestTableWriteAdapter {
     TableIdentifier identifier = TableIdentifier.of(namespace, request.name());
     if (request.stageCreate()) {
       // A staged create writes a metadata.json and deliberately does not register the table, so the
-      // catalog cannot load it. The response carries the staged metadata and no metadata-location,
-      // which is how the client knows the table is not committed yet; it sends the whole change
-      // list back to the commit route to finish the create.
+      // catalog cannot load it -- the metadata has to be read back from where the commit put it.
+      // The client already knows this table is not committed, because it asked for a transaction;
+      // it will send the whole change list to the commit route to finish the create.
       return LoadTableResponse.builder()
           .withTableMetadata(
               openHouseInternalCatalog.loadMetadataAt(identifier, saved.getTableLocation()))
@@ -207,9 +200,13 @@ public class IcebergRestTableWriteAdapter {
 
     if (snapshotsChanged(base, updated)) {
       icebergSnapshotsService.putIcebergSnapshots(
-          databaseId, tableId, snapshotsRequestBody(body, updated), principal, true);
+          databaseId,
+          tableId,
+          snapshotsRequestBody(body, updated),
+          principal,
+          /*icebergRestCommit*/ true);
     } else {
-      tablesService.putTable(body, principal, /*failOnExist*/ false, true);
+      tablesService.putTable(body, principal, /*failOnExist*/ false, /*icebergRestCommit*/ true);
     }
     return CatalogHandlers.loadTable(openHouseInternalCatalog, identifier);
   }
@@ -230,8 +227,12 @@ public class IcebergRestTableWriteAdapter {
    * testDropTableWithoutPurge} passes regardless, because the data file it checks for lives outside
    * the table's location and so is not what OpenHouse's purge deletes -- it does not exercise the
    * divergence, and should not be read as evidence the divergence is absent.
+   *
+   * @param purgeRequested carried this far so the decision to ignore it lives with the drop it
+   *     would have modified, rather than being dropped silently at the route
    */
-  public void dropTable(Namespace namespace, String tableId, String principal) {
+  public void dropTable(
+      Namespace namespace, String tableId, Boolean purgeRequested, String principal) {
     String databaseId = namespace.level(0);
     try {
       tablesService.deleteTable(databaseId, tableId, principal);
