@@ -32,6 +32,7 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -42,6 +43,7 @@ import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 
 /** Default Table Service Implementation for /tables REST endpoint. */
+@Slf4j
 @Component
 public class TablesServiceImpl implements TablesService {
 
@@ -150,7 +152,7 @@ public class TablesServiceImpl implements TablesService {
       // is also what has to create its namespace record. Without this, the namespace API would
       // answer "no such namespace" for a database whose tables it is willing to list. Idempotent,
       // and already authorized by the CREATE_TABLE check above.
-      namespacesService.ensureNamespace(databaseId);
+      registerNamespace(databaseId);
     }
 
     // FIXME: save method redundantly issue existence check after findById is called above
@@ -441,12 +443,45 @@ public class TablesServiceImpl implements TablesService {
       String databaseId, String tableId, long deletedAtMs, String actingPrincipal) {
     // TODO: Validation should be at the table owner level when this is self serve through SQL
     authorizationUtils.checkDatabasePrivilege(databaseId, actingPrincipal, Privileges.CREATE_TABLE);
+    // Restoring puts a live table back into a database that may no longer have a namespace row:
+    // dropping the last table and then dropping the (now empty) namespace deletes it, and the
+    // restore brings the table back without it. Registering here keeps the database the restored
+    // table names from being one the namespace store has never heard of.
+    registerNamespace(databaseId);
     openHouseInternalRepository.restoreTable(
         SoftDeletedTablePrimaryKey.builder()
             .databaseId(databaseId)
             .tableId(tableId)
             .deletedAtMs(deletedAtMs)
             .build());
+  }
+
+  /**
+   * Registers {@code databaseId} in the namespace store, ahead of the table write it belongs to.
+   *
+   * <p>Ordering matters: registration runs first, so a table write that then fails leaves an
+   * unreferenced database row rather than a table whose database does not exist. The reverse order
+   * has no such harmless failure.
+   *
+   * <p>A registration failure is logged and swallowed because the namespace store is not yet the
+   * source of truth for a database's existence — reads still derive it from the table store, so a
+   * missing row costs nothing a client can observe, while failing the write would break table
+   * creation over a store that is not load-bearing. This must become fatal once the store is the
+   * source of truth and the derived fallback is deleted — here and in its twin, {@code
+   * IcebergSnapshotsServiceImpl#registerNamespace}, which the same flip has to reach.
+   *
+   * <p>Concurrent registration of the same database is already the store's problem to absorb, and
+   * is pinned by {@code NamespacesServiceImplTest#ensureNamespaceIsIdempotent}.
+   */
+  private void registerNamespace(String databaseId) {
+    try {
+      namespacesService.ensureNamespace(databaseId);
+    } catch (Exception e) {
+      log.warn(
+          "Failed to register database {} in the namespace store; the table write continues.",
+          databaseId,
+          e);
+    }
   }
 
   /** Whether sharing has been enabled for the table denoted by tableDto. */

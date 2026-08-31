@@ -5,6 +5,8 @@ import static com.linkedin.openhouse.tables.mock.RequestConstants.*;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
@@ -16,6 +18,8 @@ import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.IcebergSnapshotsService;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -45,13 +49,150 @@ public class IcebergSnapshotsServiceTest {
 
   @MockBean private TableUUIDGenerator tableUUIDGenerator;
 
+  @Autowired private HouseNamespaceRepository houseNamespaceRepository;
+
   private OpenHouseInternalRepository mockRepository;
+
+  /**
+   * The rows the namespace store holds during a test. The store itself is a mock in this context
+   * (see {@code MockTablesApplication}), so it is given the one behaviour these tests are about:
+   * what is saved can be read back.
+   */
+  private Map<String, HouseNamespace> namespaceStore;
 
   @Captor ArgumentCaptor<TableDto> tableDtoArgumentCaptor;
 
   @BeforeEach
   void setup() {
     mockRepository = applicationContext.getBean(OpenHouseInternalRepository.class);
+    namespaceStore = new LinkedHashMap<>();
+    Mockito.when(houseNamespaceRepository.findById(Mockito.anyString()))
+        .thenAnswer(
+            invocation ->
+                Optional.ofNullable(namespaceStore.get(invocation.<String>getArgument(0))));
+    Mockito.when(houseNamespaceRepository.save(Mockito.any(HouseNamespace.class)))
+        .thenAnswer(
+            invocation -> {
+              HouseNamespace saved = invocation.getArgument(0);
+              namespaceStore.put(saved.getNamespaceId(), saved);
+              return saved;
+            });
+  }
+
+  /**
+   * A snapshot commit against a table that does not exist creates the table, and so creates the
+   * database it names. That database has to be registered in the namespace store, or it is a
+   * database the namespace API can only see by deriving it from the tables it holds — the
+   * derivation this work exists to delete.
+   */
+  @Test
+  public void testTableCreatedRegistersItsNamespace() {
+    final IcebergSnapshotsRequestBody requestBody =
+        TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final TableDto tableDto = TableDto.builder().databaseId(dbId).tableId(tableId).build();
+
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class))).thenReturn(tableDto);
+
+    service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+
+    Assertions.assertTrue(
+        namespaceStore.containsKey(dbId),
+        "Creating a table through a snapshot commit must register its database as a namespace");
+  }
+
+  /**
+   * Registration runs before the table write. When the write then fails the leftover is a database
+   * row nothing points at, which is inert; the opposite order leaves a table whose database the
+   * namespace store has never heard of, and nothing the caller sees can repair that.
+   */
+  @Test
+  public void testNamespaceIsRegisteredBeforeTheTableWrite() {
+    final IcebergSnapshotsRequestBody requestBody =
+        TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class)))
+        .thenThrow(CommitFailedException.class);
+
+    Assertions.assertThrows(
+        EntityConcurrentModificationException.class,
+        () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
+
+    Assertions.assertTrue(
+        namespaceStore.containsKey(dbId),
+        "Registration must already have happened when the table write fails");
+  }
+
+  /**
+   * The namespace store is not yet the source of truth for whether a database exists, so a store
+   * that is down must not take table creation down with it. This flips once the derived fallback is
+   * deleted.
+   */
+  @Test
+  public void testNamespaceRegistrationFailureDoesNotFailTableCreation() {
+    final IcebergSnapshotsRequestBody requestBody =
+        TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final TableDto tableDto = TableDto.builder().databaseId(dbId).tableId(tableId).build();
+
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class))).thenReturn(tableDto);
+    Mockito.when(houseNamespaceRepository.save(Mockito.any(HouseNamespace.class)))
+        .thenThrow(new RuntimeException("namespace store unavailable"));
+
+    Pair<TableDto, Boolean> result =
+        service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+
+    Assertions.assertEquals(tableDto, result.getFirst());
+    Assertions.assertTrue(result.getSecond(), "Table must still be created");
+    Assertions.assertTrue(
+        namespaceStore.isEmpty(), "Nothing was registered, and that is tolerated");
+  }
+
+  /** Only the create branch registers: an update names a database that already exists. */
+  @Test
+  public void testTableUpdateDoesNotRegisterANamespace() {
+    final IcebergSnapshotsRequestBody requestBody = TEST_ICEBERG_SNAPSHOTS_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final TableDto tableDto =
+        tablesMapper.toTableDto(
+            TableDto.builder()
+                .clusterId(requestBody.getCreateUpdateTableRequestBody().getClusterId())
+                .databaseId(dbId)
+                .tableId(tableId)
+                .tableLocation(requestBody.getBaseTableVersion())
+                .tableCreator(TEST_TABLE_CREATOR)
+                .build(),
+            requestBody);
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.of(tableDto));
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class))).thenReturn(tableDto);
+
+    service.putIcebergSnapshots(dbId, tableId, requestBody, null);
+
+    Assertions.assertTrue(namespaceStore.isEmpty());
   }
 
   @Test
