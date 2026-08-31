@@ -324,6 +324,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateGetTable(fromDatabaseId, fromTableId);
     validateGetTable(toDatabaseId, toTableId);
     List<String> validationFailures = new ArrayList<>();
+    // A rename is the other way a table can come to occupy an identifier, and the catalog's rename
+    // does not re-check the destination. Without this, the create-time rule would be a door with a
+    // window next to it.
+    validateTableIdDoesNotShadowMetadataTable(toDatabaseId, toTableId, validationFailures);
     // TODO: support renames across databases
     if (!fromDatabaseId.equalsIgnoreCase(toDatabaseId)) {
       validationFailures.add(
