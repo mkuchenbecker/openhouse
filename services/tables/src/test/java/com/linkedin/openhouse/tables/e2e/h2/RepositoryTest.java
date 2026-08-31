@@ -710,20 +710,6 @@ public class RepositoryTest {
   }
 
   @Test
-  public void testFindAllIds() {
-    openHouseInternalRepository.save(
-        TABLE_DTO.toBuilder().tableVersion(INITIAL_TABLE_VERSION).build());
-    openHouseInternalRepository.save(
-        TABLE_DTO_DIFF_DB.toBuilder().tableVersion(INITIAL_TABLE_VERSION).build());
-    Assertions.assertEquals(2, openHouseInternalRepository.findAllIds().size());
-
-    TableDtoPrimaryKey key = getPrimaryKey(TABLE_DTO);
-    TableDtoPrimaryKey keyDiffDb = getPrimaryKey(TABLE_DTO_DIFF_DB);
-    openHouseInternalRepository.deleteById(key);
-    openHouseInternalRepository.deleteById(keyDiffDb);
-  }
-
-  @Test
   public void testCreateTableWithReservedProps() {
     /* The behavior is provided openhouse. properties are ignored */
     final String tblName = "offensiveMap";

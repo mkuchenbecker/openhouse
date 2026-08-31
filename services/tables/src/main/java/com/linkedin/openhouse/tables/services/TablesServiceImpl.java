@@ -472,30 +472,29 @@ public class TablesServiceImpl implements TablesService {
    * unreferenced database row rather than a table whose database does not exist. The reverse order
    * has no such harmless failure.
    *
-   * <p>A registration failure is logged and swallowed because the namespace store is not yet the
-   * source of truth for a database's existence — reads still derive it from the table store, so a
-   * missing row costs nothing a client can observe, while failing the write would break table
-   * creation over a store that is not load-bearing. This must become fatal once the store is the
-   * source of truth and the derived fallback is deleted — here and in its twin, {@code
-   * IcebergSnapshotsServiceImpl#registerNamespace}, which the same flip has to reach.
+   * <p>A registration failure fails the table write. It used to be swallowed, because the namespace
+   * store was not the source of truth and a missing row cost nothing a client could observe: reads
+   * derived the database's existence from its tables. Those reads are gone. A swallowed failure now
+   * produces a table in a database that the catalog says does not exist — invisible to every
+   * listing, undroppable through the namespace API, and repaired only by a backfill nobody knows to
+   * run. Refusing the write leaves the cluster consistent and the client able to retry.
    *
    * <p>Concurrent registration of the same database is already the store's problem to absorb, and
-   * is pinned by {@code NamespacesServiceImplTest#ensureNamespaceIsIdempotent}.
+   * is pinned by {@code NamespacesServiceImplTest#ensureNamespaceIsIdempotent}, so what reaches
+   * this catch is a store that is actually failing.
    *
-   * <p>Swallowed is not the same as unobserved: every failure here is a database that now exists
-   * with no namespace row, so each one increments {@link
-   * MetricsConstant#NAMESPACE_REGISTRATION_FAILED_CTR}. A namespace store failing writes shows up
-   * there rather than in whatever the backfill later has to clean up.
+   * <p>The counter survives the flip: {@link MetricsConstant#NAMESPACE_REGISTRATION_FAILED_CTR}
+   * still counts every failure, and now measures table writes lost to the namespace store rather
+   * than drift accumulating silently. It is the only thing this method adds — the failure itself
+   * goes to the caller, and the request handler that renders it is the one place that logs it, with
+   * the request that caused it.
    */
   private void registerNamespace(String databaseId) {
     try {
       namespacesService.ensureNamespace(databaseId);
     } catch (Exception e) {
       meterRegistry.counter(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).increment();
-      log.warn(
-          "Failed to register database {} in the namespace store; the table write continues.",
-          databaseId,
-          e);
+      throw e;
     }
   }
 

@@ -2,6 +2,7 @@ package com.linkedin.openhouse.internal.catalog;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -14,12 +15,14 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
 import java.util.Optional;
+import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Pageable;
 
 public class OpenHouseInternalCatalogTest {
 
@@ -39,6 +42,27 @@ public class OpenHouseInternalCatalogTest {
     Assertions.assertTrue(catalog.isValidBaseIdentifier(TableIdentifier.of("db", "partitions")));
     Assertions.assertFalse(
         catalog.isValidBaseIdentifier(TableIdentifier.of("db", "table", "partitions")));
+  }
+
+  /**
+   * The empty namespace used to mean "every table in the cluster", and every identifier it returned
+   * named a table called "Unused" because the only consumer wanted the database halves. That
+   * consumer is gone. Falling through instead of refusing would leave {@code
+   * findAllByDatabaseId("")}, which answers a cross-database listing with a confident empty list --
+   * the same shape of silent wrong answer this whole change is about.
+   */
+  @Test
+  void listingAcrossEveryDatabaseIsRefusedRatherThanAnsweredEmpty() {
+    HouseTableRepository repo = mock(HouseTableRepository.class);
+    OpenHouseInternalCatalog catalog = new OpenHouseInternalCatalog();
+    catalog.houseTableRepository = repo;
+
+    Assertions.assertThrows(
+        UnsupportedOperationException.class, () -> catalog.listTables(Namespace.empty()));
+    Assertions.assertThrows(
+        UnsupportedOperationException.class,
+        () -> catalog.listTables(Namespace.empty(), Pageable.unpaged()));
+    verify(repo, never()).findAllByDatabaseId(anyString());
   }
 
   @Test

@@ -5,11 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
 import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
+import com.linkedin.openhouse.internal.catalog.repository.NamespaceStoreCompleteness;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.model.TableDto;
-import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.repository.impl.BasePreservedKeyChecker;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
@@ -21,7 +22,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +50,6 @@ public class NamespacesServiceImplTest {
     tableRepository = Mockito.mock(OpenHouseInternalRepository.class);
     Mockito.when(tableRepository.searchTables(Mockito.anyString()))
         .thenReturn(Collections.emptyList());
-    Mockito.when(tableRepository.findAllIds()).thenReturn(Collections.emptyList());
     clusterProperties = Mockito.mock(ClusterProperties.class);
     Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(1);
 
@@ -57,6 +59,13 @@ public class NamespacesServiceImplTest {
     service.clusterProperties = clusterProperties;
     service.preservedKeyChecker = new BasePreservedKeyChecker();
     service.authorizationUtils = Mockito.mock(AuthorizationUtils.class);
+    service.namespaceStoreReadGate = gateOver(() -> Optional.of(1L));
+  }
+
+  private static NamespaceStoreReadGate gateOver(NamespaceStoreCompleteness completeness) {
+    NamespaceStoreReadGate gate = new NamespaceStoreReadGate();
+    gate.namespaceStoreCompleteness = completeness;
+    return gate;
   }
 
   /**
@@ -225,23 +234,132 @@ public class NamespacesServiceImplTest {
         .hasMessageContaining("entries");
   }
 
-  /** B3: a database known only from the table store is a namespace all the same. */
+  /**
+   * The behaviour this slice changes, stated as plainly as it can be: a database with tables in it
+   * and no namespace row does not exist. It used to, through a fallback that read the table store,
+   * and every read path below went through that fallback. Nothing here may keep doing it -- if any
+   * one of them still consults the table store for existence, a namespace dropped from the store
+   * comes back to life because a table still names it.
+   */
   @Test
-  void aDatabaseKnownOnlyFromTheTableStoreExists() {
-    Mockito.when(tableRepository.searchTables("prod"))
-        .thenReturn(
-            Collections.singletonList(TableDto.builder().databaseId("prod").tableId("t").build()));
-    Mockito.when(tableRepository.findAllIds())
+  void aDatabaseWithTablesButNoRowIsNotFound() {
+    givenTablesIn("prod");
+
+    assertThat(service.namespaceExists(Namespace.of("prod"), PRINCIPAL)).isFalse();
+    assertThatThrownBy(() -> service.loadNamespaceMetadata(Namespace.of("prod"), PRINCIPAL))
+        .isInstanceOf(NoSuchNamespaceException.class);
+    assertThat(service.listNamespaces(Namespace.empty(), PRINCIPAL)).isEmpty();
+    assertThatThrownBy(() -> service.dropNamespace(Namespace.of("prod"), PRINCIPAL))
+        .isInstanceOf(NoSuchNamespaceException.class);
+    assertThatThrownBy(
+            () ->
+                service.updateProperties(
+                    Namespace.of("prod"),
+                    Collections.emptySet(),
+                    Collections.singletonMap("owner", "a"),
+                    PRINCIPAL))
+        .isInstanceOf(NoSuchNamespaceException.class);
+    // ...and the sixth path: the name is free to create, because nothing holds it.
+    assertThatCode(
+            () -> service.createNamespace(Namespace.of("prod"), Collections.emptyMap(), PRINCIPAL))
+        .doesNotThrowAnyException();
+  }
+
+  /**
+   * The distinction the drop path has to keep: existence is the namespace store's alone, but
+   * occupancy is not. A namespace whose row exists and whose database holds tables is not empty,
+   * and only the table store knows that.
+   */
+  @Test
+  void aNamespaceHoldingTablesCannotBeDropped() {
+    repository.save(namespace("prod"));
+    givenTablesIn("prod");
+
+    assertThatThrownBy(() -> service.dropNamespace(Namespace.of("prod"), PRINCIPAL))
+        .isInstanceOf(NamespaceNotEmptyException.class);
+    assertThat(repository.findById("prod")).isPresent();
+
+    Mockito.when(tableRepository.searchTables("prod")).thenReturn(Collections.emptyList());
+    assertThatCode(() -> service.dropNamespace(Namespace.of("prod"), PRINCIPAL))
+        .doesNotThrowAnyException();
+    assertThat(repository.findById("prod")).isEmpty();
+  }
+
+  /** A stored namespace holding nothing is the only thing a drop may remove. */
+  @Test
+  void everyReadPathAnswersFromTheStore() {
+    repository.save(namespace("db"));
+
+    assertThat(service.namespaceExists(Namespace.of("db"), PRINCIPAL)).isTrue();
+    assertThat(service.loadNamespaceMetadata(Namespace.of("db"), PRINCIPAL).getNamespace())
+        .isEqualTo(Namespace.of("db"));
+    assertThat(service.listNamespaces(Namespace.empty(), PRINCIPAL))
+        .containsExactly(Namespace.of("db"));
+    assertThatThrownBy(
+            () -> service.createNamespace(Namespace.of("db"), Collections.emptyMap(), PRINCIPAL))
+        .isInstanceOf(AlreadyExistsException.class);
+    assertThatCode(
+            () ->
+                service.updateProperties(
+                    Namespace.of("db"),
+                    Collections.emptySet(),
+                    Collections.singletonMap("owner", "a"),
+                    PRINCIPAL))
+        .doesNotThrowAnyException();
+    assertThatCode(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL))
+        .doesNotThrowAnyException();
+  }
+
+  /**
+   * Every read is gated, and the refusal has to carry the remedy: the caller who sees it is not the
+   * operator who can fix it, and the only thing connecting them is this string.
+   */
+  @Test
+  void anUnverifiedStoreRefusesEveryReadAndNamesTheBackfill() {
+    service.namespaceStoreReadGate = gateOver(Optional::empty);
+    repository.save(namespace("db"));
+
+    for (org.junit.jupiter.api.function.Executable read : gatedReads()) {
+      assertThatThrownBy(read::execute)
+          .isInstanceOf(NamespaceStoreNotBackfilledException.class)
+          .hasMessageContaining("/hts/databases/backfill")
+          .hasMessageContaining("verify");
+    }
+  }
+
+  /** The same reads, against the same store, once a verification pass has recorded completeness. */
+  @Test
+  void aVerifiedStoreServesTheSameReads() {
+    repository.save(namespace("db"));
+    for (org.junit.jupiter.api.function.Executable read : gatedReads()) {
+      assertThatCode(read::execute).doesNotThrowAnyException();
+    }
+  }
+
+  /** Every namespace path that reads the store, so the two tests above cover all of them. */
+  private List<org.junit.jupiter.api.function.Executable> gatedReads() {
+    List<org.junit.jupiter.api.function.Executable> reads = new ArrayList<>();
+    reads.add(() -> service.namespaceExists(Namespace.of("db"), PRINCIPAL));
+    reads.add(() -> service.loadNamespaceMetadata(Namespace.of("db"), PRINCIPAL));
+    reads.add(() -> service.listNamespaces(Namespace.empty(), PRINCIPAL));
+    reads.add(
+        () -> service.createNamespace(Namespace.of("fresh"), Collections.emptyMap(), PRINCIPAL));
+    reads.add(
+        () ->
+            service.updateProperties(
+                Namespace.of("db"),
+                Collections.emptySet(),
+                Collections.singletonMap("owner", "a"),
+                PRINCIPAL));
+    reads.add(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL));
+    return reads;
+  }
+
+  private void givenTablesIn(String databaseId) {
+    Mockito.when(tableRepository.searchTables(databaseId))
         .thenReturn(
             Collections.singletonList(
-                TableDtoPrimaryKey.builder().databaseId("prod").tableId("t").build()));
-
-    assertThat(service.namespaceExists(Namespace.of("prod"), PRINCIPAL)).isTrue();
-    assertThat(service.loadNamespaceMetadata(Namespace.of("prod"), PRINCIPAL).getNamespace())
-        .isEqualTo(Namespace.of("prod"));
-    assertThat(service.listNamespaces(Namespace.empty(), PRINCIPAL))
-        .containsExactly(Namespace.of("prod"));
-    assertThat(repository.findById("prod")).isEmpty();
+                TableDto.builder().databaseId(databaseId).tableId("t").build()));
   }
 
   /** B3: registering is idempotent, and it is what a table write does. */

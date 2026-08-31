@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.controller;
 
+import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import lombok.extern.slf4j.Slf4j;
@@ -87,6 +88,19 @@ public class IcebergRestExceptionHandler {
   @ExceptionHandler(UnsupportedOperationException.class)
   public ResponseEntity<ErrorResponse> handleNotImplemented(UnsupportedOperationException e) {
     return errorResponse(501, e.getMessage(), UnsupportedOperationException.class.getSimpleName());
+  }
+
+  /**
+   * The service cannot say which namespaces exist, so it says that rather than answering. Without
+   * this mapping the refusal would reach the catch-all below, and a client would be told "internal
+   * server error" for a condition an operator can fix in one call — with the call itself replaced
+   * by a generic string.
+   */
+  @ExceptionHandler(NamespaceStoreNotBackfilledException.class)
+  public ResponseEntity<ErrorResponse> handleNamespaceStoreNotBackfilled(
+      NamespaceStoreNotBackfilledException e) {
+    return errorResponse(
+        503, e.getMessage(), NamespaceStoreNotBackfilledException.class.getSimpleName());
   }
 
   @ExceptionHandler(Exception.class)

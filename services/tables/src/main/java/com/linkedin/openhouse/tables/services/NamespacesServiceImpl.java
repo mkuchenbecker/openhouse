@@ -7,8 +7,6 @@ import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.authorization.Privileges;
-import com.linkedin.openhouse.tables.model.TableDto;
-import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
@@ -39,14 +37,20 @@ import org.springframework.stereotype.Component;
  * encoding is applied here through {@link NamespaceUtil#encode}, and the repository below receives
  * an opaque key it must not parse.
  *
- * <p>Existence is composed from two stores. The namespace store holds a row for every namespace
- * created through this API, and for a database created by a table write it holds a row only if that
- * write's registration succeeded ({@link #ensureNamespace}): registration is best-effort while the
- * store is not the source of truth, so a caller may swallow its failure and still create the table.
- * A database older than the store has no row at all. Either way the row may be missing, and
- * existence is then derived from the table store instead — the same derivation {@code GET
- * /databases} has always used. Without that second source this API would report that {@code prod}
- * does not exist while {@code GET /namespaces/prod/tables} listed its tables.
+ * <p>Existence comes from the namespace store and nowhere else. It used to be composed with a
+ * second source — a database with no row still existed if the table store held a table under it —
+ * because the store could not yet be trusted to know about every database. It can now: every
+ * table-creating path registers its database and fails the write if it cannot, and the backfill has
+ * given every older database a row. Composing the two sources today would only reintroduce the
+ * asymmetry it was covering for, where a database dropped from the namespace store reappears
+ * because a table still names it.
+ *
+ * <p>The table store is still read for one thing, in {@link #dropNamespace}: whether a namespace
+ * holds tables. That is occupancy, not existence — a namespace with tables in it is not empty — and
+ * only the table store knows it.
+ *
+ * <p>Every read here is gated on {@link NamespaceStoreReadGate}, because a store that has not been
+ * backfilled would answer all of them with a confident, well-formed "nothing".
  */
 @Component
 public class NamespacesServiceImpl implements NamespacesService {
@@ -60,6 +64,8 @@ public class NamespacesServiceImpl implements NamespacesService {
   @Autowired ClusterProperties clusterProperties;
 
   @Autowired PreservedKeyChecker preservedKeyChecker;
+
+  @Autowired NamespaceStoreReadGate namespaceStoreReadGate;
 
   /**
    * Nesting is not implemented, and a cluster that asks for it must be told so at startup rather
@@ -92,9 +98,10 @@ public class NamespacesServiceImpl implements NamespacesService {
     // today: CREATE_TABLE on the namespace being created (its parent, once nesting is enabled).
     authorizationUtils.checkDatabasePrivilege(
         NamespaceUtil.encode(parentOrSelf(namespace)), actingPrincipal, Privileges.CREATE_TABLE);
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
     requireParentExists(namespace);
 
-    if (findStored(namespace).isPresent() || findDerived(namespace).isPresent()) {
+    if (findStored(namespace).isPresent()) {
       throw new AlreadyExistsException("Namespace already exists: %s", namespace);
     }
     long now = System.currentTimeMillis();
@@ -137,12 +144,9 @@ public class NamespacesServiceImpl implements NamespacesService {
     validate(namespace);
     authorizationUtils.checkDatabasePrivilege(
         NamespaceUtil.encode(namespace), actingPrincipal, Privileges.GET_TABLE_METADATA);
-    Optional<HouseNamespace> stored = findStored(namespace);
-    if (stored.isPresent()) {
-      return metadata(stored.get());
-    }
-    return findDerived(namespace)
-        .map(derived -> new NamespaceMetadata(NamespaceUtil.decode(derived), new LinkedHashMap<>()))
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
+    return findStored(namespace)
+        .map(NamespacesServiceImpl::metadata)
         .orElseThrow(() -> new NoSuchNamespaceException("Namespace does not exist: %s", namespace));
   }
 
@@ -151,7 +155,8 @@ public class NamespacesServiceImpl implements NamespacesService {
     validate(namespace);
     authorizationUtils.checkDatabasePrivilege(
         NamespaceUtil.encode(namespace), actingPrincipal, Privileges.GET_TABLE_METADATA);
-    return findStored(namespace).isPresent() || findDerived(namespace).isPresent();
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
+    return findStored(namespace).isPresent();
   }
 
   @Override
@@ -159,6 +164,9 @@ public class NamespacesServiceImpl implements NamespacesService {
     boolean hasParent = parent != null && !parent.isEmpty();
     if (hasParent) {
       validate(parent);
+    }
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
+    if (hasParent) {
       requireExists(parent);
     }
     int maxDepth = clusterProperties.getClusterTablesNamespaceMaxDepth();
@@ -172,10 +180,6 @@ public class NamespacesServiceImpl implements NamespacesService {
     Set<String> encoded = new LinkedHashSet<>();
     for (HouseNamespace stored : houseNamespaceRepository.findAll()) {
       encoded.add(stored.getNamespaceId());
-    }
-    // Databases that predate the namespace store have no row; they are still namespaces.
-    for (TableDtoPrimaryKey key : openHouseInternalRepository.findAllIds()) {
-      encoded.add(key.getDatabaseId());
     }
     String prefix = hasParent ? NamespaceUtil.encode(parent) + "." : "";
     int depth = hasParent ? parent.levels().length : 0;
@@ -199,17 +203,18 @@ public class NamespacesServiceImpl implements NamespacesService {
     validate(namespace);
     authorizationUtils.checkDatabasePrivilege(
         NamespaceUtil.encode(namespace), actingPrincipal, Privileges.DELETE_TABLE);
-    Optional<HouseNamespace> stored = findStored(namespace);
-    Optional<String> derived = findDerived(namespace);
-    if (!stored.isPresent() && !derived.isPresent()) {
-      throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
-    }
-    // Emptiness spans two stores and is composed here: a derived name exists precisely because a
-    // table names it, and child namespaces come from the namespace store. Either occupant is a 409.
-    if (derived.isPresent() || !listNamespaces(namespace, actingPrincipal).isEmpty()) {
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
+    HouseNamespace stored =
+        findStored(namespace)
+            .orElseThrow(
+                () -> new NoSuchNamespaceException("Namespace does not exist: %s", namespace));
+    // Existence is the namespace store's alone, but emptiness is not: a namespace holding tables is
+    // not empty, and only the table store knows whether it holds any. Child namespaces come from
+    // the namespace store. Either occupant is a 409.
+    if (holdsTables(namespace) || !listNamespaces(namespace, actingPrincipal).isEmpty()) {
       throw new NamespaceNotEmptyException("Namespace %s is not empty", namespace);
     }
-    houseNamespaceRepository.deleteById(stored.get().getNamespaceId());
+    houseNamespaceRepository.deleteById(stored.getNamespaceId());
   }
 
   @Override
@@ -225,7 +230,11 @@ public class NamespacesServiceImpl implements NamespacesService {
     authorizationUtils.checkDatabasePrivilege(
         NamespaceUtil.encode(namespace), actingPrincipal, Privileges.UPDATE_TABLE_METADATA);
 
-    HouseNamespace stored = requireStoredOrRegisterDerived(namespace);
+    namespaceStoreReadGate.requireStoreIsAuthoritative();
+    HouseNamespace stored =
+        findStored(namespace)
+            .orElseThrow(
+                () -> new NoSuchNamespaceException("Namespace does not exist: %s", namespace));
     Map<String, String> properties = copy(stored.getProperties());
 
     List<String> removed = new ArrayList<>();
@@ -249,24 +258,6 @@ public class NamespacesServiceImpl implements NamespacesService {
         namespace);
     return new NamespacePropertiesUpdateResult(
         new ArrayList<>(requestedUpdates.keySet()), removed, missing);
-  }
-
-  /**
-   * The namespace store is the only writable one; a database that only exists derivedly gets its
-   * row written here, on the first write that needs somewhere to put a property.
-   */
-  private HouseNamespace requireStoredOrRegisterDerived(Namespace namespace) {
-    Optional<HouseNamespace> stored = findStored(namespace);
-    if (stored.isPresent()) {
-      return stored.get();
-    }
-    String derived =
-        findDerived(namespace)
-            .orElseThrow(
-                () -> new NoSuchNamespaceException("Namespace does not exist: %s", namespace));
-    ensureNamespace(derived);
-    return findStored(namespace)
-        .orElseThrow(() -> new NoSuchNamespaceException("Namespace does not exist: %s", namespace));
   }
 
   private HouseNamespace save(HouseNamespace namespaceRow, Namespace namespace) {
@@ -303,18 +294,17 @@ public class NamespacesServiceImpl implements NamespacesService {
   }
 
   /**
-   * @return the stored spelling of the database a table names, when the table store holds one under
-   *     this namespace. Case-insensitivity lives in the repository below, so the returned name is
-   *     the one the table store holds rather than the one that was asked with.
+   * @return whether the table store holds any table under this namespace. This is the one question
+   *     the table store is still asked, and it is about occupancy rather than existence: a
+   *     namespace that holds tables cannot be dropped, whether or not the namespace store agrees it
+   *     is there.
    */
-  private Optional<String> findDerived(Namespace namespace) {
-    List<TableDto> tables =
-        openHouseInternalRepository.searchTables(NamespaceUtil.encode(namespace));
-    return tables.isEmpty() ? Optional.empty() : Optional.of(tables.get(0).getDatabaseId());
+  private boolean holdsTables(Namespace namespace) {
+    return !openHouseInternalRepository.searchTables(NamespaceUtil.encode(namespace)).isEmpty();
   }
 
   private void requireExists(Namespace namespace) {
-    if (!findStored(namespace).isPresent() && !findDerived(namespace).isPresent()) {
+    if (!findStored(namespace).isPresent()) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", namespace);
     }
   }

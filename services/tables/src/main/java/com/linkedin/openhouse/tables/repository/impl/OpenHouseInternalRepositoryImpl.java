@@ -877,40 +877,18 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
         .map(houseTable -> mapper.toTableDto(houseTable, fieldSet));
   }
 
-  @Timed(metricKey = MetricsConstant.REPO_TABLE_IDS_FIND_ALL_TIME)
-  @Override
-  public List<TableDtoPrimaryKey> findAllIds() {
-    return catalog.listTables(Namespace.empty()).stream()
-        .map(key -> mapper.toTableDtoPrimaryKey(key))
-        .collect(Collectors.toList());
-  }
-
-  @Timed(metricKey = MetricsConstant.REPO_TABLE_IDS_FIND_ALL_TIME)
-  @Override
-  public Page<TableDtoPrimaryKey> findAllIds(Pageable pageable) {
-    if (!(catalog instanceof OpenHouseInternalCatalog)) {
-      throw new UnsupportedOperationException(
-          "Does not support paginated search for getting all databases");
-    }
-    return ((OpenHouseInternalCatalog) catalog)
-        .listTables(Namespace.empty(), pageable)
-        .map(key -> mapper.toTableDtoPrimaryKey(key));
-  }
-
+  /**
+   * The two {@code findAllIds} overloads that used to live here walked every table in the cluster
+   * to recover the set of databases it contained. That set comes from the namespace store now, and
+   * the walk was the only caller of the cross-database listing, so both are gone rather than left
+   * as a scan nobody needs.
+   */
   /* IMPLEMENT AS NEEDED */
   @Timed(metricKey = MetricsConstant.REPO_TABLES_FIND_ALL_TIME)
   @Override
   public Iterable<TableDto> findAll() {
-    List<Table> tables =
-        catalog.listTables(Namespace.empty()).stream()
-            .map(tableIdentifier -> catalog.loadTable(tableIdentifier))
-            .collect(Collectors.toList());
-    return tables.stream()
-        .map(
-            table ->
-                convertToTableDto(
-                    table, fileIOManager, partitionSpecMapper, policiesMapper, tableTypeMapper))
-        .collect(Collectors.toList());
+    throw new UnsupportedOperationException(
+        "Loading every table in the cluster is not supported; list tables within a database.");
   }
 
   @Override

@@ -11,10 +11,11 @@ import org.apache.iceberg.catalog.Namespace;
  * <p>The service speaks Iceberg {@link Namespace} values; the persisted encoding (dot-joined
  * levels) is applied below this seam and never leaks above it.
  *
- * <p>A namespace exists here if either store says so: the namespace store holds a row for it, or
- * the table store holds a table that names it. The second case is every database that predates the
- * namespace store, and is what keeps this API from denying the existence of databases the rest of
- * OpenHouse serves. See {@link #ensureNamespace(String)} for the other half of that contract.
+ * <p>A namespace exists here if, and only if, the namespace store holds a row for it. It once also
+ * existed if the table store held a table naming it; that second source covered for a store that
+ * did not yet know about every database, and it is gone now that every write registers and the
+ * backfill has caught up the rest. See {@link #ensureNamespace(String)} for the half of the
+ * contract that keeps it true.
  */
 public interface NamespacesService {
 
@@ -31,6 +32,10 @@ public interface NamespacesService {
    * Register {@code databaseId} in the namespace store if it is not there already, so that a
    * database created by writing a table into it is a namespace this API can see. Idempotent, and
    * unauthorized on its own: the caller has already been authorized to create the table.
+   *
+   * <p>Its failure is the table write's failure. Nothing derives a database's existence from its
+   * tables any more, so a table whose database was never registered is a table in a database that
+   * does not exist.
    */
   void ensureNamespace(String databaseId);
 
