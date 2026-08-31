@@ -4,6 +4,7 @@ import static com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtil
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
@@ -117,7 +118,7 @@ public class IcebergRestTableWriteAdapter {
   public LoadTableResponse createTable(
       Namespace namespace, CreateTableRequest request, String principal) {
     request.validate();
-    String databaseId = namespace.level(0);
+    String databaseId = NamespaceUtil.encode(namespace);
     // The namespace's own name has already been judged by the route (IcebergRestIdentifiers), so
     // what remains is whether it exists.
     if (!namespacesService.namespaceExists(namespace, principal)) {
@@ -173,7 +174,7 @@ public class IcebergRestTableWriteAdapter {
    */
   public LoadTableResponse updateTable(
       Namespace namespace, String tableId, UpdateTableRequest request, String principal) {
-    String databaseId = namespace.level(0);
+    String databaseId = NamespaceUtil.encode(namespace);
     TableIdentifier identifier = TableIdentifier.of(namespace, tableId);
 
     TableMetadata base = loadBase(databaseId, tableId, principal);
@@ -251,9 +252,9 @@ public class IcebergRestTableWriteAdapter {
     }
     try {
       tablesApiHandler.renameTable(
-          source.namespace().level(0),
+          NamespaceUtil.encode(source.namespace()),
           source.name(),
-          destination.namespace().level(0),
+          NamespaceUtil.encode(destination.namespace()),
           destination.name(),
           principal);
     } catch (NoSuchUserTableException e) {
@@ -265,7 +266,10 @@ public class IcebergRestTableWriteAdapter {
           e, "Table does not exist: %s.%s", e.getDatabaseId(), e.getTableId());
     } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
       throw new AlreadyExistsException(
-          e, "Table already exists: %s.%s", destination.namespace().level(0), destination.name());
+          e,
+          "Table already exists: %s.%s",
+          NamespaceUtil.encode(destination.namespace()),
+          destination.name());
     }
   }
 
@@ -291,7 +295,7 @@ public class IcebergRestTableWriteAdapter {
    */
   public void dropTable(
       Namespace namespace, String tableId, Boolean purgeRequested, String principal) {
-    String databaseId = namespace.level(0);
+    String databaseId = NamespaceUtil.encode(namespace);
     try {
       tablesService.deleteTable(databaseId, tableId, principal);
     } catch (NoSuchUserTableException e) {

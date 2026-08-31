@@ -16,9 +16,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.types.Types;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -68,6 +70,10 @@ public class NestedNamespaceRoutingTest {
   private static final String CHILD = "sub";
   private static final Namespace NESTED = Namespace.of(PARENT, CHILD);
   private static final String ENCODED_NESTED = PARENT + "." + CHILD;
+
+  /** The same one-column schema as {@link #SCHEMA}, for the routes that take it as an object. */
+  private static final Schema REST_SCHEMA =
+      new Schema(Types.NestedField.required(1, "id", Types.LongType.get()));
 
   private static final String SCHEMA =
       "{\"type\": \"struct\", \"fields\": ["
@@ -205,6 +211,107 @@ public class NestedNamespaceRoutingTest {
 
     restCatalog.dropNamespace(Namespace.of("shadowdb", "sub"));
     restCatalog.dropNamespace(Namespace.of("shadowdb"));
+  }
+
+  /**
+   * The rename-time half of the metadata-table discriminator, over the {@code /v1} REST route, at
+   * the depth where it bites.
+   *
+   * <p>The REST rename route and this rule were built separately and had never run together. The
+   * route goes through {@link
+   * com.linkedin.openhouse.tables.api.handler.TablesApiHandler#renameTable} deliberately, so that
+   * the audit aspect's pointcut still fires, and the rule lives on the validator that handler
+   * invokes -- which reads as though composing the two grants the rule to REST renames for free. It
+   * does not follow on its own: the handler is told which database the destination is in by name,
+   * so a route that names only the first level of a nested namespace hands it a one-level database
+   * and the rule's depth floor is never cleared. Renaming a table in {@code renamedb.sub} onto
+   * {@code history} is the case that separates the two readings, because it is refused under one
+   * and accepted under the other.
+   *
+   * <p>Calibration: encoding only {@code destination.namespace().level(0)} on the way to the
+   * handler turns the first assertion green -- the rename succeeds -- and leaves {@code
+   * renamedb.sub.history} occupied by a base table that {@code loadTable} would then read as the
+   * {@code history} metadata table of {@code renamedb.sub}.
+   */
+  @Test
+  void aRestRenameOntoAMetadataTableNameIsRefusedInANestedNamespace() {
+    Namespace parent = Namespace.of("renamedb");
+    Namespace nested = Namespace.of("renamedb", "sub");
+    restCatalog.createNamespace(parent);
+    restCatalog.createNamespace(nested);
+    restCatalog.createTable(TableIdentifier.of(nested, "renamable"), REST_SCHEMA);
+
+    assertThatThrownBy(
+            () ->
+                restCatalog.renameTable(
+                    TableIdentifier.of(nested, "renamable"),
+                    TableIdentifier.of(nested, "history")))
+        // The validator's own sentence, reported faithfully: the refusal is the service's, and the
+        // facade does not reword it. Iceberg's client raises IllegalArgumentException for the 400
+        // it carries.
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("is an Iceberg metadata table name")
+        .hasMessageContaining("renamedb.sub.history would be ambiguous");
+
+    // The table is still where it was: a refused rename moves nothing.
+    assertThat(restCatalog.tableExists(TableIdentifier.of(nested, "renamable"))).isTrue();
+    assertThat(restCatalog.tableExists(TableIdentifier.of(nested, "history"))).isFalse();
+
+    // A destination that is not a metadata table type is renamed at the same depth, so the refusal
+    // above is this rule and not a rename route that refuses everything nested.
+    restCatalog.renameTable(
+        TableIdentifier.of(nested, "renamable"), TableIdentifier.of(nested, "histories"));
+    assertThat(restCatalog.tableExists(TableIdentifier.of(nested, "histories"))).isTrue();
+
+    restCatalog.dropTable(TableIdentifier.of(nested, "histories"), false);
+    restCatalog.dropNamespace(nested);
+    restCatalog.dropNamespace(parent);
+  }
+
+  /**
+   * A metadata-table identifier is not a user table, and the {@code /v1} table routes say so.
+   *
+   * <p>This is the read-path counterpart of the admission rules, and it only becomes reachable once
+   * nesting is on: at depth 2 the namespace {@code ns.tbl} is one the routes will accept, so {@code
+   * ns.tbl.files} reaches the repository instead of being turned away as too deep. The catalog
+   * already declines to read it as a base table -- but Iceberg answers that decline by building the
+   * {@code files} metadata table rather than by raising {@code NoSuchTableException}, so the
+   * repository has to say "no user table here" itself.
+   *
+   * <p>404 is also the answer the contract needs rather than merely a safe one: a stock Iceberg
+   * client that gets it loads the base table and derives the metadata table on its own, which is
+   * what {@code CatalogTests.testLoadMetadataTable} asserts. A 500 stops that fallback dead.
+   *
+   * <p>Calibration: without the repository's guard this route answers 500, because the mapper is
+   * handed a {@code FilesTable} and reads OpenHouse properties a metadata table does not carry.
+   */
+  @Test
+  void aMetadataTableIdentifierIsNotAUserTableOnTheV1Routes() {
+    restCatalog.createNamespace(Namespace.of("metadb"));
+    createTable("metadb", "tbl");
+
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/metadb%1Ftbl/tables/files",
+                    HttpMethod.GET,
+                    authorizedRequest(),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.NotFound.class)
+        .hasMessageContaining("Table does not exist: metadb.tbl.files");
+
+    // HEAD answers the same way, so tableExists() does not report a metadata table as a base table.
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/metadb%1Ftbl/tables/files",
+                    HttpMethod.HEAD,
+                    authorizedRequest(),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.NotFound.class);
+
+    deleteTable("metadb", "tbl");
+    restCatalog.dropNamespace(Namespace.of("metadb"));
   }
 
   /** The configured depth is still a bound: one level past it is not routable. */

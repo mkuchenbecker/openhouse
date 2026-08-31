@@ -802,6 +802,28 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     updateProperties.set(propertyKey, overrideValue).commit();
   }
 
+  /**
+   * Whether {@code tableId} could name a row this repository holds.
+   *
+   * <p>{@code OpenHouseInternalCatalog.isValidIdentifier} declines to read a metadata-table
+   * identifier as a base table, and Iceberg answers that decline by <em>building the metadata
+   * table</em> rather than by raising {@link NoSuchTableException}. So a repository that only
+   * catches {@code NoSuchTableException} gets a {@code FilesTable} back and hands it to a mapper
+   * written for a base table, which reads OpenHouse properties a metadata table does not have. The
+   * answer to "is there a user table at this identifier" is simply no, and saying so here is what
+   * turns that into the 404 both APIs already have wording for.
+   *
+   * <p>The same predicate the catalog gates on, not a second rule stated in parallel: an identifier
+   * the catalog will not read as a base table is one this repository has no row for, and the two
+   * cannot drift apart if there is only one of them.
+   *
+   * <p>Inert at the shipped namespace depth of 1, where no base-table identifier can also read as a
+   * metadata-table identifier.
+   */
+  private static boolean namesAUserTable(TableIdentifier tableId) {
+    return !NamespaceUtil.isMetadataTableIdentifier(tableId);
+  }
+
   @Timed(metricKey = MetricsConstant.REPO_TABLE_FIND_TIME)
   @Override
   public Optional<TableDto> findById(TableDtoPrimaryKey tableDtoPrimaryKey) {
@@ -809,6 +831,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     TableIdentifier tableId =
         NamespaceUtil.tableIdentifier(
             tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId());
+    if (!namesAUserTable(tableId)) {
+      return Optional.empty();
+    }
     try {
       table = catalog.loadTable(tableId);
     } catch (NoSuchTableException exception) {
@@ -844,9 +869,12 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Timed(metricKey = MetricsConstant.REPO_TABLE_EXISTS_TIME)
   @Override
   public boolean existsById(TableDtoPrimaryKey tableDtoPrimaryKey) {
-    return catalog.tableExists(
+    TableIdentifier tableId =
         NamespaceUtil.tableIdentifier(
-            tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId()));
+            tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId());
+    // Same reading as findById, and for the same reason: catalog.tableExists loads, so a metadata
+    // table would be reported as an existing user table.
+    return namesAUserTable(tableId) && catalog.tableExists(tableId);
   }
 
   @Timed(metricKey = MetricsConstant.REPO_TABLE_DELETE_TIME)
