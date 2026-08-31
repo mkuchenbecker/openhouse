@@ -10,6 +10,8 @@ import io.swagger.v3.oas.annotations.Hidden;
 import java.util.UUID;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.RenameTableRequest;
+import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
@@ -102,6 +104,20 @@ public class IcebergRestCatalogController implements CatalogApiApi, Configuratio
   public ResponseEntity<Void> dropTable(
       String prefix, String namespace, String table, UUID idempotencyKey, Boolean purgeRequested) {
     icebergRestApiHandler.dropTable(prefix, namespace, table, purgeRequested);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> renameTable(
+      String prefix, RenameTableRequest renameTableRequest, UUID idempotencyKey) {
+    icebergRestApiHandler.renameTable(prefix, renameTableRequest);
+    return ResponseEntity.noContent().build();
+  }
+
+  @Override
+  public ResponseEntity<Void> reportMetrics(
+      String prefix, String namespace, String table, ReportMetricsRequest reportMetricsRequest) {
+    icebergRestApiHandler.reportMetrics(prefix, namespace, table, reportMetricsRequest);
     return ResponseEntity.noContent().build();
   }
 

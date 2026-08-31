@@ -17,6 +17,7 @@ import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
+import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterAll;
@@ -28,6 +29,7 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.web.client.HttpClientErrorException;
@@ -56,6 +58,7 @@ import org.springframework.web.client.RestTemplate;
 public class IcebergRestCatalogWriteTest {
 
   private static final String DB = "icebergrestwritedb";
+  private static final String OTHER_DB = "icebergrestwriteotherdb";
 
   private static final Schema SCHEMA =
       new Schema(
@@ -73,6 +76,7 @@ public class IcebergRestCatalogWriteTest {
     authToken = new DummyTokenInterceptor.DummySecurityJWT("testuser").buildNoopJWT();
     restCatalog = buildRestCatalog();
     restCatalog.createNamespace(Namespace.of(DB));
+    restCatalog.createNamespace(Namespace.of(OTHER_DB));
   }
 
   @AfterAll
@@ -246,6 +250,156 @@ public class IcebergRestCatalogWriteTest {
                             + "\"tableProperties\":{}}"),
                     String.class))
         .isInstanceOf(HttpClientErrorException.class);
+  }
+
+  @Test
+  void renameMovesTheTableAndFreesItsOldName() {
+    TableIdentifier from = TableIdentifier.of(DB, "rename_from_t");
+    TableIdentifier to = TableIdentifier.of(DB, "rename_to_t");
+    Table original = restCatalog.buildTable(from, SCHEMA).withProperty("prop1", "val1").create();
+    String uuid = original.uuid().toString();
+
+    restCatalog.renameTable(from, to);
+
+    assertThat(restCatalog.tableExists(from)).isFalse();
+    Table renamed = restCatalog.loadTable(to);
+    assertThat(renamed.uuid().toString()).isEqualTo(uuid);
+    assertThat(renamed.properties())
+        .containsEntry("prop1", "val1")
+        .containsEntry("openhouse.tableId", "rename_to_t");
+  }
+
+  @Test
+  void renameOfAMissingTableIsNotFound() {
+    assertThatThrownBy(
+            () ->
+                restCatalog.renameTable(
+                    TableIdentifier.of(DB, "never_existed_t"),
+                    TableIdentifier.of(DB, "wherever_t")))
+        .isInstanceOf(NoSuchTableException.class);
+  }
+
+  @Test
+  void renameOntoAnExistingTableConflicts() {
+    TableIdentifier from = TableIdentifier.of(DB, "rename_conflict_from_t");
+    TableIdentifier to = TableIdentifier.of(DB, "rename_conflict_to_t");
+    restCatalog.buildTable(from, SCHEMA).create();
+    restCatalog.buildTable(to, SCHEMA).create();
+
+    assertThatThrownBy(() -> restCatalog.renameTable(from, to))
+        .isInstanceOf(AlreadyExistsException.class);
+
+    assertThat(restCatalog.tableExists(from)).isTrue();
+    assertThat(restCatalog.tableExists(to)).isTrue();
+  }
+
+  /**
+   * The two ways a cross-database rename can fail have to stay distinguishable, and the order of
+   * the checks is what keeps them so: a destination namespace that does not exist is the
+   * specification's 404, decided before OpenHouse's refusal to move a table between databases is
+   * ever reached. Without the ordering a client with a typo in the namespace would be told the
+   * catalog does not support what it asked for.
+   */
+  @Test
+  void renameIntoAMissingNamespaceIsNotFoundRatherThanRefused() {
+    TableIdentifier from = TableIdentifier.of(DB, "rename_missing_ns_t");
+    restCatalog.buildTable(from, SCHEMA).create();
+
+    assertThatThrownBy(
+            () ->
+                restCatalog.renameTable(from, TableIdentifier.of("no_such_database", "anywhere_t")))
+        .isInstanceOf(NoSuchNamespaceException.class);
+
+    assertThat(restCatalog.tableExists(from)).isTrue();
+  }
+
+  /**
+   * OpenHouse declines a rename that changes the table's database, and the REST route does not
+   * widen that: the refusal is the service-layer validator's, reported verbatim as a 400. Pinned
+   * because the facade calls the validator rather than the service, and going straight to the
+   * service -- which does not apply this rule itself -- would silently make REST callers able to do
+   * something {@code /v1} callers cannot.
+   */
+  @Test
+  void renameAcrossDatabasesIsRefusedWithTheValidatorsOwnReason() {
+    TableIdentifier from = TableIdentifier.of(DB, "rename_cross_db_t");
+    restCatalog.buildTable(from, SCHEMA).create();
+
+    assertThatThrownBy(
+            () ->
+                restTemplate.exchange(
+                    baseUrl() + "/v1/iceberg/tables/rename",
+                    HttpMethod.POST,
+                    jsonRequest(
+                        "{\"source\":{\"namespace\":[\""
+                            + DB
+                            + "\"],\"name\":\"rename_cross_db_t\"},"
+                            + "\"destination\":{\"namespace\":[\""
+                            + OTHER_DB
+                            + "\"],\"name\":\"rename_cross_db_t\"}}"),
+                    String.class))
+        .isInstanceOf(HttpClientErrorException.BadRequest.class)
+        .hasMessageContaining("Rename table across databases is not supported");
+
+    assertThat(restCatalog.tableExists(from)).isTrue();
+    assertThat(restCatalog.tableExists(TableIdentifier.of(OTHER_DB, "rename_cross_db_t")))
+        .isFalse();
+  }
+
+  /**
+   * The metrics route accepts a report and discards it. There is nothing to observe afterwards --
+   * that is the point -- so what this pins is that a report in the shape a stock client sends is
+   * accepted at all, rather than rejected as malformed or falling through to a 500. A client's
+   * reporter suppresses its own failures, so nothing else in the suite would notice if it did.
+   */
+  @Test
+  void aMetricsReportIsAcceptedAndDiscarded() {
+    TableIdentifier identifier = TableIdentifier.of(DB, "metrics_t");
+    restCatalog.buildTable(identifier, SCHEMA).create();
+
+    assertThat(
+            restTemplate
+                .exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/" + DB + "/tables/metrics_t/metrics",
+                    HttpMethod.POST,
+                    jsonRequest(scanReportJson(DB + ".metrics_t")),
+                    String.class)
+                .getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  /**
+   * The route does not look the table up, so a report about a table that is not there is accepted
+   * like any other. The specification lists a 404 for this case and OpenHouse never answers it; the
+   * divergence is deliberate (see {@code OpenHouseIcebergRestApiHandler#reportMetrics}) and is
+   * pinned here so it cannot change unnoticed.
+   */
+  @Test
+  void aMetricsReportAboutAnUnknownTableIsAcceptedToo() {
+    assertThat(
+            restTemplate
+                .exchange(
+                    baseUrl() + "/v1/iceberg/namespaces/" + DB + "/tables/no_such_table/metrics",
+                    HttpMethod.POST,
+                    jsonRequest(scanReportJson(DB + ".no_such_table")),
+                    String.class)
+                .getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  /** A scan report in the shape {@code RESTMetricsReporter} sends one. */
+  private static String scanReportJson(String tableName) {
+    return "{\"report-type\":\"scan-report\","
+        + "\"table-name\":\""
+        + tableName
+        + "\","
+        + "\"snapshot-id\":1,"
+        + "\"filter\":true,"
+        + "\"schema-id\":0,"
+        + "\"projected-field-ids\":[1],"
+        + "\"projected-field-names\":[\"id\"],"
+        + "\"metrics\":{},"
+        + "\"metadata\":{\"engine-name\":\"test\"}}";
   }
 
   private String openHouseTableJson(String databaseId, String tableId) {

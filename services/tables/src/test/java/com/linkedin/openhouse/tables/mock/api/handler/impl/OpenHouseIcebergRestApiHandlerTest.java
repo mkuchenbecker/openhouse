@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
@@ -24,7 +25,9 @@ import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,7 +77,48 @@ public class OpenHouseIcebergRestApiHandlerTest {
             "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-            "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
+            "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "POST /v1/{prefix}/tables/rename",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics");
+  }
+
+  /**
+   * Registering an existing metadata file is a capability OpenHouse declines, so the route must
+   * stay off the advertised list. A client that saw it there would be told the catalog can adopt a
+   * file it does not own, and get a 404 from a route that was never generated.
+   */
+  @Test
+  void configDoesNotAdvertiseADeclinedRoute() {
+    assertThat(handler.getConfig("openhouse").getEndpoints())
+        .doesNotContain("POST /v1/{prefix}/namespaces/{namespace}/register");
+  }
+
+  /**
+   * The rename route reads the source as an identifier that names a table -- so a name OpenHouse
+   * could never hold is a 404 -- and the destination as a namespace that must be able to hold one,
+   * which is the same split {@code createTable} makes. Neither reaches the write adapter.
+   */
+  @Test
+  void anIllegalIdentifierOnTheRenameRouteIsANotFound() {
+    assertThatThrownBy(
+            () ->
+                handler.renameTable(
+                    ICEBERG_REST_PREFIX,
+                    RenameTableRequest.builder()
+                        .withSource(TableIdentifier.of("db", "not-a-table"))
+                        .withDestination(TableIdentifier.of("db", "t2"))
+                        .build()))
+        .isInstanceOf(NoSuchTableException.class);
+    assertThatThrownBy(
+            () ->
+                handler.renameTable(
+                    ICEBERG_REST_PREFIX,
+                    RenameTableRequest.builder()
+                        .withSource(TableIdentifier.of("db", "t1"))
+                        .withDestination(TableIdentifier.of("non-existing", "t2"))
+                        .build()))
+        .isInstanceOf(NoSuchNamespaceException.class);
+    verifyNoInteractions(tableWriteAdapter);
   }
 
   /**
@@ -135,6 +179,30 @@ public class OpenHouseIcebergRestApiHandlerTest {
     assertThatThrownBy(() -> handler.listTables(ICEBERG_REST_PREFIX, "db", "invalid", null))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("page token");
+    // Every route checks the prefix, including the two that do no other work of their own: the
+    // metrics route discards its body, so the prefix check is the only thing standing between a
+    // request on a prefix this catalog does not serve and a 204 saying it was accepted.
+    assertThatThrownBy(
+            () ->
+                handler.renameTable(
+                    "other",
+                    RenameTableRequest.builder()
+                        .withSource(TableIdentifier.of("db", "t1"))
+                        .withDestination(TableIdentifier.of("db", "t2"))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("prefix");
+    assertThatThrownBy(() -> handler.reportMetrics("other", "db", "t1", null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("prefix");
+  }
+
+  /** The metrics route accepts a report and keeps nothing: no service, no catalog, no write. */
+  @Test
+  void aMetricsReportIsDiscardedWithoutTouchingAnything() {
+    handler.reportMetrics(ICEBERG_REST_PREFIX, "db", "t1", null);
+
+    verifyNoInteractions(tablesApiHandler, openHouseInternalCatalog, tableWriteAdapter);
   }
 
   @Test

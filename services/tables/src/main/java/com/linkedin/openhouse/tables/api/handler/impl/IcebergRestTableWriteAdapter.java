@@ -7,6 +7,7 @@ import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
+import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.common.TableType;
@@ -74,6 +75,7 @@ import org.springframework.stereotype.Component;
 public class IcebergRestTableWriteAdapter {
 
   private final TablesService tablesService;
+  private final TablesApiHandler tablesApiHandler;
   private final IcebergSnapshotsService icebergSnapshotsService;
   private final NamespacesService namespacesService;
   private final OpenHouseInternalCatalog openHouseInternalCatalog;
@@ -82,12 +84,14 @@ public class IcebergRestTableWriteAdapter {
 
   public IcebergRestTableWriteAdapter(
       TablesService tablesService,
+      TablesApiHandler tablesApiHandler,
       IcebergSnapshotsService icebergSnapshotsService,
       NamespacesService namespacesService,
       OpenHouseInternalCatalog openHouseInternalCatalog,
       PartitionSpecMapper partitionSpecMapper,
       ClusterProperties clusterProperties) {
     this.tablesService = tablesService;
+    this.tablesApiHandler = tablesApiHandler;
     this.icebergSnapshotsService = icebergSnapshotsService;
     this.namespacesService = namespacesService;
     this.openHouseInternalCatalog = openHouseInternalCatalog;
@@ -209,6 +213,60 @@ public class IcebergRestTableWriteAdapter {
       tablesService.putTable(body, principal, /*failOnExist*/ false, /*icebergRestCommit*/ true);
     }
     return CatalogHandlers.loadTable(openHouseInternalCatalog, identifier);
+  }
+
+  /**
+   * Serves {@code POST /v1/{prefix}/tables/rename}.
+   *
+   * <p><b>Why this one route goes through the API handler.</b> Create and commit assemble a request
+   * body the {@code /v1} API has no way to express, so they call the services directly. Rename does
+   * not: it is the same four identifiers on both APIs, and its rules -- including the one that
+   * matters most here -- live in {@link
+   * com.linkedin.openhouse.tables.api.validator.TablesApiValidator#validateRenameTable}. Calling
+   * {@link TablesApiHandler#renameTable} runs that validator, so a REST caller is held to exactly
+   * the rules an OpenHouse caller is, and the rules stay written down once. It also puts the rename
+   * back under {@code TableAuditAspect}, whose pointcut is on {@code TablesApiHandler.renameTable}:
+   * a REST rename emits the same RENAME_FROM/RENAME_TO audit pair a {@code /v1} rename does, which
+   * a call straight to the service would have skipped silently.
+   *
+   * <p><b>Renames across databases.</b> OpenHouse declines them: the validator refuses a rename
+   * whose target database differs from its source, and this route does not widen that. The REST
+   * specification explicitly permits a server to refuse ("it's valid to move a table across
+   * namespaces, but the server implementation is not required to support it"), so the refusal is
+   * conforming. It arrives as a 400 carrying the validator's own sentence rather than a 406, which
+   * is the status the specification reserves for the refusal, because the refusal is not this
+   * facade's to reclassify -- it is the service's answer, reported faithfully.
+   *
+   * <p><b>What this route does add.</b> The destination namespace is checked for existence first.
+   * The specification requires 404 for a rename into a namespace that does not exist, and without
+   * that check a cross-database rename into a namespace that was never created would be reported as
+   * the cross-database refusal -- telling a client its request was unsupported when in truth it had
+   * a typo. Ordering the checks this way is also what makes the two answers distinguishable at all:
+   * "there is no such namespace" is a fact about the catalog, "renames do not cross databases" is a
+   * fact about OpenHouse.
+   */
+  public void renameTable(TableIdentifier source, TableIdentifier destination, String principal) {
+    if (!namespacesService.namespaceExists(destination.namespace(), principal)) {
+      throw new NoSuchNamespaceException("Namespace does not exist: %s", destination.namespace());
+    }
+    try {
+      tablesApiHandler.renameTable(
+          source.namespace().level(0),
+          source.name(),
+          destination.namespace().level(0),
+          destination.name(),
+          principal);
+    } catch (NoSuchUserTableException e) {
+      // Same condition, the specification's wording -- see createTable above for why the phrasing
+      // has to be the contract's rather than OpenHouse's. The table named is taken from the
+      // exception rather than assumed to be the source, so that if a rename ever fails on some
+      // other table the message says which one; the cause is carried so the descent survives.
+      throw new NoSuchTableException(
+          e, "Table does not exist: %s.%s", e.getDatabaseId(), e.getTableId());
+    } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+      throw new AlreadyExistsException(
+          e, "Table already exists: %s.%s", destination.namespace().level(0), destination.name());
+    }
   }
 
   /**

@@ -1338,6 +1338,7 @@ paths:
         Rename a table from one identifier to another. It's valid to move a table
         across namespaces, but the server implementation is not required to support it.
       operationId: renameTable
+      x-openhouse-support: supported
       requestBody:
         description: Current table identifier to rename and new table identifier to rename to
         content:
@@ -1399,6 +1400,7 @@ paths:
         - Catalog API
       summary: Send a metrics report to this endpoint to be processed by the backend
       operationId: reportMetrics
+      x-openhouse-support: supported
       requestBody:
         description: The request containing the metrics report to be sent
         content:

@@ -62,7 +62,19 @@ final class IcebergRestIdentifiers {
    * route both name the same absent table.
    */
   static TableIdentifier readTableIdentifier(String encodedNamespace, String table, int maxDepth) {
-    Namespace namespace = decode(encodedNamespace);
+    return readTableIdentifier(decode(encodedNamespace), table, maxDepth);
+  }
+
+  /**
+   * As {@link #readTableIdentifier(String, String, int)}, for an identifier a request body carried
+   * already decoded -- the rename route names its two tables in JSON rather than in the path.
+   */
+  static TableIdentifier readTableIdentifier(TableIdentifier identifier, int maxDepth) {
+    return readTableIdentifier(identifier.namespace(), identifier.name(), maxDepth);
+  }
+
+  private static TableIdentifier readTableIdentifier(
+      Namespace namespace, String table, int maxDepth) {
     try {
       NamespaceUtil.validate(namespace, maxDepth);
       if (table == null || !TABLE_NAME_PATTERN.matcher(table).matches()) {

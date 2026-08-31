@@ -39,15 +39,16 @@ import org.junit.jupiter.params.provider.ValueSource;
  *
  * <p>The facade implements {@code GET /v1/config}, the six namespace routes (create, load, exists,
  * drop, list and update properties), the read-only table routes (list tables, load table, table
- * exists) and the table write routes (create, including staged create; commit; drop). Every test
- * the facade cannot honestly satisfy is overridden and disabled with a reason, and the reasons now
- * fall into two kinds that should not be confused. Some name a route that does not exist yet
- * ({@code NEEDS_*}) and are a roadmap. The rest name a capability OpenHouse deliberately declines
- * -- partition-spec evolution, schema narrowing, a client-chosen table location or format version
- * -- or a divergence in wording rather than behaviour; those are not going to be deleted by adding
- * an endpoint, and each says exactly what the catalog does instead. Further tests skip themselves
- * through the suite's built-in capability flags ({@code supportsEmptyNamespace()}, {@code
- * supportsNestedNamespaces()}, {@code supportsNamesWithDot()}, {@code supportsNamesWithSlashes()}).
+ * exists), the table write routes (create, including staged create; commit; drop; rename) and the
+ * metrics-reporting route, which accepts a report and discards it. Every test the facade cannot
+ * honestly satisfy is overridden and disabled with a reason. No reason left here names a route that
+ * is merely missing: each names a capability OpenHouse deliberately declines -- registering a
+ * metadata file it does not own, partition-spec evolution, schema narrowing, a client-chosen table
+ * location or format version -- or a divergence in wording rather than behaviour. None of them will
+ * be deleted by adding an endpoint, and each says exactly what the catalog does instead. Further
+ * tests skip themselves through the suite's built-in capability flags ({@code
+ * supportsEmptyNamespace()}, {@code supportsNestedNamespaces()}, {@code supportsNamesWithDot()},
+ * {@code supportsNamesWithSlashes()}).
  */
 public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> {
 
@@ -57,14 +58,8 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   private static RESTCatalog restCatalog;
   private static String authToken;
 
-  private static final String NEEDS_RENAME_TABLE =
-      "needs renameTable endpoint (POST /v1/{prefix}/tables/rename); when it is not advertised the 1.11 client throws UnsupportedOperationException before reaching the server";
-
-  private static final String NEEDS_REGISTER_TABLE =
-      "needs registerTable endpoint (POST /v1/{prefix}/namespaces/{namespace}/register)";
-
-  private static final String NEEDS_METRICS_ENDPOINT =
-      "needs the metrics endpoint (POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics) to receive scan reports";
+  private static final String DECLINES_REGISTER_TABLE =
+      "OpenHouse declines to adopt an existing metadata file as a table: POST /v1/{prefix}/namespaces/{namespace}/register is deliberately not implemented and not advertised in /v1/config. A register points the catalog at a metadata.json it did not write. OpenHouse allocates every table's location itself through the cluster's storage selector, and its only drop purges everything under that location -- so an adopted file outside managed storage would be one the catalog can delete but never placed, carrying schema, partitioning and properties that never passed the write path's checks. Refusing the capability outright is the honest answer; a half-register that stored the pointer without owning the files would be worse than none. Note too that this test registers the metadata of a table it has just dropped with purge=false, which OpenHouse purges anyway (see IcebergRestTableWriteAdapter#dropTable), so the file it names is already gone";
 
   private static final String DECLINES_PARTITION_EVOLUTION =
       "OpenHouse declines partition-spec evolution on an existing table (OpenHouseInternalRepositoryImpl.checkPartitionSpecEvolution): a table's partitioning is fixed at creation, and a commit that changes it is refused with 400. The commit route reports that refusal faithfully; the declined capability is the divergence, and it is deliberate";
@@ -223,71 +218,22 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   }
 
   // ---------------------------------------------------------------------------------------------
-  // Tests this facade cannot satisfy. Each @Disabled reason names either a route that does not
-  // exist yet or the capability OpenHouse declines and what it does instead.
+  // Tests this facade cannot satisfy. Each @Disabled reason names the capability OpenHouse
+  // declines and what it does instead.
   // ---------------------------------------------------------------------------------------------
 
   @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void testRenameTable() {
-    super.testRenameTable();
-  }
-
-  @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void dropAfterRenameDoesntCorruptTable() throws IOException {
-    super.dropAfterRenameDoesntCorruptTable();
-  }
-
-  @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void testRenameTableMissingSourceTable() {
-    super.testRenameTableMissingSourceTable();
-  }
-
-  @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void renameTableNamespaceMissing() {
-    super.renameTableNamespaceMissing();
-  }
-
-  @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void testRenameTableDestinationTableAlreadyExists() {
-    super.testRenameTableDestinationTableAlreadyExists();
-  }
-
-  @Override
-  @Disabled(NEEDS_RENAME_TABLE)
-  @Test
-  public void createTableInUniqueLocation() {
-    super.createTableInUniqueLocation();
-  }
-
-  @Override
-  @Disabled(NEEDS_REGISTER_TABLE)
+  @Disabled(DECLINES_REGISTER_TABLE)
   @Test
   public void testRegisterTable() {
     super.testRegisterTable();
   }
 
   @Override
-  @Disabled(NEEDS_REGISTER_TABLE)
+  @Disabled(DECLINES_REGISTER_TABLE)
   @Test
   public void testRegisterExistingTable() {
     super.testRegisterExistingTable();
-  }
-
-  @Override
-  @Disabled(NEEDS_METRICS_ENDPOINT)
-  @Test
-  public void testCatalogWithCustomMetricsReporter() throws IOException {
-    super.testCatalogWithCustomMetricsReporter();
   }
 
   @Override
