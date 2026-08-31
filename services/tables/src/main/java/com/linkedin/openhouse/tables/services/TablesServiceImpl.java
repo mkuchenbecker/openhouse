@@ -9,6 +9,7 @@ import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
@@ -28,6 +29,7 @@ import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +60,13 @@ public class TablesServiceImpl implements TablesService {
   @Autowired TableUUIDGenerator tableUUIDGenerator;
 
   @Autowired NamespacesService namespacesService;
+
+  /**
+   * Non-fatal registration is the right call while the namespace store is not the source of truth,
+   * but silent registration is not: without this counter a store outage accumulates databases with
+   * no namespace row and nothing says so until the backfill finds them.
+   */
+  @Autowired MeterRegistry meterRegistry;
 
   @Autowired ReadBridgeStripProtection readBridgeStripProtection;
 
@@ -472,11 +481,17 @@ public class TablesServiceImpl implements TablesService {
    *
    * <p>Concurrent registration of the same database is already the store's problem to absorb, and
    * is pinned by {@code NamespacesServiceImplTest#ensureNamespaceIsIdempotent}.
+   *
+   * <p>Swallowed is not the same as unobserved: every failure here is a database that now exists
+   * with no namespace row, so each one increments {@link
+   * MetricsConstant#NAMESPACE_REGISTRATION_FAILED_CTR}. A namespace store failing writes shows up
+   * there rather than in whatever the backfill later has to clean up.
    */
   private void registerNamespace(String databaseId) {
     try {
       namespacesService.ensureNamespace(databaseId);
     } catch (Exception e) {
+      meterRegistry.counter(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).increment();
       log.warn(
           "Failed to register database {} in the namespace store; the table write continues.",
           databaseId,

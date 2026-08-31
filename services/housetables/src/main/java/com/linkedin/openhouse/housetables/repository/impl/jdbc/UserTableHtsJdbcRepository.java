@@ -8,6 +8,7 @@ import java.util.Optional;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -51,6 +52,27 @@ public interface UserTableHtsJdbcRepository
       "SELECT DISTINCT databaseId FROM UserTableRow u where "
           + "(:databaseId IS NULL OR lower(u.databaseId) = lower(:databaseId))")
   Page<String> findAllDistinctDatabaseIds(String databaseId, Pageable pageable);
+
+  /**
+   * The same distinct-database projection as {@link #findAllDistinctDatabaseIds()}, seeked rather
+   * than offset: it returns the page of distinct databaseIds that sort strictly after {@code
+   * after}, or the first page when {@code after} is null.
+   *
+   * <p>Seeking rather than counting pages is what makes a resumed backfill exact. The comparison
+   * and the ordering are then both the database's, evaluated under one collation on one column, so
+   * a resume cannot step over a database because the server and the client disagreed about where
+   * {@code after} sits. It also keeps the cost of a resume proportional to what is left rather than
+   * to what has already been done, and it needs no count query, which a {@code DISTINCT} projection
+   * does not answer correctly anyway — hence {@link Slice}, whose {@code hasNext} is decided by
+   * reading one row past the page.
+   *
+   * <p>Callers must pass a {@code Pageable} sorted ascending by {@code databaseId}; the seek is
+   * meaningless under any other order.
+   */
+  @Query(
+      "SELECT DISTINCT u.databaseId FROM UserTableRow u where "
+          + "(:after IS NULL OR u.databaseId > :after)")
+  Slice<String> findDistinctDatabaseIdsAfter(@Param("after") String after, Pageable pageable);
 
   Page<UserTableRow> findAllByDatabaseIdIgnoreCase(String databaseId, Pageable pageable);
 
