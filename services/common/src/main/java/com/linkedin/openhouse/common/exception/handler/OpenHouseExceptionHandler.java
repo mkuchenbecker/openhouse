@@ -8,6 +8,7 @@ import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
 import com.linkedin.openhouse.common.exception.JobEngineException;
 import com.linkedin.openhouse.common.exception.JobStateConflictException;
+import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
 import com.linkedin.openhouse.common.exception.NoSuchEntityException;
 import com.linkedin.openhouse.common.exception.NoSuchJobException;
 import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableException;
@@ -152,6 +153,26 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
             .error(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase())
             .message(
                 String.format(COMMIT_STATE_UNKNOWN_TMPL, e.getTableId(), e.getCause().getMessage()))
+            .stacktrace(getAbbreviatedStackTrace(e))
+            .cause(getExceptionCause(e))
+            .build();
+    return buildResponseEntity(errorResponseBody);
+  }
+
+  /**
+   * A namespace read that the service cannot answer because the namespace store has not been shown
+   * complete. 503 rather than 500: nothing is broken, a one-time migration has not been run, and
+   * the message carries the command that runs it.
+   */
+  @Hidden
+  @ExceptionHandler(NamespaceStoreNotBackfilledException.class)
+  protected ResponseEntity<ErrorResponseBody> handleNamespaceStoreNotBackfilled(
+      NamespaceStoreNotBackfilledException e) {
+    ErrorResponseBody errorResponseBody =
+        ErrorResponseBody.builder()
+            .status(HttpStatus.SERVICE_UNAVAILABLE)
+            .error(HttpStatus.SERVICE_UNAVAILABLE.getReasonPhrase())
+            .message(e.getMessage())
             .stacktrace(getAbbreviatedStackTrace(e))
             .cause(getExceptionCause(e))
             .build();

@@ -24,7 +24,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.BaseMetastoreCatalog;
@@ -101,13 +100,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
   @Override
   public List<TableIdentifier> listTables(Namespace namespace) {
     NamespaceUtil.validateOperationNamespace(namespace);
-    // TODO: Implement SupportsNamespace interface and listNamespaces() method to remove this
-    //  branch. This is anti-pattern and only a temporary solution.
-    if (namespace.isEmpty()) {
-      return StreamSupport.stream(houseTableRepository.findAll().spliterator(), false)
-          .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), "Unused"))
-          .collect(Collectors.toList());
-    }
+    rejectCrossDatabaseListing(namespace);
     return houseTableRepository.findAllByDatabaseId(namespace.toString()).stream()
         .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()))
         .collect(Collectors.toList());
@@ -115,14 +108,27 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   public Page<TableIdentifier> listTables(Namespace namespace, Pageable pageable) {
     NamespaceUtil.validateOperationNamespace(namespace);
-    if (namespace.isEmpty()) {
-      return houseTableRepository
-          .findAll(pageable)
-          .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), "Unused"));
-    }
+    rejectCrossDatabaseListing(namespace);
     return houseTableRepository
         .findAllByDatabaseId(namespace.toString(), pageable)
         .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()));
+  }
+
+  /**
+   * The empty namespace used to mean "every table in the cluster", and every row it returned
+   * carried the table id {@code "Unused"} because no caller wanted it: the one consumer was the
+   * derivation of the set of databases from the set of tables. That derivation is gone — databases
+   * come from the namespace store — and a sentinel identifier that names a table which does not
+   * exist is not something to keep alive for a caller that no longer exists. Refusing loudly beats
+   * the alternative of falling through to {@code findAllByDatabaseId("")}, which would answer a
+   * cross-database listing with a confident empty list.
+   */
+  private static void rejectCrossDatabaseListing(Namespace namespace) {
+    if (namespace.isEmpty()) {
+      throw new UnsupportedOperationException(
+          "listTables requires a database. Listing every table in the cluster existed only to"
+              + " derive which databases exist, which the namespace store answers directly.");
+    }
   }
 
   /**

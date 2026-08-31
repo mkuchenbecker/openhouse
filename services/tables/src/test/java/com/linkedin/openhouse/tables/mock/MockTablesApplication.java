@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.mock;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.NamespaceStoreCompleteness;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
@@ -10,6 +11,7 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.repository.impl.BasePreservedKeyChecker;
 import com.linkedin.openhouse.tables.toggle.TableFeatureToggle;
+import java.util.Optional;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -68,6 +70,17 @@ public class MockTablesApplication {
    * HouseTableRepository} is.
    */
   @MockBean HouseNamespaceRepository houseNamespaceRepository;
+
+  /**
+   * The gate in front of every namespace read asks whether the backfill marker says the namespace
+   * store is complete. There is no House Tables here to ask, and the mock context creates no
+   * databases the store could be missing, so it is answered verified. A mock would answer "not
+   * verified" and turn every namespace read in every mock test into a 503.
+   */
+  @Bean
+  NamespaceStoreCompleteness provideVerifiedNamespaceStore() {
+    return () -> Optional.of(1L);
+  }
 
   /**
    * The namespace service holds namespace properties to the same preserved-key rule as table

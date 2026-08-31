@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.tablestest;
 
+import com.linkedin.openhouse.internal.catalog.repository.NamespaceStoreCompleteness;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
@@ -46,6 +48,18 @@ public class SpringH2TestApplication {
 
   public static void main(String[] args) {
     SpringApplication.run(SpringH2TestApplication.class, args);
+  }
+
+  /**
+   * The backfill marker lives in House Tables, and these fixtures boot the tables service without
+   * one. The H2 namespace store they run against is created empty and every database in it is
+   * registered by the write that created it, so it is complete by construction and the gate in
+   * front of namespace reads is told so.
+   */
+  @Bean
+  @Primary
+  NamespaceStoreCompleteness provideVerifiedNamespaceStore() {
+    return () -> Optional.of(1L);
   }
 
   /**
