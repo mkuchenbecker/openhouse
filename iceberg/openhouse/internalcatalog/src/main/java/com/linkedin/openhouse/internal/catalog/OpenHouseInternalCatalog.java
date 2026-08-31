@@ -130,7 +130,9 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
     NamespaceUtil.validateOperationNamespace(namespace, maxNamespaceDepth);
     rejectCrossDatabaseListing(namespace);
     return houseTableRepository.findAllByDatabaseId(namespace.toString()).stream()
-        .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()))
+        .map(
+            houseTable ->
+                NamespaceUtil.tableIdentifier(houseTable.getDatabaseId(), houseTable.getTableId()))
         .collect(Collectors.toList());
   }
 
@@ -139,7 +141,9 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
     rejectCrossDatabaseListing(namespace);
     return houseTableRepository
         .findAllByDatabaseId(namespace.toString(), pageable)
-        .map(houseTable -> TableIdentifier.of(houseTable.getDatabaseId(), houseTable.getTableId()));
+        .map(
+            houseTable ->
+                NamespaceUtil.tableIdentifier(houseTable.getDatabaseId(), houseTable.getTableId()));
   }
 
   /**

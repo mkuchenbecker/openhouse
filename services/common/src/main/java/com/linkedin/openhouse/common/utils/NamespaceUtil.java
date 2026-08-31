@@ -240,6 +240,21 @@ public final class NamespaceUtil {
   }
 
   /**
+   * The identifier of the table {@code tableId} inside the namespace {@code encodedNamespace}.
+   *
+   * <p>{@code TableIdentifier.of(encodedNamespace, tableId)} would be wrong once namespaces nest:
+   * it reads the whole encoded namespace as a single level, so {@code ("db.sub", "t")} would name a
+   * table in a one-level namespace literally called {@code db.sub} — an identifier the catalog's
+   * depth predicate then rejects. Decoding first is what makes the levels come back.
+   *
+   * <p>At depth 1 an encoded namespace has no separator, so this produces exactly the identifier
+   * the two-string overload does, level for level.
+   */
+  public static TableIdentifier tableIdentifier(String encodedNamespace, String tableId) {
+    return TableIdentifier.of(decode(encodedNamespace), tableId);
+  }
+
+  /**
    * Validate that {@code namespace} is a legal OpenHouse namespace: non-empty, no deeper than
    * {@code maxDepth}, every level within the identifier charset, and an encoded form that fits the
    * {@code database_id} column.

@@ -1,7 +1,11 @@
 package com.linkedin.openhouse.common.utils;
 
 import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
+import java.util.Arrays;
+import java.util.Locale;
+import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -289,5 +293,88 @@ public class NamespaceUtilTest {
     Assertions.assertFalse(
         "myXdb.child".compareTo(lower) >= 0 && "myXdb.child".compareTo(upper) < 0);
     Assertions.assertFalse(NamespaceUtil.isDirectChild("my_db", "myXdb.child"));
+  }
+
+  /**
+   * The discriminator's whole job: {@code a.b.history} is a metadata table, {@code db.history} is a
+   * table someone created and called {@code history}. The depth floor is the only thing separating
+   * them, so it is asserted from both sides.
+   *
+   * <p>Calibration: dropping the depth floor turns the second block red; keeping the floor but
+   * matching the namespace's last level instead of the identifier's name turns the first block red.
+   */
+  @Test
+  public void testIsMetadataTableIdentifierNeedsBothDepthAndAMetadataName() {
+    Assertions.assertTrue(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "history")));
+    Assertions.assertTrue(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "snapshots")));
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("a", "b"), "sales")));
+
+    // Depth 1 is the shipped configuration, and there a metadata-table name is just a name.
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(TableIdentifier.of(Namespace.of("db"), "history")));
+    Assertions.assertFalse(
+        NamespaceUtil.isMetadataTableIdentifier(
+            TableIdentifier.of(Namespace.of("db"), "snapshots")));
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableIdentifier(null));
+  }
+
+  /**
+   * The set of metadata table names is Iceberg's, not a list copied into OpenHouse. Asserting over
+   * {@code MetadataTableType.values()} is what makes a type added upstream a covered case rather
+   * than a silently creatable table name.
+   */
+  @Test
+  public void testEveryIcebergMetadataTableTypeIsRecognised() {
+    Assertions.assertTrue(MetadataTableType.values().length > 0);
+    Arrays.stream(MetadataTableType.values())
+        .forEach(
+            type -> {
+              String lower = type.name().toLowerCase(Locale.ROOT);
+              Assertions.assertTrue(
+                  NamespaceUtil.isMetadataTableName(lower), "not recognised: " + lower);
+              Assertions.assertTrue(NamespaceUtil.isMetadataTableName(type.name()));
+              Assertions.assertTrue(
+                  NamespaceUtil.isMetadataTableIdentifier(
+                      TableIdentifier.of(Namespace.of("a", "b"), lower)));
+            });
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableName("histories"));
+    Assertions.assertFalse(NamespaceUtil.isMetadataTableName(null));
+  }
+
+  /**
+   * The create-time admission rule reads the encoded namespace the write actually carries, so the
+   * question it asks is the same one the catalog will ask of the resulting identifier.
+   */
+  @Test
+  public void testCollidesWithMetadataTableFollowsTheEncodedNamespaceDepth() {
+    Assertions.assertTrue(NamespaceUtil.collidesWithMetadataTable("a.b", "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("db", "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("a.b", "histories"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable(null, "history"));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("a.b", null));
+    Assertions.assertFalse(NamespaceUtil.collidesWithMetadataTable("", "history"));
+  }
+
+  /**
+   * A table identifier built from an encoded namespace has to get its levels back, and at depth 1
+   * has to be the identifier the two-string overload produces -- byte for byte, level for level.
+   *
+   * <p>Calibration: using {@code TableIdentifier.of(encoded, tableId)} instead leaves the depth-1
+   * assertion green and turns the nested one red, which is exactly the bug the helper exists for.
+   */
+  @Test
+  public void testTableIdentifierDecodesTheNamespaceAndIsIdenticalAtDepthOne() {
+    Assertions.assertEquals(
+        TableIdentifier.of("db", "t"), NamespaceUtil.tableIdentifier("db", "t"));
+    Assertions.assertEquals(
+        TableIdentifier.of(Namespace.of("a", "b"), "t"), NamespaceUtil.tableIdentifier("a.b", "t"));
+    Assertions.assertEquals(
+        2, NamespaceUtil.tableIdentifier("a.b", "t").namespace().levels().length);
   }
 }
