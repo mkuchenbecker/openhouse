@@ -70,10 +70,35 @@ public interface TablesService {
    *     boolean is set to true iff creation occurred. This is to differentiate between creation and
    *     update of {@link TableDto}.
    */
+  default Pair<TableDto, Boolean> putTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreatorUpdater,
+      Boolean failOnExist) {
+    return putTable(
+        createUpdateTableRequestBody,
+        tableCreatorUpdater,
+        failOnExist, /*icebergRestCommit*/
+        false);
+  }
+
+  /**
+   * As {@link #putTable(CreateUpdateTableRequestBody, String, Boolean)}, but able to say that the
+   * commit arrived through the Iceberg REST facade.
+   *
+   * <p>A REST commit's preconditions are Iceberg {@code UpdateRequirement}s, checked by the facade
+   * against the base it loaded; it declares no whole-document base version of its own. {@code
+   * icebergRestCommit} carries exactly that fact down to the catalog layer, where the two checks
+   * that defend a client-declared base go dormant. Nothing else about the write changes:
+   * authorization, policies, preserved keys, the version check and House Tables' own compare all
+   * run identically.
+   *
+   * @param icebergRestCommit true iff the caller is the Iceberg REST facade
+   */
   Pair<TableDto, Boolean> putTable(
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
       String tableCreatorUpdater,
-      Boolean failOnExist);
+      Boolean failOnExist,
+      boolean icebergRestCommit);
 
   /**
    * Delete a table represented by databaseId and tableId if actingPrincipal has the right privilege

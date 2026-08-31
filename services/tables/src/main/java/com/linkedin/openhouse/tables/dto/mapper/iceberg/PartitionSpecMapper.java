@@ -55,14 +55,22 @@ public class PartitionSpecMapper {
    */
   @Named("toTimePartitionSpec")
   public TimePartitionSpec toTimePartitionSpec(Table table) {
-    PartitionSpec partitionSpec = table.spec();
+    return toTimePartitionSpec(table.schema(), table.spec());
+  }
+
+  /**
+   * As {@link #toTimePartitionSpec(Table)}, but for a schema and spec that do not yet belong to a
+   * table. The Iceberg REST create route is handed exactly that pair -- a {@code
+   * CreateTableRequest} names a schema and a partition spec for a table that does not exist -- so
+   * the derivation has to be reachable without a {@link Table} to read them off.
+   */
+  public TimePartitionSpec toTimePartitionSpec(Schema schema, PartitionSpec partitionSpec) {
     List<PartitionField> timeBasedPartitionFields =
         partitionSpec.fields().stream()
             .filter(
                 x -> {
-                  validatePartitionField(table.schema(), x);
-                  return table.schema().findField(x.sourceId()).type().typeId()
-                      == ALLOWED_PARTITION_TYPEID;
+                  validatePartitionField(schema, x);
+                  return schema.findField(x.sourceId()).type().typeId() == ALLOWED_PARTITION_TYPEID;
                 })
             .collect(Collectors.toList());
     if (timeBasedPartitionFields.size() > MAX_TIME_PARTITIONING_COLUMNS) {
@@ -72,11 +80,7 @@ public class PartitionSpecMapper {
     if (!timeBasedPartitionFields.isEmpty()) {
       timePartitionSpec =
           TimePartitionSpec.builder()
-              .columnName(
-                  partitionSpec
-                      .schema()
-                      .findField(timeBasedPartitionFields.get(0).sourceId())
-                      .name())
+              .columnName(schema.findField(timeBasedPartitionFields.get(0).sourceId()).name())
               .granularity(toGranularity(timeBasedPartitionFields.get(0)).get())
               .build();
     }
@@ -118,14 +122,18 @@ public class PartitionSpecMapper {
    */
   @Named("toClusteringSpec")
   public List<ClusteringColumn> toClusteringSpec(Table table) {
-    PartitionSpec partitionSpec = table.spec();
+    return toClusteringSpec(table.schema(), table.spec());
+  }
+
+  /** As {@link #toClusteringSpec(Table)}, for a schema and spec with no table behind them yet. */
+  public List<ClusteringColumn> toClusteringSpec(Schema schema, PartitionSpec partitionSpec) {
     List<PartitionField> clusteringFields =
         partitionSpec.fields().stream()
             .filter(
                 x -> {
-                  validatePartitionField(table.schema(), x);
+                  validatePartitionField(schema, x);
                   return ALLOWED_CLUSTERING_TYPEIDS.contains(
-                      table.schema().findField(x.sourceId()).type().typeId());
+                      schema.findField(x.sourceId()).type().typeId());
                 })
             .collect(Collectors.toList());
     if (clusteringFields.size() > ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS) {
@@ -141,7 +149,7 @@ public class PartitionSpecMapper {
               .map(
                   x ->
                       ClusteringColumn.builder()
-                          .columnName(table.schema().findColumnName(x.sourceId()))
+                          .columnName(schema.findColumnName(x.sourceId()))
                           .transform(toTransform(x).orElse(null))
                           .build())
               .collect(Collectors.toList());

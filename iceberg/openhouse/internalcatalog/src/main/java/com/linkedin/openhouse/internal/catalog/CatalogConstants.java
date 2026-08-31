@@ -28,6 +28,25 @@ public final class CatalogConstants {
   /** Used to uniquely identify an update towards a table from user side. */
   public static final String COMMIT_KEY = "commitKey";
 
+  /**
+   * Marks a commit that arrived through the Iceberg REST facade rather than the whole-document
+   * {@code /v1} API.
+   *
+   * <p>The two protocol-level conflict checks in {@code OpenHouseInternalTableOperations} -- {@code
+   * abortIfWriterBaseDivergedFromCatalog} and {@code failIfRetryUpdate} -- exist only because a
+   * whole-document client declares its own base in {@link #COMMIT_KEY} and the server has to defend
+   * against that declaration being stale. A REST client declares its preconditions as Iceberg
+   * {@code UpdateRequirement}s instead, which are checked against the base the server itself just
+   * loaded, so re-deriving a base declaration for those two checks would only fabricate a
+   * precondition the client never stated. This key is how a commit says so.
+   *
+   * <p>It is a transient, doCommit-local marker: it is stripped from the property map before the
+   * commit is derived, exactly as {@link #COMMIT_KEY} is, so it never reaches a metadata.json. The
+   * durable linearization point -- House Tables' metadataLocation compare plus JPA {@code @Version}
+   * -- is unaffected and still runs for every commit on both paths.
+   */
+  public static final String IS_REST_COMMIT_KEY = "isIcebergRestCommit";
+
   public static final String EVOLVED_SCHEMA_KEY = "evolved.table.schema";
 
   public static final String RTAS_ENABLED_TABLE_PROP = "replace.enabled";

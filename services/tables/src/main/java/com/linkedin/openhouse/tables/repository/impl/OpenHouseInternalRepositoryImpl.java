@@ -193,7 +193,15 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       // TODO remove tableTypeAdded after all existing tables have been back-filled to have a
       // tableType
       boolean tableTypeAdded = checkIfTableTypeAdded(updateProperties, table.properties());
-      updateProperties.set(COMMIT_KEY, tableDto.getTableVersion()).commit();
+      // A whole-document commit declares the base it was written against; the catalog layer
+      // checks that declaration. A REST commit states its preconditions as UpdateRequirements
+      // instead, already validated against the base the facade loaded, so it declares no base and
+      // says so -- see CatalogConstants.IS_REST_COMMIT_KEY.
+      if (tableDto.isRestCommit()) {
+        updateProperties.set(IS_REST_COMMIT_KEY, "true").commit();
+      } else {
+        updateProperties.set(COMMIT_KEY, tableDto.getTableVersion()).commit();
+      }
       // this relies on forked iceberg-core to use this property for building the base transaction
       // retryer
       // default iceberg behavior will use the hdfs base metadata to derive the base transaction
@@ -605,6 +613,10 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     if (tableDto.isStageReplace()) {
       meterRegistry.counter(MetricsConstant.REPO_TABLE_REPLACED_CTR_STAGED).increment();
       propertiesMap.put(IS_STAGE_REPLACE_KEY, String.valueOf(tableDto.isStageReplace()));
+    }
+
+    if (tableDto.isRestCommit()) {
+      propertiesMap.put(IS_REST_COMMIT_KEY, "true");
     }
 
     propertiesMap.put(
