@@ -2,6 +2,7 @@ package com.linkedin.openhouse.internal.catalog.repository;
 
 import com.linkedin.openhouse.housetables.client.api.DatabaseApi;
 import com.linkedin.openhouse.housetables.client.model.DatabaseBackfillStatus;
+import com.linkedin.openhouse.internal.catalog.repository.exception.NamespaceStoreCompletenessUnavailableException;
 import java.time.Duration;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,8 +24,19 @@ public class NamespaceStoreCompletenessImpl implements NamespaceStoreCompletenes
 
   @Override
   public Optional<Long> verifiedCompleteTimeMs() {
-    DatabaseBackfillStatus status =
-        databaseApi.getBackfillStatus().block(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS));
-    return Optional.ofNullable(status == null ? null : status.getVerifiedCompleteTimeMs());
+    DatabaseBackfillStatus status;
+    try {
+      status = databaseApi.getBackfillStatus().block(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS));
+    } catch (RuntimeException e) {
+      // The only translation on this hop: whatever the transport raises becomes the one outcome
+      // this repository publishes for "cannot tell", with the cause kept.
+      throw new NamespaceStoreCompletenessUnavailableException(
+          "Could not read the state of the database backfill from House Tables", e);
+    }
+    if (status == null) {
+      throw new NamespaceStoreCompletenessUnavailableException(
+          "House Tables answered the backfill status request with no body", null);
+    }
+    return Optional.ofNullable(status.getVerifiedCompleteTimeMs());
   }
 }

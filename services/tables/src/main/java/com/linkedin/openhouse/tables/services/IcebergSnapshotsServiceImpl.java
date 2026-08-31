@@ -155,18 +155,15 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
    *
    * <p>The counter survives the flip: {@link MetricsConstant#NAMESPACE_REGISTRATION_FAILED_CTR}
    * still counts every failure, and now measures table writes lost to the namespace store rather
-   * than drift accumulating silently.
+   * than drift accumulating silently. It is the only thing this method adds — the failure itself
+   * goes to the caller, and the request handler that renders it is the one place that logs it, with
+   * the request that caused it.
    */
   private void registerNamespace(String databaseId) {
     try {
       namespacesService.ensureNamespace(databaseId);
     } catch (Exception e) {
       meterRegistry.counter(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).increment();
-      log.error(
-          "Failed to register database {} in the namespace store while creating a table through a"
-              + " snapshot commit.",
-          databaseId,
-          e);
       throw e;
     }
   }

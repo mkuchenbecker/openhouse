@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
 import com.linkedin.openhouse.internal.catalog.repository.NamespaceStoreCompleteness;
+import com.linkedin.openhouse.internal.catalog.repository.exception.NamespaceStoreCompletenessUnavailableException;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,13 +71,19 @@ public class NamespaceStoreReadGate {
    */
   private volatile boolean serving = false;
 
-  private final Object checkLock = new Object();
+  /**
+   * Held only by the thread actually reading the marker. Threads that cannot take it are refused
+   * from the remembered state rather than made to wait for a network call they would then also be
+   * refused by.
+   */
+  private final java.util.concurrent.locks.ReentrantLock checkLock =
+      new java.util.concurrent.locks.ReentrantLock();
 
-  /** Guarded by {@link #checkLock}; when the remembered refusal expires. */
-  private long recheckAtMs = Long.MIN_VALUE;
+  /** When the remembered refusal expires. */
+  private volatile long recheckAtMs = Long.MIN_VALUE;
 
-  /** Guarded by {@link #checkLock}; why the last check refused, replayed until it expires. */
-  private String rememberedRefusal;
+  /** Why the last check refused, replayed until it expires. */
+  private volatile String rememberedRefusal = "Cannot serve namespace reads: " + REMEDY;
 
   /**
    * @throws NamespaceStoreNotBackfilledException if the namespace store has not been verified
@@ -87,7 +94,10 @@ public class NamespaceStoreReadGate {
     if (serving) {
       return;
     }
-    synchronized (checkLock) {
+    if (System.currentTimeMillis() < recheckAtMs || !checkLock.tryLock()) {
+      throw new NamespaceStoreNotBackfilledException(rememberedRefusal);
+    }
+    try {
       if (serving) {
         return;
       }
@@ -99,7 +109,7 @@ public class NamespaceStoreReadGate {
       Optional<Long> verifiedAt;
       try {
         verifiedAt = namespaceStoreCompleteness.verifiedCompleteTimeMs();
-      } catch (RuntimeException e) {
+      } catch (NamespaceStoreCompletenessUnavailableException e) {
         rememberedRefusal =
             "Cannot serve namespace reads: the state of the database backfill could not be read"
                 + " from House Tables, and an unreadable marker is not a complete store. "
@@ -114,6 +124,8 @@ public class NamespaceStoreReadGate {
           "Namespace store verified complete at {}; serving namespace reads from it from here on.",
           verifiedAt.get());
       serving = true;
+    } finally {
+      checkLock.unlock();
     }
   }
 }

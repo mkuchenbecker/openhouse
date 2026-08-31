@@ -21,7 +21,6 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
-import org.springframework.data.util.Pair;
 
 @SpringBootTest
 public class TablesServiceTest {
@@ -44,12 +43,14 @@ public class TablesServiceTest {
   }
 
   /**
-   * The other half of the same drift: creating a table through {@code putTable} registers its
-   * database, swallows a failure to do so, and must not swallow it silently. {@code
+   * Creating a table through {@code putTable} registers its database, and a failure to do so now
+   * fails the write rather than being swallowed: nothing derives a database's existence from its
+   * tables any more, so the table would land in a database the catalog denies exists. The counter
+   * stays, because a client's 500 is not a signal an operator can watch. {@code
    * IcebergSnapshotsServiceTest} covers the snapshot-commit twin of this path.
    */
   @Test
-  public void testNamespaceRegistrationFailureIsCounted() {
+  public void testNamespaceRegistrationFailureFailsTheTableWriteAndIsCounted() {
     final String dbId = TEST_CREATE_TABLE_REQUEST_BODY.getDatabaseId();
     final String tableId = TEST_CREATE_TABLE_REQUEST_BODY.getTableId();
     final TableDtoPrimaryKey key =
@@ -66,14 +67,17 @@ public class TablesServiceTest {
         meterRegistry.find(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).counter();
     double before = counter == null ? 0d : counter.count();
 
-    Pair<TableDto, Boolean> result =
-        service.putTable(TEST_CREATE_TABLE_REQUEST_BODY, TEST_TABLE_CREATOR, false);
+    RuntimeException thrown =
+        Assertions.assertThrows(
+            RuntimeException.class,
+            () -> service.putTable(TEST_CREATE_TABLE_REQUEST_BODY, TEST_TABLE_CREATOR, false));
 
-    Assertions.assertTrue(result.getSecond(), "the table is still created");
+    Assertions.assertEquals("namespace store unavailable", thrown.getMessage());
+    Mockito.verify(mockRepository, Mockito.never()).save(Mockito.any(TableDto.class));
     Assertions.assertEquals(
         before + 1,
         meterRegistry.counter(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).count(),
-        "a swallowed registration failure has to be visible somewhere");
+        "a registration failure has to be countable, not only visible to the one caller");
   }
 
   @Test

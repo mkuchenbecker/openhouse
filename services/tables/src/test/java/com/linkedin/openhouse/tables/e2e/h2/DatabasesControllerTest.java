@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllDatabasesResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetDatabaseResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
@@ -19,6 +20,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.catalog.Catalog;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInfo;
@@ -48,6 +50,19 @@ public class DatabasesControllerTest {
   @Autowired MockMvc mvc;
 
   @Autowired StorageManager storageManager;
+
+  @Autowired HouseNamespaceRepository houseNamespaceRepository;
+
+  /**
+   * The listing reads the namespace store now, and a database stays in it until it is dropped
+   * rather than until its last table is. That is the point of the store, and it makes what this
+   * class asserts depend on what every other class sharing this context has created. So this class
+   * owns the store for the length of each of its tests.
+   */
+  @BeforeEach
+  public void emptyTheNamespaceStore() {
+    houseNamespaceRepository.deleteAll();
+  }
 
   private void deleteTableAndValidateResponse(GetTableResponseBody getTableResponseBody)
       throws Exception {

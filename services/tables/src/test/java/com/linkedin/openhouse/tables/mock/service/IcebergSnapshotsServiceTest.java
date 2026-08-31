@@ -142,12 +142,14 @@ public class IcebergSnapshotsServiceTest {
   }
 
   /**
-   * The namespace store is not yet the source of truth for whether a database exists, so a store
-   * that is down must not take table creation down with it. This flips once the derived fallback is
-   * deleted.
+   * The flip the fallback deletion brought with it. This asserted the opposite -- that a namespace
+   * store which is down must not take table creation down with it -- and that was right while reads
+   * derived a database's existence from its tables, because the missing row cost nothing a client
+   * could see. It costs everything now: the commit would create a table in a database the catalog
+   * denies exists, and no later request could tell that had happened.
    */
   @Test
-  public void testNamespaceRegistrationFailureDoesNotFailTableCreation() {
+  public void testNamespaceRegistrationFailureFailsTableCreation() {
     final IcebergSnapshotsRequestBody requestBody =
         TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
     final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
@@ -163,19 +165,20 @@ public class IcebergSnapshotsServiceTest {
     Mockito.when(houseNamespaceRepository.save(Mockito.any(HouseNamespace.class)))
         .thenThrow(new RuntimeException("namespace store unavailable"));
 
-    Pair<TableDto, Boolean> result =
-        service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+    RuntimeException thrown =
+        Assertions.assertThrows(
+            RuntimeException.class,
+            () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
 
-    Assertions.assertEquals(tableDto, result.getFirst());
-    Assertions.assertTrue(result.getSecond(), "Table must still be created");
-    Assertions.assertTrue(
-        namespaceStore.isEmpty(), "Nothing was registered, and that is tolerated");
+    Assertions.assertEquals("namespace store unavailable", thrown.getMessage());
+    Assertions.assertTrue(namespaceStore.isEmpty(), "Nothing was registered");
+    Mockito.verify(mockRepository, Mockito.never()).save(Mockito.any(TableDto.class));
   }
 
   /**
-   * Tolerated is not the same as unobserved. A namespace store failing writes now leaves databases
-   * behind with no row, and until this counter moves nothing says so: the table write succeeds, the
-   * client sees nothing, and the gap surfaces whenever somebody next runs the backfill.
+   * The counter survives the flip. It used to be the only trace of a swallowed failure; it now
+   * measures table writes lost to the namespace store, which is a different question with the same
+   * answer and worth keeping separate from the client's error.
    */
   @Test
   public void testNamespaceRegistrationFailureIsCounted() {
@@ -195,12 +198,14 @@ public class IcebergSnapshotsServiceTest {
         .thenThrow(new RuntimeException("namespace store unavailable"));
     double before = registrationFailures();
 
-    service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+    Assertions.assertThrows(
+        RuntimeException.class,
+        () -> service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR));
 
     Assertions.assertEquals(
         before + 1,
         registrationFailures(),
-        "a swallowed registration failure has to be visible somewhere");
+        "a registration failure has to be countable, not only visible to the one caller");
   }
 
   /** A registration that succeeds must not look like drift. */

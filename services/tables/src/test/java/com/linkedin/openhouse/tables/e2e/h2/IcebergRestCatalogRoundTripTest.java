@@ -26,6 +26,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.types.Types;
@@ -589,12 +590,15 @@ public class IcebergRestCatalogRoundTripTest {
   }
 
   /**
-   * B3, the other half: a database that predates the namespace store has no row at all. Deleting
-   * the row here is exactly that state, and the namespace API must not deny the database's
-   * existence because of it.
+   * The inverse of what this used to assert. A database that predates the namespace store has no
+   * row, and the API used to cover for that by deriving its existence from the tables it holds.
+   * That derivation is gone: the row is what makes the namespace, and without one the namespace is
+   * not there, whatever the table store says. Deleting the row here is exactly the unbackfilled
+   * state, and pinning it is the point -- a read path that quietly kept the fallback would pass
+   * every other test in this class.
    */
   @Test
-  void aDatabaseWithNoStoredRowIsStillANamespace() {
+  void aDatabaseWithNoStoredRowIsNotANamespace() {
     String db = "icebergrestderived";
     createOpenHouseTable(db, "derived_t", SCHEMA_2COL, null, null);
     Namespace ns = Namespace.of(db);
@@ -603,10 +607,16 @@ public class IcebergRestCatalogRoundTripTest {
       houseNamespaceRepository.deleteById(db);
       assertThat(houseNamespaceRepository.findById(db)).isEmpty();
 
+      assertThat(restCatalog.namespaceExists(ns)).isFalse();
+      assertThat(restCatalog.listNamespaces()).doesNotContain(ns);
+      assertThatThrownBy(() -> restCatalog.loadNamespaceMetadata(ns))
+          .isInstanceOf(NoSuchNamespaceException.class);
+      // Nothing holds the name, so it can be created -- and the table it already holds is then
+      // under a namespace that exists again.
+      createNamespaceOverHttp(db);
       assertThat(restCatalog.namespaceExists(ns)).isTrue();
-      assertThat(restCatalog.listNamespaces()).contains(ns);
-      assertThat(restCatalog.loadNamespaceMetadata(ns)).isEmpty();
-      // It holds a table, so it is not empty, and that is a 409 rather than the 404 it used to be.
+      // And it is still not empty, because the table store still holds a table under it: existence
+      // moved to the namespace store, occupancy did not.
       assertThatThrownBy(
               () ->
                   restTemplate.exchange(
@@ -616,15 +626,6 @@ public class IcebergRestCatalogRoundTripTest {
                       String.class))
           .isInstanceOf(HttpClientErrorException.Conflict.class)
           .hasMessageContaining("NamespaceNotEmptyException");
-      // Creating it is a conflict: it exists.
-      assertThatThrownBy(() -> createNamespaceOverHttp(db))
-          .isInstanceOf(HttpClientErrorException.Conflict.class)
-          .hasMessageContaining("AlreadyExistsException");
-
-      // Setting a property on it writes the row it never had, without moving anything else.
-      restCatalog.setProperties(ns, Collections.singletonMap("owner", "testuser"));
-      assertThat(houseNamespaceRepository.findById(db)).isPresent();
-      assertThat(restCatalog.loadNamespaceMetadata(ns)).containsEntry("owner", "testuser");
     } finally {
       deleteOpenHouseTable(db, "derived_t");
       houseNamespaceRepository.deleteById(db);
