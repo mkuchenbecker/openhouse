@@ -20,8 +20,8 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
-import org.apache.iceberg.types.Types;
 import org.apache.iceberg.rest.RESTCatalog;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -244,8 +244,7 @@ public class NestedNamespaceRoutingTest {
     assertThatThrownBy(
             () ->
                 restCatalog.renameTable(
-                    TableIdentifier.of(nested, "renamable"),
-                    TableIdentifier.of(nested, "history")))
+                    TableIdentifier.of(nested, "renamable"), TableIdentifier.of(nested, "history")))
         // The validator's own sentence, reported faithfully: the refusal is the service's, and the
         // facade does not reword it. Iceberg's client raises IllegalArgumentException for the 400
         // it carries.

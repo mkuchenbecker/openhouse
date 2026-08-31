@@ -130,9 +130,9 @@ public class OpenHouseIcebergRestNamespaceApiHandler implements IcebergRestNames
    *
    * <p>The rule lives in {@link IcebergRestIdentifiers}, which the table routes read too, so that a
    * name cannot be answerable on one route and malformed on another. It covers the identifier only:
-   * it deliberately does not span the service call, where a {@link org.apache.iceberg.exceptions.ValidationException} means
-   * something else entirely (a reserved property key, an oversized property bag) and owes the
-   * client a 400 that says so.
+   * it deliberately does not span the service call, where a {@link
+   * org.apache.iceberg.exceptions.ValidationException} means something else entirely (a reserved
+   * property key, an oversized property bag) and owes the client a 400 that says so.
    */
   private Namespace readNamespace(String namespace) {
     return IcebergRestIdentifiers.readNamespace(
