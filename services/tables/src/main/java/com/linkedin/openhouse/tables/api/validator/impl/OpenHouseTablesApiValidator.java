@@ -6,6 +6,7 @@ import static com.linkedin.openhouse.common.schema.IcebergSchemaHelper.*;
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
@@ -526,10 +527,9 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   private void validateDatabaseId(String databaseId, List<String> validationFailures) {
     if (StringUtils.isEmpty(databaseId)) {
       validationFailures.add("databaseId : Cannot be empty");
-    } else if (!databaseId.matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+    } else if (!NamespaceUtil.isValidNamespaceIdentifier(databaseId)) {
       validationFailures.add(
-          String.format(
-              "databaseId : provided %s, %s", databaseId, ALPHA_NUM_UNDERSCORE_ERROR_MSG));
+          String.format("databaseId : provided %s, %s", databaseId, NAMESPACE_ID_ERROR_MSG));
     }
   }
 

@@ -98,6 +98,27 @@ public class HouseNamespaceRepositoryImpl implements HouseNamespaceRepository {
     return namespaces;
   }
 
+  /**
+   * The store's listing primitive, delegated to HTS rather than derived here: {@code findAll()}
+   * filtered in this process would make listing one namespace's children cost the whole catalog.
+   * HTS answers it as a bounded range over the encoded id and returns only the direct children.
+   */
+  @Override
+  public List<HouseNamespace> childrenOf(String encodedParent) {
+    GetAllEntityResponseBodyDatabase response =
+        databaseApi
+            .getDatabaseChildren(encodedParent)
+            .onErrorResume(e -> handleHtsHttpError(e, encodedParent))
+            .block(Duration.ofSeconds(READ_REQUEST_TIMEOUT_SECONDS));
+    List<HouseNamespace> children = new ArrayList<>();
+    if (response != null && response.getResults() != null) {
+      for (Database database : response.getResults()) {
+        children.add(toHouseNamespace(database));
+      }
+    }
+    return children;
+  }
+
   @Override
   public void deleteById(String namespaceId) {
     databaseApi

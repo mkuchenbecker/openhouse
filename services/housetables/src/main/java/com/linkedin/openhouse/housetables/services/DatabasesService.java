@@ -18,6 +18,16 @@ public interface DatabasesService {
   List<Database> getAllDatabases();
 
   /**
+   * The direct children of {@code parentDatabaseId} — namespaces exactly one level deeper — ordered
+   * by databaseId. Grandchildren are excluded, and the parent is not its own child.
+   *
+   * <p>Returns an empty list when the parent has no children, including when the parent itself does
+   * not exist: existence is the Tables Service's question, and answering it here would make one
+   * listing call return two different failures for the same state.
+   */
+  List<Database> getChildDatabases(String parentDatabaseId);
+
+  /**
    * Create or replace a {@link Database} row, conditional on {@link Database#getVersion()}: a null
    * version asserts that no row exists yet, a non-null one asserts that the stored row is at that
    * version.

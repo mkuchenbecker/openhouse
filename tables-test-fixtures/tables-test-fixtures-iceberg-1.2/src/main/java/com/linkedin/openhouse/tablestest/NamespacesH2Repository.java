@@ -1,11 +1,16 @@
 package com.linkedin.openhouse.tablestest;
 
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,5 +54,28 @@ public interface NamespacesH2Repository extends HouseNamespaceRepository {
   @Override
   default void deleteById(String namespaceId) {
     deleteByNamespaceIdIgnoreCase(namespaceId);
+  }
+
+  /**
+   * The subtree range the {@code childrenOf} contract is built on, expressed the same way the House
+   * Tables store expresses it: a half-open range over the encoded id, which is contiguous because
+   * the encoding dot-joins the levels. A {@code LIKE} prefix would not do — the identifier charset
+   * admits {@code _}, which SQL {@code LIKE} reads as a single-character wildcard.
+   */
+  @Query(
+      "SELECT n FROM HouseNamespace n WHERE n.namespaceId >= :lowerBound"
+          + " AND n.namespaceId < :upperBound ORDER BY n.namespaceId")
+  List<HouseNamespace> findAllInSubtree(
+      @Param("lowerBound") String lowerBound, @Param("upperBound") String upperBound);
+
+  /** The range gives the subtree; the separator count narrows it to the children. */
+  @Override
+  default List<HouseNamespace> childrenOf(String encodedParent) {
+    return findAllInSubtree(
+            NamespaceUtil.subtreeLowerBound(encodedParent),
+            NamespaceUtil.subtreeUpperBound(encodedParent))
+        .stream()
+        .filter(namespace -> NamespaceUtil.isDirectChild(encodedParent, namespace.getNamespaceId()))
+        .collect(Collectors.toList());
   }
 }

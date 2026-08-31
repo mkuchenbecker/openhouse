@@ -1,10 +1,10 @@
 package com.linkedin.openhouse.tables.api.validator.impl;
 
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_ERROR_MSG;
-import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.NAMESPACE_ID_ERROR_MSG;
 
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
 import com.linkedin.openhouse.tables.api.validator.DatabasesApiValidator;
 import java.util.ArrayList;
@@ -57,9 +57,9 @@ public class OpenHouseDatabasesApiValidator implements DatabasesApiValidator {
     List<String> validationFailures = new ArrayList<>();
     if (StringUtils.isEmpty(databaseId)) {
       validationFailures.add("databaseId : Cannot be empty");
-    } else if (!databaseId.matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+    } else if (!NamespaceUtil.isValidNamespaceIdentifier(databaseId)) {
       validationFailures.add(
-          String.format("databaseId provided: %s, %s", databaseId, ALPHA_NUM_UNDERSCORE_ERROR_MSG));
+          String.format("databaseId provided: %s, %s", databaseId, NAMESPACE_ID_ERROR_MSG));
     }
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
