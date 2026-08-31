@@ -137,37 +137,46 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
   /**
    * How many times loading the metadata file is attempted before the failure is reported.
    *
-   * <p>This is a budget for storage being briefly unavailable, not for storage answering. An
-   * outcome the first attempt already decided -- the file is not there -- is not retried at all;
-   * see {@link #isRetryableMetadataLoadFailure}.
+   * <p>This is a budget for the dependency being briefly unable to answer, not for it answering. An
+   * outcome the first read already settled is not retried at all; see {@link
+   * #isTransientMetadataLoadFailure}.
    */
   private static final int METADATA_LOAD_ATTEMPTS = 20;
 
   /**
    * Whether a failed attempt to load the metadata file is worth repeating.
    *
-   * <p>The line drawn here is the one Iceberg's {@link FileIO} contract already draws. A {@link
-   * NotFoundException} is what an {@code InputFile} raises when storage answered and said the
-   * object does not exist; every other failure to read it -- a connection reset, a throttled
-   * request, an unavailable name node -- reaches this method as {@code RuntimeIOException}, {@code
-   * UncheckedIOException} or a provider exception, and those are the ones a retry can fix. Retrying
-   * an absent file cannot change the answer: nothing in the read path creates the file, so twenty
-   * attempts and one attempt reach the same 404 and the only difference is how long the client
-   * waits for it.
+   * <p>The line is drawn by the same list the {@code catch} clauses below use, and that is the
+   * whole point: an exception this method is prepared to convert into an answer for the client is,
+   * by construction, one the read already settled. Absence, a location that is not a metadata file
+   * name, JSON that does not describe table metadata, metadata that names a schema it does not
+   * carry -- reading the same location a second time produces the same exception, because nothing
+   * in the read path changes what is at that location. Spending a dependency-failure budget on them
+   * only decides how long the client waits for an answer that was available on the first attempt;
+   * at the shipped budget that is around ninety seconds.
    *
-   * <p>The distinction is only as good as the {@code FileIO} underneath: a storage client that
-   * reported a transient fault as {@code NotFoundException} would now fail fast on it. That is the
-   * same reading Iceberg itself applies -- {@code BaseMetastoreTableOperations} passes {@code
-   * stopRetryOn(NotFoundException.class)} to the same task -- so this states the rule the fork
-   * already applied rather than choosing a new one.
+   * <p>Everything else keeps the full budget, which is what the budget was for: a name node that is
+   * failing over, a throttled or reset connection, an object store returning 5xx. Those reach here
+   * as {@code RuntimeIOException}, {@code UncheckedIOException} or a provider exception, and a
+   * second attempt genuinely can answer differently.
    *
-   * <p>Stating it explicitly is not cosmetic. {@code Tasks} consults its {@code stopRetryOn} list
-   * <em>only</em> when no {@code shouldRetryTest} predicate was supplied, so any predicate passed
-   * here replaces that list rather than adding to it. A predicate that answered {@code true} for a
-   * missing file would silently restore the twenty-attempt wait this method exists to prevent.
+   * <p>The risk this rule accepts is a partially written metadata file read mid-write, where a
+   * retry might see the finished bytes. OpenHouse does not produce that state: a commit writes to a
+   * fresh {@code NNNNN-<uuid>.metadata.json} and only then publishes the pointer to it, so a
+   * location a reader can reach is a location that is already complete.
+   *
+   * <p>Stating the rule here is not cosmetic. {@code Tasks} consults its {@code stopRetryOn} list
+   * <em>only</em> when no {@code shouldRetryTest} predicate was supplied, so a predicate passed
+   * here replaces the {@code stopRetryOn(NotFoundException.class)} that {@code
+   * BaseMetastoreTableOperations} sets rather than adding to it. That is why absence is named below
+   * even though Iceberg names it too: a predicate that omitted it would silently give the missing
+   * file its twenty attempts back.
    */
-  private static boolean isRetryableMetadataLoadFailure(Exception e) {
-    return !(e instanceof NotFoundException);
+  private static boolean isTransientMetadataLoadFailure(Exception e) {
+    return !(e instanceof NotFoundException
+        || e instanceof ValidationException
+        || e instanceof IllegalArgumentException
+        || e instanceof IllegalStateException);
   }
 
   /** A wrapper function to encapsulate timer logic for loading metadata. */
@@ -179,7 +188,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
         () ->
             super.refreshFromMetadataLocation(
                 metadataLoc,
-                OpenHouseInternalTableOperations::isRetryableMetadataLoadFailure,
+                OpenHouseInternalTableOperations::isTransientMetadataLoadFailure,
                 METADATA_LOAD_ATTEMPTS,
                 this::loadTableMetadataWithCache);
     try {

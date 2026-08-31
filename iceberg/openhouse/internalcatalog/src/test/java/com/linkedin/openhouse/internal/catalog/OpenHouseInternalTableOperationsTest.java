@@ -44,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.SneakyThrows;
 import org.apache.commons.compress.utils.Lists;
 import org.apache.hadoop.conf.Configuration;
@@ -76,6 +77,9 @@ import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
@@ -2192,16 +2196,40 @@ public class OpenHouseInternalTableOperationsTest {
   /**
    * Verifies that a missing metadata file is surfaced as the named subtype, and therefore still as
    * an InvalidTableMetadataException for every caller that catches the supertype.
+   *
+   * <p>The location has to be a metadata file name a commit could actually have written. Iceberg
+   * decides the compression codec from the file name before it opens anything, so a location that
+   * is not named {@code *.metadata.json} never reaches storage and never produces the absence this
+   * test is about -- see {@link #testRefreshMetadataMalformedLocationIsNotReportedAsMissing}.
    */
   @Test
   void testRefreshMetadataMissingFileThrowsInvalidTableMetadataException() {
-    String nonExistentPath = "/tmp/non-existent-" + UUID.randomUUID() + "/metadata.json";
+    String nonExistentPath =
+        "/tmp/non-existent-" + UUID.randomUUID() + "/00000-" + UUID.randomUUID() + ".metadata.json";
 
     InvalidTableMetadataException e =
         Assertions.assertThrows(
             TableMetadataFileNotFoundException.class,
             () -> openHouseInternalTableOperations.refreshMetadata(nonExistentPath));
     Assertions.assertInstanceOf(NotFoundException.class, e.getCause());
+  }
+
+  /**
+   * A location that is not a metadata file name at all is refused by Iceberg before storage is
+   * consulted, so it is not evidence about whether the file is there and must not be reported as a
+   * missing file -- that would answer 404 for a table whose HTS row is malformed.
+   */
+  @Test
+  void testRefreshMetadataMalformedLocationIsNotReportedAsMissing() {
+    String malformedLocation = "/tmp/non-existent-" + UUID.randomUUID() + "/metadata.json";
+
+    InvalidTableMetadataException e =
+        Assertions.assertThrows(
+            InvalidTableMetadataException.class,
+            () -> openHouseInternalTableOperations.refreshMetadata(malformedLocation));
+    Assertions.assertFalse(
+        e instanceof TableMetadataFileNotFoundException,
+        "a location Iceberg rejected before reading is not a missing file: " + e.getMessage());
   }
 
   /**
@@ -2225,28 +2253,44 @@ public class OpenHouseInternalTableOperationsTest {
   }
 
   /**
-   * A metadata file that is not there is decided by the first read. Retrying it cannot change the
-   * answer -- nothing in the read path creates the file -- so the client must not be made to wait
-   * out a dependency-failure retry budget for a 404.
+   * An outcome the first read settled is read exactly once. Retrying cannot change the answer --
+   * nothing in the read path changes what is at the location -- so the client must not be made to
+   * wait out a dependency-failure budget for it. At the shipped budget that wait is around ninety
+   * seconds, which is why this asserts the read count and not only the elapsed time.
    */
-  @Test
-  void testMissingMetadataFileIsNotRetried() {
+  @ParameterizedTest
+  @MethodSource("settledMetadataLoadFailures")
+  void testASettledMetadataLoadFailureIsNotRetried(String name, RuntimeException settled) {
     CountingTableMetadataCache counting =
         new CountingTableMetadataCache(
             location -> {
-              throw new NotFoundException("Failed to open input stream for file: %s", location);
+              throw settled;
             });
     OpenHouseInternalTableOperations ops = operationsBackedBy(counting);
 
-    long start = System.currentTimeMillis();
     Assertions.assertThrows(
-        TableMetadataFileNotFoundException.class,
-        () -> ops.refreshMetadata("/tmp/gone-" + UUID.randomUUID() + "/metadata.json"));
-    long elapsedMs = System.currentTimeMillis() - start;
+        InvalidTableMetadataException.class,
+        () -> ops.refreshMetadata("/tmp/settled-" + UUID.randomUUID() + "/00000-a.metadata.json"));
 
-    Assertions.assertEquals(1, counting.attempts(), "an absent file must be read exactly once");
-    Assertions.assertTrue(
-        elapsedMs < 2000, "answering a missing metadata file took " + elapsedMs + " ms");
+    // The read count, not the elapsed time, is what this asserts. Wall clock on a shared build
+    // machine is not a fact about the code, but attempts are: the twenty-attempt budget is spent
+    // on Iceberg's exponential backoff, so one read is the whole of the latency claim.
+    Assertions.assertEquals(1, counting.attempts(), name + " must be read exactly once");
+  }
+
+  private static Stream<Arguments> settledMetadataLoadFailures() {
+    return Stream.of(
+        Arguments.of(
+            "an absent file", new NotFoundException("Failed to open input stream for file: x")),
+        Arguments.of(
+            "a location that is not a metadata file name",
+            new IllegalArgumentException("x is not a valid metadata file")),
+        Arguments.of(
+            "metadata naming a schema it does not carry",
+            new IllegalArgumentException("Cannot find schema with current-schema-id=6")),
+        Arguments.of("metadata Iceberg rejects", new ValidationException("Cannot parse metadata")),
+        Arguments.of(
+            "a table the read cannot place", new IllegalStateException("Cannot find table")));
   }
 
   /**
