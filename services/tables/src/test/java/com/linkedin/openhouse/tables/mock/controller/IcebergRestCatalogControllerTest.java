@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
+import com.linkedin.openhouse.common.exception.TableMetadataFileNotFoundException;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
@@ -255,10 +256,11 @@ public class IcebergRestCatalogControllerTest {
   }
 
   /**
-   * A table pointing at a metadata.json that storage no longer holds. The catalog re-throws the
-   * miss wrapped in {@link InvalidTableMetadataException}, which nothing mapped: the read answered
-   * 500, and a 500 is what the Iceberg client turns into "the service is broken" rather than "that
-   * file is gone".
+   * A table pointing at a metadata.json that storage no longer holds. The catalog reports the miss
+   * as {@link TableMetadataFileNotFoundException} -- a {@link InvalidTableMetadataException}, so
+   * every older caller still catches it, but a named one, so this edge does not have to unwrap
+   * {@code getCause()} to find out. Before either existed the read answered 500, and a 500 is what
+   * the Iceberg client turns into "the service is broken" rather than "that file is gone".
    */
   @Test
   public void testMissingMetadataFileIsNotFound() throws Exception {
@@ -271,7 +273,7 @@ public class IcebergRestCatalogControllerTest {
             nullable(String.class),
             nullable(String.class)))
         .thenThrow(
-            new InvalidTableMetadataException(
+            new TableMetadataFileNotFoundException(
                 "db",
                 "gone",
                 "Failed to open input stream for file: /tmp/db/gone/v1.metadata.json",

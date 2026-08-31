@@ -13,6 +13,8 @@ import com.linkedin.openhouse.cluster.storage.StorageClient;
 import com.linkedin.openhouse.cluster.storage.hdfs.HdfsStorageClient;
 import com.linkedin.openhouse.cluster.storage.local.LocalStorageClient;
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
+import com.linkedin.openhouse.common.exception.TableMetadataFileNotFoundException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.cache.TableMetadataCache;
 import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
 import com.linkedin.openhouse.internal.catalog.commit.UpdateRequirementValidator;
@@ -112,7 +114,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       houseTable =
           houseTableRepository.findById(
               HouseTablePrimaryKey.builder()
-                  .databaseId(tableIdentifier.namespace().toString())
+                  .databaseId(NamespaceUtil.encode(tableIdentifier.namespace()))
                   .tableId(tableIdentifier.name())
                   .build());
     } catch (HouseTableNotFoundException ne) {
@@ -120,7 +122,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       // avoidable.
       log.debug(
           "Currently there's no entry that exists in House table for the key {}.{}",
-          tableIdentifier.namespace().toString(),
+          NamespaceUtil.encode(tableIdentifier.namespace()),
           tableIdentifier.name());
       metricsReporter.count(InternalCatalogMetricsConstant.NO_TABLE_WHEN_REFRESH);
     }
@@ -132,6 +134,42 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     refreshMetadata(houseTable.map(HouseTable::getTableLocation).orElse(null));
   }
 
+  /**
+   * How many times loading the metadata file is attempted before the failure is reported.
+   *
+   * <p>This is a budget for storage being briefly unavailable, not for storage answering. An
+   * outcome the first attempt already decided -- the file is not there -- is not retried at all;
+   * see {@link #isRetryableMetadataLoadFailure}.
+   */
+  private static final int METADATA_LOAD_ATTEMPTS = 20;
+
+  /**
+   * Whether a failed attempt to load the metadata file is worth repeating.
+   *
+   * <p>The line drawn here is the one Iceberg's {@link FileIO} contract already draws. A {@link
+   * NotFoundException} is what an {@code InputFile} raises when storage answered and said the
+   * object does not exist; every other failure to read it -- a connection reset, a throttled
+   * request, an unavailable name node -- reaches this method as {@code RuntimeIOException}, {@code
+   * UncheckedIOException} or a provider exception, and those are the ones a retry can fix. Retrying
+   * an absent file cannot change the answer: nothing in the read path creates the file, so twenty
+   * attempts and one attempt reach the same 404 and the only difference is how long the client
+   * waits for it.
+   *
+   * <p>The distinction is only as good as the {@code FileIO} underneath: a storage client that
+   * reported a transient fault as {@code NotFoundException} would now fail fast on it. That is the
+   * same reading Iceberg itself applies -- {@code BaseMetastoreTableOperations} passes {@code
+   * stopRetryOn(NotFoundException.class)} to the same task -- so this states the rule the fork
+   * already applied rather than choosing a new one.
+   *
+   * <p>Stating it explicitly is not cosmetic. {@code Tasks} consults its {@code stopRetryOn} list
+   * <em>only</em> when no {@code shouldRetryTest} predicate was supplied, so any predicate passed
+   * here replaces that list rather than adding to it. A predicate that answered {@code true} for a
+   * missing file would silently restore the twenty-attempt wait this method exists to prevent.
+   */
+  private static boolean isRetryableMetadataLoadFailure(Exception e) {
+    return !(e instanceof NotFoundException);
+  }
+
   /** A wrapper function to encapsulate timer logic for loading metadata. */
   @WithSpan("IcebergTableOps.refreshMetadata")
   protected void refreshMetadata(final String metadataLoc) {
@@ -140,7 +178,10 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     Runnable r =
         () ->
             super.refreshFromMetadataLocation(
-                metadataLoc, null, 20, this::loadTableMetadataWithCache);
+                metadataLoc,
+                OpenHouseInternalTableOperations::isRetryableMetadataLoadFailure,
+                METADATA_LOAD_ATTEMPTS,
+                this::loadTableMetadataWithCache);
     try {
       if (needToReload) {
         metricsReporter.executeWithStats(
@@ -152,17 +193,31 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
           "refreshMetadata from location {} succeeded, took {} ms",
           metadataLoc,
           System.currentTimeMillis() - startTime);
-    } catch (IllegalArgumentException
-        | IllegalStateException
-        | NotFoundException
-        | ValidationException e) {
+    } catch (NotFoundException e) {
+      // The file is gone, which is a different fact about the table from "the file is unreadable"
+      // and is answered differently at the edge. Naming it here is what stops every caller from
+      // reconstructing it out of getCause().
+      log.error(
+          "refreshMetadata from location {} failed after {} ms",
+          metadataLoc,
+          System.currentTimeMillis() - startTime,
+          e);
+      throw new TableMetadataFileNotFoundException(
+          NamespaceUtil.encode(tableIdentifier.namespace()),
+          tableIdentifier.name(),
+          e.getMessage(),
+          e);
+    } catch (IllegalArgumentException | IllegalStateException | ValidationException e) {
       log.error(
           "refreshMetadata from location {} failed after {} ms",
           metadataLoc,
           System.currentTimeMillis() - startTime,
           e);
       throw new InvalidTableMetadataException(
-          tableIdentifier.namespace().toString(), tableIdentifier.name(), e.getMessage(), e);
+          NamespaceUtil.encode(tableIdentifier.namespace()),
+          tableIdentifier.name(),
+          e.getMessage(),
+          e);
     } catch (Exception e) {
       log.error(
           "refreshMetadata from location {} failed after {} ms",
@@ -376,9 +431,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
               || properties.containsKey(CatalogConstants.OPENHOUSE_DATABASEID_KEY)
                   && !properties
                       .get(CatalogConstants.OPENHOUSE_DATABASEID_KEY)
-                      .equalsIgnoreCase(this.tableIdentifier.namespace().toString()))) {
+                      .equalsIgnoreCase(NamespaceUtil.encode(tableIdentifier.namespace())))) {
         houseTableRepository.rename(
-            this.tableIdentifier.namespace().toString(),
+            NamespaceUtil.encode(tableIdentifier.namespace()),
             this.tableIdentifier.name(),
             properties.get(CatalogConstants.OPENHOUSE_DATABASEID_KEY),
             properties.get(CatalogConstants.OPENHOUSE_TABLEID_KEY),

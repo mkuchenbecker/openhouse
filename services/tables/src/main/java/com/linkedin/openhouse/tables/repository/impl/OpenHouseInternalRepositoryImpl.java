@@ -886,10 +886,31 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
         true);
   }
 
+  /**
+   * The operation-namespace argument for a database-scoped catalog call, made by a caller that
+   * already holds the encoded database id.
+   *
+   * <p>This reads the encoded id as a single level rather than decoding it into levels. Decoding
+   * would be the coherent pairing with {@link NamespaceUtil#tableIdentifier}, which reads the same
+   * strings on neighbouring lines the other way, and it would produce the identical storage key --
+   * {@link NamespaceUtil#encode} of a decoded id is the id, for any dot-joined string. What it
+   * would also do is make {@code validateOperationNamespace} on the catalog side count the dots, so
+   * a database id containing one would begin to be rejected at the shipped maximum depth of 1,
+   * where today it is accepted and listed. That is a visible depth-1 behaviour change, and depth-1
+   * behaviour is precisely the compatibility promise {@code DepthOneRoutingIdentityTest} defends.
+   *
+   * <p>So the second reading of the string stays, named here in one place instead of appearing
+   * unannounced at four call sites. Removing it belongs with the change that lets these methods
+   * take the levels rather than the encoded id.
+   */
+  private static Namespace databaseNamespace(String databaseId) {
+    return Namespace.of(databaseId);
+  }
+
   @Timed(metricKey = MetricsConstant.REPO_TABLES_SEARCH_BY_DATABASE_TIME)
   @Override
   public List<TableDto> searchTables(String databaseId) {
-    return catalog.listTables(Namespace.of(databaseId)).stream()
+    return catalog.listTables(databaseNamespace(databaseId)).stream()
         .map(tablesIdentifier -> mapper.toTableDto(tablesIdentifier))
         .collect(Collectors.toList());
   }
@@ -902,7 +923,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
           "Does not support paginated search for getting all tables in a database");
     }
     return ((OpenHouseInternalCatalog) catalog)
-        .listTables(Namespace.of(databaseId), pageable)
+        .listTables(databaseNamespace(databaseId), pageable)
         .map(tablesIdentifier -> mapper.toTableDto(tablesIdentifier));
   }
 
@@ -918,7 +939,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
     Set<String> fieldSet = new HashSet<>(fields);
     return ((OpenHouseInternalCatalog) catalog)
-        .listHouseTables(Namespace.of(databaseId), pageable)
+        .listHouseTables(databaseNamespace(databaseId), pageable)
         .map(houseTable -> mapper.toTableDto(houseTable, fieldSet));
   }
 
@@ -997,7 +1018,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       String databaseId, String tableId, Pageable pageable) {
     if (catalog instanceof OpenHouseInternalCatalog) {
       return ((OpenHouseInternalCatalog) catalog)
-          .searchSoftDeletedTables(Namespace.of(databaseId), tableId, pageable);
+          .searchSoftDeletedTables(databaseNamespace(databaseId), tableId, pageable);
     } else {
       throw new UnsupportedOperationException(
           "SearchSoftDeletedTables is not supported for this catalog type: "
