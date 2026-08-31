@@ -105,7 +105,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
    * an identifier is refused at creation, so the reading being given up names nothing that can
    * exist.
    *
-   * <p>At the shipped depth of 1 the two clauses are disjoint — a base table namespace is exactly
+   * <p>At the shipped depth of 1 the two clauses are disjoint — a base table namespace can only be
    * one level and the discriminator needs two — so this is the same predicate it has always been.
    */
   @Override

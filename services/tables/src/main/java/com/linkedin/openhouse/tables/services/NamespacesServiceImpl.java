@@ -94,12 +94,41 @@ public class NamespacesServiceImpl implements NamespacesService {
     return metadata(saved);
   }
 
+  /**
+   * The parent check is what keeps the namespace tree connected. Registering {@code a.b} while
+   * {@code a} has no row would leave a child whose parent does not exist: no listing walk starts at
+   * a root that is not there, so the database would be invisible to {@code listNamespaces}, and
+   * undroppable through the namespace API — the same orphan that failing a registration silently
+   * used to produce, arrived at through the table-create path instead.
+   *
+   * <p>It refuses rather than creating the missing ancestors. Iceberg's reference suite is the
+   * specification here, and {@code CatalogTests#tableCreationWithoutNamespace} pins that a catalog
+   * requiring namespace creation answers a table create into a namespace that does not exist with
+   * {@link NoSuchNamespaceException} rather than conjuring the namespace; nothing in the suite
+   * creates a nested namespace implicitly — {@code testListNestedNamespaces} and {@code
+   * testDropNamespaceWithNestedNamespace} both create the parent explicitly first. Refusing is also
+   * the only reversible answer: an implicitly created ancestor turns a typo into a permanent
+   * namespace that nothing will ever clean up.
+   *
+   * <p>Unreachable at the shipped max-depth of 1, where every namespace is a root and this returns
+   * before looking at anything. That also means the check cannot misfire on a cluster whose
+   * namespace store was never backfilled: a nested namespace can only be reached through {@code
+   * createNamespace}, which is gated on the store being authoritative and enforces the same rule,
+   * so there is no unbackfilled cluster that has one.
+   *
+   * @throws NoSuchNamespaceException if the database's parent namespace does not exist
+   */
   @Override
   public void ensureNamespace(String databaseId) {
-    String namespaceId = NamespaceUtil.encode(Namespace.of(databaseId));
+    // decode(), not Namespace.of(): a nested databaseId arrives encoded, and Namespace.of("a.b")
+    // would read it as a single level literally named "a.b" — an identifier with no parent to
+    // check, which is exactly the check being added here.
+    Namespace namespace = NamespaceUtil.decode(databaseId);
+    String namespaceId = NamespaceUtil.encode(namespace);
     if (houseNamespaceRepository.findById(namespaceId).isPresent()) {
       return;
     }
+    requireParentExists(namespace);
     long now = System.currentTimeMillis();
     try {
       houseNamespaceRepository.save(
