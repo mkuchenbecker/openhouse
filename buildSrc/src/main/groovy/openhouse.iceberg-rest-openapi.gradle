@@ -29,6 +29,8 @@ def icebergTypeMap = [
     'CreateTableRequest=org.apache.iceberg.rest.requests.CreateTableRequest',
     'UpdateTableRequest=org.apache.iceberg.rest.requests.UpdateTableRequest',
     'CommitTableResponse=org.apache.iceberg.rest.responses.LoadTableResponse',
+    'RenameTableRequest=org.apache.iceberg.rest.requests.RenameTableRequest',
+    'ReportMetricsRequest=org.apache.iceberg.rest.requests.ReportMetricsRequest',
 ].join(',')
 
 configurations {
