@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.api.handler.impl;
 
 import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
@@ -23,6 +24,8 @@ import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.CatalogHandlers;
 import org.apache.iceberg.rest.RESTUtil;
+import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Page;
@@ -39,11 +42,18 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
 
   private final TablesApiHandler tablesApiHandler;
   private final OpenHouseInternalCatalog openHouseInternalCatalog;
+  private final IcebergRestTableWriteAdapter tableWriteAdapter;
+  private final ClusterProperties clusterProperties;
 
   public OpenHouseIcebergRestApiHandler(
-      TablesApiHandler tablesApiHandler, OpenHouseInternalCatalog openHouseInternalCatalog) {
+      TablesApiHandler tablesApiHandler,
+      OpenHouseInternalCatalog openHouseInternalCatalog,
+      IcebergRestTableWriteAdapter tableWriteAdapter,
+      ClusterProperties clusterProperties) {
     this.tablesApiHandler = tablesApiHandler;
     this.openHouseInternalCatalog = openHouseInternalCatalog;
+    this.tableWriteAdapter = tableWriteAdapter;
+    this.clusterProperties = clusterProperties;
   }
 
   @Override
@@ -93,28 +103,67 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     }
     // Iceberg 1.11 loadTable may send referenced-by for view-load chains; Phase 1 ignores it.
 
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
-    String databaseId = icebergNamespace.level(0);
-    try {
-      tablesApiHandler.getTable(databaseId, table, extractAuthenticatedUserPrincipal());
-    } catch (NoSuchUserTableException e) {
-      throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, table);
-    }
-
-    return CatalogHandlers.loadTable(
-        openHouseInternalCatalog, TableIdentifier.of(icebergNamespace, table));
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
+    requireTable(identifier);
+    return CatalogHandlers.loadTable(openHouseInternalCatalog, identifier);
   }
 
   @Override
   public void tableExists(String prefix, String namespace, String table) {
     validatePrefix(prefix);
+    requireTable(IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth()));
+  }
+
+  @Override
+  public LoadTableResponse createTable(
+      String prefix, String namespace, CreateTableRequest request, String accessDelegation) {
+    validatePrefix(prefix);
+    // The namespace is judged here, not by the service layer: a create into a namespace whose name
+    // OpenHouse could never hold is a create into a namespace that does not exist (404), and the
+    // table name itself is left for the service layer's validator to reject and describe (400),
+    // because a create names a table that does not exist yet.
     Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
-    String databaseId = icebergNamespace.level(0);
+    IcebergRestIdentifiers.requireHoldable(icebergNamespace, maxNamespaceDepth());
+    return tableWriteAdapter.createTable(
+        icebergNamespace, request, extractAuthenticatedUserPrincipal());
+  }
+
+  @Override
+  public LoadTableResponse updateTable(
+      String prefix, String namespace, String table, UpdateTableRequest request) {
+    validatePrefix(prefix);
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
+    return tableWriteAdapter.updateTable(
+        identifier.namespace(), identifier.name(), request, extractAuthenticatedUserPrincipal());
+  }
+
+  @Override
+  public void dropTable(String prefix, String namespace, String table, Boolean purgeRequested) {
+    validatePrefix(prefix);
+    TableIdentifier identifier =
+        IcebergRestIdentifiers.readTableIdentifier(namespace, table, maxNamespaceDepth());
+    tableWriteAdapter.dropTable(
+        identifier.namespace(),
+        identifier.name(),
+        purgeRequested,
+        extractAuthenticatedUserPrincipal());
+  }
+
+  /** Existence check that speaks the REST specification's vocabulary, and authorizes the read. */
+  private void requireTable(TableIdentifier identifier) {
     try {
-      tablesApiHandler.getTable(databaseId, table, extractAuthenticatedUserPrincipal());
+      tablesApiHandler.getTable(
+          identifier.namespace().level(0), identifier.name(), extractAuthenticatedUserPrincipal());
     } catch (NoSuchUserTableException e) {
-      throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, table);
+      throw new NoSuchTableException(
+          "Table does not exist: %s.%s", identifier.namespace().level(0), identifier.name());
     }
+  }
+
+  private int maxNamespaceDepth() {
+    return clusterProperties.getClusterTablesNamespaceMaxDepth();
   }
 
   private static void validatePrefix(String prefix) {
@@ -131,8 +180,14 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     return namespace;
   }
 
+  /**
+   * An absent page token and an empty one both mean "the first page". Every Iceberg Java client
+   * since 1.6.0 sends {@code pageToken=} on its first request, so rejecting the empty token made
+   * {@code RESTCatalog.listTables()} fail outright against this facade. The namespace list route
+   * already reads an empty token that way; this is the same rule on the table list route.
+   */
   private static PageCursor decodePageToken(String pageToken, Integer requestedPageSize) {
-    if (pageToken == null) {
+    if (pageToken == null || pageToken.isEmpty()) {
       return new PageCursor(0, validatePageSize(requestedPageSize));
     }
 

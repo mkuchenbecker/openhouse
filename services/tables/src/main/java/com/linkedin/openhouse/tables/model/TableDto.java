@@ -84,6 +84,17 @@ public class TableDto {
   private boolean replaceCommit;
 
   /**
+   * True when this commit arrived through the Iceberg REST facade rather than the whole-document
+   * {@code /v1} API.
+   *
+   * <p>Deliberately not a field of {@code CreateUpdateTableRequestBody}: it is set by the service
+   * layer for REST callers only, so no {@code /v1} client can send it and switch the whole-document
+   * conflict checks off. See {@code CatalogConstants#IS_REST_COMMIT_KEY} for what it turns off and
+   * why that is safe.
+   */
+  private boolean restCommit;
+
+  /**
    * Bundling eligible string type field into a map as {@link org.mapstruct.Mapper} doesn't provide
    * easy interface to achieve so.
    */

@@ -26,6 +26,9 @@ def icebergTypeMap = [
     'GetNamespaceResponse=org.apache.iceberg.rest.responses.GetNamespaceResponse',
     'ListNamespacesResponse=org.apache.iceberg.rest.responses.ListNamespacesResponse',
     'UpdateNamespacePropertiesResponse=org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse',
+    'CreateTableRequest=org.apache.iceberg.rest.requests.CreateTableRequest',
+    'UpdateTableRequest=org.apache.iceberg.rest.requests.UpdateTableRequest',
+    'CommitTableResponse=org.apache.iceberg.rest.responses.LoadTableResponse',
 ].join(',')
 
 configurations {
@@ -41,6 +44,36 @@ dependencies {
 }
 
 def loadSpec = { new org.yaml.snakeyaml.Yaml().load(icebergRestSpec.newInputStream()) as Map }
+
+/**
+ * Schemas renamed before codegen so that a type mapping resolves.
+ *
+ * openapi-generator applies a type mapping to a referenced request body by rewriting the *import* but
+ * not the *usage*, so a schema whose Iceberg Java class has a different simple name generates an
+ * import of the Java class and a parameter typed by the schema name -- which no longer resolves.
+ * Renaming the schema to the Java class's own simple name makes the two agree. Only schemas whose
+ * names differ from their Java class need an entry; everything else maps by identity already.
+ */
+def schemaAliases = ['CommitTableRequest': 'UpdateTableRequest']
+
+def applySchemaAliases
+applySchemaAliases = { Object node ->
+  if (node instanceof Map) {
+    node.each { key, value ->
+      if (key == '$ref' && value instanceof String) {
+        schemaAliases.each { from, to ->
+          if (value == "#/components/schemas/${from}") {
+            node[key] = "#/components/schemas/${to}" as String
+          }
+        }
+      } else {
+        applySchemaAliases.call(value)
+      }
+    }
+  } else if (node instanceof List) {
+    node.each { applySchemaAliases.call(it) }
+  }
+}
 
 def eachOperation = { Map spec, Closure body ->
   spec.paths.each { path, methods ->
@@ -106,6 +139,13 @@ tasks.register('icebergRestPrepareCodegenSpec') {
       out.security = spec.security
     }
 
+    schemaAliases.each { from, to ->
+      if (out.components?.schemas?.containsKey(from)) {
+        out.components.schemas[to] = out.components.schemas.remove(from)
+      }
+    }
+    applySchemaAliases.call(out)
+
     def codegenFile = codegenSpec.get().asFile
     codegenFile.parentFile.mkdirs()
     codegenFile.text = new org.yaml.snakeyaml.Yaml().dump(out)
@@ -158,7 +198,7 @@ tasks.register('icebergRestCodegen', JavaExec) {
       '--global-property',
       'apis,models=CatalogConfig:ListTablesResponse,apiTests=false,apiDocs=false,modelTests=false,modelDocs=false,supportingFiles=',
       '--additional-properties',
-      'interfaceOnly=true,useTags=true,skipDefaultInterface=false,hideGenerationTimestamp=true,useSpringBoot3=false,openApiNullable=false'
+      'interfaceOnly=true,useTags=true,skipDefaultInterface=true,hideGenerationTimestamp=true,useSpringBoot3=false,openApiNullable=false'
   inputs.file(codegenSpec)
   inputs.files(configurations.icebergRestOpenApiGenerator)
   outputs.dir(codegenDir)

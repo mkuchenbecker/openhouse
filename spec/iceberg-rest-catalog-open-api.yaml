@@ -601,6 +601,7 @@ paths:
         create operation include changes like AddSchemaUpdate and SetCurrentSchemaUpdate that set the initial
         table state.
       operationId: createTable
+      x-openhouse-support: supported
       parameters:
         - $ref: '#/components/parameters/data-access'
         - $ref: '#/components/parameters/idempotency-key'
@@ -1051,6 +1052,7 @@ paths:
         - Catalog API
       summary: Commit updates to a table
       operationId: updateTable
+      x-openhouse-support: supported
       parameters:
         - $ref: '#/components/parameters/idempotency-key'
       description:
@@ -1171,6 +1173,7 @@ paths:
         - Catalog API
       summary: Drop a table from the catalog
       operationId: dropTable
+      x-openhouse-support: supported
       description: Remove a table from the catalog
       parameters:
         - $ref: '#/components/parameters/idempotency-key'

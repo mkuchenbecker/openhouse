@@ -119,7 +119,8 @@ public class TablesServiceImpl implements TablesService {
   public Pair<TableDto, Boolean> putTable(
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
       String tableCreatorUpdater,
-      Boolean failOnExist) {
+      Boolean failOnExist,
+      boolean icebergRestCommit) {
     String databaseId = createUpdateTableRequestBody.getDatabaseId();
     String tableId = createUpdateTableRequestBody.getTableId();
 
@@ -188,6 +189,9 @@ public class TablesServiceImpl implements TablesService {
       tableDtoToSave = readBridgeStripProtection.prepare(tableDto.orElse(null), tableDtoToSave);
     } catch (ColumnDefaultException e) {
       throw e.toUnsupportedClient();
+    }
+    if (icebergRestCommit) {
+      tableDtoToSave = tableDtoToSave.toBuilder().restCommit(true).build();
     }
     return saveTableDto(tableDtoToSave, tableDto);
   }

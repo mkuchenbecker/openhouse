@@ -267,9 +267,18 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       // Now that we have metadataLocation we stamp it in metadata property.
       Map<String, String> properties = new HashMap<>(metadata.properties());
 
-      abortIfWriterBaseDivergedFromCatalog(base, metadata);
-
-      failIfRetryUpdate(properties);
+      // The two checks below defend a base the *client* declared. A REST commit declares its
+      // preconditions as UpdateRequirements instead -- already checked upstream against the base
+      // the server itself loaded -- so on that path the pair is dormant and only the marker is
+      // stripped. See CatalogConstants.IS_REST_COMMIT_KEY.
+      boolean isRestCommit =
+          Boolean.parseBoolean(properties.remove(CatalogConstants.IS_REST_COMMIT_KEY));
+      if (isRestCommit) {
+        properties.remove(CatalogConstants.COMMIT_KEY);
+      } else {
+        abortIfWriterBaseDivergedFromCatalog(base, metadata);
+        failIfRetryUpdate(properties);
+      }
       restoreOverriddenProperties(properties);
 
       properties.put(

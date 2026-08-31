@@ -7,9 +7,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
+import com.linkedin.openhouse.tables.api.handler.impl.IcebergRestTableWriteAdapter;
 import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseIcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllTablesResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
@@ -22,6 +24,7 @@ import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,18 +34,27 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 public class OpenHouseIcebergRestApiHandlerTest {
 
   @Mock private TablesApiHandler tablesApiHandler;
   @Mock private OpenHouseInternalCatalog openHouseInternalCatalog;
+  @Mock private IcebergRestTableWriteAdapter tableWriteAdapter;
 
   private OpenHouseIcebergRestApiHandler handler;
 
   @BeforeEach
   void setUp() {
-    handler = new OpenHouseIcebergRestApiHandler(tablesApiHandler, openHouseInternalCatalog);
+    // @Value defaults do not apply to a directly-constructed properties bean, and depth 0 would
+    // make every identifier illegal -- which would pass the 404 assertions below for the wrong
+    // reason. Set the shipped depth explicitly.
+    ClusterProperties clusterProperties = new ClusterProperties();
+    ReflectionTestUtils.setField(clusterProperties, "clusterTablesNamespaceMaxDepth", 1);
+    handler =
+        new OpenHouseIcebergRestApiHandler(
+            tablesApiHandler, openHouseInternalCatalog, tableWriteAdapter, clusterProperties);
   }
 
   @Test
@@ -58,8 +70,42 @@ public class OpenHouseIcebergRestApiHandlerTest {
             "DELETE /v1/{prefix}/namespaces/{namespace}",
             "POST /v1/{prefix}/namespaces/{namespace}/properties",
             "GET /v1/{prefix}/namespaces/{namespace}/tables",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables",
             "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+            "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
             "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
+  }
+
+  /**
+   * An empty page token is what every Iceberg Java client since 1.6.0 sends on a first request; it
+   * used to be rejected, which made {@code RESTCatalog.listTables()} fail outright.
+   */
+  @Test
+  void anEmptyPageTokenIsTheFirstPage() {
+    when(tablesApiHandler.searchTables("db", 0, 1, "tableId", Collections.emptyList(), "undefined"))
+        .thenReturn(pageResponse("db", "t1", 0, 1, 1));
+
+    assertThat(handler.listTables(ICEBERG_REST_PREFIX, "db", "", 1).getIdentifiers())
+        .containsExactly(TableIdentifier.of("db", "t1"));
+  }
+
+  /**
+   * An identifier OpenHouse's charset cannot express names a table that cannot exist. That is a
+   * 404, not the 400 the service layer's own validator would raise: {@code tableExists} in
+   * particular has to answer "no", not "you asked wrongly".
+   */
+  @Test
+  void anIllegalIdentifierOnATableRouteIsANotFound() {
+    assertThatThrownBy(() -> handler.tableExists(ICEBERG_REST_PREFIX, "non-existing", "t1"))
+        .isInstanceOf(NoSuchTableException.class);
+    assertThatThrownBy(() -> handler.tableExists(ICEBERG_REST_PREFIX, "db", "not-a-table"))
+        .isInstanceOf(NoSuchTableException.class);
+    assertThatThrownBy(
+            () ->
+                handler.loadTable(
+                    ICEBERG_REST_PREFIX, "non-existing", "t1", null, null, "all", null))
+        .isInstanceOf(NoSuchTableException.class);
   }
 
   @Test

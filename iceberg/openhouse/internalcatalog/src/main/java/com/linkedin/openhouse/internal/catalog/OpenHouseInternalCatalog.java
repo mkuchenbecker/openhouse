@@ -28,6 +28,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.Path;
 import org.apache.iceberg.BaseMetastoreCatalog;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.UpdateProperties;
@@ -319,6 +321,21 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
    * @param tableIdentifier
    * @return fileIO
    */
+  /**
+   * Read the table metadata at {@code metadataLocation} for a table House Tables does not point at.
+   *
+   * <p>A staged create writes a metadata.json and deliberately does not register the table, so
+   * {@link #loadTable} cannot reach what was just staged. The Iceberg REST create route has to hand
+   * that metadata back to the client -- it is the seed of the create transaction -- and this is the
+   * only way to get it. The metadata cache is consulted first, so the commit that just wrote the
+   * file normally answers this without touching storage again.
+   */
+  public TableMetadata loadMetadataAt(TableIdentifier tableIdentifier, String metadataLocation) {
+    FileIO fileIO = resolveFileIO(tableIdentifier);
+    return tableMetadataCache.load(
+        metadataLocation, () -> TableMetadataParser.read(fileIO, metadataLocation));
+  }
+
   protected FileIO resolveFileIO(TableIdentifier tableIdentifier) {
     Optional<HouseTable> houseTable = Optional.empty();
     try {

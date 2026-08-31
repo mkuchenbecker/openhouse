@@ -1,8 +1,14 @@
 package com.linkedin.openhouse.tables.controller;
 
+import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
+import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
 import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
+import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableException;
+import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
+import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -40,6 +46,60 @@ public class IcebergRestExceptionHandler {
   @ExceptionHandler(AlreadyExistsException.class)
   public ResponseEntity<ErrorResponse> handleAlreadyExists(AlreadyExistsException e) {
     return errorResponse(409, e.getMessage(), AlreadyExistsException.class.getSimpleName());
+  }
+
+  /**
+   * OpenHouse's service layer raises its own exceptions, not Iceberg's, and until the write routes
+   * existed none of them could reach this facade -- the read routes translate at the handler. Every
+   * one of them below has a settled meaning and an obvious status; without these mappings they all
+   * fell through to the catch-all, and a client was told "internal server error" for a table it had
+   * already created, a schema change the catalog declines, or a concurrent write it should retry.
+   * Worse, the Iceberg client reads a 500 on a commit as {@code CommitStateUnknownException} --
+   * "the write may or may not have landed, clean up by hand" -- which is precisely the wrong thing
+   * to say about a commit the server refused outright.
+   */
+  @ExceptionHandler(com.linkedin.openhouse.common.exception.AlreadyExistsException.class)
+  public ResponseEntity<ErrorResponse> handleOpenHouseAlreadyExists(
+      com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+    return errorResponse(409, e.getMessage(), AlreadyExistsException.class.getSimpleName());
+  }
+
+  @ExceptionHandler({NoSuchUserTableException.class, NoSuchSoftDeletedUserTableException.class})
+  public ResponseEntity<ErrorResponse> handleNoSuchUserTable(RuntimeException e) {
+    return errorResponse(404, e.getMessage(), NoSuchTableException.class.getSimpleName());
+  }
+
+  @ExceptionHandler(EntityConcurrentModificationException.class)
+  public ResponseEntity<ErrorResponse> handleConcurrentModification(
+      EntityConcurrentModificationException e) {
+    return errorResponse(409, e.getMessage(), CommitFailedException.class.getSimpleName());
+  }
+
+  /**
+   * A commit whose outcome really is unknown. Reported as 500 because that is the status the
+   * Iceberg client turns back into {@code CommitStateUnknownException}; a 503 would be read as
+   * "retry", and retrying a commit that may have landed is how a table ends up with the same
+   * snapshot twice.
+   */
+  @ExceptionHandler(OpenHouseCommitStateUnknownException.class)
+  public ResponseEntity<ErrorResponse> handleCommitStateUnknown(
+      OpenHouseCommitStateUnknownException e) {
+    return errorResponse(500, e.getMessage(), "CommitStateUnknownException");
+  }
+
+  @ExceptionHandler({
+    UnsupportedClientOperationException.class,
+    InvalidSchemaEvolutionException.class
+  })
+  public ResponseEntity<ErrorResponse> handleUnsupportedClientOperation(RuntimeException e) {
+    return errorResponse(400, e.getMessage(), "BadRequestException");
+  }
+
+  /** A metadata file the catalog points at but storage no longer holds. */
+  @ExceptionHandler(org.apache.iceberg.exceptions.NotFoundException.class)
+  public ResponseEntity<ErrorResponse> handleNotFound(
+      org.apache.iceberg.exceptions.NotFoundException e) {
+    return errorResponse(404, e.getMessage(), "NotFoundException");
   }
 
   @ExceptionHandler(NamespaceNotEmptyException.class)

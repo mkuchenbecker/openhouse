@@ -7,10 +7,11 @@ import com.linkedin.openhouse.tables.generated.iceberg.api.ConfigurationApiApi;
 import com.linkedin.openhouse.tables.generated.iceberg.model.CatalogConfig;
 import com.linkedin.openhouse.tables.generated.iceberg.model.ListTablesResponse;
 import io.swagger.v3.oas.annotations.Hidden;
-import java.util.Optional;
 import java.util.UUID;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
+import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
 import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
@@ -19,7 +20,6 @@ import org.apache.iceberg.rest.responses.UpdateNamespacePropertiesResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.context.request.NativeWebRequest;
 
 /**
  * Thin Spring MVC adapter for the generated read-only Iceberg REST contract.
@@ -41,11 +41,6 @@ public class IcebergRestCatalogController implements CatalogApiApi, Configuratio
       IcebergRestNamespaceApiHandler icebergRestNamespaceApiHandler) {
     this.icebergRestApiHandler = icebergRestApiHandler;
     this.icebergRestNamespaceApiHandler = icebergRestNamespaceApiHandler;
-  }
-
-  @Override
-  public Optional<NativeWebRequest> getRequest() {
-    return Optional.empty();
   }
 
   @Override
@@ -78,6 +73,36 @@ public class IcebergRestCatalogController implements CatalogApiApi, Configuratio
             ifNoneMatch,
             snapshots,
             referencedBy));
+  }
+
+  @Override
+  public ResponseEntity<org.apache.iceberg.rest.responses.LoadTableResponse> createTable(
+      String prefix,
+      String namespace,
+      CreateTableRequest createTableRequest,
+      String xIcebergAccessDelegation,
+      UUID idempotencyKey) {
+    return ResponseEntity.ok(
+        icebergRestApiHandler.createTable(
+            prefix, namespace, createTableRequest, xIcebergAccessDelegation));
+  }
+
+  @Override
+  public ResponseEntity<org.apache.iceberg.rest.responses.LoadTableResponse> updateTable(
+      String prefix,
+      String namespace,
+      String table,
+      UpdateTableRequest commitTableRequest,
+      UUID idempotencyKey) {
+    return ResponseEntity.ok(
+        icebergRestApiHandler.updateTable(prefix, namespace, table, commitTableRequest));
+  }
+
+  @Override
+  public ResponseEntity<Void> dropTable(
+      String prefix, String namespace, String table, UUID idempotencyKey, Boolean purgeRequested) {
+    icebergRestApiHandler.dropTable(prefix, namespace, table, purgeRequested);
+    return ResponseEntity.noContent().build();
   }
 
   @Override
