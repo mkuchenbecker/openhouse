@@ -52,54 +52,79 @@ Verified; violating these costs hours.
 Every branch below is code from this session. **None is merged to `main`.** CI is scoped
 `branches: [main]`, so a pull request targeting any other branch runs no checks at all: only
 PR #60 carries real CI, and every other number here is from a local Gradle run on JDK 17.
-The conformance suite itself lives only on the namespace stack, not on `main`.
+
+**All four goals are done.** `claude/integration-v2` (`ccfc34ba`) carries every workstream merged
+and verified together: **97 cases, 59 executing, 0 failures**, with `services/tables` 681,
+`housetables` 162, `common` 40, `internalcatalog` 165 — all clean.
 
 | Goal | State | PRs |
 |---|---|---|
-| 1 — database data model | **Implemented** | #59 → #61 → #63 |
-| 2 — multi-level namespaces | **Implemented** | #64 → #65 → #67 |
-| 3 — write path | **Implemented** | #60 → #62 → #66 |
-| 4 — remaining REST surface | In progress | rename/register/metrics in flight |
+| 1 — database data model | Done | #59 → #61 → #63 |
+| 2 — multi-level namespaces | Done | #64 → #65 → #67 |
+| 3 — write path | Done | #60 → #62 → #66 |
+| 4 — remaining REST surface | Done by its own definition | #68, #70, #71 |
 
-**The scoreboard: 15 → 43 executing, 0 failures**, measured on the write stack
-(`claude/ws3-rest-write-routes`). The nesting stack independently reports 17 executing. The two
-stacks have not yet been merged, so **the combined figure is not yet known** — that merge and its
-measurement is the next verification owed.
+Goal 4's definition was *every one of the 32 operations is implemented or carries a recorded,
+reviewed decision not to serve it — silence is not an answer.* That now holds. Twenty are served.
+Twelve are declined in writing: `registerTable` (#68), scan planning ×4 and credentials/auth ×3
+(#70), and views ×8, deferred with a named trigger (#71).
 
-`claude/integration-rest-write` is the working branch that merges the namespace/facade stack with
-the commit-engine stack. It needs remaking once the nesting and rename slices land.
+### The scoreboard: 15 → 59, and why not 97
 
-### What the remaining 42 disabled tests are
+All 28 remaining `@Disabled` tests are downstream of a capability decision, not of unfinished work:
+partition evolution 10, schema narrowing 8, catalog-chosen location 3, catalog-chosen format
+version 2, `registerTable` 2, intermediate schemas 1, column defaults 1, and one test whose own
+*setup* deletes a column and so is blocked by schema narrowing. A further 10 self-skip on the
+suite's capability flags.
 
-Counted from the tree on `claude/ws3-rest-write-routes`, not from this document.
+**97 executing is reachable only if OpenHouse adopts partition evolution and schema narrowing.**
+That is a product decision. Absent it, 59 is the ceiling, and each decline should be expressed as a
+suite capability flag wherever one exists rather than as an `@Disabled` nobody will retire.
 
-| Kind | Count | Owner |
-|---|---|---|
-| Route not built — rename 6, register 2, metrics 1 | 9 | Goal 4, in flight |
-| Genuine defects — `CLIENT_TABLE_DEFAULTS_NOT_SENT` 4, `COMMIT_FAILURE_MESSAGE_TEXT` 2, `MISSING_METADATA_FILE_IS_A_500` 1, `STALE_UPDATES_NOT_A_CONFLICT` 1 | 8 | queued |
-| **Capabilities OpenHouse declines** — partition evolution 10, schema narrowing 8, catalog-chosen location 3, catalog-chosen format version 2, column defaults 1, intermediate schemas 1 | **25** | **owner decision** |
+### What integration found that no single branch could
 
-A further 12 self-skip on the suite's own capability flags. 43 + 42 + 12 = 97.
+The two most serious defects of the programme were invisible until the stacks were merged, because
+each needed one branch's nesting and another's write routes in the same tree:
 
-**The target of 97 executing is only reachable if OpenHouse adopts the 25 declined capabilities.**
-That is a product decision, not engineering work. If OpenHouse genuinely declines them, the honest
-target is roughly 60 executing, with every decline recorded and — wherever the suite offers a
-capability flag — expressed as a flag rather than an `@Disabled`, so the suite skips them
-legitimately instead of carrying them as a to-do list that will never be done.
+- `IcebergRestTableWriteAdapter` took `namespace.level(0)` as the database id on **every** route it
+  serves. Above depth 1, `createTable`, `updateTable` and `dropTable` were **writing to the wrong
+  database**. Six call sites plus the read path.
+- `testLoadMetadataTable` answered 500: at depth 2 `ns.tbl` is a valid namespace, so `ns.tbl.files`
+  reached the repository, and Iceberg answers `isValidIdentifier`'s decline by *constructing* the
+  metadata table rather than raising — handing a `FilesTable` to a mapper expecting OpenHouse
+  properties. `existsById` had the same hole.
+
+The lesson is not "merge earlier". It is that **a composition is not verified by the plausibility of
+its layering.** Both were found because the merge was required to prove a specific claim with a
+test, rather than argue it from structure.
+
+### Landmines recorded, not yet fixed
+
+- **`iceberg-views-enabled` enables a mock view store in production code.** The Spark plugin's
+  client is a real Iceberg `ViewCatalog` (`OpenHouseCatalog.java:103`) backed by a
+  `ConcurrentHashMap` (`:148-149`), logging "in-memory only, not persisted to any service"
+  (`:628-634`) at a `mock://openhouse/views/` location (`:678-680`). Switched on, it tells users
+  they have views and hands them a map that dies with the JVM. Renaming or retiring it needs its
+  own slice with tests.
+- **A missing metadata file takes ~33 seconds to answer 404** — 20 retries of a dependency-failure
+  policy applied to an outcome the code can already decide.
+- **`X-Iceberg-Access-Delegation` is bound by the controller and never read by the handler**
+  (`IcebergRestCatalogController.java:65,:85`; `OpenHouseIcebergRestApiHandler.java:97,:122`).
+  A header accepted and silently ignored.
 
 ### Lessons this programme paid for
 
 1. **A brief that points an agent at 90–140KB of design documents produces nothing.** Two agents ran
-   seven hours and never got past reading. Short, explicit reading lists; forbid the big documents;
+   seven hours and never got past reading. Short explicit reading lists; forbid the big documents;
    one narrow scope; require a push inside the first hour.
-2. **Do not idle between slices.** Waiting on a decision that only affects a later step cost hours.
+2. **Do not idle between slices.** Waiting on a decision that only gates a later step cost hours.
    Where two stacks need combining, merge them on a working branch and verify — that needs no
    permission and is not a merge to `main`.
-3. **A test that would pass vacuously must be calibrated by mutation.** Several real defects were
-   caught only because a test was proven able to fail: the backfill's verification never traversed
-   its paging loop, and would have marked an incomplete store complete.
-
----
+3. **Calibrate by mutation any test that would pass vacuously.** The backfill's verification never
+   traversed its paging loop and would have marked an incomplete store complete.
+4. **The labels were less reliable than the code.** Of eight tests marked as defects, four were a
+   harness that never configured the catalog and one named the wrong failure entirely. Re-derive
+   counts and reasons from the tree; never inherit them.
 
 ## Where the 78 remaining disabled tests sit
 
