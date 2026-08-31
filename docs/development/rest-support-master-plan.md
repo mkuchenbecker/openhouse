@@ -106,8 +106,13 @@ test, rather than argue it from structure.
   (`:628-634`) at a `mock://openhouse/views/` location (`:678-680`). Switched on, it tells users
   they have views and hands them a map that dies with the JVM. Renaming or retiring it needs its
   own slice with tests.
-- **A missing metadata file takes ~33 seconds to answer 404** — 20 retries of a dependency-failure
-  policy applied to an outcome the code can already decide.
+- ~~A missing metadata file takes ~33 seconds to answer 404.~~ **This claim, recorded here earlier
+  today, was wrong** — and the slice sent to fix it measured before changing anything. Absence was
+  already fast: the fork's `BaseMetastoreTableOperations` passes `stopRetryOn(NotFoundException)`.
+  The twenty-attempt burn was on *settled* failures the retry could never change — a codec check,
+  metadata naming a schema it does not carry — costing 365.7s across four tests, now 0.511s
+  (#72). Recorded as an error rather than quietly corrected, because inheriting a confident claim
+  without measuring is the exact failure this document exists to stop.
 - **`X-Iceberg-Access-Delegation` is bound by the controller and never read by the handler**
   (`IcebergRestCatalogController.java:65,:85`; `OpenHouseIcebergRestApiHandler.java:97,:122`).
   A header accepted and silently ignored.
