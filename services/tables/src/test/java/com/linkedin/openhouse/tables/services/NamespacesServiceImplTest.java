@@ -462,7 +462,10 @@ public class NamespacesServiceImplTest {
 
     assertThatThrownBy(() -> service.ensureNamespace("a.b"))
         .isInstanceOf(NoSuchNamespaceException.class)
-        .hasMessageContaining("a");
+        // The whole message, not a substring: "a" appears in almost anything this could throw,
+        // including the refusal for "a.b" itself, and the caller has to be told which namespace to
+        // create.
+        .hasMessage("Namespace does not exist: a");
     assertThat(repository.rows).isEmpty();
 
     service.createNamespace(Namespace.of("a"), Collections.emptyMap(), PRINCIPAL);
@@ -487,7 +490,7 @@ public class NamespacesServiceImplTest {
     service.createNamespace(Namespace.of("a"), Collections.emptyMap(), PRINCIPAL);
     assertThatThrownBy(() -> service.ensureNamespace("a.b.c"))
         .isInstanceOf(NoSuchNamespaceException.class)
-        .hasMessageContaining("a.b");
+        .hasMessage("Namespace does not exist: a.b");
     assertThat(repository.rows).hasSize(1);
   }
 
