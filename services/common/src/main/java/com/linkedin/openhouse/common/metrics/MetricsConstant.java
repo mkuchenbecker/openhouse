@@ -15,6 +15,17 @@ public final class MetricsConstant {
       "repo_table_unsupported_partitionspec_evolution";
   public static final String REPO_TABLE_ACCEPT_SNAPSHOT_CTR = "repo_table_snapshot_accepted";
 
+  /**
+   * A table-creating path failed to register the database it names in the namespace store.
+   *
+   * <p>Those paths swallow the failure on purpose: the store is not the source of truth yet, so a
+   * store outage must not take table creation down with it. Swallowing it silently is a different
+   * thing, and not the intent — every increment here is a database that now exists with no
+   * namespace row, which is drift the backfill will have to clean up and which nothing else would
+   * report until it did. Non-zero and rising means the namespace store is failing writes.
+   */
+  public static final String NAMESPACE_REGISTRATION_FAILED_CTR = "namespace_registration_failed";
+
   // Components sections
   public static final String JOBS_SERVICE = "jobs";
   public static final String HOUSETABLES_SERVICE = "housetables";

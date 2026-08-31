@@ -1,5 +1,8 @@
 package com.linkedin.openhouse.housetables.e2e.database;
 
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import com.google.common.collect.Lists;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
 import com.linkedin.openhouse.housetables.api.spec.model.Database;
@@ -20,9 +23,12 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
  * End-to-end coverage for the backfill that gives every database in the table store a row in {@code
@@ -33,7 +39,11 @@ import org.springframework.test.context.ContextConfiguration;
  */
 @SpringBootTest
 @ContextConfiguration(initializers = PropertyOverrideContextInitializer.class)
+@AutoConfigureMockMvc
 public class DatabaseBackfillTest {
+
+  private static final String BACKFILL_ENDPOINT = "/hts/databases/backfill";
+  private static final String BACKFILL_VERIFY_ENDPOINT = "/hts/databases/backfill/verify";
 
   @Autowired DatabaseBackfillService backfillService;
 
@@ -48,6 +58,8 @@ public class DatabaseBackfillTest {
    * partway and to prove a resumed run does not touch what the first run already did.
    */
   @SpyBean DatabasesService databasesService;
+
+  @Autowired MockMvc mvc;
 
   @AfterEach
   public void tearDown() {
@@ -216,6 +228,40 @@ public class DatabaseBackfillTest {
     Assertions.assertNotNull(
         backfillService.verify(10).getVerifiedCompleteTimeMs(),
         "the store lookup folds case, so verification has to fold it the same way");
+  }
+
+  @Test
+  public void theTriggerIsARouteAndNothingRunsWithoutBeingAsked() throws Exception {
+    givenTable("alpha", "t1");
+
+    mvc.perform(MockMvcRequestBuilders.get(BACKFILL_ENDPOINT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.scanCompleteTimeMs").doesNotExist())
+        .andExpect(jsonPath("$.verifiedCompleteTimeMs").doesNotExist());
+    Assertions.assertEquals(
+        Collections.emptyList(), storedDatabaseIds(), "reading the status runs nothing");
+
+    mvc.perform(MockMvcRequestBuilders.post(BACKFILL_ENDPOINT).param("pageSize", "100"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.databasesRegistered").value(1))
+        .andExpect(jsonPath("$.scanCompleteTimeMs").isNumber())
+        .andExpect(jsonPath("$.verifiedCompleteTimeMs").doesNotExist());
+    Assertions.assertEquals(Lists.newArrayList("alpha"), storedDatabaseIds());
+
+    mvc.perform(MockMvcRequestBuilders.post(BACKFILL_VERIFY_ENDPOINT))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.missingCount").value(0))
+        .andExpect(jsonPath("$.verifiedCompleteTimeMs").isNumber());
+  }
+
+  @Test
+  public void anUnusablePageSizeIsARejectedRequestRatherThanAnEmptyRun() throws Exception {
+    givenTable("alpha", "t1");
+
+    mvc.perform(MockMvcRequestBuilders.post(BACKFILL_ENDPOINT).param("pageSize", "0"))
+        .andExpect(status().isBadRequest());
+
+    Assertions.assertEquals(Collections.emptyList(), storedDatabaseIds());
   }
 
   private void givenTable(String databaseId, String tableId) {

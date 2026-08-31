@@ -5,6 +5,7 @@ import static com.linkedin.openhouse.tables.mock.RequestConstants.*;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.internal.catalog.model.HouseNamespace;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
@@ -18,6 +19,8 @@ import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.IcebergSnapshotsService;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -50,6 +53,8 @@ public class IcebergSnapshotsServiceTest {
   @MockBean private TableUUIDGenerator tableUUIDGenerator;
 
   @Autowired private HouseNamespaceRepository houseNamespaceRepository;
+
+  @Autowired private MeterRegistry meterRegistry;
 
   private OpenHouseInternalRepository mockRepository;
 
@@ -165,6 +170,66 @@ public class IcebergSnapshotsServiceTest {
     Assertions.assertTrue(result.getSecond(), "Table must still be created");
     Assertions.assertTrue(
         namespaceStore.isEmpty(), "Nothing was registered, and that is tolerated");
+  }
+
+  /**
+   * Tolerated is not the same as unobserved. A namespace store failing writes now leaves databases
+   * behind with no row, and until this counter moves nothing says so: the table write succeeds, the
+   * client sees nothing, and the gap surfaces whenever somebody next runs the backfill.
+   */
+  @Test
+  public void testNamespaceRegistrationFailureIsCounted() {
+    final IcebergSnapshotsRequestBody requestBody =
+        TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final TableDto tableDto = TableDto.builder().databaseId(dbId).tableId(tableId).build();
+
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class))).thenReturn(tableDto);
+    Mockito.when(houseNamespaceRepository.save(Mockito.any(HouseNamespace.class)))
+        .thenThrow(new RuntimeException("namespace store unavailable"));
+    double before = registrationFailures();
+
+    service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+
+    Assertions.assertEquals(
+        before + 1,
+        registrationFailures(),
+        "a swallowed registration failure has to be visible somewhere");
+  }
+
+  /** A registration that succeeds must not look like drift. */
+  @Test
+  public void testSuccessfulNamespaceRegistrationIsNotCounted() {
+    final IcebergSnapshotsRequestBody requestBody =
+        TEST_ICEBERG_SNAPSHOTS_INITIAL_VERSION_REQUEST_BODY;
+    final String dbId = requestBody.getCreateUpdateTableRequestBody().getDatabaseId();
+    final String tableId = requestBody.getCreateUpdateTableRequestBody().getTableId();
+    final TableDtoPrimaryKey key =
+        TableDtoPrimaryKey.builder().databaseId(dbId).tableId(tableId).build();
+    final TableDto tableDto = TableDto.builder().databaseId(dbId).tableId(tableId).build();
+
+    Mockito.when(tableUUIDGenerator.generateUUID(Mockito.any(IcebergSnapshotsRequestBody.class)))
+        .thenReturn(UUID.randomUUID());
+    Mockito.when(mockRepository.findById(key)).thenReturn(Optional.empty());
+    Mockito.when(mockRepository.save(Mockito.any(TableDto.class))).thenReturn(tableDto);
+    double before = registrationFailures();
+
+    service.putIcebergSnapshots(dbId, tableId, requestBody, TEST_TABLE_CREATOR);
+
+    Assertions.assertTrue(namespaceStore.containsKey(dbId), "Precondition: registration succeeded");
+    Assertions.assertEquals(before, registrationFailures());
+  }
+
+  private double registrationFailures() {
+    Counter counter =
+        meterRegistry.find(MetricsConstant.NAMESPACE_REGISTRATION_FAILED_CTR).counter();
+    return counter == null ? 0d : counter.count();
   }
 
   /** Only the create branch registers: an update names a database that already exists. */
