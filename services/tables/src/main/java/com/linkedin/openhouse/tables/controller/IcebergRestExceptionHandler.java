@@ -99,7 +99,7 @@ public class IcebergRestExceptionHandler {
     return errorResponse(400, e.getMessage(), "BadRequestException");
   }
 
-  /** A metadata file the catalog points at but storage no longer holds. */
+  /** A file the catalog points at but storage no longer holds, reported by Iceberg unchanged. */
   @ExceptionHandler(org.apache.iceberg.exceptions.NotFoundException.class)
   public ResponseEntity<ErrorResponse> handleNotFound(
       org.apache.iceberg.exceptions.NotFoundException e) {
