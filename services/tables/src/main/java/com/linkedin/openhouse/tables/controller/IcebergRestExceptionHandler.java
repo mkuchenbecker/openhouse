@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.controller;
 
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
+import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
 import com.linkedin.openhouse.common.exception.NamespaceStoreNotBackfilledException;
 import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
@@ -32,6 +33,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @ConditionalOnProperty(value = "cluster.tables.iceberg-rest.enabled", havingValue = "true")
 @Slf4j
 public class IcebergRestExceptionHandler {
+
+  private static final String COMMIT_FAILURE_PREFIX = "Cannot commit";
 
   @ExceptionHandler(NoSuchTableException.class)
   public ResponseEntity<ErrorResponse> handleNoSuchTable(NoSuchTableException e) {
@@ -72,7 +75,8 @@ public class IcebergRestExceptionHandler {
   @ExceptionHandler(EntityConcurrentModificationException.class)
   public ResponseEntity<ErrorResponse> handleConcurrentModification(
       EntityConcurrentModificationException e) {
-    return errorResponse(409, e.getMessage(), CommitFailedException.class.getSimpleName());
+    return errorResponse(
+        409, commitFailureMessage(e.getMessage()), CommitFailedException.class.getSimpleName());
   }
 
   /**
@@ -102,6 +106,26 @@ public class IcebergRestExceptionHandler {
     return errorResponse(404, e.getMessage(), "NotFoundException");
   }
 
+  /**
+   * The same condition as above, one wrapper further out. {@code
+   * OpenHouseInternalTableOperations.refreshMetadata} catches Iceberg's {@code NotFoundException}
+   * and re-throws it as {@link InvalidTableMetadataException}, so a table whose metadata.json has
+   * gone missing never reached the mapping above and fell through to the catch-all: the read
+   * answered 500, which tells a client "the catalog is broken, retry later" for a table that is
+   * simply pointing at a file that is not there.
+   *
+   * <p>Only an absent file is a 404. {@code InvalidTableMetadataException} also carries genuinely
+   * corrupt metadata -- a metadata.json that parsed into something invalid -- and that is a server
+   * problem, not a missing resource, so it keeps the catch-all's 500.
+   */
+  @ExceptionHandler(InvalidTableMetadataException.class)
+  public ResponseEntity<ErrorResponse> handleInvalidTableMetadata(InvalidTableMetadataException e) {
+    if (e.getCause() instanceof org.apache.iceberg.exceptions.NotFoundException) {
+      return errorResponse(404, e.getMessage(), "NotFoundException");
+    }
+    return handleDefault(e);
+  }
+
   @ExceptionHandler(NamespaceNotEmptyException.class)
   public ResponseEntity<ErrorResponse> handleNamespaceNotEmpty(NamespaceNotEmptyException e) {
     return errorResponse(409, e.getMessage(), NamespaceNotEmptyException.class.getSimpleName());
@@ -109,7 +133,8 @@ public class IcebergRestExceptionHandler {
 
   @ExceptionHandler(CommitFailedException.class)
   public ResponseEntity<ErrorResponse> handleCommitFailed(CommitFailedException e) {
-    return errorResponse(409, e.getMessage(), CommitFailedException.class.getSimpleName());
+    return errorResponse(
+        409, commitFailureMessage(e.getMessage()), CommitFailedException.class.getSimpleName());
   }
 
   /**
@@ -167,6 +192,26 @@ public class IcebergRestExceptionHandler {
   public ResponseEntity<ErrorResponse> handleDefault(Exception e) {
     log.error("Unhandled Iceberg REST request failure", e);
     return errorResponse(500, "Internal server error", "InternalServerError");
+  }
+
+  /**
+   * What a client is told when a commit does not go through.
+   *
+   * <p>The Iceberg client re-wraps a 409 on a commit as {@code CommitFailedException("Commit
+   * failed: " + message)} and hands that message straight to the caller, so this string is the
+   * whole of what an operator sees. A catalog that evaluates {@code UpdateRequirement}s server-side
+   * reports the specification's "Requirement failed: ..." wording, which names the precondition but
+   * never says what happened to the commit; Iceberg's own local commit path says "Cannot commit",
+   * which is the sentence a client (and the reference conformance suite) looks for. Both belong in
+   * the message: the outcome first, then the precondition that produced it.
+   */
+  private static String commitFailureMessage(String message) {
+    if (message == null || message.isEmpty()) {
+      return COMMIT_FAILURE_PREFIX;
+    }
+    return message.startsWith(COMMIT_FAILURE_PREFIX)
+        ? message
+        : COMMIT_FAILURE_PREFIX + ": " + message;
   }
 
   private ResponseEntity<ErrorResponse> errorResponse(int statusCode, String message, String type) {

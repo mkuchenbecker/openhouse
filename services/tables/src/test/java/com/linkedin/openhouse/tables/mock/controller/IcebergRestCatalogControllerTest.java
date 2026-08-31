@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestNamespaceApiHandler;
 import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
@@ -208,6 +209,114 @@ public class IcebergRestCatalogControllerTest {
                 .content("{\"updates\":{\"owner\":\"user\"}}"))
         .andExpect(status().isUnprocessableEntity())
         .andExpect(jsonPath("$.error.type").value("UnprocessableEntityException"));
+  }
+
+  /**
+   * A commit that lost a race is a conflict, and what the client is told about it is the server's
+   * own message: the Iceberg client re-wraps a 409 as {@code CommitFailedException("Commit failed:
+   * " + message)} and hands that to the caller. "Requirement failed: ..." names the precondition
+   * but never says what became of the commit, so the outcome is stated first.
+   */
+  @Test
+  public void testCommitConflictSaysTheCommitDidNotHappen() throws Exception {
+    when(icebergRestApiHandler.updateTable(
+            eq(ICEBERG_REST_PREFIX), eq("db"), eq("tb1"), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(
+            new CommitFailedException(
+                "Requirement failed: current schema changed: expected id 0 != 1"));
+
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    "/v1/{prefix}/namespaces/db/tables/tb1", ICEBERG_REST_PREFIX)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"requirements\":[],\"updates\":[]}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error.type").value("CommitFailedException"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Cannot commit: Requirement failed: current schema changed: expected id 0 != 1"));
+  }
+
+  /** A message that already says it is stated once, not twice. */
+  @Test
+  public void testCommitConflictDoesNotRepeatItself() throws Exception {
+    when(icebergRestApiHandler.updateTable(
+            eq(ICEBERG_REST_PREFIX), eq("db"), eq("tb1"), org.mockito.ArgumentMatchers.any()))
+        .thenThrow(new CommitFailedException("Cannot commit: stale table metadata"));
+
+    mvc.perform(
+            MockMvcRequestBuilders.post(
+                    "/v1/{prefix}/namespaces/db/tables/tb1", ICEBERG_REST_PREFIX)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"requirements\":[],\"updates\":[]}"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error.message").value("Cannot commit: stale table metadata"));
+  }
+
+  /**
+   * A table pointing at a metadata.json that storage no longer holds. The catalog re-throws the
+   * miss wrapped in {@link InvalidTableMetadataException}, which nothing mapped: the read answered
+   * 500, and a 500 is what the Iceberg client turns into "the service is broken" rather than "that
+   * file is gone".
+   */
+  @Test
+  public void testMissingMetadataFileIsNotFound() throws Exception {
+    when(icebergRestApiHandler.loadTable(
+            eq(ICEBERG_REST_PREFIX),
+            eq("db"),
+            eq("gone"),
+            nullable(String.class),
+            nullable(String.class),
+            nullable(String.class),
+            nullable(String.class)))
+        .thenThrow(
+            new InvalidTableMetadataException(
+                "db",
+                "gone",
+                "Failed to open input stream for file: /tmp/db/gone/v1.metadata.json",
+                new org.apache.iceberg.exceptions.NotFoundException(
+                    "Failed to open input stream for file: /tmp/db/gone/v1.metadata.json")));
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(
+                "/v1/{prefix}/namespaces/db/tables/gone", ICEBERG_REST_PREFIX))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.error.code").value(404))
+        .andExpect(jsonPath("$.error.type").value("NotFoundException"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    org.hamcrest.Matchers.containsString(
+                        "Failed to open input stream for file: /tmp/db/gone/v1.metadata.json")));
+  }
+
+  /**
+   * The other half of that mapping: metadata that is present but does not parse is not a missing
+   * resource, and answering 404 for it would send a client looking for a table that is there.
+   */
+  @Test
+  public void testUnreadableMetadataIsStillAServerError() throws Exception {
+    when(icebergRestApiHandler.loadTable(
+            eq(ICEBERG_REST_PREFIX),
+            eq("db"),
+            eq("corrupt"),
+            nullable(String.class),
+            nullable(String.class),
+            nullable(String.class),
+            nullable(String.class)))
+        .thenThrow(
+            new InvalidTableMetadataException(
+                "db",
+                "corrupt",
+                "Cannot parse metadata",
+                new org.apache.iceberg.exceptions.ValidationException("Cannot parse metadata")));
+
+    mvc.perform(
+            MockMvcRequestBuilders.get(
+                "/v1/{prefix}/namespaces/db/tables/corrupt", ICEBERG_REST_PREFIX))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.error.type").value("InternalServerError"));
   }
 
   private static TableMetadata testMetadata(String location) {
