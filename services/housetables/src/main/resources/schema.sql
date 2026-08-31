@@ -77,3 +77,22 @@ CREATE TABLE IF NOT EXISTS database_row (
     ETL_TS              DATETIME(6)       DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (database_id)
 );
+
+-- Durable state of the backfill that gives every database in user_table_row a row in database_row.
+-- Exactly one row lives here, under id = 'database_row'.
+--
+-- watermark is the resume point of a scan in flight, and is cleared by the scan that reaches the
+-- end. scan_complete_time_ms says a scan RAN. verified_complete_time_ms says a pass read the store
+-- back and found nothing missing -- that is the only column that may be read as "database_row is
+-- complete", and a verification that finds a gap sets it back to NULL.
+CREATE TABLE IF NOT EXISTS database_backfill_row (
+    id                          VARCHAR (128)     NOT NULL,
+    version                     BIGINT            ,
+    watermark                   VARCHAR (128)     DEFAULT NULL,
+    scan_complete_time_ms       BIGINT            DEFAULT NULL,
+    verified_complete_time_ms   BIGINT            DEFAULT NULL,
+    last_verify_time_ms         BIGINT            DEFAULT NULL,
+    missing_count               BIGINT            DEFAULT NULL,
+    ETL_TS                      DATETIME(6)       DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (id)
+);
