@@ -14,6 +14,9 @@ import com.linkedin.openhouse.cluster.storage.hdfs.HdfsStorageClient;
 import com.linkedin.openhouse.cluster.storage.local.LocalStorageClient;
 import com.linkedin.openhouse.common.exception.InvalidTableMetadataException;
 import com.linkedin.openhouse.internal.catalog.cache.TableMetadataCache;
+import com.linkedin.openhouse.internal.catalog.commit.MetadataUpdateApplier;
+import com.linkedin.openhouse.internal.catalog.commit.UpdateRequirementValidator;
+import com.linkedin.openhouse.internal.catalog.commit.WholeDocumentCommitDeriver;
 import com.linkedin.openhouse.internal.catalog.exception.InvalidIcebergSnapshotException;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.mapper.HouseTableMapper;
@@ -41,7 +44,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.FileSystem;
@@ -55,7 +57,6 @@ import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.SortDirection;
 import org.apache.iceberg.SortField;
 import org.apache.iceberg.SortOrder;
-import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.TableProperties;
@@ -304,54 +305,29 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       String sortOrderJson = properties.remove(CatalogConstants.SORT_ORDER_KEY);
       logPropertiesMap(properties);
 
-      TableMetadata metadataToCommit = metadata.replaceProperties(properties);
-
-      if (sortOrderJson != null) {
-        SortOrder sortOrder = SortOrderParser.fromJson(metadataToCommit.schema(), sortOrderJson);
-        metadataToCommit = metadataToCommit.replaceSortOrder(sortOrder);
-      }
-
+      // The client's whole intended document becomes an Iceberg-shaped change list -- the same
+      // shape the REST spec commits -- and the shared engine, not bespoke TableMetadata surgery,
+      // produces the metadata that gets written. Requirements are checked against the catalog's
+      // base; the changes are applied to the document, exactly as the replaced code did.
+      // Refs are parsed only alongside a snapshot list, as before: a commit with no snapshot
+      // section never deserialises refs, so a malformed refs payload cannot fail a commit that
+      // does not carry snapshots.
+      List<Snapshot> snapshotsToPut = null;
+      Map<String, SnapshotRef> snapshotRefs = null;
       if (serializedSnapshotsToPut != null) {
-        List<Snapshot> snapshotsToPut =
-            SnapshotsUtil.parseSnapshots(fileIO, serializedSnapshotsToPut);
-        Map<String, SnapshotRef> snapshotRefs =
+        snapshotsToPut = SnapshotsUtil.parseSnapshots(fileIO, serializedSnapshotsToPut);
+        snapshotRefs =
             serializedSnapshotRefs == null
                 ? new HashMap<>()
                 : SnapshotsUtil.parseSnapshotRefs(serializedSnapshotRefs);
-
-        TableMetadata.Builder builder = TableMetadata.buildFrom(metadataToCommit);
-
-        // 1. Identify which snapshots are new vs existing
-        Set<Long> existingSnapshotIds =
-            metadataToCommit.snapshots().stream()
-                .map(Snapshot::snapshotId)
-                .collect(Collectors.toSet());
-        Set<Long> newSnapshotIds =
-            snapshotsToPut.stream().map(Snapshot::snapshotId).collect(Collectors.toSet());
-
-        // 2. Add new snapshots
-        snapshotsToPut.stream()
-            .filter(s -> !existingSnapshotIds.contains(s.snapshotId()))
-            .forEach(builder::addSnapshot);
-
-        // 3. Remove snapshots that are no longer present in the client payload
-        List<Long> toRemove =
-            existingSnapshotIds.stream()
-                .filter(id -> !newSnapshotIds.contains(id))
-                .collect(Collectors.toList());
-        if (!toRemove.isEmpty()) {
-          builder.removeSnapshots(toRemove);
-        }
-
-        // 4. Sync Refs: Remove refs not in payload, Set/Update refs from payload
-        metadataToCommit.refs().keySet().stream()
-            .filter(ref -> !snapshotRefs.containsKey(ref))
-            .forEach(builder::removeRef);
-
-        snapshotRefs.forEach(builder::setRef);
-
-        metadataToCommit = builder.build();
       }
+
+      WholeDocumentCommitDeriver.DerivedCommit derivedCommit =
+          WholeDocumentCommitDeriver.derive(
+              base, metadata, properties, sortOrderJson, snapshotsToPut, snapshotRefs);
+      UpdateRequirementValidator.validate(base, derivedCommit.requirements());
+      TableMetadata metadataToCommit =
+          MetadataUpdateApplier.apply(metadata, derivedCommit.updates());
 
       final TableMetadata updatedMtDataRef = metadataToCommit;
       Tracer tracer = GlobalOpenTelemetry.getTracer("openhouse-tables");
