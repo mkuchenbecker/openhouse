@@ -22,6 +22,17 @@ import org.apache.iceberg.exceptions.ValidationException;
  * Iceberg upgrade, which for a precondition check means silently accepting commits a spec-compliant
  * server would reject. We therefore delegate, and confine our own logic to the two cases Iceberg's
  * implementations do not cover: a {@code null} (non-existent) table, and view-only requirements.
+ *
+ * <p><b>Why no allow-list here, when {@code MetadataUpdateApplier} keeps one?</b> The two Iceberg
+ * interfaces fail differently. {@code MetadataUpdate}'s interface default raises {@link
+ * UnsupportedOperationException}, which a REST surface would render as an internal error, so the
+ * applier screens update types before delegating. {@code UpdateRequirement}'s default already
+ * raises {@link ValidationException}, the right answer, so a requirement type this version cannot
+ * evaluate against a table is rejected correctly without any list of ours. What does depend on the
+ * exact set of types is the {@code null} base branch below, which assumes {@code
+ * AssertTableDoesNotExist} is the only requirement meaningful against a table that does not exist;
+ * {@code UpdateRequirementValidatorTest} pins that set so an Iceberg upgrade cannot quietly
+ * invalidate the assumption.
  */
 public final class UpdateRequirementValidator {
 

@@ -73,11 +73,11 @@ public class MetadataUpdateApplierTest {
   // ---------------------------------------------------------------------------------------------
 
   @Test
-  public void testEmptyUpdatesReturnEquivalentMetadata() {
-    TableMetadata result = MetadataUpdateApplier.apply(base, Collections.emptyList());
-    Assertions.assertEquals(base.uuid(), result.uuid());
-    Assertions.assertEquals(base.currentSchemaId(), result.currentSchemaId());
-    Assertions.assertEquals(base.location(), result.location());
+  public void testEmptyUpdatesReturnTheSameMetadataInstance() {
+    // Iceberg's builder hands back the metadata it started from when nothing changed. Pinning the
+    // identity here is what makes the warning in apply()'s contract checkable: a caller cannot use
+    // "is this a new object?" to decide whether a commit changed anything.
+    Assertions.assertSame(base, MetadataUpdateApplier.apply(base, Collections.emptyList()));
   }
 
   @Test
@@ -298,7 +298,7 @@ public class MetadataUpdateApplierTest {
             new MetadataUpdate.SetProperties(Collections.singletonMap("owner", "openhouse")));
 
     TableMetadata created =
-        MetadataUpdateApplier.applyChecked(
+        MetadataUpdateApplier.validateAndApply(
             null,
             Collections.singletonList(new UpdateRequirement.AssertTableDoesNotExist()),
             createUpdates);
@@ -325,6 +325,53 @@ public class MetadataUpdateApplierTest {
     Assertions.assertTrue(e.getMessage().contains("no updates were supplied"), e.getMessage());
   }
 
+  @Test
+  public void testAppendCommitAgainstAnExistingTable() {
+    // The shape a real append arrives in: assert the table and the branch head we read, then add a
+    // snapshot and move the branch. Exercised end to end because that is the sequence the wiring
+    // slice will hand this engine.
+    Snapshot first = CommitTestFixtures.snapshot(1L, 1L);
+    TableMetadata afterFirst =
+        MetadataUpdateApplier.validateAndApply(
+            base,
+            Arrays.asList(
+                new UpdateRequirement.AssertTableUUID(base.uuid()),
+                new UpdateRequirement.AssertRefSnapshotID(SnapshotRef.MAIN_BRANCH, null)),
+            Arrays.asList(
+                new MetadataUpdate.AddSnapshot(first),
+                setSnapshotRef(SnapshotRef.MAIN_BRANCH, first.snapshotId(), "branch")));
+    Assertions.assertEquals(first.snapshotId(), afterFirst.currentSnapshot().snapshotId());
+
+    Snapshot second = CommitTestFixtures.snapshot(2L, 2L);
+    TableMetadata afterSecond =
+        MetadataUpdateApplier.validateAndApply(
+            afterFirst,
+            Arrays.asList(
+                new UpdateRequirement.AssertTableUUID(afterFirst.uuid()),
+                new UpdateRequirement.AssertRefSnapshotID(
+                    SnapshotRef.MAIN_BRANCH, first.snapshotId())),
+            Arrays.asList(
+                new MetadataUpdate.AddSnapshot(second),
+                setSnapshotRef(SnapshotRef.MAIN_BRANCH, second.snapshotId(), "branch")));
+    Assertions.assertEquals(second.snapshotId(), afterSecond.currentSnapshot().snapshotId());
+    Assertions.assertEquals(2, afterSecond.snapshots().size());
+
+    // A second writer that still believes the branch points at the first snapshot loses.
+    Snapshot stale = CommitTestFixtures.snapshot(3L, 3L);
+    Assertions.assertThrows(
+        CommitFailedException.class,
+        () ->
+            MetadataUpdateApplier.validateAndApply(
+                afterSecond,
+                Arrays.asList(
+                    new UpdateRequirement.AssertTableUUID(afterSecond.uuid()),
+                    new UpdateRequirement.AssertRefSnapshotID(
+                        SnapshotRef.MAIN_BRANCH, first.snapshotId())),
+                Arrays.asList(
+                    new MetadataUpdate.AddSnapshot(stale),
+                    setSnapshotRef(SnapshotRef.MAIN_BRANCH, stale.snapshotId(), "branch"))));
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Failure modes
   // ---------------------------------------------------------------------------------------------
@@ -338,7 +385,7 @@ public class MetadataUpdateApplierTest {
     Assertions.assertThrows(
         CommitFailedException.class,
         () ->
-            MetadataUpdateApplier.applyChecked(
+            MetadataUpdateApplier.validateAndApply(
                 before,
                 Collections.singletonList(
                     new UpdateRequirement.AssertTableUUID("00000000-0000-0000-0000-000000000000")),

@@ -92,7 +92,7 @@ public final class MetadataUpdateApplier {
    * @throws ValidationException if an update or requirement cannot be applied to a table
    * @throws IllegalArgumentException if either list, or any element of them, is {@code null}
    */
-  public static TableMetadata applyChecked(
+  public static TableMetadata validateAndApply(
       TableMetadata base, List<UpdateRequirement> requirements, List<MetadataUpdate> updates) {
     UpdateRequirementValidator.validate(base, requirements);
     return apply(base, updates);
@@ -103,6 +103,9 @@ public final class MetadataUpdateApplier {
    *
    * @param base the table's current metadata, or {@code null} to build a new table from nothing
    * @param updates the changes to apply; must not be {@code null}
+   *     <p>When no update actually changes anything, Iceberg's builder hands back the metadata it
+   *     started from, so the returned object may be the very same instance as {@code base}. Callers
+   *     must not read a fresh instance as proof that something changed.
    * @return the resulting metadata
    * @throws ValidationException if an update cannot be applied to a table, or if a create produced
    *     no metadata at all
