@@ -2,8 +2,10 @@ package com.linkedin.openhouse.tables.api.handler.impl;
 
 import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.IcebergRestApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
@@ -22,7 +24,6 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.rest.CatalogHandlers;
-import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.domain.Page;
@@ -39,11 +40,15 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
 
   private final TablesApiHandler tablesApiHandler;
   private final OpenHouseInternalCatalog openHouseInternalCatalog;
+  private final ClusterProperties clusterProperties;
 
   public OpenHouseIcebergRestApiHandler(
-      TablesApiHandler tablesApiHandler, OpenHouseInternalCatalog openHouseInternalCatalog) {
+      TablesApiHandler tablesApiHandler,
+      OpenHouseInternalCatalog openHouseInternalCatalog,
+      ClusterProperties clusterProperties) {
     this.tablesApiHandler = tablesApiHandler;
     this.openHouseInternalCatalog = openHouseInternalCatalog;
+    this.clusterProperties = clusterProperties;
   }
 
   @Override
@@ -57,11 +62,11 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   public ListTablesResponse listTables(
       String prefix, String namespace, String pageToken, Integer pageSize) {
     validatePrefix(prefix);
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
+    Namespace icebergNamespace = decodeNamespace(namespace);
     PageCursor cursor = decodePageToken(pageToken, pageSize);
     ApiResponse<GetAllTablesResponseBody> response =
         tablesApiHandler.searchTables(
-            icebergNamespace.level(0),
+            NamespaceUtil.encode(icebergNamespace),
             cursor.getPage(),
             cursor.getPageSize(),
             "tableId",
@@ -93,8 +98,8 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     }
     // Iceberg 1.11 loadTable may send referenced-by for view-load chains; Phase 1 ignores it.
 
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
-    String databaseId = icebergNamespace.level(0);
+    Namespace icebergNamespace = decodeNamespace(namespace);
+    String databaseId = NamespaceUtil.encode(icebergNamespace);
     try {
       tablesApiHandler.getTable(databaseId, table, extractAuthenticatedUserPrincipal());
     } catch (NoSuchUserTableException e) {
@@ -108,8 +113,8 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
   @Override
   public void tableExists(String prefix, String namespace, String table) {
     validatePrefix(prefix);
-    Namespace icebergNamespace = decodeSingleLevelNamespace(namespace);
-    String databaseId = icebergNamespace.level(0);
+    Namespace icebergNamespace = decodeNamespace(namespace);
+    String databaseId = NamespaceUtil.encode(icebergNamespace);
     try {
       tablesApiHandler.getTable(databaseId, table, extractAuthenticatedUserPrincipal());
     } catch (NoSuchUserTableException e) {
@@ -123,10 +128,28 @@ public class OpenHouseIcebergRestApiHandler implements IcebergRestApiHandler {
     }
   }
 
-  private static Namespace decodeSingleLevelNamespace(String encodedNamespace) {
-    Namespace namespace = RESTUtil.decodeNamespace(encodedNamespace);
-    if (namespace.isEmpty() || namespace.levels().length != 1) {
-      throw new NoSuchNamespaceException("Only single-level namespaces are supported");
+  /**
+   * Decode the namespace a {@code /v1} table route names, and bound its depth by the cluster's
+   * configured maximum.
+   *
+   * <p>Two encodings meet here and must not be confused. On the wire the Iceberg REST spec joins a
+   * multi-level namespace with the {@code 0x1F} unit separator, which {@link
+   * IcebergRestNamespaceWireForm} decodes; in storage OpenHouse joins the same levels with {@code
+   * .}, which {@link NamespaceUtil#encode} writes. This method converts one to the other, and is
+   * the only place on these routes that does.
+   *
+   * <p>At the shipped depth of 1 this accepts and rejects exactly what its single-level predecessor
+   * did, with the same exception and the same message: a one-level namespace passes, everything
+   * else is a 404. The depth bound is what widens, and only when the cluster asks for it.
+   */
+  private Namespace decodeNamespace(String encodedNamespace) {
+    Namespace namespace = IcebergRestNamespaceWireForm.decode(encodedNamespace);
+    int maxDepth = clusterProperties.getClusterTablesNamespaceMaxDepth();
+    if (namespace.isEmpty() || namespace.levels().length > maxDepth) {
+      throw new NoSuchNamespaceException(
+          maxDepth == 1
+              ? "Only single-level namespaces are supported"
+              : String.format("Only namespaces up to %s levels deep are supported", maxDepth));
     }
     return namespace;
   }

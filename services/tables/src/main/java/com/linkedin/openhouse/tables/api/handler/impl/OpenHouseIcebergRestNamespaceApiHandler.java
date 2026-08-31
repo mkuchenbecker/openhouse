@@ -17,7 +17,6 @@ import java.util.Set;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.ValidationException;
-import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
 import org.apache.iceberg.rest.responses.CreateNamespaceResponse;
@@ -30,9 +29,9 @@ import org.springframework.stereotype.Component;
 /**
  * Default Iceberg REST namespace adapter, backed by {@link NamespacesService}.
  *
- * <p>Owns the wire-to-domain translation only: {@link RESTUtil} decodes the {@code 0x1F}-separated
- * wire form, the service owns authorization and the existence policy, and the persisted
- * (dot-joined) encoding is applied below both.
+ * <p>Owns the wire-to-domain translation only: {@link IcebergRestNamespaceWireForm} decodes the
+ * {@code 0x1F}-separated wire form, the service owns authorization and the existence policy, and
+ * the persisted (dot-joined) encoding is applied below both.
  */
 @Component
 @ConditionalOnProperty(value = "cluster.tables.iceberg-rest.enabled", havingValue = "true")
@@ -138,7 +137,7 @@ public class OpenHouseIcebergRestNamespaceApiHandler implements IcebergRestNames
    * property key, an oversized property bag) and owes the client a 400 that says so.
    */
   private Namespace readNamespace(String namespace) {
-    Namespace decoded = RESTUtil.decodeNamespace(namespace);
+    Namespace decoded = IcebergRestNamespaceWireForm.decode(namespace);
     try {
       NamespaceUtil.validate(decoded, clusterProperties.getClusterTablesNamespaceMaxDepth());
     } catch (ValidationException e) {

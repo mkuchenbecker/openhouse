@@ -7,7 +7,9 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
+import com.linkedin.openhouse.common.utils.NamespaceUtil;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseIcebergRestApiHandler;
@@ -38,11 +40,19 @@ public class OpenHouseIcebergRestApiHandlerTest {
   @Mock private TablesApiHandler tablesApiHandler;
   @Mock private OpenHouseInternalCatalog openHouseInternalCatalog;
 
+  private final ClusterProperties clusterProperties =
+      org.mockito.Mockito.mock(ClusterProperties.class);
+
   private OpenHouseIcebergRestApiHandler handler;
 
   @BeforeEach
   void setUp() {
-    handler = new OpenHouseIcebergRestApiHandler(tablesApiHandler, openHouseInternalCatalog);
+    org.mockito.Mockito.lenient()
+        .when(clusterProperties.getClusterTablesNamespaceMaxDepth())
+        .thenReturn(NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH);
+    handler =
+        new OpenHouseIcebergRestApiHandler(
+            tablesApiHandler, openHouseInternalCatalog, clusterProperties);
   }
 
   @Test

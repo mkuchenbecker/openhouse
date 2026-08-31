@@ -71,22 +71,87 @@ public class NamespacesServiceImplTest {
   }
 
   /**
-   * B8: raising cluster.tables.namespace.max-depth widens one validator and nothing below it, so a
-   * cluster that asks for nesting has to be told at startup rather than on the first two-level
-   * create, where it would have arrived as a 500 out of /hts/databases.
+   * Replaces the startup guard this slice removes. The guard refused any max-depth but 1 and named
+   * the five seams nesting needed; the seams now exist, so the same configuration has to be
+   * accepted end to end instead of refused. Anything less than a create/list/load/drop round trip
+   * would leave "accepted" meaning only "did not throw at startup".
    */
   @Test
-  void aMaxDepthAboveOneIsRefusedAtStartupWithTheSeamsNamed() {
+  void aNestedNamespaceIsCreatedListedLoadedAndDropped() {
     Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
-    assertThatThrownBy(() -> service.rejectUnimplementedNamespaceDepth())
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("cluster.tables.namespace.max-depth is 2")
-        .hasMessageContaining("/hts/databases")
-        .hasMessageContaining("isTableNamespace")
-        .hasMessageContaining("childrenOf");
+    service.createNamespace(Namespace.of("db"), Collections.emptyMap(), PRINCIPAL);
 
-    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(1);
-    assertThatCode(() -> service.rejectUnimplementedNamespaceDepth()).doesNotThrowAnyException();
+    NamespaceMetadata created =
+        service.createNamespace(
+            Namespace.of("db", "sub"), Collections.singletonMap("owner", "a"), PRINCIPAL);
+    assertThat(created.getNamespace()).isEqualTo(Namespace.of("db", "sub"));
+    assertThat(repository.findById("db.sub")).isPresent();
+
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL))
+        .containsExactly(Namespace.of("db", "sub"));
+    assertThat(service.loadNamespaceMetadata(Namespace.of("db", "sub"), PRINCIPAL).getProperties())
+        .containsEntry("owner", "a");
+    assertThat(service.namespaceExists(Namespace.of("db", "sub"), PRINCIPAL)).isTrue();
+
+    // The parent is occupied while the child is there, and free once it is gone.
+    assertThatThrownBy(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL))
+        .isInstanceOf(NamespaceNotEmptyException.class);
+    service.dropNamespace(Namespace.of("db", "sub"), PRINCIPAL);
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL)).isEmpty();
+    assertThatCode(() -> service.dropNamespace(Namespace.of("db"), PRINCIPAL))
+        .doesNotThrowAnyException();
+  }
+
+  /**
+   * The nested listing has to come from the store's range query rather than a filtered findAll(),
+   * and it has to stop at the direct children: a grandchild is in the subtree range but is not a
+   * child of the parent that was asked about.
+   *
+   * <p>Calibration: filtering findAll() instead trips the stub's findAll() assertion; dropping the
+   * direct-child filter from the stub's childrenOf turns the grandchild into a third element.
+   */
+  @Test
+  void aNestedListingComesFromTheRangeQueryAndStopsAtDirectChildren() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(3);
+    repository.save(namespace("db"));
+    repository.save(namespace("db.a"));
+    repository.save(namespace("db.b"));
+    repository.save(namespace("db.a.deep"));
+    repository.save(namespace("dbx"));
+    repository.failOnFindAll = true;
+
+    assertThat(service.listNamespaces(Namespace.of("db"), PRINCIPAL))
+        .containsExactlyInAnyOrder(Namespace.of("db", "a"), Namespace.of("db", "b"));
+  }
+
+  /**
+   * The top-level listing is the one that still reads the store, and it must answer with the roots
+   * rather than everything the store holds.
+   */
+  @Test
+  void theTopLevelListingAnswersWithRootsOnly() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+    repository.save(namespace("db"));
+    repository.save(namespace("db.sub"));
+
+    assertThat(service.listNamespaces(Namespace.empty(), PRINCIPAL))
+        .containsExactly(Namespace.of("db"));
+  }
+
+  /** The configured depth is a bound, not a suggestion: one level past it is a validation error. */
+  @Test
+  void aNamespaceDeeperThanTheConfiguredMaximumIsRejected() {
+    Mockito.when(clusterProperties.getClusterTablesNamespaceMaxDepth()).thenReturn(2);
+    service.createNamespace(Namespace.of("db"), Collections.emptyMap(), PRINCIPAL);
+    service.createNamespace(Namespace.of("db", "sub"), Collections.emptyMap(), PRINCIPAL);
+
+    assertThatThrownBy(
+            () ->
+                service.createNamespace(
+                    Namespace.of("db", "sub", "deeper"), Collections.emptyMap(), PRINCIPAL))
+        .isInstanceOf(ValidationException.class)
+        .hasMessageContaining("db.sub.deeper");
+    assertThat(repository.findById("db.sub.deeper")).isEmpty();
   }
 
   /**

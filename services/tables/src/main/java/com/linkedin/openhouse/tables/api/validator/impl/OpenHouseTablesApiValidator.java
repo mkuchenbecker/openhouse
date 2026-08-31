@@ -144,6 +144,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validationFailures.addAll(validateUUIDForReplicaTable(createUpdateTableRequestBody));
     validationFailures.addAll(
         validateUpdateTimestampForReplicatedTable(createUpdateTableRequestBody));
+    validateTableIdDoesNotShadowMetadataTable(
+        databaseId, createUpdateTableRequestBody.getTableId(), validationFailures);
 
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
@@ -322,6 +324,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateGetTable(fromDatabaseId, fromTableId);
     validateGetTable(toDatabaseId, toTableId);
     List<String> validationFailures = new ArrayList<>();
+    // A rename is the other way a table can come to occupy an identifier, and the catalog's rename
+    // does not re-check the destination. Without this, the create-time rule would be a door with a
+    // window next to it.
+    validateTableIdDoesNotShadowMetadataTable(toDatabaseId, toTableId, validationFailures);
     // TODO: support renames across databases
     if (!fromDatabaseId.equalsIgnoreCase(toDatabaseId)) {
       validationFailures.add(
@@ -521,6 +527,29 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       log.warn("Failed to parse schema for duplicate column check", e);
       validationFailures.add("schema : " + e.getMessage());
       return Optional.empty();
+    }
+  }
+
+  /**
+   * The create-time half of the metadata-table discriminator.
+   *
+   * <p>{@code db.sub.history} can be read as the {@code history} metadata table of {@code db.sub}
+   * or as a base table named {@code history} in the namespace {@code db.sub}. The catalog resolves
+   * it as the former; this is what makes that resolution lossless rather than a choice that
+   * silently hides someone's table. A table that would occupy such an identifier never comes into
+   * existence, so the reading given up names nothing.
+   *
+   * <p>Inert at the shipped namespace depth of 1, where a database is one level deep: {@code
+   * db.history} is a table named {@code history} in {@code db} and stays creatable.
+   */
+  private void validateTableIdDoesNotShadowMetadataTable(
+      String databaseId, String tableId, List<String> validationFailures) {
+    if (NamespaceUtil.collidesWithMetadataTable(databaseId, tableId)) {
+      validationFailures.add(
+          String.format(
+              "tableId : provided %s, is an Iceberg metadata table name and cannot be a table in"
+                  + " the nested namespace %s; %s.%s would be ambiguous",
+              tableId, databaseId, databaseId, tableId));
     }
   }
 
