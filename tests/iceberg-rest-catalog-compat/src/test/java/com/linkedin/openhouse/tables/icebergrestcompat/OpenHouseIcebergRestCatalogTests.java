@@ -51,6 +51,16 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
 
   private static final String FACADE_ENABLED_FLAG = "cluster.tables.iceberg-rest.enabled";
 
+  private static final String NAMESPACE_MAX_DEPTH_FLAG = "cluster.tables.namespace.max-depth";
+
+  /**
+   * The suite's nesting tests work in {@code parent} and {@code parent.child}, so the server under
+   * test has to admit two levels for them to mean anything. Two rather than more: it is the
+   * shallowest configuration in which nesting is on at all, so anything that only works because
+   * there is room to spare would still show up here.
+   */
+  private static final String NAMESPACE_MAX_DEPTH = "2";
+
   private static OpenHouseLocalServer server;
   private static RESTCatalog restCatalog;
   private static String authToken;
@@ -88,6 +98,7 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   @BeforeAll
   static void startServerAndCatalog() {
     System.setProperty(FACADE_ENABLED_FLAG, "true");
+    System.setProperty(NAMESPACE_MAX_DEPTH_FLAG, NAMESPACE_MAX_DEPTH);
     server = new OpenHouseLocalServer();
     server.start();
     authToken = readDummyToken();
@@ -105,6 +116,7 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
         server.stop();
       }
       System.clearProperty(FACADE_ENABLED_FLAG);
+      System.clearProperty(NAMESPACE_MAX_DEPTH_FLAG);
     }
   }
 
@@ -116,12 +128,24 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   @AfterEach
   void dropNamespacesCreatedByTest() {
     for (Namespace namespace : restCatalog.listNamespaces()) {
-      try {
-        restCatalog.dropNamespace(namespace);
-      } catch (RuntimeException e) {
-        // A namespace that is not empty belongs to a test that left occupants behind; the next
-        // test's own assertions will report that far more precisely than a failure here would.
+      dropTree(namespace);
+    }
+  }
+
+  /**
+   * Depth-first, because a namespace with children cannot be dropped. Dropping only the roots was
+   * enough while namespaces were single-level; with nesting on it would leave every child of every
+   * failed root behind, and the next test asserts on an empty catalog.
+   */
+  private static void dropTree(Namespace namespace) {
+    try {
+      for (Namespace child : restCatalog.listNamespaces(namespace)) {
+        dropTree(child);
       }
+      restCatalog.dropNamespace(namespace);
+    } catch (RuntimeException e) {
+      // A namespace that is not empty belongs to a test that left occupants behind; the next
+      // test's own assertions will report that far more precisely than a failure here would.
     }
   }
 
@@ -148,12 +172,13 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   }
 
   /**
-   * OpenHouse ships with {@code cluster.tables.namespace.max-depth} at 1, so namespaces are
-   * single-level and the two nesting tests skip themselves on this flag.
+   * The server under test is booted with {@code cluster.tables.namespace.max-depth} above 1, so
+   * {@code testListNestedNamespaces} and {@code testDropNamespaceWithNestedNamespace} execute
+   * rather than skip themselves on this flag.
    */
   @Override
   protected boolean supportsNestedNamespaces() {
-    return false;
+    return true;
   }
 
   @Override

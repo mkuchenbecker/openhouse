@@ -95,10 +95,24 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
         tableMetadataCache);
   }
 
+  /**
+   * Whether {@code tableIdentifier} names a base table in this catalog.
+   *
+   * <p>The second clause is the metadata-table discriminator. Once namespaces nest, an identifier
+   * whose namespace is two or more levels deep and whose last element is an Iceberg metadata table
+   * type has two readings, and this hands it to Iceberg's metadata-table branch rather than looking
+   * for a base table of that name. Nothing is lost by doing so: a base table that would occupy such
+   * an identifier is refused at creation, so the reading being given up names nothing that can
+   * exist.
+   *
+   * <p>At the shipped depth of 1 the two clauses are disjoint — a base table namespace is exactly
+   * one level and the discriminator needs two — so this is the same predicate it has always been.
+   */
   @Override
   protected boolean isValidIdentifier(TableIdentifier tableIdentifier) {
     return tableIdentifier != null
-        && NamespaceUtil.isTableNamespace(tableIdentifier.namespace(), maxNamespaceDepth);
+        && NamespaceUtil.isTableNamespace(tableIdentifier.namespace(), maxNamespaceDepth)
+        && !NamespaceUtil.isMetadataTableIdentifier(tableIdentifier);
   }
 
   @Override

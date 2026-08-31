@@ -2,7 +2,9 @@ package com.linkedin.openhouse.common.utils;
 
 import com.linkedin.openhouse.common.api.validator.ValidatorConstants;
 import java.util.regex.Pattern;
+import org.apache.iceberg.MetadataTableType;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.ValidationException;
 
 /**
@@ -169,6 +171,67 @@ public final class NamespaceUtil {
         && encodedCandidate.startsWith(prefix)
         && encodedCandidate.indexOf(SEPARATOR_CHAR, prefix.length()) < 0
         && encodedCandidate.length() > prefix.length();
+  }
+
+  /**
+   * The shallowest namespace at which an identifier can be read as a metadata table.
+   *
+   * <p>Iceberg addresses a table's metadata tables by appending the type to the table's own
+   * identifier, so {@code db.tbl.history} is the {@code history} metadata table of {@code db.tbl}
+   * and its namespace is {@code db.tbl} — two levels. One level below that, {@code db.history}, is
+   * a table called {@code history} in the database {@code db}, and always has been.
+   */
+  private static final int METADATA_TABLE_MIN_NAMESPACE_DEPTH = 2;
+
+  /**
+   * Whether {@code name} is one of Iceberg's metadata table types.
+   *
+   * <p>The set is read from {@link MetadataTableType} rather than restated here, so a metadata
+   * table Iceberg adds in a later release cannot quietly become a creatable table name. The lookup
+   * is case-insensitive because {@link MetadataTableType#from} is, and because that is the reading
+   * Iceberg itself will apply to the same string.
+   */
+  public static boolean isMetadataTableName(String name) {
+    return name != null && MetadataTableType.from(name) != null;
+  }
+
+  /**
+   * Whether {@code identifier} names a metadata table rather than a base table.
+   *
+   * <p>Once namespaces can nest, {@code db.tbl.history} has two possible readings: the {@code
+   * history} metadata table of {@code db.tbl}, or a base table named {@code history} in the
+   * namespace {@code db.tbl}. This predicate picks the first, and {@link
+   * #collidesWithMetadataTable} is what makes that choice safe rather than arbitrary — a base table
+   * that would occupy such an identifier is refused at creation, so the second reading names
+   * nothing that can exist.
+   *
+   * <p>The depth floor is what keeps this inert at the shipped depth of 1: there, every base table
+   * identifier has a one-level namespace, so {@code db.history} is a table named {@code history}
+   * and stays one. Only {@code db.tbl.history}, which was already a metadata-table identifier
+   * before nesting, clears the floor.
+   */
+  public static boolean isMetadataTableIdentifier(TableIdentifier identifier) {
+    return identifier != null
+        && identifier.namespace().levels().length >= METADATA_TABLE_MIN_NAMESPACE_DEPTH
+        && isMetadataTableName(identifier.name());
+  }
+
+  /**
+   * Whether creating a table {@code tableId} under {@code encodedNamespace} would occupy an
+   * identifier {@link #isMetadataTableIdentifier} reads as a metadata table.
+   *
+   * <p>Deliberately the same predicate, applied to the identifier the create would produce, rather
+   * than a second rule stated in parallel: the admission rule and the reading it protects cannot
+   * drift apart if there is only one of them.
+   */
+  public static boolean collidesWithMetadataTable(String encodedNamespace, String tableId) {
+    if (encodedNamespace == null
+        || encodedNamespace.isEmpty()
+        || tableId == null
+        || tableId.isEmpty()) {
+      return false;
+    }
+    return isMetadataTableIdentifier(TableIdentifier.of(decode(encodedNamespace), tableId));
   }
 
   /** Inverse of {@link #encode(Namespace)} over a persisted (or {@code /v1}) namespace string. */
