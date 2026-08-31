@@ -210,14 +210,20 @@ public class NamespaceUtilTest {
     }
   }
 
+  /**
+   * The per-level charset inside a namespace and the charset the wire seams enforce are one
+   * constant, not two that happen to agree today.
+   */
   @Test
-  public void testValidateNamespaceIdentifierThrowsForTheSameInputsThePredicateRejects() {
-    Assertions.assertDoesNotThrow(() -> NamespaceUtil.validateNamespaceIdentifier("db"));
-    Assertions.assertDoesNotThrow(() -> NamespaceUtil.validateNamespaceIdentifier("a.b"));
+  public void testTheLevelCharsetIsTheSameOneTheWireSeamsEnforce() {
+    Assertions.assertTrue(NamespaceUtil.isValidNamespaceIdentifier("legal_1"));
     Assertions.assertThrows(
-        ValidationException.class, () -> NamespaceUtil.validateNamespaceIdentifier("not-legal"));
-    Assertions.assertThrows(
-        ValidationException.class, () -> NamespaceUtil.validateNamespaceIdentifier(null));
+        ValidationException.class, () -> NamespaceUtil.validate(Namespace.of("not-legal"), 1));
+    Assertions.assertFalse(NamespaceUtil.isValidNamespaceIdentifier("not-legal"));
+    Assertions.assertEquals(
+        "^[a-zA-Z0-9_]+$", ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX, "charset is unchanged");
+    Assertions.assertEquals(
+        "^[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)*$", ValidatorConstants.NAMESPACE_ID_REGEX);
   }
 
   /**

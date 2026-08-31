@@ -4,12 +4,20 @@ public final class ValidatorConstants {
 
   private ValidatorConstants() {}
 
-  public static final String ALPHA_NUM_UNDERSCORE_PATTERN_SEARCH_REGEX = "^%?[a-zA-Z0-9_]+%?$";
+  /**
+   * The identifier charset itself, without anchors. Every constant below is composed from it rather
+   * than restating it, so widening what an identifier may contain is one edit rather than a hunt
+   * for the copies that drifted.
+   */
+  private static final String IDENTIFIER_LEVEL = "[a-zA-Z0-9_]+";
+
+  public static final String ALPHA_NUM_UNDERSCORE_PATTERN_SEARCH_REGEX =
+      "^%?" + IDENTIFIER_LEVEL + "%?$";
 
   public static final String ALPHA_NUM_UNDERSCORE_PATTERN_SEARCH_ERROR_MSG =
       "Only alphanumerics and underscore supported. The wildcard '%' can only be at the beginning or end of the string";
 
-  public static final String ALPHA_NUM_UNDERSCORE_REGEX = "^[a-zA-Z0-9_]+$";
+  public static final String ALPHA_NUM_UNDERSCORE_REGEX = "^" + IDENTIFIER_LEVEL + "$";
   public static final String ALPHA_NUM_UNDERSCORE_ERROR_MSG =
       "Only alphanumerics and underscore supported";
 
@@ -24,7 +32,8 @@ public final class ValidatorConstants {
    * <p>At the shipped namespace depth of 1 an encoded namespace contains no separator, so this
    * accepts and rejects exactly what {@link #ALPHA_NUM_UNDERSCORE_REGEX} does.
    */
-  public static final String NAMESPACE_ID_REGEX = "^[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)*$";
+  public static final String NAMESPACE_ID_REGEX =
+      "^" + IDENTIFIER_LEVEL + "(\\." + IDENTIFIER_LEVEL + ")*$";
 
   public static final String NAMESPACE_ID_ERROR_MSG =
       "Only alphanumerics and underscore supported, with '.' separating namespace levels";

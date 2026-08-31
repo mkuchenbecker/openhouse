@@ -83,8 +83,13 @@ public final class NamespaceUtil {
   /** The width of {@code house_table.database_id}, and therefore of an encoded namespace. */
   public static final int MAX_ENCODED_NAMESPACE_LENGTH = 128;
 
-  /** Per-level identifier charset. {@code .} is structurally reserved as the encoding separator. */
-  private static final Pattern LEVEL_PATTERN = Pattern.compile("^[a-zA-Z0-9_]+$");
+  /**
+   * Per-level identifier charset. {@code .} is structurally reserved as the encoding separator.
+   * Taken from {@link ValidatorConstants} rather than restated, so a level cannot be legal here and
+   * illegal at the seam that carries it across the wire.
+   */
+  private static final Pattern LEVEL_PATTERN =
+      Pattern.compile(ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX);
 
   private static final String SEPARATOR = ".";
 
@@ -128,20 +133,6 @@ public final class NamespaceUtil {
    */
   public static boolean isValidNamespaceIdentifier(String encodedNamespace) {
     return encodedNamespace != null && NAMESPACE_ID_PATTERN.matcher(encodedNamespace).matches();
-  }
-
-  /**
-   * Throwing form of {@link #isValidNamespaceIdentifier(String)}, for call sites that reject rather
-   * than collect.
-   *
-   * @throws ValidationException if {@code encodedNamespace} is outside the charset
-   */
-  public static void validateNamespaceIdentifier(String encodedNamespace) {
-    if (!isValidNamespaceIdentifier(encodedNamespace)) {
-      throw new ValidationException(
-          "Namespace identifier %s must match %s",
-          encodedNamespace, ValidatorConstants.NAMESPACE_ID_REGEX);
-    }
   }
 
   /**

@@ -11,6 +11,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -47,6 +48,29 @@ public class NamespaceDepthWiringTest {
     assertThat(catalogField.getAnnotation(Value.class).value())
         .isEqualTo(clusterField.getAnnotation(Value.class).value())
         .isEqualTo("${cluster.tables.namespace.max-depth:1}");
+  }
+
+  /**
+   * The placeholder resolves against a real Spring {@link org.springframework.core.env.Environment}
+   * — the property name is spelled correctly, the default syntax is well formed, and a set value
+   * wins. String equality with {@link ClusterProperties} alone would not catch a placeholder that
+   * both fields spell wrong in the same way.
+   */
+  @Test
+  public void thePlaceholderResolvesAgainstARealEnvironment() throws NoSuchFieldException {
+    String placeholder =
+        OpenHouseInternalCatalog.class
+            .getDeclaredField("maxNamespaceDepth")
+            .getAnnotation(Value.class)
+            .value();
+
+    MockEnvironment unset = new MockEnvironment();
+    assertThat(unset.resolveRequiredPlaceholders(placeholder))
+        .isEqualTo(NamespaceUtil.DEFAULT_MAX_NAMESPACE_DEPTH_LITERAL);
+
+    MockEnvironment raised = new MockEnvironment();
+    raised.setProperty("cluster.tables.namespace.max-depth", "3");
+    assertThat(raised.resolveRequiredPlaceholders(placeholder)).isEqualTo("3");
   }
 
   /** At the shipped depth, every answer is the one the hardcoded constant used to give. */
