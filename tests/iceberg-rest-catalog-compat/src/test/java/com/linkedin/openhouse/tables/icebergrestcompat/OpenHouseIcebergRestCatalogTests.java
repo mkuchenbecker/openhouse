@@ -5,7 +5,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,7 +18,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -469,42 +467,6 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   }
 
   @Override
-  @Test
-  public void testDefaultTableProperties() {
-    super.testDefaultTableProperties();
-  }
-
-  @Override
-  @Test
-  public void testDefaultTablePropertiesCreateTransaction() {
-    super.testDefaultTablePropertiesCreateTransaction();
-  }
-
-  @Override
-  @Test
-  public void testOverrideTableProperties() {
-    super.testOverrideTableProperties();
-  }
-
-  @Override
-  @Test
-  public void testOverrideTablePropertiesCreateTransaction() {
-    super.testOverrideTablePropertiesCreateTransaction();
-  }
-
-  @Override
-  @Test
-  public void testUUIDValidation() {
-    super.testUUIDValidation();
-  }
-
-  @Override
-  @Test
-  public void testUpdateTableSchemaAssignmentConflict() {
-    super.testUpdateTableSchemaAssignmentConflict();
-  }
-
-  @Override
   @Disabled(COLUMN_DEFAULTS_NOT_STORED)
   @Test
   public void testCreateTableWithDefaultColumnValue() {
@@ -516,12 +478,6 @@ public class OpenHouseIcebergRestCatalogTests extends CatalogTests<RESTCatalog> 
   @Test
   public void testCompleteCreateTransactionMultipleSchemas() {
     super.testCompleteCreateTransactionMultipleSchemas();
-  }
-
-  @Override
-  @Test
-  public void testLoadTableWithMissingMetadataFile(@TempDir Path tempDir) throws IOException {
-    super.testLoadTableWithMissingMetadataFile(tempDir);
   }
 
   @Override
