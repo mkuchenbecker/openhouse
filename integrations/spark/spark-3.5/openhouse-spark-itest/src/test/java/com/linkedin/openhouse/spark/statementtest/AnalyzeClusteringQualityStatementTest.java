@@ -46,8 +46,7 @@ public class AnalyzeClusteringQualityStatementTest {
         .sql(
             "ALTER TABLE openhouse.db.table SET TBLPROPERTIES ("
                 + "'optimize.cluster.keys' = 'id', "
-                + "'optimize.cluster.sort-mode' = 'sort', "
-                + "'optimize.cluster.min-snapshot-age-minutes' = '0')")
+                + "'optimize.cluster.sort-mode' = 'sort')")
         .show();
     spark.sql("OPTIMIZE openhouse.db.table").collect();
 
@@ -55,15 +54,65 @@ public class AnalyzeClusteringQualityStatementTest {
     Assertions.assertEquals("true", m.get("clustering_configured"));
     Assertions.assertEquals("id", m.get("keys"));
     Assertions.assertEquals("sort", m.get("sort_mode"));
-    Assertions.assertNotNull(m.get("config_id"));
-    // After a full-scope OPTIMIZE, all bytes fall inside the clustered interval.
+    Assertions.assertNotNull(m.get("layout_id"));
+    // After OPTIMIZE every live file carries the current layout stamp.
     Assertions.assertEquals("100.00", m.get("coverage_bytes_pct"));
+    Assertions.assertEquals("100.00", m.get("coverage_files_pct"));
+    Assertions.assertEquals("0", m.get("files_new"));
+    Assertions.assertEquals("0", m.get("files_stale"));
+    Assertions.assertEquals("0", m.get("files_damaged"));
+    Assertions.assertEquals("0.0", m.get("unclustered_tail_hours"));
+    Assertions.assertEquals("none", m.get("oldest_uncovered_seq"));
     // Per-key depth rows are emitted for the leading key.
     Assertions.assertNotNull(m.get("depth_avg/id"));
     Assertions.assertNotNull(m.get("depth_max/id"));
     Assertions.assertNotNull(m.get("depth_avg_covered/id"));
-    // The persisted interval state is echoed back.
-    Assertions.assertTrue(m.get("state").trim().startsWith("["));
+    // The persisted epoch history is echoed back.
+    Assertions.assertTrue(m.get("epochs").trim().startsWith("["));
+  }
+
+  @Test
+  public void testAnalyzeClassifiesNewStaleAndDamagedFiles() {
+    spark
+        .sql(
+            "ALTER TABLE openhouse.db.table SET TBLPROPERTIES ("
+                + "'optimize.cluster.keys' = 'id', "
+                + "'optimize.cluster.sort-mode' = 'sort')")
+        .show();
+    spark.sql("OPTIMIZE openhouse.db.table").collect();
+
+    // New: unstamped data above the watermark.
+    spark.sql("INSERT INTO openhouse.db.table VALUES (7, 'd7', 'tableid')").show();
+    Map<String, String> m = analyze("openhouse.db.table");
+    Assertions.assertEquals("1", m.get("files_new"));
+    Assertions.assertEquals("0", m.get("files_damaged"));
+    Assertions.assertEquals("1", m.get("files_covered"));
+    Assertions.assertNotEquals("none", m.get("oldest_uncovered_seq"));
+    Assertions.assertTrue(Double.parseDouble(m.get("unclustered_tail_hours")) >= 0.0);
+
+    // Stale: after a key change every previously clustered file carries an older layout.
+    spark
+        .sql("ALTER TABLE openhouse.db.table SET TBLPROPERTIES ('optimize.cluster.keys' = 'data')")
+        .show();
+    m = analyze("openhouse.db.table");
+    Assertions.assertEquals("1", m.get("files_stale"));
+    Assertions.assertEquals("0", m.get("files_covered"));
+    Assertions.assertEquals("0.00", m.get("coverage_files_pct"));
+
+    // Damaged: a foreign rewrite of clustered files leaves unstamped files at or below the
+    // watermark. Recluster under the new keys first so there is a watermark to be below.
+    spark.sql("OPTIMIZE openhouse.db.table FULL").collect();
+    Assertions.assertEquals("0", analyze("openhouse.db.table").get("files_damaged"));
+    spark
+        .sql(
+            "CALL openhouse.system.rewrite_data_files(table => 'db.table', "
+                + "options => map('min-input-files', '1', 'rewrite-all', 'true', "
+                + "'use-starting-sequence-number', 'true'))")
+        .collect();
+    m = analyze("openhouse.db.table");
+    Assertions.assertEquals("0", m.get("files_covered"));
+    Assertions.assertTrue(
+        Integer.parseInt(m.get("files_damaged")) + Integer.parseInt(m.get("files_new")) >= 1);
   }
 
   @Test
@@ -71,8 +120,7 @@ public class AnalyzeClusteringQualityStatementTest {
     spark
         .sql(
             "ALTER TABLE openhouse.db.table SET TBLPROPERTIES ("
-                + "'optimize.cluster.keys' = 'id', "
-                + "'optimize.cluster.min-snapshot-age-minutes' = '0')")
+                + "'optimize.cluster.keys' = 'id')")
         .show();
     long snapshotsBefore = spark.sql("SELECT * FROM openhouse.db.table.snapshots").count();
     analyze("openhouse.db.table");

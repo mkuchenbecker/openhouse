@@ -1,27 +1,41 @@
 package com.linkedin.openhouse.spark.sql.execution.datasources.v2
 
-import java.util.Locale
-
 import scala.collection.JavaConverters._
 
 import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.OptimizeTable
+import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.OptimizeTable._
+import org.apache.iceberg.{HasTableOperations, SortOrder, Table}
+import org.apache.iceberg.spark.actions.SparkActions
 import org.apache.iceberg.spark.source.SparkTable
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.{Attribute, GenericInternalRow, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, GenericInternalRow}
 import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, TableChange}
 import org.apache.spark.sql.execution.datasources.v2.LeafV2CommandExec
-import org.apache.spark.sql.functions.{col, current_timestamp, expr, lit, max}
 import org.apache.spark.unsafe.types.UTF8String
 
 /**
- * Runs Iceberg data-layout maintenance for the OPTIMIZE command as thin sugar over the catalog's
- * stored procedures. With no `optimize.cluster.keys` configured this is a plain bin-pack compaction
- * (`system.rewrite_data_files`); with clustering configured it is a sort / z-order rewrite that is
- * incremental by default (only the forward slice of the leading key since the last run, tracked by
- * the `optimize.cluster.hwm-snapshot-id` watermark), with `FULL` reclustering up to the age floor.
- * `REWRITE MANIFESTS` runs afterwards over the post-rewrite layout.
+ * Runs Iceberg data-layout maintenance for the OPTIMIZE command through the Iceberg action API.
+ *
+ * With no `optimize.cluster.keys` configured this is a plain bin-pack compaction. With clustering
+ * configured it is a sort / z-order rewrite whose progress is tracked two ways at once, both in
+ * table metadata that survives snapshot expiration:
+ *
+ *  - '''Per-file layout stamp.''' Every file the rewrite writes records the layout id as its
+ *    Iceberg `sort_order_id`, and carries the id and the layout JSON in its footer. A file is
+ *    clustered iff its stamp is the current layout; a file rewritten by anything else (a scheduled
+ *    bin-pack, another engine) loses the stamp and is eligible again.
+ *  - '''Sequence watermark.''' `optimize.cluster.hwm-seq` is the highest data sequence number a
+ *    run has consumed. Output files are committed with the data sequence number of the newest
+ *    input they replaced, so a run's own output never reads as new data.
+ *
+ * Incremental (the default) rewrites files above the watermark that do not carry the current
+ * layout; `FULL` rewrites every file that does not carry the current layout, whatever its
+ * sequence. Files stamped with an older layout are left to `FULL`.
+ *
+ * After the data rewrite, position delete files are compacted and dangling deletes dropped (a
+ * no-op on copy-on-write or delete-free tables), then `REWRITE MANIFESTS` runs if requested.
  */
 case class OptimizeTableExec(
   output: Seq[Attribute],
@@ -31,18 +45,21 @@ case class OptimizeTableExec(
   full: Boolean,
   rewriteManifests: Boolean) extends LeafV2CommandExec {
 
+  import OptimizeTableExec._
+
   private def row(metric: String, value: String): InternalRow =
     new GenericInternalRow(
       Array[Any](UTF8String.fromString(metric), UTF8String.fromString(value)))
 
   override protected def run(): Seq[InternalRow] = {
-    val props = catalog.loadTable(ident) match {
+    val table = catalog.loadTable(ident) match {
       case iceberg: SparkTable
         if iceberg.table().properties().containsKey(MaintenanceProperties.TABLE_ID_PROP) =>
-        iceberg.table().properties().asScala.toMap
-      case table =>
-        throw new UnsupportedOperationException(s"Cannot optimize non-Openhouse table: $table")
+        iceberg.table()
+      case other =>
+        throw new UnsupportedOperationException(s"Cannot optimize non-Openhouse table: $other")
     }
+    val props = table.properties().asScala.toMap
 
     // A table opted out of platform maintenance should not be compacted by hand either.
     val compactionJob = MaintenanceProperties.DATA_COMPACTION_JOB
@@ -52,134 +69,154 @@ case class OptimizeTableExec(
           s"'maintenance.$compactionJob.disabled'), so OPTIMIZE will not run on it.")
     }
 
-    val cat = quoteIfNeeded(catalog.name())
-    val tableArg = (ident.namespace() :+ ident.name()).map(quoteIfNeeded).mkString(".")
-    val qualifiedTableName = s"$cat.$tableArg"
+    val qualifiedTableName =
+      (Seq(catalog.name()) ++ ident.namespace() :+ ident.name()).map(quoteIfNeeded).mkString(".")
 
     // Snapshot the physical layout before doing any work so we can report the reduction.
     val filesBefore = spark.table(s"$qualifiedTableName.files").count()
     val snapshotsBefore = spark.table(s"$qualifiedTableName.snapshots").count()
+    val metrics = Seq.newBuilder[InternalRow]
 
     val config = OptimizeTable.parseClusterConfig(props)
-    config.keys match {
-      case Seq() =>
-        // No clustering configured: plain bin-pack compaction (unchanged historical behavior).
-        spark.sql(s"CALL $cat.system.rewrite_data_files(table => '$tableArg')").collect()
-      case _ =>
-        cluster(cat, tableArg, qualifiedTableName, config)
+    if (config.keys.isEmpty) {
+      // No clustering configured: plain bin-pack compaction.
+      val result = SparkActions.get(spark).rewriteDataFiles(table).binPack().execute()
+      metrics += row("files_rewritten", result.rewrittenDataFilesCount().toString)
+      metrics += row("bytes_rewritten", result.rewrittenBytesCount().toString)
+    } else {
+      cluster(table, qualifiedTableName, props, config, metrics)
     }
+
+    // Compact merge-on-read position delete files and drop dangling deletes (deletes that no longer
+    // apply to any live data, e.g. because the data files they targeted were just rewritten).
+    // Runs after the data rewrite so it also cleans up deletes that rewrite made dangling, and
+    // before REWRITE MANIFESTS so manifest compaction sees the reduced delete-file set.
+    SparkActions.get(spark).rewritePositionDeletes(table).execute()
 
     if (rewriteManifests) {
       // Independent manifest compaction; runs after the data rewrite so it sees the new layout.
-      spark.sql(s"CALL $cat.system.rewrite_manifests(table => '$tableArg')").collect()
+      SparkActions.get(spark).rewriteManifests(table).execute()
     }
 
     val filesAfter = spark.table(s"$qualifiedTableName.files").count()
     val snapshotsAfter = spark.table(s"$qualifiedTableName.snapshots").count()
-    Seq(
-      row("files_before", filesBefore.toString),
-      row("files_after", filesAfter.toString),
-      row("files_removed", (filesBefore - filesAfter).toString),
-      row("snapshots_committed", (snapshotsAfter - snapshotsBefore).toString))
+    metrics += row("files_before", filesBefore.toString)
+    metrics += row("files_after", filesAfter.toString)
+    metrics += row("files_removed", (filesBefore - filesAfter).toString)
+    metrics += row("snapshots_committed", (snapshotsAfter - snapshotsBefore).toString)
+    metrics.result()
   }
 
   private def cluster(
-      cat: String,
-      tableArg: String,
+      table: Table,
       qualifiedTableName: String,
-      config: OptimizeTable.ClusterConfig): Unit = {
-    import config.{hwm, keys, maxCommits, minAgeMinutes, sortMode, state}
+      props: Map[String, String],
+      config: ClusterConfig,
+      metrics: scala.collection.mutable.Builder[InternalRow, Seq[InternalRow]]): Unit = {
+    requireSequenceNumbers(table)
 
-    // Age floor: the newest snapshot at least `minAgeMinutes` old, by commit time. Everything
-    // younger is held back so we never rewrite files a concurrent streaming writer is extending.
-    val ageFloor = spark.table(s"$qualifiedTableName.snapshots")
-      .where(col("committed_at") <= current_timestamp() - expr(s"INTERVAL $minAgeMinutes MINUTES"))
-      .orderBy(col("committed_at").desc)
-      .limit(1)
-      .select("snapshot_id")
-      .collect().headOption.map(_.getLong(0))
-    if (ageFloor.isEmpty) return // nothing old enough to consume yet -> no-op
-
-    val floorId = ageFloor.get
-    // Incremental run whose watermark has not moved -> nothing new to do.
-    if (!full && hwm.contains(floorId)) return
-
-    // The forward slice is bounded on the leading clustering key. Its upper bound is the max value
-    // present as of the age floor; Iceberg satisfies this from manifest metrics when the table has
-    // no deletes, so it is metadata-only.
-    val leadKey = keys.head
-    val floorMax = Option(
-      spark.read.option("snapshot-id", floorId).table(qualifiedTableName)
-        .agg(max(col(quoteIfNeeded(leadKey)))).head().get(0))
-    if (floorMax.isEmpty) return // no data as of the age floor -> no-op
-
-    // Lower bound: incremental runs skip what a prior run already clustered -- the last-clustered
-    // upper of the current key selection, read from the persisted interval state (a table property,
-    // so it survives snapshot expiration). FULL ignores the bound and reclusters everything up to
-    // the floor.
-    val cfgId = OptimizeTable.configId(keys, sortMode)
-    val lowerValue = state.find(_.config == cfgId).map(_.upper).filterNot(_ => full)
-
-    // Cast the persisted (string) bound back to the leading key's type so a key promoted between
-    // runs (e.g. INT -> BIGINT) is compared after a cast, not across boxed types.
-    val leadType = spark.table(qualifiedTableName).schema(leadKey).dataType
-    val lead = col(quoteIfNeeded(leadKey))
-    val lowerBound = lowerValue.map(u => lit(u).cast(leadType))
-
-    // No-op if the leading key has not advanced past the last-clustered upper. Evaluate the
-    // comparison in Catalyst (not in Scala) so the cast above governs the ordering.
-    val advanced = lowerBound.forall { lb =>
-      spark.range(1).select(lit(floorMax.get) > lb).head().getBoolean(0)
-    }
-    if (!advanced) return
-
-    // The `where` slice to recluster: `lead <= floorMax`, plus `lead > lowerBound` for an
-    // incremental run. Catalyst renders each key-type literal correctly, then the predicate is
-    // embedded as a SQL string literal so its own quotes survive the CALL.
-    val scope = lowerBound.map(lb => (lead > lb) && (lead <= lit(floorMax.get)))
-      .getOrElse(lead <= lit(floorMax.get)).expr.sql
-    val cols = keys.map(quoteIfNeeded).mkString(", ")
-    val sortOrder = sortMode.toLowerCase(Locale.ROOT) match {
-      case "zorder" => s"zorder($cols)"
-      case _ => cols
+    val layout = config.layout
+    // A watermark left by the snapshot-id design is carried over once: a live snapshot maps to its
+    // sequence number, an expired one to 0 (everything is re-examined, and the stamps decide).
+    val hwmBefore = props.get(LEGACY_HWM_SNAPSHOT_PROP).map(_.trim.toLong) match {
+      case Some(snapshotId) if !props.contains(HWM_SEQ_PROP) =>
+        Option(table.snapshot(snapshotId)).map(_.sequenceNumber()).getOrElse(0L)
+      case _ => config.hwmSeq
     }
 
-    // Scoped sort / z-order rewrite with partial progress: min-input-files=1 + rewrite-all=true
-    // cluster the region regardless of file count; use-starting-sequence-number keeps concurrent
-    // equality-deletes valid. rewrite-all forces a rewrite over the non-empty scope, so a healthy
-    // run always commits a snapshot; if none is committed the rewrite failed systemically (partial
-    // progress swallows per-group failures), so fail loudly and leave the watermark unadvanced.
-    val snapshotsBefore = spark.table(s"$qualifiedTableName.snapshots").count()
-    spark.sql(
-      s"CALL $cat.system.rewrite_data_files(" +
-        s"table => '$tableArg', " +
-        "strategy => 'sort', " +
-        s"sort_order => '$sortOrder', " +
-        s"where => ${Literal(scope).sql}, " +
-        "options => map(" +
-        "'min-input-files', '1', " +
-        "'rewrite-all', 'true', " +
-        "'use-starting-sequence-number', 'true', " +
-        "'partial-progress.enabled', 'true', " +
-        s"'partial-progress.max-commits', '$maxCommits'))").collect()
-    if (spark.table(s"$qualifiedTableName.snapshots").count() <= snapshotsBefore) {
-      throw new IllegalStateException(
-        s"OPTIMIZE clustered no data for '$qualifiedTableName': the scoped rewrite " +
-          s"(keys=[${keys.mkString(",")}], sort-mode=$sortMode) committed no snapshot despite a " +
-          s"non-empty scope. The watermark was left unadvanced so the run can be retried.")
+    metrics += row("layout_id", layout.id.toString)
+    metrics += row("hwm_seq_before", hwmBefore.toString)
+
+    val action = SparkActions.get(spark).rewriteDataFiles(table)
+    val rewrite = config.sortMode match {
+      case "zorder" => action.zOrder(config.keys: _*)
+      case _ =>
+        val order = SortOrder.builderFor(table.schema())
+        config.keys.foreach(key => order.asc(key))
+        action.sort(order.build())
     }
 
-    // Advance all clustering metadata in one atomic alterTable -- the watermark (the consumed age
-    // floor, not head), the config id, and the interval state -- so they never disagree.
-    val newState = OptimizeTable.advanceState(
-      state, cfgId, keys, sortMode, lowerValue, floorMax.get.toString, full)
-    catalog.alterTable(ident,
-      TableChange.setProperty(OptimizeTable.HWM_PROP, floorId.toString),
-      TableChange.setProperty(OptimizeTable.CONFIG_ID_PROP, cfgId),
-      TableChange.setProperty(OptimizeTable.STATE_PROP, OptimizeTable.stateMapper.writeValueAsString(newState)))
+    // Selection: never a file already carrying the current layout; incremental additionally skips
+    // everything at or below the watermark, which leaves files stamped with an older layout (they
+    // are all below it) to FULL.
+    rewrite
+      .option("min-input-files", "1")
+      .option("rewrite-all", "true")
+      .option("partial-progress.enabled", "true")
+      .option("partial-progress.max-commits", config.maxCommits.toString)
+      .option(EXCLUDE_SORT_ORDER_IDS, layout.id.toString)
+      .option(USE_MAX_INPUT_SEQUENCE_NUMBER, "true")
+      .option(OUTPUT_SORT_ORDER_ID, layout.id.toString)
+      .option(OUTPUT_FILE_METADATA_PREFIX + FILE_LAYOUT_ID_KEY, layout.id.toString)
+      .option(OUTPUT_FILE_METADATA_PREFIX + FILE_LAYOUT_KEY, layoutToJson(layout))
+    if (!full && hwmBefore > 0) {
+      rewrite.option(MIN_DATA_SEQUENCE_NUMBER, hwmBefore.toString)
+    }
+
+    val result = rewrite.execute()
+    metrics += row("files_rewritten", result.rewrittenDataFilesCount().toString)
+    metrics += row("bytes_rewritten", result.rewrittenBytesCount().toString)
+    metrics += row("files_failed", result.failedDataFilesCount().toString)
+
+    // The watermark is what the stamps say was consumed: every stamped file was committed with the
+    // data sequence number of the newest input it replaced, so the newest stamped file marks the
+    // highest sequence any run has clustered.
+    table.refresh()
+    val hwmAfter = math.max(hwmBefore, maxStampedSequence(qualifiedTableName, layout.id))
+    metrics += row("hwm_seq_after", hwmAfter.toString)
+
+    val epochs = if (result.rewrittenDataFilesCount() > 0) {
+      OptimizeTable.advanceEpochs(config.epochs, layout.id, hwmBefore, hwmAfter, full)
+    } else {
+      config.epochs
+    }
+
+    // Persist every piece of clustering state in one atomic alterTable so they never disagree,
+    // and drop the properties of the design this replaces.
+    val changes = Seq(
+      TableChange.setProperty(LAYOUT_ID_PROP, layout.id.toString),
+      TableChange.setProperty(LAYOUT_PROP_PREFIX + layout.id, layoutToJson(layout)),
+      TableChange.setProperty(HWM_SEQ_PROP, hwmAfter.toString),
+      TableChange.setProperty(EPOCHS_PROP, epochsToJson(epochs))) ++
+      LEGACY_PROPS.filter(props.contains).map(TableChange.removeProperty)
+    catalog.alterTable(ident, changes: _*)
+  }
+
+  /** The highest data sequence number among live data files stamped with the layout, or 0. */
+  private def maxStampedSequence(qualifiedTableName: String, layoutId: Int): Long = {
+    val rows = spark.sql(
+      s"""SELECT max(sequence_number) FROM $qualifiedTableName.entries
+         |WHERE status < 2 AND data_file.content = 0 AND data_file.sort_order_id = $layoutId
+         |""".stripMargin).collect()
+    if (rows.isEmpty || rows.head.isNullAt(0)) 0L else rows.head.getLong(0)
+  }
+
+  private def requireSequenceNumbers(table: Table): Unit = {
+    val formatVersion = table match {
+      case ops: HasTableOperations => ops.operations().current().formatVersion()
+      case _ => 2
+    }
+    if (formatVersion < 2) {
+      throw new UnsupportedOperationException(
+        s"Cannot cluster table '$ident': clustering tracks progress by data sequence number, " +
+          s"which format-version 1 tables do not have. Upgrade the table to format-version 2.")
+    }
   }
 
   override def simpleString(maxFields: Int): String = {
     s"OptimizeTableExec: ${catalog} ${ident} full=${full} rewriteManifests=${rewriteManifests}"
   }
+}
+
+object OptimizeTableExec {
+  /**
+   * Rewrite options of the OpenHouse Iceberg fork (openhouse-1.5.2, 1.5.2.22 and later). They are
+   * spelled out here so the extension compiles against any 1.5.2 runtime; an older runtime rejects
+   * them at execution time with "Cannot use options".
+   */
+  val MIN_DATA_SEQUENCE_NUMBER = "min-data-sequence-number"
+  val EXCLUDE_SORT_ORDER_IDS = "exclude-sort-order-ids"
+  val USE_MAX_INPUT_SEQUENCE_NUMBER = "use-max-input-sequence-number"
+  val OUTPUT_SORT_ORDER_ID = "output-sort-order-id"
+  val OUTPUT_FILE_METADATA_PREFIX = "output-file-metadata."
 }

@@ -35,13 +35,8 @@ public class OptimizeTestSpark3_5 extends OpenHouseSparkITest {
   private static final String DATABASE = "d1_optimize_spark";
   private static final String OPTIMIZE_TEST_PREFIX = "optimize_test_";
 
-  // 'optimize.cluster.min-snapshot-age-minutes'='0' disables the conflict hold-back so a freshly
-  // inserted table is fully eligible for rewrite within the test (no real-time settle wait).
   private static String clustered(String keys) {
-    return "'optimize.cluster.keys'='"
-        + keys
-        + "', 'optimize.cluster.sort-mode'='zorder', "
-        + "'optimize.cluster.min-snapshot-age-minutes'='0'";
+    return "'optimize.cluster.keys'='" + keys + "', 'optimize.cluster.sort-mode'='zorder'";
   }
 
   private static long snapshotCount(SparkSession spark, String tableName) {

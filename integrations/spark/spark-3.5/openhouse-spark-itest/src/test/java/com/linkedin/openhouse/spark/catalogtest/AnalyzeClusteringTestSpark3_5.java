@@ -41,10 +41,7 @@ public class AnalyzeClusteringTestSpark3_5 extends OpenHouseSparkITest {
   private static final String ANALYZE_TEST_PREFIX = "analyze_test_";
 
   private static String clustered(String keys) {
-    return "'optimize.cluster.keys'='"
-        + keys
-        + "', 'optimize.cluster.sort-mode'='zorder', "
-        + "'optimize.cluster.min-snapshot-age-minutes'='0'";
+    return "'optimize.cluster.keys'='" + keys + "', 'optimize.cluster.sort-mode'='zorder'";
   }
 
   /** Value of a table-level metric (null dimension), or empty if absent. */

@@ -12,84 +12,100 @@ class OptimizeTableTest {
     val empty = parseClusterConfig(Map.empty)
     assertTrue(empty.keys.isEmpty)
     assertEquals(DEFAULT_SORT_MODE, empty.sortMode)
-    assertEquals(DEFAULT_MIN_SNAPSHOT_AGE_MINUTES, empty.minAgeMinutes)
     assertEquals(DEFAULT_MAX_COMMITS, empty.maxCommits)
-    assertTrue(empty.hwm.isEmpty)
-    assertTrue(empty.state.isEmpty)
+    assertEquals(0L, empty.hwmSeq)
+    assertTrue(empty.epochs.isEmpty)
 
     val cfg = parseClusterConfig(Map(
       KEYS_PROP -> " ts , uid ",
-      SORT_MODE_PROP -> "sort",
-      MIN_SNAPSHOT_AGE_PROP -> "5",
+      SORT_MODE_PROP -> "SORT",
       MAX_COMMITS_PROP -> "3",
-      HWM_PROP -> "42",
-      STATE_PROP -> """[{"config":"c1","keys":"ts","mode":"sort","upper":"20"}]"""))
+      HWM_SEQ_PROP -> "42",
+      EPOCHS_PROP -> """[{"layout":1234,"lowerSeq":0,"upperSeq":42}]"""))
     assertEquals(Seq("ts", "uid"), cfg.keys)
     assertEquals("sort", cfg.sortMode)
-    assertEquals(5L, cfg.minAgeMinutes)
     assertEquals(3L, cfg.maxCommits)
-    assertEquals(Some(42L), cfg.hwm)
-    assertEquals(Seq(ClusterInterval("c1", "ts", "sort", None, "20")), cfg.state)
+    assertEquals(42L, cfg.hwmSeq)
+    assertEquals(Seq(Epoch(1234, 0L, 42L)), cfg.epochs)
+    assertEquals(Layout(layoutId(Seq("ts", "uid"), "sort"), Seq("ts", "uid"), "sort"), cfg.layout)
   }
 
   @Test
-  def configIdStableAcrossWhitespaceChangesOnKeyOrMode(): Unit = {
-    assertEquals(configId(Seq("ts", "uid"), "zorder"), configId(Seq(" ts ", " uid "), "ZORDER"))
-    assertNotEquals(configId(Seq("ts", "uid"), "zorder"), configId(Seq("ts"), "zorder"))
-    assertNotEquals(configId(Seq("ts"), "zorder"), configId(Seq("ts"), "sort"))
+  def parseClusterConfigRejectsUnknownSortMode(): Unit = {
+    val e = assertThrows(classOf[IllegalArgumentException],
+      () => parseClusterConfig(Map(KEYS_PROP -> "ts", SORT_MODE_PROP -> "hilbert")))
+    assertTrue(e.getMessage.contains(SORT_MODE_PROP))
   }
 
   @Test
-  def parseStateRoundTripsWithAndWithoutLower(): Unit = {
-    val json = """[{"config":"c1","keys":"ts","mode":"sort","lower":"10","upper":"20"},""" +
-      """{"config":"c2","keys":"ts,uid","mode":"zorder","upper":"2026-01-06 00:00:00"}]"""
-    assertEquals(Seq(
-      ClusterInterval("c1", "ts", "sort", Some("10"), "20"),
-      ClusterInterval("c2", "ts,uid", "zorder", None, "2026-01-06 00:00:00")), parseState(json))
+  def layoutIdStableAcrossWhitespaceChangesOnKeyOrMode(): Unit = {
+    assertEquals(layoutId(Seq("ts", "uid"), "zorder"), layoutId(Seq(" ts ", " uid "), "ZORDER"))
+    assertNotEquals(layoutId(Seq("ts", "uid"), "zorder"), layoutId(Seq("ts"), "zorder"))
+    assertNotEquals(layoutId(Seq("ts"), "zorder"), layoutId(Seq("ts"), "sort"))
+    assertNotEquals(layoutId(Seq("ts", "uid"), "zorder"), layoutId(Seq("uid", "ts"), "zorder"))
   }
 
   @Test
-  def parseStateEmptyOrNullIsNoState(): Unit = {
-    assertEquals(Seq.empty[ClusterInterval], parseState(""))
-    assertEquals(Seq.empty[ClusterInterval], parseState(null))
+  def layoutIdNeverCollidesWithRegisteredSortOrderIds(): Unit = {
+    Seq(Seq("a"), Seq("b"), Seq("a", "b"), Seq("ts"), Seq("uid", "ts")).foreach { keys =>
+      Seq("zorder", "sort").foreach { mode =>
+        assertTrue(layoutId(keys, mode) >= MIN_LAYOUT_ID, s"$keys/$mode")
+      }
+    }
   }
 
   @Test
-  def parseStateMalformedFailsLoudly(): Unit = {
-    val e = assertThrows(classOf[IllegalStateException], () => parseState("not json"))
-    assertTrue(e.getMessage.contains(STATE_PROP))
+  def layoutRoundTripsThroughJson(): Unit = {
+    val layout = Layout(4321, Seq("ts", "uid"), "zorder")
+    assertEquals(layout, layoutFromJson(layoutToJson(layout)))
+  }
+
+  @Test
+  def parseEpochsRoundTrips(): Unit = {
+    val epochs = Seq(Epoch(1, 0L, 20L), Epoch(2, 20L, 40L))
+    assertEquals(epochs, parseEpochs(epochsToJson(epochs)))
+  }
+
+  @Test
+  def parseEpochsEmptyOrNullIsNoHistory(): Unit = {
+    assertEquals(Seq.empty[Epoch], parseEpochs(""))
+    assertEquals(Seq.empty[Epoch], parseEpochs(null))
+  }
+
+  @Test
+  def parseEpochsMalformedFailsLoudly(): Unit = {
+    val e = assertThrows(classOf[IllegalStateException], () => parseEpochs("not json"))
+    assertTrue(e.getMessage.contains(EPOCHS_PROP))
     assertTrue(e.getMessage.contains("UNSET TBLPROPERTIES"))
   }
 
   @Test
-  def advanceStateFirstRunCreatesInterval(): Unit = {
+  def advanceEpochsFirstRunCreatesEpoch(): Unit = {
     assertEquals(
-      Seq(ClusterInterval("c1", "ts", "sort", Some("5"), "10")),
-      advanceState(Seq.empty, "c1", Seq("ts"), "sort", Some("5"), "10", full = false))
+      Seq(Epoch(1, 5L, 10L)),
+      advanceEpochs(Seq.empty, 1, 5L, 10L, full = false))
   }
 
   @Test
-  def advanceStateSameConfigExtendsUpperKeepsLower(): Unit = {
-    val s0 = Seq(ClusterInterval("c1", "ts", "sort", Some("5"), "10"))
+  def advanceEpochsSameLayoutExtendsUpperKeepsLower(): Unit = {
+    val s0 = Seq(Epoch(1, 5L, 10L))
+    assertEquals(Seq(Epoch(1, 5L, 20L)), advanceEpochs(s0, 1, 10L, 20L, full = false))
+    // A run that consumed nothing new never moves the upper bound backwards.
     assertEquals(
-      Seq(ClusterInterval("c1", "ts", "sort", Some("5"), "20")),
-      advanceState(s0, "c1", Seq("ts"), "sort", Some("10"), "20", full = false))
+      Seq(Epoch(1, 5L, 20L)),
+      advanceEpochs(Seq(Epoch(1, 5L, 20L)), 1, 20L, 20L, full = false))
   }
 
   @Test
-  def advanceStateFullCollapsesToUnbounded(): Unit = {
-    val s0 = Seq(ClusterInterval("c1", "ts", "sort", Some("5"), "20"))
-    assertEquals(
-      Seq(ClusterInterval("c1", "ts", "sort", None, "30")),
-      advanceState(s0, "c1", Seq("ts"), "sort", None, "30", full = true))
+  def advanceEpochsFullStartsAtZero(): Unit = {
+    val s0 = Seq(Epoch(1, 5L, 20L))
+    assertEquals(Seq(Epoch(1, 0L, 30L)), advanceEpochs(s0, 1, 20L, 30L, full = true))
   }
 
   @Test
-  def advanceStateConfigChangeAppendsAndRetains(): Unit = {
-    val s0 = Seq(ClusterInterval("c1", "ts", "sort", None, "20"))
-    val s1 = advanceState(s0, "c2", Seq("ts", "uid"), "zorder", Some("20"), "40", full = false)
-    assertEquals(Seq(
-      ClusterInterval("c1", "ts", "sort", None, "20"),
-      ClusterInterval("c2", "ts,uid", "zorder", Some("20"), "40")), s1)
+  def advanceEpochsLayoutChangeAppendsAndRetains(): Unit = {
+    val s0 = Seq(Epoch(1, 0L, 20L))
+    val s1 = advanceEpochs(s0, 2, 20L, 40L, full = false)
+    assertEquals(Seq(Epoch(1, 0L, 20L), Epoch(2, 20L, 40L)), s1)
   }
 }

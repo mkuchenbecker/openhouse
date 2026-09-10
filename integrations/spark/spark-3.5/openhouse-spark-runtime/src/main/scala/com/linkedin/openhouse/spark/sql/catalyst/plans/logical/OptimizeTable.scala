@@ -6,7 +6,6 @@ import java.util.zip.CRC32
 
 import scala.util.control.NonFatal
 
-import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.{ClassTagExtensions, DefaultScalaModule}
 
@@ -23,14 +22,15 @@ import org.apache.spark.sql.types.StringType
  * Behavior depends on whether clustering keys are configured via the `optimize.cluster.*` table
  * properties:
  *
- *  - '''No `optimize.cluster.keys`''': plain bin-pack compaction (`system.rewrite_data_files` with
- *    defaults). Historical behavior, unaffected by `FULL`.
- *  - '''Clustering configured''': a sort / z-order rewrite of the configured keys, incremental by
- *    default (only the forward slice of the leading key since the last run, tracked by an
- *    `optimize.cluster.hwm-snapshot-id` watermark); `FULL` reclusters up to the age floor.
+ *  - '''No `optimize.cluster.keys`''': plain bin-pack compaction. `FULL` has no effect.
+ *  - '''Clustering configured''': a sort / z-order rewrite of the configured keys. Every file the
+ *    rewrite writes is stamped with the layout that produced it (its Iceberg `sort_order_id` and a
+ *    footer entry), and its data sequence number is pinned to the newest input it replaced.
+ *    Incremental (the default) rewrites files newer than the sequence watermark that do not carry
+ *    the current layout; `FULL` rewrites every file that does not carry the current layout.
  *
- * `REWRITE MANIFESTS` (`system.rewrite_manifests`) is independent and runs after the data rewrite.
- * Snapshot expiration is intentionally not part of OPTIMIZE -- that is the VACUUM command's job.
+ * `REWRITE MANIFESTS` is independent and runs after the data rewrite. Snapshot expiration is not
+ * part of OPTIMIZE; that is the VACUUM command's job.
  */
 case class OptimizeTable(tableName: Seq[String], full: Boolean, rewriteManifests: Boolean)
   extends LeafCommand {
@@ -46,17 +46,43 @@ case class OptimizeTable(tableName: Seq[String], full: Boolean, rewriteManifests
 
 object OptimizeTable {
 
+  // User configuration.
   val KEYS_PROP = "optimize.cluster.keys"
   val SORT_MODE_PROP = "optimize.cluster.sort-mode"
-  val MIN_SNAPSHOT_AGE_PROP = "optimize.cluster.min-snapshot-age-minutes"
-  val HWM_PROP = "optimize.cluster.hwm-snapshot-id"
   val MAX_COMMITS_PROP = "optimize.cluster.max-commits"
-  val CONFIG_ID_PROP = "optimize.cluster.config-id"
-  val STATE_PROP = "optimize.cluster.state"
+
+  // State OPTIMIZE writes back.
+  val LAYOUT_ID_PROP = "optimize.cluster.layout-id"
+  val LAYOUT_PROP_PREFIX = "optimize.cluster.layout."
+  val HWM_SEQ_PROP = "optimize.cluster.hwm-seq"
+  val EPOCHS_PROP = "optimize.cluster.epochs"
+
+  // State written by the snapshot-id watermark design this replaces; read once for migration and
+  // then removed.
+  val LEGACY_HWM_SNAPSHOT_PROP = "optimize.cluster.hwm-snapshot-id"
+  val LEGACY_STATE_PROP = "optimize.cluster.state"
+  val LEGACY_CONFIG_ID_PROP = "optimize.cluster.config-id"
+  val LEGACY_MIN_SNAPSHOT_AGE_PROP = "optimize.cluster.min-snapshot-age-minutes"
+  val LEGACY_PROPS: Seq[String] = Seq(
+    LEGACY_HWM_SNAPSHOT_PROP,
+    LEGACY_STATE_PROP,
+    LEGACY_CONFIG_ID_PROP,
+    LEGACY_MIN_SNAPSHOT_AGE_PROP)
+
+  /** Footer metadata keys stamped into every file a clustering rewrite writes. */
+  val FILE_LAYOUT_ID_KEY = "openhouse.cluster.layout-id"
+  val FILE_LAYOUT_KEY = "openhouse.cluster.layout"
 
   val DEFAULT_SORT_MODE = "zorder"
-  val DEFAULT_MIN_SNAPSHOT_AGE_MINUTES = 30L
   val DEFAULT_MAX_COMMITS = 10L
+
+  val SORT_MODES: Set[String] = Set("zorder", "sort")
+
+  /**
+   * Layout ids start above this so they never collide with the ids of a table's registered Iceberg
+   * sort orders, which are allocated from 1 upward.
+   */
+  val MIN_LAYOUT_ID = 1000
 
   /**
    * Clustering configuration resolved from the `optimize.cluster.*` table properties, with every
@@ -65,86 +91,104 @@ object OptimizeTable {
   case class ClusterConfig(
       keys: Seq[String],
       sortMode: String,
-      minAgeMinutes: Long,
       maxCommits: Long,
-      hwm: Option[Long],
-      state: Seq[ClusterInterval])
+      hwmSeq: Long,
+      epochs: Seq[Epoch]) {
+
+    /** The layout this configuration produces. */
+    def layout: Layout = Layout(layoutId(keys, sortMode), keys, sortMode)
+  }
+
+  /** A key selection and sort mode, identified by a stable id. */
+  case class Layout(id: Int, keys: Seq[String], mode: String)
+
+  /**
+   * One run's worth of consumed data sequence numbers, `(lowerSeq, upperSeq]`, under a layout. A
+   * FULL run starts at 0. Persisted in `optimize.cluster.epochs` as durable history of which
+   * sequence ranges were clustered under which key selection; the per-file stamps remain the
+   * source of truth for what is clustered now.
+   */
+  case class Epoch(layout: Int, lowerSeq: Long, upperSeq: Long)
 
   /** Parse the `optimize.cluster.*` table properties into a typed [[ClusterConfig]]. */
-  def parseClusterConfig(props: Map[String, String]): ClusterConfig = ClusterConfig(
-    keys = props.get(KEYS_PROP)
-      .map(_.split(",").map(_.trim).filter(_.nonEmpty).toSeq).getOrElse(Seq.empty),
-    sortMode = props.getOrElse(SORT_MODE_PROP, DEFAULT_SORT_MODE),
-    minAgeMinutes = props.get(MIN_SNAPSHOT_AGE_PROP).map(_.toLong)
-      .getOrElse(DEFAULT_MIN_SNAPSHOT_AGE_MINUTES),
-    maxCommits = props.get(MAX_COMMITS_PROP).map(_.toLong).getOrElse(DEFAULT_MAX_COMMITS),
-    hwm = props.get(HWM_PROP).map(_.toLong),
-    state = parseState(props.getOrElse(STATE_PROP, "")))
+  def parseClusterConfig(props: Map[String, String]): ClusterConfig = {
+    val sortMode =
+      props.getOrElse(SORT_MODE_PROP, DEFAULT_SORT_MODE).trim.toLowerCase(Locale.ROOT)
+    if (!SORT_MODES.contains(sortMode)) {
+      throw new IllegalArgumentException(
+        s"Unsupported '$SORT_MODE_PROP' value '$sortMode'; expected one of " +
+          s"${SORT_MODES.toSeq.sorted.mkString(", ")}")
+    }
+    ClusterConfig(
+      keys = parseKeys(props.getOrElse(KEYS_PROP, "")),
+      sortMode = sortMode,
+      maxCommits = props.get(MAX_COMMITS_PROP).map(_.trim.toLong).getOrElse(DEFAULT_MAX_COMMITS),
+      hwmSeq = props.get(HWM_SEQ_PROP).map(_.trim.toLong).getOrElse(0L),
+      epochs = parseEpochs(props.getOrElse(EPOCHS_PROP, "")))
+  }
 
-  val stateMapper = {
+  def parseKeys(keys: String): Seq[String] =
+    keys.split(",").map(_.trim).filter(_.nonEmpty).toSeq
+
+  /**
+   * Stable identity of a key selection and mode: only a keys/mode change produces a new id. A
+   * positive int at or above [[MIN_LAYOUT_ID]], so it can be recorded as a data file's
+   * `sort_order_id` without colliding with a registered sort order.
+   */
+  def layoutId(keys: Seq[String], sortMode: String): Int = {
+    val normalized = keys.map(_.trim).mkString(",") + "|" + sortMode.trim.toLowerCase(Locale.ROOT)
+    val crc = new CRC32()
+    crc.update(normalized.getBytes(StandardCharsets.UTF_8))
+    MIN_LAYOUT_ID + (crc.getValue % (Int.MaxValue - MIN_LAYOUT_ID)).toInt
+  }
+
+  val jsonMapper = {
     val mapper = new ObjectMapper() with ClassTagExtensions
     mapper.registerModule(DefaultScalaModule)
-    // Omit an absent `lower` (None) so the persisted JSON stays compact and stable.
-    mapper.setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
     mapper
   }
 
-  /**
-   * One clustered leading-key interval `(lower, upper]` under a specific key selection (`config`).
-   * `lower = None` means unbounded below (a FULL / first backfill). Persisted, alongside the
-   * watermark, in the `optimize.cluster.state` table property so it survives snapshot expiration.
-   */
-  case class ClusterInterval(
-      config: String, keys: String, mode: String, lower: Option[String], upper: String)
+  def layoutToJson(layout: Layout): String = jsonMapper.writeValueAsString(layout)
 
-  /** Stable, compact identity of a key selection: only a keys/mode change produces a new id. */
-  def configId(keys: Seq[String], sortMode: String): String = {
-    val normalized = keys.map(_.trim).mkString(",") + "|" + sortMode.toLowerCase(Locale.ROOT)
-    val crc = new CRC32()
-    crc.update(normalized.getBytes(StandardCharsets.UTF_8))
-    java.lang.Long.toHexString(crc.getValue)
-  }
+  def layoutFromJson(json: String): Layout = jsonMapper.readValue[Layout](json)
 
   /**
-   * Parse interval state. Empty / absent input is no state (a fresh table). Non-empty but
-   * unparseable input is a corrupted property, not "no state" -- silently treating it as empty
-   * would make OPTIMIZE recluster from scratch and mis-report ANALYZE coverage, so it fails loudly
-   * naming the property and how to clear it.
+   * Parse epoch history. Empty / absent input is no history (a fresh table). Non-empty but
+   * unparseable input is a corrupted property; it fails loudly naming the property and how to
+   * clear it rather than being silently read as "no history".
    */
-  def parseState(json: String): Seq[ClusterInterval] = {
+  def parseEpochs(json: String): Seq[Epoch] = {
     if (json == null || json.trim.isEmpty) return Seq.empty
     try {
-      stateMapper.readValue[Seq[ClusterInterval]](json)
+      jsonMapper.readValue[Seq[Epoch]](json)
     } catch {
       case NonFatal(e) =>
         throw new IllegalStateException(
-          s"Malformed clustering state in table property '$STATE_PROP'; OPTIMIZE cannot tell " +
-            s"what is already clustered. Clear the clustering metadata and let the next OPTIMIZE " +
-            s"rebuild it: ALTER TABLE <table> UNSET TBLPROPERTIES " +
-            s"('$STATE_PROP', '$HWM_PROP', '$CONFIG_ID_PROP'). Value was: $json", e)
+          s"Malformed clustering history in table property '$EPOCHS_PROP'. Clear it and let " +
+            s"the next OPTIMIZE rebuild it: ALTER TABLE <table> UNSET TBLPROPERTIES " +
+            s"('$EPOCHS_PROP'). Value was: $json", e)
     }
   }
 
+  def epochsToJson(epochs: Seq[Epoch]): String = jsonMapper.writeValueAsString(epochs)
+
   /**
-   * Fold a completed run into the interval state. A same-config incremental run extends the current
-   * epoch's upper bound (keeping its lower); a config change appends a new epoch, retains the old
-   * ones (durable key-selection history); FULL collapses the current config to one unbounded-below
-   * interval.
+   * Fold a completed run into the epoch history. An incremental run under a layout that already
+   * has an epoch extends that epoch's upper bound; a run under a new layout appends an epoch whose
+   * lower bound is the watermark it started from; FULL replaces the layout's epoch with one that
+   * starts at 0. Epochs of other layouts are retained as history.
    */
-  def advanceState(
-      existing: Seq[ClusterInterval],
-      cfgId: String,
-      keys: Seq[String],
-      mode: String,
-      lower: Option[String],
-      upper: String,
-      full: Boolean): Seq[ClusterInterval] = {
-    val keysStr = keys.mkString(",")
-    val others = existing.filterNot(_.config == cfgId)
-    (full, existing.find(_.config == cfgId)) match {
-      case (true, _) => others :+ ClusterInterval(cfgId, keysStr, mode, None, upper)
-      case (false, Some(cur)) => others :+ cur.copy(keys = keysStr, mode = mode, upper = upper)
-      case (false, None) => existing :+ ClusterInterval(cfgId, keysStr, mode, lower, upper)
+  def advanceEpochs(
+      existing: Seq[Epoch],
+      layout: Int,
+      lowerSeq: Long,
+      upperSeq: Long,
+      full: Boolean): Seq[Epoch] = {
+    val others = existing.filterNot(_.layout == layout)
+    (full, existing.find(_.layout == layout)) match {
+      case (true, _) => others :+ Epoch(layout, 0L, upperSeq)
+      case (false, Some(cur)) => others :+ cur.copy(upperSeq = math.max(cur.upperSeq, upperSeq))
+      case (false, None) => existing :+ Epoch(layout, lowerSeq, upperSeq)
     }
   }
 }
