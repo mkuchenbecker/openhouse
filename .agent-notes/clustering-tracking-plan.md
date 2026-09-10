@@ -35,6 +35,17 @@ the Iceberg changes there.
 | 8 | The layout id is an int allocated by OpenHouse (CRC32 of `keys|mode`), with the config JSON in a table property. Reason: the OpenHouse tables service cannot register an additional Iceberg sort order after table creation (the client commits only the default sort order JSON, and the service's update path writes it to a table property). | Claude | 2026-09-10 |
 | 9 | Alternative A watermarks on `data_sequence_number`, not `file_sequence_number`. A rewrite bumps `file_sequence_number` on its outputs to the new commit, so a watermark on it re-picks its own outputs. `data_sequence_number` is set by the commit manager and can be pinned to the max input sequence per file group. | Claude | 2026-09-10 |
 
+| 10 | Both signals live in one mechanism instead of a per-table mode switch. Incremental selection is `data_seq > hwm AND stamp != current layout`; FULL is `stamp != current layout`. A "sequence only" mode and a "stamp only" mode select the same files in every case that can occur (a run's own output sits at or below the watermark; a foreign rewrite's output sits above it; an old layout's files sit below it), so a switch would be ceremony. ANALYZE reports both views. Reversible: the two signals are independent properties and options. | Claude | 2026-09-10 |
+| 11 | Plain Spark writes record `sort_order_id = 0` (the unsorted order), not null. The Iceberg fork's `include-/exclude-sort-order-ids` treat the token `null` as "0 or null", and OpenHouse treats both as unstamped. | Claude (fact found by test) | 2026-09-10 |
+| 12 | Layout ids start at 1000 (`MIN_LAYOUT_ID`) so they never collide with a table's registered sort order ids, which Iceberg allocates from 1. | Claude | 2026-09-10 |
+| 13 | The byte budget (`optimize.cluster.max-bytes-per-run`) defaults to unbounded. Default value is an open question for Mike. | Claude, pending Mike | 2026-09-10 |
+| 14 | The watermark after a run is read back from the stamps: `max(sequence_number)` over live files stamped with the current layout. Outputs carry the newest input's sequence, so this equals the highest sequence any run consumed, and a budget-truncated run advances only as far as it got. No Iceberg result-API change needed. | Claude | 2026-09-10 |
+| 15 | VACUUM refuses the whole command, not only `REMOVE ORPHAN FILES`, on a table with `retention.backup.enabled` or an existing backup directory: since #447 the scheduled expiration job moves data files to backup too, and since #687 orphan deletion honors data manifests regardless of the flag. | Claude | 2026-09-10 |
+| 16 | The scheduled compaction and DLO-strategy-execution tasks skip tables with `optimize.cluster.keys` (`TableMetadata.hasClusteringKeys`). Whether the job should instead run the clustered path is open. | Claude, pending Mike | 2026-09-10 |
+| 17 | OpenHouse keeps `iceberg_1_5_version = 1.5.2.21` in the tree. The clustering path names the fork's rewrite options as string constants, compiles against 1.5.2.21, and fails at runtime with "Cannot use options" on it. Verification here ran against a locally published `1.5.2.22-SNAPSHOT` of the fork. The version bump is part of landing, which is Mike's. | Claude | 2026-09-10 |
+
+| 18 | The merge-on-read statement test (`testOptimizeCompactsMergeOnReadDeletesAndKeepsRowsCorrect`) is `@Disabled`: the itest classpath carries both the Parquet shaded into `iceberg-spark-runtime` and the unshaded Parquet of `tables-test-fixtures`, and reading a position delete fails in `org.apache.iceberg.parquet.ReadConf` with a `ClassCastException` before OPTIMIZE runs. Position-delete compaction stays in OPTIMIZE (decision 5); the test needs a clean classpath, which is a test-infrastructure fix, not a product one. Fork #28 had deleted this test without saying why; this is probably why. | Claude | 2026-09-10 |
+
 ## Facts the design rests on (verified in source)
 
 - OpenHouse defaults `cluster.iceberg.format-version` to 2. v1 tables have all-zero
@@ -131,15 +142,30 @@ oldest live snapshot".
   branch will carry the 32 upstream commits until fork main is synced. Claude will not
   push to fork `main` without permission.
 
-## Status
+## Status (2026-09-10, end of session)
 
-See the bottom of this file; updated as work lands.
+Branches: mkuchenbecker/openhouse `claude/openhouse-optimization-prs-6brd0f` (based on
+linkedin main 252478b) and mkuchenbecker/iceberg `claude/openhouse-optimization-prs-6brd0f`
+(based on openhouse-1.5.2 39df55d, draft PR mkuchenbecker/iceberg#2).
 
-- [ ] PR0 fork sync (mkuchenbecker/iceberg)
-- [ ] PR1 iceberg planning/commit options
-- [ ] PR2 iceberg stamping
-- [ ] PR3 VACUUM on main
-- [ ] PR4 OPTIMIZE
-- [ ] PR5 ANALYZE
-- [ ] PR6 compaction job
-- [ ] Tests pinning the design
+- [x] PR0 fork sync: mkuchenbecker/iceberg `openhouse-1.5.2` fast-forwarded to linkedin 39df55d.
+- [x] PR1+PR2 iceberg (one commit, `dafa841`): sequence bounds, sort-order-id include/exclude,
+      use-max-input-sequence-number, output-sort-order-id, output-file-metadata.*.
+      10 new tests pass; existing `TestRewriteDataFilesAction`, `TestSparkDataWrite`,
+      `TestSparkFileWriterFactory`, `TestRewriteFileGroup` pass. Published locally as
+      1.5.2.22-SNAPSHOT for the OpenHouse runs below.
+- [x] PR3 VACUUM (`e7d4297`): rebased fork #28 onto linkedin main; #447/#687 semantics.
+- [x] PR4 OPTIMIZE and PR5 ANALYZE (`73ec53d`): stamp + sequence watermark, migration, docs.
+- [x] PR6 jobs (`a73b537`): compaction and DLO execution skip tables with clustering keys.
+- [x] Tests: spark-3.5 runtime unit tests, apps scheduler/client tests, itest
+      `statementTest` (VACUUM/OPTIMIZE/ANALYZE statement tests on a Hadoop catalog) and
+      `catalogTest` (the three `*TestSpark3_5` suites against the embedded OpenHouse server)
+      pass against the fork snapshot. Test-helper fixes were the only failures in the last runs.
+- [ ] Landing: Mike's call (decision 2). Not done: upstream PRs #661/#662/#663 untouched,
+      fork PR #28 untouched, OpenHouse `iceberg_1_5_version` still 1.5.2.21 (the clustered
+      OPTIMIZE path needs the fork release), linkedin/iceberg PR not opened.
+- [ ] mkuchenbecker/openhouse `main` is 32 commits behind linkedin `main`; the PR from the
+      designated branch shows those commits until fork main is synced.
+
+Local-only, uncommitted, in the sandbox checkout: `build.gradle` points
+`iceberg_1_5_version` at 1.5.2.22-SNAPSHOT and adds `mavenLocal()`. Not part of any commit.
