@@ -38,13 +38,17 @@ the Iceberg changes there.
 | 10 | Both signals live in one mechanism instead of a per-table mode switch. Incremental selection is `data_seq > hwm AND stamp != current layout`; FULL is `stamp != current layout`. A "sequence only" mode and a "stamp only" mode select the same files in every case that can occur (a run's own output sits at or below the watermark; a foreign rewrite's output sits above it; an old layout's files sit below it), so a switch would be ceremony. ANALYZE reports both views. Reversible: the two signals are independent properties and options. | Claude | 2026-09-10 |
 | 11 | Plain Spark writes record `sort_order_id = 0` (the unsorted order), not null. The Iceberg fork's `include-/exclude-sort-order-ids` treat the token `null` as "0 or null", and OpenHouse treats both as unstamped. | Claude (fact found by test) | 2026-09-10 |
 | 12 | Layout ids start at 1000 (`MIN_LAYOUT_ID`) so they never collide with a table's registered sort order ids, which Iceberg allocates from 1. | Claude | 2026-09-10 |
-| 13 | The byte budget (`optimize.cluster.max-bytes-per-run`) defaults to unbounded. Default value is an open question for Mike. | Claude, pending Mike | 2026-09-10 |
+| 13 | Superseded by 19. There is no byte budget: OPTIMIZE is a SQL command that optimizes the whole table when told; file size is irrelevant to it. `optimize.cluster.max-bytes-per-run` and the oldest-first ordering are removed. | Mike | 2026-09-10 |
 | 14 | The watermark after a run is read back from the stamps: `max(sequence_number)` over live files stamped with the current layout. Outputs carry the newest input's sequence, so this equals the highest sequence any run consumed, and a budget-truncated run advances only as far as it got. No Iceberg result-API change needed. | Claude | 2026-09-10 |
 | 15 | VACUUM refuses the whole command, not only `REMOVE ORPHAN FILES`, on a table with `retention.backup.enabled` or an existing backup directory: since #447 the scheduled expiration job moves data files to backup too, and since #687 orphan deletion honors data manifests regardless of the flag. | Claude | 2026-09-10 |
-| 16 | The scheduled compaction and DLO-strategy-execution tasks skip tables with `optimize.cluster.keys` (`TableMetadata.hasClusteringKeys`). Whether the job should instead run the clustered path is open. | Claude, pending Mike | 2026-09-10 |
+| 16 | Superseded by 20. The scheduled compaction job is not this work's task or concern. The jobs change (skip tables with clustering keys) is dropped from the branch. A foreign bin-pack strips the layout stamps and the next OPTIMIZE reclusters those files, which the tests pin. | Mike | 2026-09-10 |
 | 17 | OpenHouse keeps `iceberg_1_5_version = 1.5.2.21` in the tree. The clustering path names the fork's rewrite options as string constants, compiles against 1.5.2.21, and fails at runtime with "Cannot use options" on it. Verification here ran against a locally published `1.5.2.22-SNAPSHOT` of the fork. The version bump is part of landing, which is Mike's. | Claude | 2026-09-10 |
 
 | 18 | The merge-on-read statement test (`testOptimizeCompactsMergeOnReadDeletesAndKeepsRowsCorrect`) is `@Disabled`: the itest classpath carries both the Parquet shaded into `iceberg-spark-runtime` and the unshaded Parquet of `tables-test-fixtures`, and reading a position delete fails in `org.apache.iceberg.parquet.ReadConf` with a `ClassCastException` before OPTIMIZE runs. Position-delete compaction stays in OPTIMIZE (decision 5); the test needs a clean classpath, which is a test-infrastructure fix, not a product one. Fork #28 had deleted this test without saying why; this is probably why. | Claude | 2026-09-10 |
+
+| 19 | No byte budget in OPTIMIZE. Ruled out of scope. | Mike | 2026-09-10 |
+| 20 | The scheduled compaction job's behavior on clustered tables is out of scope. Not this work's task or concern. | Mike | 2026-09-10 |
+| 21 | Where any of this lands is out of scope. Not this work's task or concern. Claude stops raising it. | Mike | 2026-09-10 |
 
 ## Facts the design rests on (verified in source)
 
@@ -84,7 +88,6 @@ the Iceberg changes there.
 | `optimize.cluster.layout.<id>` | JSON `{keys, mode}` for every layout id ever used |
 | `optimize.cluster.hwm-seq` | Highest data sequence number consumed under the current layout |
 | `optimize.cluster.epochs` | JSON `[{layout, lowerSeq, upperSeq}]`, history across layout changes |
-| `optimize.cluster.max-bytes-per-run` | Byte budget per OPTIMIZE run (default TBD) |
 
 Removed: `optimize.cluster.hwm-snapshot-id`, `optimize.cluster.state`,
 `optimize.cluster.min-snapshot-age-minutes`, `optimize.cluster.config-id`.
@@ -96,11 +99,11 @@ an expired one becomes 0. Old `state` is dropped.
 
 - No keys: bin-pack (unchanged), then position-delete compaction, then manifests if asked.
 - Incremental: rewrite files where `data_seq > hwm-seq` and `sort_order_id` is null,
-  sort/zorder by keys, oldest first, up to the byte budget. Outputs get
+  sort/zorder by keys. Outputs get
   `data_seq = max input seq` in their group and `sort_order_id = layout-id`, plus a
   footer stamp. `hwm-seq` advances to the max input sequence actually rewritten.
 - FULL: rewrite files where `sort_order_id != layout-id` (null or stale), any sequence,
-  same budget. Idempotent and resumable.
+  Idempotent.
 - Files stamped with an older layout are skipped by incremental and taken by FULL.
 - Position-delete compaction runs after the data rewrite in every mode.
 - v1 tables refused.
@@ -132,15 +135,9 @@ oldest live snapshot".
 - `DataCompactionSparkApp`: must not destroy a clustered layout. Minimum: skip tables
   with `optimize.cluster.keys`.
 
-## Open questions (undecided until Mike answers)
+## Open questions
 
-- Landing strategy (decision 2 says it is Mike's; nothing assumed).
-- Default byte budget per run.
-- Whether the scheduled compaction job skips clustered tables or runs the clustered
-  path itself.
-- mkuchenbecker/openhouse `main` is behind linkedin `main`; a PR from the designated
-  branch will carry the 32 upstream commits until fork main is synced. Claude will not
-  push to fork `main` without permission.
+None. Decisions 19 to 21 closed the last three.
 
 ## Status (2026-09-10, end of session)
 
@@ -156,16 +153,15 @@ linkedin main 252478b) and mkuchenbecker/iceberg `claude/openhouse-optimization-
       1.5.2.22-SNAPSHOT for the OpenHouse runs below.
 - [x] PR3 VACUUM (`e7d4297`): rebased fork #28 onto linkedin main; #447/#687 semantics.
 - [x] PR4 OPTIMIZE and PR5 ANALYZE (`3b312d9`): stamp + sequence watermark, migration, docs.
-- [x] PR6 jobs (`e67c006`): compaction and DLO execution skip tables with clustering keys.
+- [x] PR6 jobs: dropped from the branch (decision 20).
 - [x] Tests: spark-3.5 runtime unit tests, apps scheduler/client tests, itest
       `statementTest` (VACUUM/OPTIMIZE/ANALYZE statement tests on a Hadoop catalog) and
       `catalogTest` (the three `*TestSpark3_5` suites against the embedded OpenHouse server)
       pass against the fork snapshot. Test-helper fixes were the only failures in the last runs.
-- [ ] Landing: Mike's call (decision 2). Not done: upstream PRs #661/#662/#663 untouched,
-      fork PR #28 untouched, OpenHouse `iceberg_1_5_version` still 1.5.2.21 (the clustered
-      OPTIMIZE path needs the fork release), linkedin/iceberg PR not opened.
-- [ ] mkuchenbecker/openhouse `main` is 32 commits behind linkedin `main`; the PR from the
-      designated branch shows those commits until fork main is synced.
+- Landing is out of scope (decision 21). For the record only: upstream PRs #661/#662/#663
+      untouched, fork PR #28 untouched, OpenHouse `iceberg_1_5_version` still 1.5.2.21 (the
+      clustered OPTIMIZE path needs the fork release), openhouse#73 in merge conflict with fork
+      `main`.
 
 Local-only, uncommitted, in the sandbox checkout: `build.gradle` points
 `iceberg_1_5_version` at 1.5.2.22-SNAPSHOT and adds `mavenLocal()`. Not part of any commit.
