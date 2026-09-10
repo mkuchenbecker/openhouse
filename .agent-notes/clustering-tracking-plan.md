@@ -152,7 +152,7 @@ linkedin main 252478b) and mkuchenbecker/iceberg `claude/openhouse-optimization-
       `TestSparkFileWriterFactory`, `TestRewriteFileGroup` pass. Published locally as
       1.5.2.22-SNAPSHOT for the OpenHouse runs below.
 - [x] PR3 VACUUM (`e7d4297`): rebased fork #28 onto linkedin main; #447/#687 semantics.
-- [x] PR4 OPTIMIZE and PR5 ANALYZE (`3b312d9`): stamp + sequence watermark, migration, docs.
+- [x] PR4 OPTIMIZE and PR5 ANALYZE (`dc854bf`): stamp + sequence watermark, migration, docs.
 - [x] PR6 jobs: dropped from the branch (decision 20).
 - [x] Tests: spark-3.5 runtime unit tests, apps scheduler/client tests, itest
       `statementTest` (VACUUM/OPTIMIZE/ANALYZE statement tests on a Hadoop catalog) and
