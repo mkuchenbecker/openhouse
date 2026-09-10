@@ -49,9 +49,16 @@ object MaintenanceProperties {
   /** OFD: forces a one-day orphan window when set to `true`. */
   val OFD_ONE_DAY_TTL_PROP = "ofd.one_day_ttl.enabled"
 
-  /** OFD: when backups are on, the job moves orphans aside instead of deleting them. */
+  /**
+   * Backups: the retention job moves expired data files into the backup directory and writes a
+   * `data_manifest_*.json` per partition there. Orphan-file deletion then moves any orphan of such
+   * a partition into the backup directory too, whatever the flag currently says, and snapshot
+   * expiration does the same while the flag is on. The directory defaults to `.backup` under the
+   * table location (`RetentionSparkApp`, `SnapshotsExpirationSparkApp`).
+   */
   val BACKUP_ENABLED_PROP = "retention.backup.enabled"
   val BACKUP_DIR_PROP = "retention.backup.dir"
+  val DEFAULT_BACKUP_DIR = ".backup"
 
   /** Job types, as named by `JobConf.JobTypeEnum` in the disable switches. */
   val SNAPSHOTS_EXPIRATION_JOB = "SNAPSHOTS_EXPIRATION"
@@ -134,6 +141,10 @@ object MaintenanceProperties {
    */
   def isBackupConfigured(props: Map[String, String]): Boolean =
     isEnabled(props, BACKUP_ENABLED_PROP) || props.get(BACKUP_DIR_PROP).exists(_.trim.nonEmpty)
+
+  /** The backup directory, relative to the table location. */
+  def backupDir(props: Map[String, String]): String =
+    props.get(BACKUP_DIR_PROP).map(_.trim).filter(_.nonEmpty).getOrElse(DEFAULT_BACKUP_DIR)
 
   /** True when the table is a replica; the scheduled SE job skips non-primary tables. */
   def isReplica(props: Map[String, String]): Boolean =

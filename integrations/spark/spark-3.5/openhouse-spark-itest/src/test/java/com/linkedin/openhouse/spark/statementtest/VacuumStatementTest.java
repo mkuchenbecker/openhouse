@@ -20,6 +20,7 @@ import org.junit.jupiter.api.TestInstance;
 public class VacuumStatementTest {
 
   private static SparkSession spark = null;
+  private static java.nio.file.Path warehouse = null;
 
   private long snapshotCount(String table) {
     return spark.sql("SELECT * FROM " + table + ".snapshots").count();
@@ -118,18 +119,30 @@ public class VacuumStatementTest {
   }
 
   @Test
-  public void testVacuumRemoveOrphanFilesOnBackupEnabledTableThrows() {
-    // The scheduled job moves orphans into the backup directory instead of deleting them; the
-    // stored procedure cannot, so it must not run here.
+  public void testVacuumOnBackupEnabledTableThrows() {
+    // The scheduled jobs move reclaimed files into the backup directory instead of deleting them;
+    // the stored procedures cannot, so neither step may run here.
     setProperties("openhouse.db.table", "'retention.backup.enabled' = 'true'");
 
     Assertions.assertThrows(
         UnsupportedOperationException.class,
         () -> spark.sql("VACUUM openhouse.db.table REMOVE ORPHAN FILES").collect());
+    Assertions.assertThrows(
+        UnsupportedOperationException.class,
+        () -> spark.sql("VACUUM openhouse.db.table RETAIN 0 HOURS").collect());
+    Assertions.assertEquals(3, snapshotCount("openhouse.db.table"));
+  }
 
-    // Expiration alone is unaffected.
-    vacuum("VACUUM openhouse.db.table RETAIN 0 HOURS");
-    Assertions.assertEquals(1, snapshotCount("openhouse.db.table"));
+  @Test
+  public void testVacuumOnTableWithBackupDirectoryThrows() throws Exception {
+    // A backup directory marks preserved files even after the flag is turned off (the orphan-file
+    // job honors the data manifests in it regardless), so its presence alone refuses VACUUM.
+    Files.createDirectories(warehouse.resolve("db").resolve("table").resolve(".backup"));
+
+    Assertions.assertThrows(
+        UnsupportedOperationException.class,
+        () -> spark.sql("VACUUM openhouse.db.table RETAIN 0 HOURS").collect());
+    Assertions.assertEquals(3, snapshotCount("openhouse.db.table"));
   }
 
   @Test
@@ -195,7 +208,8 @@ public class VacuumStatementTest {
   @SneakyThrows
   @BeforeAll
   public void setupSpark() {
-    Path unittest = new Path(Files.createTempDirectory("unittest").toString());
+    warehouse = Files.createTempDirectory("unittest");
+    Path unittest = new Path(warehouse.toString());
     spark =
         SparkSession.builder()
             .master("local[2]")

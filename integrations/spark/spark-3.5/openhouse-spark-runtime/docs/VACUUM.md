@@ -86,7 +86,7 @@ service treats `openhouse.`-prefixed keys as reserved and rejects any attempt to
 | --------- | --- |
 | `maintenance.disabled = 'true'`, or `maintenance.SNAPSHOTS_EXPIRATION.disabled` / `maintenance.ORPHAN_FILES_DELETION.disabled` for the step being run | The table has been opted out of platform maintenance; a manual `VACUUM` should not sidestep that. |
 | The table is a replica (`openhouse.tableType = 'REPLICA_TABLE'`) | The scheduled expiration job runs on primary tables only. A replica's snapshots are replication state, and expiring them by hand can strand an incremental replication. Maintenance for replicas stays with the scheduled jobs. |
-| `REMOVE ORPHAN FILES` on a table configured for orphan backups (`retention.backup.enabled` / `retention.backup.dir`) | On those tables the scheduled job *moves* orphans into the backup directory instead of deleting them. The stored procedure has no equivalent hook, so it would destroy files the platform expects to remain recoverable — and treat the backup directory's own contents as orphans. |
+| The table keeps backups: `retention.backup.enabled = 'true'`, or its backup directory (`retention.backup.dir`, default `.backup`) exists under the table location | On those tables the scheduled jobs *move* reclaimed data files into the backup directory instead of deleting them: orphan-file deletion does so for every partition that has a `data_manifest_*.json` there, whatever the flag says, and snapshot expiration does so while the flag is on. The stored procedures have no such hook, so they would delete files the platform expects to remain recoverable and treat the backup directory's own contents as orphans. |
 
 ## Examples
 
@@ -121,6 +121,6 @@ VACUUM openhouse.db.table REMOVE ORPHAN FILES RETAIN 168 HOURS;
 - **Snapshot expiration requires write quota**; orphan-file deletion does not. This is why
   orphan-file deletion runs first — on a table that is out of quota, orphan cleanup still
   proceeds even though expiration cannot commit.
-- **Expiration here also deletes files.** The scheduled expiration job deliberately leaves file
-  deletion to orphan-file deletion; `VACUUM` deletes the files the expired snapshots exclusively
-  referenced, because reclaiming that storage is the point of running it by hand.
+- **Both steps delete the files they reclaim.** Snapshot expiration deletes the data, delete,
+  manifest and manifest-list files that only the expired snapshots referenced, as the scheduled
+  expiration job does when run with file deletion enabled.

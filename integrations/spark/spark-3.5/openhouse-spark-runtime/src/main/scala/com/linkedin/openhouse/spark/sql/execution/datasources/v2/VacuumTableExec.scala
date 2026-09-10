@@ -5,6 +5,7 @@ import java.time.format.DateTimeFormatter
 
 import scala.collection.JavaConverters._
 
+import org.apache.hadoop.fs.Path
 import org.apache.iceberg.spark.source.SparkTable
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
@@ -27,9 +28,13 @@ import org.apache.spark.unsafe.types.UTF8String
  * `RETAIN n HOURS` bounds both operations. When it is omitted, each falls back to what the
  * corresponding job would have used for this table: the `policies.history` window for expiration,
  * and the orphan-file job's own default (or one day, under `ofd.one_day_ttl.enabled`) for orphan
- * removal. The one deliberate divergence from the jobs is that expiration here also deletes the
- * files the expired snapshots exclusively referenced -- reclaiming that storage is the point of
- * running VACUUM by hand, whereas the scheduled job leaves it to orphan-file deletion.
+ * removal. Both steps delete the files they reclaim, as the scheduled jobs do.
+ *
+ * VACUUM refuses tables whose orphans or expired files the platform preserves instead of deleting:
+ * when `retention.backup.enabled` is set, or when the table's backup directory exists, the
+ * scheduled jobs move data files into that directory (a `data_manifest_*.json` there marks a
+ * partition for preservation, regardless of the flag). The stored procedures have no such hook and
+ * would delete the files outright, and would treat the backup directory itself as orphans.
  */
 case class VacuumTableExec(
   output: Seq[Attribute],
@@ -46,9 +51,9 @@ case class VacuumTableExec(
       Array[Any](UTF8String.fromString(metric), UTF8String.fromString(value)))
 
   override protected def run(): Seq[InternalRow] = {
-    val props = catalog.loadTable(ident) match {
+    val (props, tableLocation) = catalog.loadTable(ident) match {
       case iceberg: SparkTable if iceberg.table().properties().containsKey(TABLE_ID_PROP) =>
-        iceberg.table().properties().asScala.toMap
+        (iceberg.table().properties().asScala.toMap, iceberg.table().location())
       case table =>
         throw new UnsupportedOperationException(s"Cannot vacuum non-Openhouse table: $table")
     }
@@ -77,6 +82,18 @@ case class VacuumTableExec(
       requireMaintenanceEnabled(props, ORPHAN_FILES_DELETION_JOB)
     }
 
+    // On a table with backups the scheduled jobs move reclaimed data files into the backup
+    // directory instead of deleting them: orphan-file deletion whenever a data manifest exists for
+    // the partition, snapshot expiration when the backup flag is on. The stored procedures delete
+    // outright and would also treat the backup directory's own contents as orphans, so refuse.
+    if (isBackupConfigured(props) || backupDirectoryExists(tableLocation, props)) {
+      throw new UnsupportedOperationException(
+        s"Cannot vacuum table '$ident': it keeps backups of reclaimed files " +
+          s"('$BACKUP_ENABLED_PROP', or a '${backupDir(props)}' directory under the table " +
+          s"location), which the scheduled jobs preserve instead of deleting. Leave cleanup to " +
+          s"the scheduled jobs.")
+    }
+
     val quotedCatalog = quoteIfNeeded(catalog.name())
     val tableArg = (ident.namespace() :+ ident.name()).map(quoteIfNeeded).mkString(".")
     val metrics = Seq.newBuilder[InternalRow]
@@ -87,18 +104,6 @@ case class VacuumTableExec(
       // unreferenced files from storage and always can, so doing it first ensures it still runs in
       // that case. Running first also means it scans against the pre-expiration referenced-file
       // set, so it can never delete a file that a still-live snapshot references.
-      //
-      // On a table configured for orphan backups the scheduled job moves orphans into the backup
-      // directory instead of deleting them, via a delete hook the stored procedure has no
-      // equivalent of. Running the procedure would both destroy files the platform expects to
-      // remain recoverable and treat the backup directory's own contents as orphans, so refuse.
-      if (isBackupConfigured(props)) {
-        throw new UnsupportedOperationException(
-          s"Cannot remove orphan files on table '$ident': it is configured for orphan backups " +
-            s"('$BACKUP_ENABLED_PROP'/'$BACKUP_DIR_PROP'), which preserve orphans instead of " +
-            s"deleting them. Leave orphan-file cleanup to the scheduled job, or run VACUUM " +
-            s"without REMOVE ORPHAN FILES.")
-      }
       val (age, source) = orphanRetention(props, retainHours)
       metrics += row("orphan_files_retain_hours", age.toHours.toString)
       metrics += row("orphan_files_retain_source", source)
@@ -144,6 +149,13 @@ case class VacuumTableExec(
     val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
       .withZone(ZoneId.of(spark.sessionState.conf.sessionLocalTimeZone))
     s", older_than => TIMESTAMP '${formatter.format(Instant.now().minus(age))}'"
+  }
+
+  /** True when the table's backup directory exists on storage; see [[MaintenanceProperties]]. */
+  private def backupDirectoryExists(
+      tableLocation: String, props: Map[String, String]): Boolean = {
+    val path = new Path(tableLocation, backupDir(props))
+    path.getFileSystem(spark.sessionState.newHadoopConf()).exists(path)
   }
 
   private def requireMaintenanceEnabled(props: Map[String, String], jobType: String): Unit = {
