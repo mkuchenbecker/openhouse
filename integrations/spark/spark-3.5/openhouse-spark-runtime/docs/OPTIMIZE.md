@@ -89,7 +89,5 @@ runtime a clustered `OPTIMIZE` fails with `Cannot use options ...`; bin-pack is 
 `maintenance.disabled = 'true'` or `maintenance.DATA_COMPACTION.disabled = 'true'` — the same
 switches the jobs scheduler consults before dispatching work for a table.
 
-The scheduled data-compaction job skips tables that configure `optimize.cluster.keys`. It
-bin-packs blind, which would wipe the layout stamps and hand the same files straight back to the
-next `OPTIMIZE`. Clustered tables are compacted by `OPTIMIZE`, which bin-packs as part of the sort
-or z-order rewrite.
+A scheduled bin-pack of a clustered table strips the layout stamps from the files it rewrites, so
+those files read as unclustered and the next `OPTIMIZE` reclusters them.
