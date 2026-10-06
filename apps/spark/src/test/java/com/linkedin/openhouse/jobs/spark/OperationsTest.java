@@ -364,18 +364,18 @@ public class OperationsTest extends OpenHouseSparkITest {
   public void testRetentionWithNativeTimestampHonorsLosAngelesZone() throws Exception {
     final String zonedTableName = "db.test_retention_zoned_native_ts";
     final String utcTableName = "db.test_retention_utc_native_ts";
-    // now is 2024-02-01T02:00Z, keeping one day. In Los Angeles today is 2024-01-31, so the cut is
-    // the start of 2024-01-30 local (2024-01-30T08:00Z); in UTC today is 2024-02-01, so the cut is
-    // 2024-01-31T00:00Z. Each deletes whole days, measured in its own zone.
+    // now is 2024-02-01T02:00Z, keeping one day. The zone only changes the wall clock fed to the
+    // existing cutoff: in Los Angeles it is 2024-01-31T18:00, so the cutoff is
+    // date_trunc('day', 2024-01-31T18:00 - 1 day) = 2024-01-30T00:00; in UTC it is
+    // 2024-02-01T02:00,
+    // so the cutoff is 2024-01-31T00:00. Spark reads both literals in its UTC session.
     ZonedDateTime now = ZonedDateTime.of(2024, 2, 1, 2, 0, 0, 0, ZoneOffset.UTC);
     try (Operations ops = Operations.withCatalog(getSparkSession(), otelEmitter)) {
       prepareTable(ops, zonedTableName, true);
       prepareTable(ops, utcTableName, true);
-      // before_la_midnight is 2024-01-29 in Los Angeles but 2024-01-30 in UTC. The zoned run
-      // deletes it because its local day is older than the cut; the naive main SQL kept it.
       String fixtureRows =
           "('older_than_both', cast('2024-01-29 12:00:00' as timestamp)), "
-              + "('before_la_midnight', cast('2024-01-30 04:00:00' as timestamp)), "
+              + "('on_zoned_cutoff_date', cast('2024-01-30 04:00:00' as timestamp)), "
               + "('kept_only_by_la_zone', cast('2024-01-30 12:00:00' as timestamp)), "
               + "('kept_by_both', cast('2024-01-31 12:00:00' as timestamp))";
       ops.spark().sql(String.format("INSERT INTO %s VALUES %s", zonedTableName, fixtureRows));
@@ -393,7 +393,7 @@ public class OperationsTest extends OpenHouseSparkITest {
       ops.runRetention(utcTableName, "ts", "", "day", 1, false, "", now);
 
       Assertions.assertEquals(
-          Arrays.asList("kept_by_both", "kept_only_by_la_zone"),
+          Arrays.asList("kept_by_both", "kept_only_by_la_zone", "on_zoned_cutoff_date"),
           collectSortedDataValues(ops, zonedTableName));
       Assertions.assertEquals(
           Arrays.asList("kept_by_both"), collectSortedDataValues(ops, utcTableName));
@@ -401,27 +401,39 @@ public class OperationsTest extends OpenHouseSparkITest {
   }
 
   @Test
-  public void testRetentionWithNativeTimestampEastOfUtcKeepsCurrentLocalDay() throws Exception {
-    final String tableName = "db.test_retention_zoned_native_east";
-    // +05:30 at a run of 2024-02-01T02:00Z. Locally today is 2024-02-01, so keeping one day cuts at
-    // the start of 2024-01-31 local = 2024-01-30T18:30Z. kept_boundary_day is early on 2024-01-31
-    // local, which the cut keeps; the naive main SQL cut at 2024-01-31T00:00Z and deleted it.
-    ZonedDateTime now =
-        ZonedDateTime.of(2024, 2, 1, 2, 0, 0, 0, ZoneOffset.UTC)
-            .withZoneSameInstant(ZoneOffset.ofHoursMinutes(5, 30));
+  public void testRetentionWithNativeTimestampEastOfUtcAdvancesCutoff() throws Exception {
+    final String zonedTableName = "db.test_retention_zoned_native_east";
+    final String utcTableName = "db.test_retention_utc_native_east";
+    // now is 2024-01-31T20:00Z, keeping one day. In +05:30 it is already 2024-02-01T01:30, so the
+    // cutoff is 2024-01-31T00:00; in UTC it is still 2024-01-31, so the cutoff is 2024-01-30T00:00.
+    // East of UTC the zone moves the cutoff later, the mirror image of the Los Angeles case.
+    ZonedDateTime now = ZonedDateTime.of(2024, 1, 31, 20, 0, 0, 0, ZoneOffset.UTC);
     try (Operations ops = Operations.withCatalog(getSparkSession(), otelEmitter)) {
-      prepareTable(ops, tableName, true);
+      prepareTable(ops, zonedTableName, true);
+      prepareTable(ops, utcTableName, true);
       String fixtureRows =
-          "('older_than_cutoff', cast('2024-01-29 06:00:00' as timestamp)), "
-              + "('kept_boundary_day', cast('2024-01-30 20:30:00' as timestamp)), "
-              + "('kept_today', cast('2024-01-31 20:30:00' as timestamp))";
-      ops.spark().sql(String.format("INSERT INTO %s VALUES %s", tableName, fixtureRows));
+          "('older_than_both', cast('2024-01-29 06:00:00' as timestamp)), "
+              + "('kept_only_by_utc', cast('2024-01-30 12:00:00' as timestamp)), "
+              + "('kept_by_both', cast('2024-01-31 12:00:00' as timestamp))";
+      ops.spark().sql(String.format("INSERT INTO %s VALUES %s", zonedTableName, fixtureRows));
+      ops.spark().sql(String.format("INSERT INTO %s VALUES %s", utcTableName, fixtureRows));
 
-      ops.runRetention(tableName, "ts", "", "day", 1, false, "", now);
+      ops.runRetention(
+          zonedTableName,
+          "ts",
+          "",
+          "day",
+          1,
+          false,
+          "",
+          now.withZoneSameInstant(ZoneOffset.ofHoursMinutes(5, 30)));
+      ops.runRetention(utcTableName, "ts", "", "day", 1, false, "", now);
 
       Assertions.assertEquals(
-          Arrays.asList("kept_boundary_day", "kept_today"),
-          collectSortedDataValues(ops, tableName));
+          Arrays.asList("kept_by_both"), collectSortedDataValues(ops, zonedTableName));
+      Assertions.assertEquals(
+          Arrays.asList("kept_by_both", "kept_only_by_utc"),
+          collectSortedDataValues(ops, utcTableName));
     }
   }
 
@@ -449,8 +461,9 @@ public class OperationsTest extends OpenHouseSparkITest {
       ZonedDateTime now =
           ZonedDateTime.of(2024, 2, 1, 2, 0, 0, 0, ZoneOffset.UTC)
               .withZoneSameInstant(ZoneId.of("America/Los_Angeles"));
-      // Backup-enabled zoned native retention completes without a residual failure because the
-      // DELETE statement and the backup filter resolve to the same instant.
+      // In Los Angeles now is 2024-01-31T18:00, so the cutoff is 2024-01-30T00:00. The DELETE
+      // statement and the backup filter use the same cutoff, and it lands on a UTC partition edge,
+      // so backup-enabled zoned retention stays a metadata-only delete.
       ops.runRetention(tableName, "ts", "", "day", 1, true, ".backup", now);
 
       Table table = ops.getTable(tableName);
