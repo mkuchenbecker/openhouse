@@ -7,13 +7,17 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseTablesApiHandler;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateDatabaseRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateDatabasePropertiesRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAclPoliciesResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllDatabasesResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllTablesResponseBody;
+import com.linkedin.openhouse.tables.api.spec.v0.response.GetDatabaseResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
+import com.linkedin.openhouse.tables.api.spec.v0.response.UpdateDatabasePropertiesResponseBody;
 import com.linkedin.openhouse.tables.audit.model.OperationStatus;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
@@ -651,6 +655,118 @@ public class TableAuditAspect {
     }
     allowlistPatterns = Collections.unmodifiableList(compiled);
     return allowlistPatterns;
+  }
+
+  /** Install the Around advice for createDatabase() method in OpenHouseDatabasesApiHandler */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.common.api.spec.ApiResponse<com.linkedin.openhouse.tables.api.spec.v0.response.GetDatabaseResponseBody> "
+          + "com.linkedin.openhouse.tables.api.handler.DatabasesApiHandler.createDatabase(..)) "
+          + "&& args(createDatabaseRequestBody, actingPrincipal)")
+  protected ApiResponse<GetDatabaseResponseBody> auditCreateDatabase(
+      ProceedingJoinPoint point,
+      CreateDatabaseRequestBody createDatabaseRequestBody,
+      String actingPrincipal)
+      throws Throwable {
+    ApiResponse<GetDatabaseResponseBody> result = null;
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(
+                createDatabaseRequestBody == null
+                    ? null
+                    : createDatabaseRequestBody.getDatabaseId())
+            .operationType(OperationType.CREATE)
+            .build();
+    try {
+      result = (ApiResponse<GetDatabaseResponseBody>) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, null);
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
+  }
+
+  /** Install the Around advice for getDatabase() method in OpenHouseDatabasesApiHandler */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.common.api.spec.ApiResponse<com.linkedin.openhouse.tables.api.spec.v0.response.GetDatabaseResponseBody> "
+          + "com.linkedin.openhouse.tables.api.handler.DatabasesApiHandler.getDatabase(..)) "
+          + "&& args(databaseId, actingPrincipal)")
+  protected ApiResponse<GetDatabaseResponseBody> auditGetDatabase(
+      ProceedingJoinPoint point, String databaseId, String actingPrincipal) throws Throwable {
+    ApiResponse<GetDatabaseResponseBody> result = null;
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .operationType(OperationType.READ)
+            .build();
+    try {
+      result = (ApiResponse<GetDatabaseResponseBody>) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, null);
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
+  }
+
+  /** Install the Around advice for deleteDatabase() method in OpenHouseDatabasesApiHandler */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.common.api.spec.ApiResponse<Void> "
+          + "com.linkedin.openhouse.tables.api.handler.DatabasesApiHandler.deleteDatabase(..)) "
+          + "&& args(databaseId, actingPrincipal)")
+  protected ApiResponse<Void> auditDeleteDatabase(
+      ProceedingJoinPoint point, String databaseId, String actingPrincipal) throws Throwable {
+    ApiResponse<Void> result = null;
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .operationType(OperationType.DELETE)
+            .build();
+    try {
+      result = (ApiResponse<Void>) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, null);
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
+  }
+
+  /**
+   * Install the Around advice for updateDatabaseProperties() method in OpenHouseDatabasesApiHandler
+   */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.common.api.spec.ApiResponse<com.linkedin.openhouse.tables.api.spec.v0.response.UpdateDatabasePropertiesResponseBody> "
+          + "com.linkedin.openhouse.tables.api.handler.DatabasesApiHandler.updateDatabaseProperties(..)) "
+          + "&& args(databaseId, updateDatabasePropertiesRequestBody, actingPrincipal)")
+  protected ApiResponse<UpdateDatabasePropertiesResponseBody> auditUpdateDatabaseProperties(
+      ProceedingJoinPoint point,
+      String databaseId,
+      UpdateDatabasePropertiesRequestBody updateDatabasePropertiesRequestBody,
+      String actingPrincipal)
+      throws Throwable {
+    ApiResponse<UpdateDatabasePropertiesResponseBody> result = null;
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .operationType(OperationType.UPDATE)
+            .build();
+    try {
+      result = (ApiResponse<UpdateDatabasePropertiesResponseBody>) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, null);
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
   }
 
   private void buildAndSendEvent(

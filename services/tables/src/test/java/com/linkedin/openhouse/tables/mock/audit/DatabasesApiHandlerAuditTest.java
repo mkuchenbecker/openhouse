@@ -72,4 +72,54 @@ public class DatabasesApiHandlerAuditTest {
                 TABLE_AUDIT_EVENT_UPDATE_DATABASES_ACL_POLICIES_SUCCESS, EXCLUDE_FIELDS)
             .matches(actualEvent));
   }
+
+  @Test
+  public void testCreateDatabaseSuccessfulPath() throws Exception {
+    mvc.perform(
+        MockMvcRequestBuilders.post(CURRENT_MAJOR_VERSION_PREFIX + "/databases")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"databaseId\":\"d200\",\"properties\":{\"k\":\"v\"}}")
+            .accept(MediaType.APPLICATION_JSON));
+    Mockito.verify(tableAuditHandler, atLeastOnce()).audit(argCaptor.capture());
+    TableAuditEvent actualEvent = argCaptor.getValue();
+    assertTrue(
+        new ReflectionEquals(TABLE_AUDIT_EVENT_CREATE_DATABASE_SUCCESS, EXCLUDE_FIELDS)
+            .matches(actualEvent));
+  }
+
+  @Test
+  public void testGetDatabaseSuccessfulPath() throws Exception {
+    mvc.perform(
+        MockMvcRequestBuilders.get(CURRENT_MAJOR_VERSION_PREFIX + "/databases/d200")
+            .accept(MediaType.APPLICATION_JSON));
+    Mockito.verify(tableAuditHandler, atLeastOnce()).audit(argCaptor.capture());
+    TableAuditEvent actualEvent = argCaptor.getValue();
+    assertTrue(
+        new ReflectionEquals(TABLE_AUDIT_EVENT_GET_DATABASE_SUCCESS, EXCLUDE_FIELDS)
+            .matches(actualEvent));
+  }
+
+  @Test
+  public void testDeleteDatabaseSuccessfulPath() throws Exception {
+    mvc.perform(MockMvcRequestBuilders.delete(CURRENT_MAJOR_VERSION_PREFIX + "/databases/d200"));
+    Mockito.verify(tableAuditHandler, atLeastOnce()).audit(argCaptor.capture());
+    TableAuditEvent actualEvent = argCaptor.getValue();
+    assertTrue(
+        new ReflectionEquals(TABLE_AUDIT_EVENT_DELETE_DATABASE_SUCCESS, EXCLUDE_FIELDS)
+            .matches(actualEvent));
+  }
+
+  @Test
+  public void testUpdateDatabasePropertiesSuccessfulPath() throws Exception {
+    mvc.perform(
+        MockMvcRequestBuilders.post(CURRENT_MAJOR_VERSION_PREFIX + "/databases/d200/properties")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{\"updates\":{\"k\":\"v\"},\"removals\":[]}")
+            .accept(MediaType.APPLICATION_JSON));
+    Mockito.verify(tableAuditHandler, atLeastOnce()).audit(argCaptor.capture());
+    TableAuditEvent actualEvent = argCaptor.getValue();
+    assertTrue(
+        new ReflectionEquals(TABLE_AUDIT_EVENT_UPDATE_DATABASE_PROPERTIES_SUCCESS, EXCLUDE_FIELDS)
+            .matches(actualEvent));
+  }
 }

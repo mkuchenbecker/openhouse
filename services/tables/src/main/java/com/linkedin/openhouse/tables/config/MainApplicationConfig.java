@@ -8,6 +8,7 @@ import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.config.BaseApplicationConfig;
 import com.linkedin.openhouse.common.provider.HttpConnectionPoolProviderConfig;
+import com.linkedin.openhouse.housetables.client.api.DatabaseApi;
 import com.linkedin.openhouse.housetables.client.api.ToggleStatusApi;
 import com.linkedin.openhouse.housetables.client.api.UserTableApi;
 import com.linkedin.openhouse.housetables.client.invoker.ApiClient;
@@ -66,6 +67,16 @@ public class MainApplicationConfig extends BaseApplicationConfig {
   @Bean
   public ToggleStatusApi provideToggleApiInstance() {
     return new ToggleStatusApi(getHtsConfiguredApiClient());
+  }
+
+  /**
+   * This bean is injected within {@link
+   * com.linkedin.openhouse.tables.repository.impl.DatabaseEntityRepositoryImpl}, the
+   * HouseTables-backed store of the database entity (UUID, name, properties).
+   */
+  @Bean
+  public DatabaseApi provideDatabaseApiInstance() {
+    return new DatabaseApi(getHtsConfiguredApiClient());
   }
 
   /**

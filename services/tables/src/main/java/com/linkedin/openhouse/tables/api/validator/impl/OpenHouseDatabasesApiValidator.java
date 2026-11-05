@@ -5,10 +5,14 @@ import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALP
 
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateDatabaseRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateDatabasePropertiesRequestBody;
 import com.linkedin.openhouse.tables.api.validator.DatabasesApiValidator;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import javax.validation.ConstraintViolation;
 import javax.validation.Validator;
 import org.apache.commons.lang.StringUtils;
@@ -53,6 +57,68 @@ public class OpenHouseDatabasesApiValidator implements DatabasesApiValidator {
     }
   }
 
+  @Override
+  public void validateCreateDatabase(CreateDatabaseRequestBody createDatabaseRequestBody) {
+    if (createDatabaseRequestBody == null) {
+      throw new RequestValidationFailureException("request body : cannot be empty");
+    }
+    List<String> validationFailures = new ArrayList<>();
+    for (ConstraintViolation<CreateDatabaseRequestBody> violation :
+        validator.validate(createDatabaseRequestBody)) {
+      validationFailures.add(
+          String.format("%s : %s", ApiValidatorUtil.getField(violation), violation.getMessage()));
+    }
+    validatePropertyKeys(
+        createDatabaseRequestBody.getProperties(), "properties", validationFailures);
+    if (!validationFailures.isEmpty()) {
+      throw new RequestValidationFailureException(validationFailures);
+    }
+  }
+
+  @Override
+  public void validateGetDatabase(String databaseId) {
+    validateDatabaseId(databaseId);
+  }
+
+  @Override
+  public void validateDeleteDatabase(String databaseId) {
+    validateDatabaseId(databaseId);
+  }
+
+  @Override
+  public void validateUpdateDatabaseProperties(
+      String databaseId, UpdateDatabasePropertiesRequestBody updateDatabasePropertiesRequestBody) {
+    validateDatabaseId(databaseId);
+    if (updateDatabasePropertiesRequestBody == null) {
+      throw new RequestValidationFailureException("request body : cannot be empty");
+    }
+    List<String> validationFailures = new ArrayList<>();
+    Map<String, String> updates = updateDatabasePropertiesRequestBody.getUpdates();
+    List<String> removals = updateDatabasePropertiesRequestBody.getRemovals();
+    validatePropertyKeys(updates, "updates", validationFailures);
+    if (removals != null) {
+      for (String key : removals) {
+        if (StringUtils.isBlank(key)) {
+          validationFailures.add("removals : property keys cannot be empty");
+          break;
+        }
+      }
+    }
+    if (!validationFailures.isEmpty()) {
+      throw new RequestValidationFailureException(validationFailures);
+    }
+    // Iceberg REST catalog contract: a key in both removals and updates is 422, not 400.
+    if (updates != null && removals != null) {
+      for (String key : removals) {
+        if (updates.containsKey(key)) {
+          throw new UnprocessableEntityException(
+              String.format(
+                  "Property key [%s] cannot be present in both updates and removals", key));
+        }
+      }
+    }
+  }
+
   private void validateDatabaseId(String databaseId) {
     List<String> validationFailures = new ArrayList<>();
     if (StringUtils.isEmpty(databaseId)) {
@@ -63,6 +129,23 @@ public class OpenHouseDatabasesApiValidator implements DatabasesApiValidator {
     }
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
+    }
+  }
+
+  private void validatePropertyKeys(
+      Map<String, String> properties, String fieldName, List<String> validationFailures) {
+    if (properties == null) {
+      return;
+    }
+    for (Map.Entry<String, String> entry : properties.entrySet()) {
+      if (StringUtils.isBlank(entry.getKey())) {
+        validationFailures.add(String.format("%s : property keys cannot be empty", fieldName));
+        break;
+      }
+      if (entry.getValue() == null) {
+        validationFailures.add(
+            String.format("%s : value for key %s cannot be null", fieldName, entry.getKey()));
+      }
     }
   }
 }
