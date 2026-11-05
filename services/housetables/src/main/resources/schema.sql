@@ -57,3 +57,16 @@ CREATE TABLE IF NOT EXISTS soft_deleted_user_table_row (
     purge_after_ms      BIGINT          NOT NULL,
     PRIMARY KEY (database_id, table_id, deleted_at_ms)
 );
+-- Database entity: UUID is the canonical identity, database_id is the logical name. Independent of
+-- user_table_row; deleting a database row never touches table rows. Properties are a JSON object.
+-- Production DDL (engine, charset, collation, functional unique index) is recorded under ddl/.
+CREATE TABLE IF NOT EXISTS database_row (
+    database_uuid       VARCHAR (36)      NOT NULL,
+    database_id         VARCHAR (128)     NOT NULL,
+    version             BIGINT            NOT NULL,
+    creation_time       BIGINT            DEFAULT NULL,
+    properties          MEDIUMTEXT,
+    ETL_TS              DATETIME(6)       DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (database_uuid),
+    UNIQUE (database_id)
+);
