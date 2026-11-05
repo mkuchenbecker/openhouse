@@ -41,6 +41,7 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.StaticTableOperations;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
@@ -88,8 +89,8 @@ import reactor.core.publisher.Mono;
  * copy stays table-only ({@code extends BaseMetastoreCatalog}).
  *
  * <p>Because extending {@link BaseMetastoreViewCatalog} makes this an Iceberg {@code ViewCatalog},
- * Spark's {@code SparkCatalog} routes view probes to this instance instead of short-circuiting
- * them (it only calls a catalog's view methods when the catalog is {@code instanceof ViewCatalog};
+ * Spark's {@code SparkCatalog} routes view probes to this instance instead of short-circuiting them
+ * (it only calls a catalog's view methods when the catalog is {@code instanceof ViewCatalog};
  * otherwise it answers view ops itself). Notably {@code SparkCatalog.loadView} is invoked while
  * resolving every unqualified identifier. So when views are disabled we mirror, method-for-method,
  * how {@code SparkCatalog} behaves for a non-{@code ViewCatalog} (table-only) catalog, making the
@@ -409,6 +410,28 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   }
 
   /**
+   * Resolve the effective properties of a loaded table: the properties of its database entity
+   * overlaid by the table's own properties, so an explicit table property always overrides an
+   * inherited one.
+   *
+   * <p>This is an explicit look-aside, not part of table loading. Each call performs exactly one
+   * HTTP request to the Tables Service (the database lookup) and never calls the table endpoint;
+   * nothing is cached, so a caller iterating over many tables issues one request per table. The
+   * {@link Table} is never mutated and {@link Table#properties()} remains the table's actual
+   * properties. A database that has no entity (404) contributes no properties, so the result then
+   * equals {@code table.properties()}. Any other failure surfaces as the same {@link
+   * WebClientResponseWithMessageException} / {@link WebClientRequestWithMessageException} that a
+   * table load raises.
+   *
+   * @param table a table loaded from this catalog
+   * @return an unmodifiable map of the effective properties
+   */
+  public Map<String, String> getEffectiveTableProperties(Table table) {
+    log.info("Calling getEffectiveTableProperties for table: {}", table.name());
+    return EffectiveTablePropertiesResolver.resolve(table, databaseApi);
+  }
+
+  /**
    * List databases under a database. Support for "drop database" where the default behavior is
    * cascading and needs to visit databases recursively. We are not supporting multi-level
    * databases, so no need to implement this method.
@@ -591,7 +614,8 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     return new OpenHouseTableBuilder(identifier, schema);
   }
 
-  // ============================= OpenHouse Views (gated, off by default) =============================
+  // ============================= OpenHouse Views (gated, off by default)
+  // =============================
   // Gated by VIEWS_ENABLED_PROPERTY: view operations delegate to an in-memory MOCK
   // backend (mockViewStore). loadView/buildView reuse the BaseMetastoreViewCatalog machinery via
   // newViewOps; listViews/dropView/renameView are backed directly by the store.
@@ -640,9 +664,10 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    *
    * <p>When views are disabled, throws {@link NoSuchViewException} rather than {@link
    * UnsupportedOperationException}. Spark's {@code SparkCatalog.loadView} probes this method while
-   * resolving every unqualified identifier and catches only {@code NoSuchViewException} to fall back
-   * to table resolution; any other exception propagates and breaks table reads. Throwing {@code
-   * NoSuchViewException} here therefore reproduces the table-only (non-{@code ViewCatalog}) behavior.
+   * resolving every unqualified identifier and catches only {@code NoSuchViewException} to fall
+   * back to table resolution; any other exception propagates and breaks table reads. Throwing
+   * {@code NoSuchViewException} here therefore reproduces the table-only (non-{@code ViewCatalog})
+   * behavior.
    */
   @Override
   public View loadView(TableIdentifier identifier) {
@@ -661,10 +686,10 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    * SparkCatalog.createView}, which calls {@code buildView(...).create()} and catches only {@code
    * NoSuchNamespaceException} / {@code AlreadyExistsException} (rethrowing them as Spark {@code
    * AnalysisException}s); any other exception — e.g. {@link UnsupportedOperationException} — would
-   * leak as a raw runtime error and break callers that expect an {@code AnalysisException}. Throwing
-   * {@code NoSuchNamespaceException} is therefore the signal that normalizes {@code CREATE VIEW}
-   * rejection to a Spark {@code AnalysisException}, matching how a table-only catalog (Iceberg 1.2 /
-   * Spark 3.1) rejects it. See {@code OpenHouseViewSparkITest}.
+   * leak as a raw runtime error and break callers that expect an {@code AnalysisException}.
+   * Throwing {@code NoSuchNamespaceException} is therefore the signal that normalizes {@code CREATE
+   * VIEW} rejection to a Spark {@code AnalysisException}, matching how a table-only catalog
+   * (Iceberg 1.2 / Spark 3.1) rejects it. See {@code OpenHouseViewSparkITest}.
    */
   @Override
   public ViewBuilder buildView(TableIdentifier identifier) {
@@ -701,8 +726,8 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
    * {@inheritDoc}
    *
    * <p>When views are disabled, returns {@code false} (nothing to drop), matching how {@code
-   * SparkCatalog} answers {@code DROP VIEW} for a non-{@code ViewCatalog} catalog; this keeps {@code
-   * DROP VIEW ... IF EXISTS} a no-op rather than an error.
+   * SparkCatalog} answers {@code DROP VIEW} for a non-{@code ViewCatalog} catalog; this keeps
+   * {@code DROP VIEW ... IF EXISTS} a no-op rather than an error.
    */
   @Override
   public boolean dropView(TableIdentifier identifier) {
@@ -716,9 +741,9 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   /**
    * {@inheritDoc}
    *
-   * <p>A modify operation: when views are disabled this throws {@link UnsupportedOperationException}
-   * via {@link #requireViewsEnabled()}, matching how {@code SparkCatalog} fails {@code ALTER VIEW
-   * ... RENAME} for a non-{@code ViewCatalog} catalog.
+   * <p>A modify operation: when views are disabled this throws {@link
+   * UnsupportedOperationException} via {@link #requireViewsEnabled()}, matching how {@code
+   * SparkCatalog} fails {@code ALTER VIEW ... RENAME} for a non-{@code ViewCatalog} catalog.
    */
   @Override
   public void renameView(TableIdentifier from, TableIdentifier to) {

@@ -45,6 +45,12 @@ dependencies {
 
   implementation 'org.apache.commons:commons-lang3:3.12.0'
   fatJarPackagedDependencies(project(':client:secureclient'))
+
+  // Tests exercise OpenHouseCatalog against mocked generated clients; the compileOnly dependencies
+  // above are not on the test runtime classpath, so they are repeated here for tests only.
+  testImplementation project(':client:tableclient')
+  testImplementation project(':client:secureclient')
+  testImplementation ("org.springframework.boot:spring-boot-starter-webflux:" + springVersion)
   implementation("com.linkedin.iceberg:iceberg-core:" + icebergVersion)
   implementation("org.apache.hadoop:hadoop-client:" + hadoopVersion) {
     exclude group: 'junit', module: 'junit'
