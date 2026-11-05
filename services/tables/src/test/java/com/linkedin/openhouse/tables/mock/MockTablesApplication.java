@@ -5,6 +5,7 @@ import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
+import com.linkedin.openhouse.tables.repository.DatabaseEntityRepository;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.toggle.TableFeatureToggle;
 import org.springframework.boot.SpringApplication;
@@ -57,6 +58,8 @@ public class MockTablesApplication {
   @MockBean OpenHouseInternalCatalog openHouseInternalCatalog;
 
   @MockBean HouseTableRepository houseTableRepository;
+
+  @MockBean DatabaseEntityRepository databaseEntityRepository;
 
   /**
    * Mock tests scan {@code tables.api.validator}, not {@code tables.api}, so {@code ApiConfig} is

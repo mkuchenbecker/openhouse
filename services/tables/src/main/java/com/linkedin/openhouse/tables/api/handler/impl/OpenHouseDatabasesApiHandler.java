@@ -2,9 +2,13 @@ package com.linkedin.openhouse.tables.api.handler.impl;
 
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.tables.api.handler.DatabasesApiHandler;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateDatabaseRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateDatabasePropertiesRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAclPoliciesResponseBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllDatabasesResponseBody;
+import com.linkedin.openhouse.tables.api.spec.v0.response.GetDatabaseResponseBody;
+import com.linkedin.openhouse.tables.api.spec.v0.response.UpdateDatabasePropertiesResponseBody;
 import com.linkedin.openhouse.tables.api.validator.DatabasesApiValidator;
 import com.linkedin.openhouse.tables.dto.mapper.DatabasesMapper;
 import com.linkedin.openhouse.tables.services.DatabasesService;
@@ -75,5 +79,58 @@ public class OpenHouseDatabasesApiHandler implements DatabasesApiHandler {
     databasesService.updateDatabaseAclPolicies(
         databaseId, updateAclPoliciesRequestBody, actingPrincipal);
     return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
+  }
+
+  @Override
+  public ApiResponse<GetDatabaseResponseBody> createDatabase(
+      CreateDatabaseRequestBody createDatabaseRequestBody, String actingPrincipal) {
+    databasesApiValidator.validateCreateDatabase(createDatabaseRequestBody);
+    return ApiResponse.<GetDatabaseResponseBody>builder()
+        .httpStatus(HttpStatus.CREATED)
+        .responseBody(
+            databasesMapper.toGetDatabaseResponseBody(
+                databasesService.createDatabase(
+                    createDatabaseRequestBody.getDatabaseId(),
+                    createDatabaseRequestBody.getProperties(),
+                    actingPrincipal)))
+        .build();
+  }
+
+  @Override
+  public ApiResponse<GetDatabaseResponseBody> getDatabase(
+      String databaseId, String actingPrincipal) {
+    databasesApiValidator.validateGetDatabase(databaseId);
+    return ApiResponse.<GetDatabaseResponseBody>builder()
+        .httpStatus(HttpStatus.OK)
+        .responseBody(
+            databasesMapper.toGetDatabaseResponseBody(
+                databasesService.getDatabase(databaseId, actingPrincipal)))
+        .build();
+  }
+
+  @Override
+  public ApiResponse<Void> deleteDatabase(String databaseId, String actingPrincipal) {
+    databasesApiValidator.validateDeleteDatabase(databaseId);
+    databasesService.deleteDatabase(databaseId, actingPrincipal);
+    return ApiResponse.<Void>builder().httpStatus(HttpStatus.NO_CONTENT).build();
+  }
+
+  @Override
+  public ApiResponse<UpdateDatabasePropertiesResponseBody> updateDatabaseProperties(
+      String databaseId,
+      UpdateDatabasePropertiesRequestBody updateDatabasePropertiesRequestBody,
+      String actingPrincipal) {
+    databasesApiValidator.validateUpdateDatabaseProperties(
+        databaseId, updateDatabasePropertiesRequestBody);
+    return ApiResponse.<UpdateDatabasePropertiesResponseBody>builder()
+        .httpStatus(HttpStatus.OK)
+        .responseBody(
+            databasesMapper.toUpdateDatabasePropertiesResponseBody(
+                databasesService.updateDatabaseProperties(
+                    databaseId,
+                    updateDatabasePropertiesRequestBody.getUpdates(),
+                    updateDatabasePropertiesRequestBody.getRemovals(),
+                    actingPrincipal)))
+        .build();
   }
 }

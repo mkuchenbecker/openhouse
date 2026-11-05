@@ -280,5 +280,41 @@ public final class TableAuditModelConstants {
           .role("AclEditor")
           .build();
 
+  public static final TableAuditEvent TABLE_AUDIT_EVENT_CREATE_DATABASE_SUCCESS =
+      TableAuditEvent.builder()
+          .clusterName(CLUSTER_NAME)
+          .databaseName("d200")
+          .user(USER)
+          .operationStatus(OperationStatus.SUCCESS)
+          .operationType(OperationType.CREATE)
+          .build();
+
+  public static final TableAuditEvent TABLE_AUDIT_EVENT_GET_DATABASE_SUCCESS =
+      TableAuditEvent.builder()
+          .clusterName(CLUSTER_NAME)
+          .databaseName("d200")
+          .user(USER)
+          .operationStatus(OperationStatus.SUCCESS)
+          .operationType(OperationType.READ)
+          .build();
+
+  public static final TableAuditEvent TABLE_AUDIT_EVENT_DELETE_DATABASE_SUCCESS =
+      TableAuditEvent.builder()
+          .clusterName(CLUSTER_NAME)
+          .databaseName("d200")
+          .user(USER)
+          .operationStatus(OperationStatus.SUCCESS)
+          .operationType(OperationType.DELETE)
+          .build();
+
+  public static final TableAuditEvent TABLE_AUDIT_EVENT_UPDATE_DATABASE_PROPERTIES_SUCCESS =
+      TableAuditEvent.builder()
+          .clusterName(CLUSTER_NAME)
+          .databaseName("d200")
+          .user(USER)
+          .operationStatus(OperationStatus.SUCCESS)
+          .operationType(OperationType.UPDATE)
+          .build();
+
   private TableAuditModelConstants() {}
 }

@@ -40,6 +40,7 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.StaticTableOperations;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
@@ -355,6 +356,28 @@ public class OpenHouseCatalog extends BaseMetastoreCatalog
             .block();
     log.debug("Calling listNamespaces succeeded");
     return namespaces;
+  }
+
+  /**
+   * Resolve the effective properties of a loaded table: the properties of its database entity
+   * overlaid by the table's own properties, so an explicit table property always overrides an
+   * inherited one.
+   *
+   * <p>This is an explicit look-aside, not part of table loading. Each call performs exactly one
+   * HTTP request to the Tables Service (the database lookup) and never calls the table endpoint;
+   * nothing is cached, so a caller iterating over many tables issues one request per table. The
+   * {@link Table} is never mutated and {@link Table#properties()} remains the table's actual
+   * properties. A database that has no entity (404) contributes no properties, so the result then
+   * equals {@code table.properties()}. Any other failure surfaces as the same {@link
+   * WebClientResponseWithMessageException} / {@link WebClientRequestWithMessageException} that a
+   * table load raises.
+   *
+   * @param table a table loaded from this catalog
+   * @return an unmodifiable map of the effective properties
+   */
+  public Map<String, String> getEffectiveTableProperties(Table table) {
+    log.info("Calling getEffectiveTableProperties for table: {}", table.name());
+    return EffectiveTablePropertiesResolver.resolve(table, databaseApi);
   }
 
   /**
