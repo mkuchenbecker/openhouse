@@ -142,6 +142,10 @@ final class CommitPathHttp {
     return JsonPath.read(result.getResponse().getContentAsString(), path);
   }
 
+  static String str(String json, String path) {
+    return JsonPath.read(json, path);
+  }
+
   static <T> T read(String json, String path) {
     return JsonPath.read(json, path);
   }
