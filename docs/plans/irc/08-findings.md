@@ -59,3 +59,68 @@ Fixing any of these is a behavior change and needs a decision.
 - Column defaults on v2 tables: reads and writes work on the 1.12 line, but any schema change on a table with a default fails in the client. See `10-v2-defaults.md`.
 - On the 1.12 line Parquet and Avro readers fill defaults too. On LinkedIn's line only ORC does. Opted-in Parquet tables would show a default where they show NULL today.
 - The delta-harness is being landed on the new base as a deep check (work item T2).
+
+## Third round (delta-harness baseline and combined Iceberg validation)
+
+The delta-harness is work item T2. It is in openhouse draft pull request 85, on branch
+`irc/t2-delta-harness`, into `irc-integration`. CI finished with nothing failed. No production code
+changed. The only edit outside `integrations/spark/delta-harness` is one `.gitignore` line.
+
+Legacy-path baseline, JDK 17, parallelism 2, `-Xmx3g`. Without an explicit heap limit the run was
+killed by the out-of-memory killer.
+
+| Run | Cases | Passed | Failed | Skipped | Time |
+| --- | --- | --- | --- | --- | --- |
+| Slice `delete parquet` | 238 | 237 | 0 | 1 | about 4 minutes |
+| Full, in-memory house-table stub | 2574 | 2560 | 3 | 11 | 1365 s |
+| Full, real embedded house-table service (`HARNESS_REAL_HTS=1`) | 2792 | 2778 | 3 | 11 | 1683 s |
+
+The 3 failures are the same in both full modes: `control.lock.enforcement`,
+`interact.rtas.onLockedTable` and `hazard.lock.starvesMaintenance`. After a LEGACY lock, the next Spark
+write fails in the client with `JsonParseException: Cannot convert policies string to policies object`
+instead of the server's "locked" rejection. LinkedIn's `OpenHouseTableOperationsTest` pins that parse
+failure. The cases were left asserting the intended behavior. Because they fail at the lock setup,
+whether LinkedIn's #650 (reject RTAS on a locked table) works could not be checked.
+
+The 11 skips are the harness's own known-bug tags and were not re-evaluated:
+
+- 3 `nested.deleteByNestedField`.
+- 6 `ddl.renameColumn`, tagged as a regression from LinkedIn #558.
+- 1 `ddl.encryption.active`, because the KMS plugin is not in the repo.
+- 1 `control.undrop.lifecycle`, skipped under the stub. The `undropAdmin.*` cases cover it in real mode
+  and pass.
+
+Eight case expectations were updated to follow LinkedIn changes: #830 (RTAS with replication and RTAS
+with WAP are rejected with a 400 at CREATE and ALTER time) and #652 (RTAS keeps existing policies).
+
+The harness is not wired into CI. The agent's recommendation is on-demand runs only: 23 to 28 minutes
+per full mode, on top of a build of roughly 35 minutes. The harness hardcodes `catalog-impl` at
+`wireCatalog` in `Env.scala`. A run through the in-process REST-shaped path is in progress on branch
+`irc/t2b-harness-via-seam` (work item T2b).
+
+Combined validation of the Iceberg patch branches (I8, iceberg draft pull request 8, branch
+`irc/reapply-all`, into `openhouse-1.12.0`). The five patch branches merge with no conflicts and compile
+together, including the Spark 4.2 module. 20,654 tests ran and 8 failed. All 8 failures are in
+`spark.actions.TestComputePartitionStatsAction` on Spark 3.5. One reapplied patch alone causes them
+("Default partitioned write distribution mode to NONE": the test expects 1 data file and gets 2). No
+interaction between patches was observed.
+
+| Module | Run | Failed | Skipped |
+| --- | --- | --- | --- |
+| api | 1295 | 0 | 1 |
+| common | 5 | 0 | 0 |
+| orc | 87 | 0 | 0 |
+| parquet | 756 | 0 | 9 |
+| data | 805 | 0 | 85 |
+| core | 9131 | 0 | 550 |
+| Spark 3.5 | 5513 | 8 | 990 |
+| Spark 3.5 extensions | 2719 | 0 | 180 |
+| Spark 4.2, six baseline classes | 343 | 0 | 32 |
+
+revapi and spotless pass. Checkstyle fails in 4 files, each introduced by one branch:
+`RewriteJobOrder.java`, `TestBinPackRewriteFilePlanner.java`, `OutputFileFactory.java` and
+`TestSparkOrcInitialDefaultScan.java`.
+
+Not run: Flink, Kafka Connect, Spark 4.0 and 4.1, Scala 2.12, the spark-runtime modules, open-api tests,
+and Spark 4.2 beyond the six baseline classes. A fix for the 8 test failures and the 4 style failures is
+in progress. I8 is validated, with fixes in progress. It is not done.

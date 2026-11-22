@@ -27,7 +27,7 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | T1 | oh | A small Spark SQL smoke suite runs on Spark 3.5 against the real embedded service, with the catalog path as a parameter. **Done 2026-11-22** (pull request 80). | P1 | Green in CI. A deliberately broken rule turns it red. |
-| T2 | oh | The delta-harness is in the repo and runs on demand. | P1 | One full recorded run. |
+| T2 | oh | The delta-harness is in the repo and runs on demand. **Done 2026-11-22** (draft pull request 85). Full runs recorded in `08-findings.md`. | P1 | One full recorded run. |
 | T3 | oh | Black-box tests pin the catalog plugin's behavior as it is. **Done 2026-11-22** (pull request 81). | P1 | Green on unchanged code. |
 | T4 | oh | Black-box tests pin the service commit path over the native API, filling gaps only. **Done 2026-11-22** (pull request 82); conflict and soft-delete cases follow once the stand-in is faithful. | P1 | Green on unchanged code. |
 
@@ -104,13 +104,14 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 | T5 | oh | The house table test stand-in checks versions and deletes like the real store. **Done 2026-11-22** (pull request 83). | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
 | T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
-| I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | Combined validation record. In progress. |
+| I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | Combined validation record. **Validated 2026-11-22**, fixes in progress (`08-findings.md`). |
 | X0 | ib, oh | Schema changes work on v2 tables that carry column defaults on the 1.12 line. | I3, a decision (see `10-v2-defaults.md`) | The second ALTER TABLE in the column-default Spark test passes on the new line. |
 | I9 | ib | Delete-file replication is safe on non-HDFS storage. | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
 
 ## State
 
-Done: P1, P2, I1, I2, I3, I4, T1, T3, T4, T5, C1. In progress, delegated: I8 (combined validation), T2
-(delta-harness). Waiting on a decision from Mike: X0, I9, and review of the seam design before C2 and the
+Done: P1, P2, I1, I2, I3, I4, T1, T2, T3, T4, T5, C1. In progress, delegated: I8 (validated, fixes in
+progress), T2b (delta-harness through the in-process REST-shaped path, branch `irc/t2b-harness-via-seam`,
+needs T2 and C1). Waiting on a decision from Mike: X0, I9, and review of the seam design before C2 and the
 service items start. Not started: T6, I5, I6, I7 and all service items. Draft pull requests are open on
 both forks and none is merged.
