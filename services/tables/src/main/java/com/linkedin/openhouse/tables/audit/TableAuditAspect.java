@@ -7,6 +7,7 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.ApiResponse;
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseTablesApiHandler;
+import com.linkedin.openhouse.tables.api.irc.IcebergRestLoadedTable;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
@@ -94,6 +95,40 @@ public class TableAuditAspect {
     } catch (Throwable t) {
       // Table operation failed. Audit this failed event, and throw the error to be captured by
       // {@link com.linkedin.openhouse.common.exception.handler.OpenHouseExceptionHandler}
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
+  }
+
+  /**
+   * Install the Around advice for loadTable() of the IRC read routes: an IRC table load is the same
+   * table read as a native getTable() and is audited as one.
+   */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.tables.api.irc.IcebergRestLoadedTable "
+          + "com.linkedin.openhouse.tables.api.irc.IcebergRestApiHandler.loadTable(..)) "
+          + "&& args(databaseId, tableId, snapshots, actingPrincipal)")
+  protected IcebergRestLoadedTable auditIcebergRestLoadTable(
+      ProceedingJoinPoint point,
+      String databaseId,
+      String tableId,
+      String snapshots,
+      String actingPrincipal)
+      throws Throwable {
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(OperationType.READ)
+            .build();
+    IcebergRestLoadedTable result;
+    try {
+      result = (IcebergRestLoadedTable) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, result.getMetadataLocation());
+    } catch (Throwable t) {
       buildAndSendEvent(event, OperationStatus.FAILED, null);
       throw t;
     }

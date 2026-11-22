@@ -38,6 +38,7 @@ import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.TableTypeMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
+import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.repository.SchemaValidator;
@@ -60,6 +61,7 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.BaseTransaction;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.PartitionField;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -945,6 +947,26 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     return Optional.of(
         convertToTableDto(
             table, fileIOManager, partitionSpecMapper, policiesMapper, tableTypeMapper));
+  }
+
+  @Timed(metricKey = MetricsConstant.REPO_TABLE_FIND_TIME)
+  @Override
+  public Optional<TableDtoWithMetadata> findWithMetadataById(
+      TableDtoPrimaryKey tableDtoPrimaryKey) {
+    Table table;
+    TableIdentifier tableId =
+        TableIdentifier.of(tableDtoPrimaryKey.getDatabaseId(), tableDtoPrimaryKey.getTableId());
+    try {
+      table = catalog.loadTable(tableId);
+    } catch (NoSuchTableException exception) {
+      log.debug("User table does not exist:  " + tableId + " is required.");
+      return Optional.empty();
+    }
+    return Optional.of(
+        new TableDtoWithMetadata(
+            convertToTableDto(
+                table, fileIOManager, partitionSpecMapper, policiesMapper, tableTypeMapper),
+            ((HasTableOperations) table).operations().current()));
   }
 
   @Override
