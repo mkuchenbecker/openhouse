@@ -18,6 +18,7 @@ import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.services.IcebergCreates;
+import com.linkedin.openhouse.tables.services.IcebergUpdates;
 import com.linkedin.openhouse.tables.services.TableCommitService;
 import com.linkedin.openhouse.tables.services.TablesService;
 import java.util.Collections;
@@ -50,10 +51,11 @@ import org.springframework.stereotype.Component;
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
  *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
- *       its updates to it with Iceberg's own update classes, and hands the result to {@link
- *       TableCommitService} with the stored table's version as base, so a commit that landed in
- *       between is refused by the core's guards. A replace commit (see {@link #isReplace}) is
- *       handed over as a replace.
+ *       its updates to it with Iceberg's own update classes, runs the native update validation on
+ *       the request the OpenHouse client would send for it ({@link IcebergUpdates}), as the native
+ *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
+ *       stored table's version as base, so a commit that landed in between is refused by the core's
+ *       guards. A replace commit (see {@link #isReplace}) is handed over as a replace.
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
@@ -152,6 +154,20 @@ public class IcebergRestWriteHandler {
           base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
     }
     boolean replace = isReplace(request);
+    // The native update validation, which the native table PUT and snapshots PUT (replace included)
+    // run before the service layer, on the request the OpenHouse client would send for this commit.
+    tablesApiValidator.validateUpdateTable(
+        clusterProperties.getClusterName(),
+        databaseId,
+        tableId,
+        IcebergUpdates.toUpdateBody(
+            identifier,
+            clusterProperties.getClusterName(),
+            base.getTableDto(),
+            base.getTableDto().getTableLocation(),
+            candidate,
+            replace,
+            partitionSpecMapper));
     CommitKind kind =
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
