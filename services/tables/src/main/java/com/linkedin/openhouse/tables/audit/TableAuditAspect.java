@@ -18,8 +18,12 @@ import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.audit.model.OperationStatus;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
+import com.linkedin.openhouse.tables.commit.CommitContext;
+import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.config.InternalCatalogProperties;
 import com.linkedin.openhouse.tables.config.TablesMvcConstants;
+import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -27,6 +31,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import lombok.extern.slf4j.Slf4j;
@@ -34,10 +39,13 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.SnapshotRefParser;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -133,6 +141,109 @@ public class TableAuditAspect {
       throw t;
     }
     return result;
+  }
+
+  /**
+   * Install the Around advice for the candidate commit entry of {@code TableCommitService}, which
+   * only the IRC commit route calls: the commit is audited as the native write of the same kind (a
+   * replace as REPLACE_COMMIT, a snapshots commit as COMMIT, any other as UPDATE).
+   */
+  @Around(
+      "execution("
+          + "org.springframework.data.util.Pair com.linkedin.openhouse.tables.services.TableCommitService.commit("
+          + "org.apache.iceberg.catalog.TableIdentifier, String, "
+          + "com.linkedin.openhouse.tables.model.TableDtoWithMetadata, org.apache.iceberg.TableMetadata, "
+          + "com.linkedin.openhouse.tables.commit.CommitContext)) "
+          + "&& args(identifier, baseVersion, base, candidate, context)")
+  protected Pair<TableDto, Boolean> auditCandidateCommit(
+      ProceedingJoinPoint point,
+      TableIdentifier identifier,
+      String baseVersion,
+      TableDtoWithMetadata base,
+      TableMetadata candidate,
+      CommitContext context)
+      throws Throwable {
+    OperationType operationType =
+        context.isReplace()
+            ? OperationType.REPLACE_COMMIT
+            : context.getKind() == CommitKind.SNAPSHOTS_UPDATE
+                ? OperationType.COMMIT
+                : OperationType.UPDATE;
+    return auditTableWrite(
+        point, identifier.namespace().toString(), identifier.name(), operationType);
+  }
+
+  /**
+   * Install the Around advice for the create with a given UUID, which only the IRC commit that
+   * completes a staged create calls: audited as the native create the OpenHouse client sends for
+   * the same transaction (a table PUT on the initial version, audited as CREATE).
+   */
+  @Around(
+      "execution("
+          + "org.springframework.data.util.Pair com.linkedin.openhouse.tables.services.TablesService.createTable(..)) "
+          + "&& args(createUpdateTableRequestBody, tableCreator, tableUUID)")
+  protected Pair<TableDto, Boolean> auditCreateWithUuid(
+      ProceedingJoinPoint point,
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreator,
+      UUID tableUUID)
+      throws Throwable {
+    return auditTableWrite(
+        point,
+        createUpdateTableRequestBody.getDatabaseId(),
+        createUpdateTableRequestBody.getTableId(),
+        OperationType.CREATE);
+  }
+
+  /**
+   * Install the Around advice for the staged create that writes nothing, which only the IRC create
+   * route calls: audited as the native staged create (STAGED_CREATE), with no table root.
+   */
+  @Around(
+      "execution("
+          + "org.apache.iceberg.TableMetadata com.linkedin.openhouse.tables.services.TablesService.stageCreateTable(..)) "
+          + "&& args(createUpdateTableRequestBody, tableCreator)")
+  protected TableMetadata auditStageCreate(
+      ProceedingJoinPoint point,
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreator)
+      throws Throwable {
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(createUpdateTableRequestBody.getDatabaseId())
+            .tableName(createUpdateTableRequestBody.getTableId())
+            .operationType(OperationType.STAGED_CREATE)
+            .build();
+    try {
+      TableMetadata result = (TableMetadata) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, null);
+      return result;
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private Pair<TableDto, Boolean> auditTableWrite(
+      ProceedingJoinPoint point, String databaseId, String tableId, OperationType operationType)
+      throws Throwable {
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(operationType)
+            .build();
+    try {
+      Pair<TableDto, Boolean> result = (Pair<TableDto, Boolean>) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, result.getFirst().getTableLocation());
+      return result;
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
   }
 
   /** Install the Around advice for getAllTables() method in OpenHouseTablesApiHandler */

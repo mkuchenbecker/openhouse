@@ -40,7 +40,6 @@ import org.apache.iceberg.exceptions.NotAuthorizedException;
 import org.apache.iceberg.exceptions.RESTException;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
-import org.apache.iceberg.io.ResolvingFileIO;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.SparkSession;
@@ -377,8 +376,10 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
     TableIdentifier id = TableIdentifier.of(DB, "t_written");
     Table viaRest = rest.loadTable(id);
     Table viaOpenHouse = openhouse.loadTable(id);
-    // FileIO: RESTCatalog's default when the server sends no io-impl; the existing client's own.
-    Assertions.assertEquals(ResolvingFileIO.class, viaRest.io().getClass());
+    // FileIO: the server advertises the existing client's own (HadoopFileIO) since V3, because
+    // RESTCatalog's default (ResolvingFileIO) cannot write delete files on this Iceberg line
+    // (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate).
+    Assertions.assertEquals(HadoopFileIO.class, viaRest.io().getClass());
     Assertions.assertEquals(HadoopFileIO.class, viaOpenHouse.io().getClass());
     // Table operations: Iceberg's REST operations commit through the IRC routes (V3); the
     // existing client's commit through the native API.

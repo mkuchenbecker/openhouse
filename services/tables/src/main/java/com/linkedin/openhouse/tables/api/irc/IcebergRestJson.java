@@ -10,10 +10,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.SnapshotRef;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.exceptions.BadRequestException;
+import org.apache.iceberg.rest.RESTRequest;
 import org.apache.iceberg.rest.RESTResponse;
 import org.apache.iceberg.rest.RESTSerializers;
 import org.apache.iceberg.rest.responses.ErrorResponse;
@@ -101,6 +105,42 @@ public final class IcebergRestJson {
       }
     }
     return respond(HttpStatus.OK, write(node));
+  }
+
+  /**
+   * A 200 response for a staged create: the metadata the create would store, with no {@code
+   * metadata-location}, since nothing is stored yet (the spec allows none for a staged table).
+   */
+  public static ResponseEntity<byte[]> staged(TableMetadata metadata) {
+    LoadTableResponse response = LoadTableResponse.builder().withTableMetadata(metadata).build();
+    return respond(HttpStatus.OK, write(MAPPER.valueToTree(response)));
+  }
+
+  /**
+   * Reads a request body of {@code type} with Iceberg's serializers, as Iceberg's own server-side
+   * code reads it, and runs its {@code validate()}. A body that does not parse, or names an update
+   * or requirement this Iceberg line does not know, is a 400 {@code BadRequestException}.
+   */
+  public static <T extends RESTRequest> T read(byte[] body, Class<T> type) {
+    if (body == null || body.length == 0) {
+      throw new BadRequestException("Invalid %s: no body", type.getSimpleName());
+    }
+    T request;
+    try {
+      request = MAPPER.readValue(body, type);
+    } catch (IOException | RuntimeException e) {
+      throw new BadRequestException(
+          "Invalid %s: %s", type.getSimpleName(), e.getMessage() != null ? e.getMessage() : e);
+    }
+    if (request == null) {
+      throw new BadRequestException("Invalid %s: no body", type.getSimpleName());
+    }
+    try {
+      request.validate();
+    } catch (RuntimeException e) {
+      throw new BadRequestException("Invalid %s: %s", type.getSimpleName(), e.getMessage());
+    }
+    return request;
   }
 
   private static byte[] write(JsonNode node) {

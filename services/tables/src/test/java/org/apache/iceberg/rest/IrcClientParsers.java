@@ -22,6 +22,11 @@ public final class IrcClientParsers {
     return response;
   }
 
+  /** Writes a request body exactly as the client's HTTP client does. */
+  public static String toJson(Object request) throws Exception {
+    return RESTObjectMapper.mapper().writeValueAsString(request);
+  }
+
   /** Parses an error body as the client's error handlers do. */
   public static ErrorResponse parseError(String json) {
     return ErrorResponseParser.fromJson(json);

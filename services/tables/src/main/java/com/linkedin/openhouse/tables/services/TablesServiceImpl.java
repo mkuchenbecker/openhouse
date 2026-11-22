@@ -36,7 +36,9 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Supplier;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -145,6 +147,27 @@ public class TablesServiceImpl implements TablesService {
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
       String tableCreatorUpdater,
       Boolean failOnExist) {
+    return putTable(
+        createUpdateTableRequestBody,
+        tableCreatorUpdater,
+        failOnExist,
+        () -> tableUUIDGenerator.generateUUID(createUpdateTableRequestBody));
+  }
+
+  @Override
+  public Pair<TableDto, Boolean> createTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreator,
+      UUID tableUUID) {
+    return putTable(createUpdateTableRequestBody, tableCreator, true, () -> tableUUID);
+  }
+
+  /** {@link #putTable(CreateUpdateTableRequestBody, String, Boolean)} with the UUID of a create. */
+  private Pair<TableDto, Boolean> putTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreatorUpdater,
+      Boolean failOnExist,
+      Supplier<UUID> createdTableUUID) {
     String databaseId = createUpdateTableRequestBody.getDatabaseId();
     String tableId = createUpdateTableRequestBody.getTableId();
 
@@ -205,10 +228,7 @@ public class TablesServiceImpl implements TablesService {
                                 .clusterId(createUpdateTableRequestBody.getClusterId())
                                 .build()
                                 .toString())
-                        .tableUUID(
-                            tableUUIDGenerator
-                                .generateUUID(createUpdateTableRequestBody)
-                                .toString())
+                        .tableUUID(createdTableUUID.get().toString())
                         .tableCreator(tableCreatorUpdater)
                         .build()),
             createUpdateTableRequestBody);
@@ -220,6 +240,43 @@ public class TablesServiceImpl implements TablesService {
           UnsupportedClientOperationException.Operation.COLUMN_DEFAULT, e.getMessage(), e);
     }
     return saveTableDto(tableDtoToSave, tableDto);
+  }
+
+  @Override
+  public TableMetadata stageCreateTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody, String tableCreator) {
+    String databaseId = createUpdateTableRequestBody.getDatabaseId();
+    String tableId = createUpdateTableRequestBody.getTableId();
+    if (openHouseInternalRepository
+        .findById(TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
+        .isPresent()) {
+      throw new AlreadyExistsException("Table", String.format("%s.%s", databaseId, tableId));
+    }
+    authorizationUtils.checkDatabasePrivilege(databaseId, tableCreator, Privileges.CREATE_TABLE);
+    clientCapabilityGate.checkWrite(
+        databaseId, tableId, Optional.empty(), createUpdateTableRequestBody.getTableProperties());
+    TableDto tableDto =
+        tablesMapper.toTableDto(
+            TableDto.builder()
+                .tableUri(
+                    TableUri.builder()
+                        .tableId(tableId)
+                        .databaseId(databaseId)
+                        .clusterId(createUpdateTableRequestBody.getClusterId())
+                        .build()
+                        .toString())
+                .tableUUID(tableUUIDGenerator.generateUUID(createUpdateTableRequestBody).toString())
+                .tableCreator(tableCreator)
+                .build(),
+            createUpdateTableRequestBody);
+    tableDto = LockPolicyValidator.prepare(null, tableDto);
+    try {
+      tableDto = readBridgeStripProtection.prepare(tableDto);
+    } catch (ColumnDefaultException e) {
+      throw new UnsupportedClientOperationException(
+          UnsupportedClientOperationException.Operation.COLUMN_DEFAULT, e.getMessage(), e);
+    }
+    return openHouseInternalRepository.stageCreate(tableDto);
   }
 
   private Pair<TableDto, Boolean> saveTableDto(

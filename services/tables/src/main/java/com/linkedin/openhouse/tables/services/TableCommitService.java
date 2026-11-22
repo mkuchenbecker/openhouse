@@ -1,10 +1,12 @@
 package com.linkedin.openhouse.tables.services;
 
+import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
@@ -60,8 +62,38 @@ public class TableCommitService {
             : stored.getPolicies();
     TableDto view =
         CandidateViews.toView(
-            stored, base.getMetadata(), baseVersion, candidate, policies, partitionSpecMapper);
+            stored,
+            base.getMetadata(),
+            baseVersion,
+            candidate,
+            policies,
+            partitionSpecMapper,
+            context.isReplace());
     return commit(new TableCommit(identifier, baseVersion, stored, () -> view, context));
+  }
+
+  /**
+   * The stored table a commit builds on, loaded as the native update routes load it: the stored
+   * table and its metadata from one load, with no read checks (a write runs the write checks).
+   *
+   * @throws NoSuchUserTableException if there is no such table
+   */
+  public TableDtoWithMetadata loadBase(TableIdentifier identifier) {
+    String databaseId = identifier.namespace().toString();
+    String tableId = identifier.name();
+    return openHouseInternalRepository
+        .findWithMetadataById(
+            TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
+        .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+  }
+
+  /**
+   * Whether committing {@code candidate} on {@code base} changes snapshots or refs, and so is a
+   * commit of the native snapshots route's kind ({@link
+   * com.linkedin.openhouse.tables.commit.CommitKind#SNAPSHOTS_UPDATE}).
+   */
+  public static boolean changesSnapshots(TableMetadata base, TableMetadata candidate) {
+    return CandidateViews.snapshotsChanged(base, candidate);
   }
 
   /** Commits an already decoded {@link TableCommit}. */
