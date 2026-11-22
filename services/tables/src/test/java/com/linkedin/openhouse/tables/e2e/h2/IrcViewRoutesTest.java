@@ -395,6 +395,50 @@ public class IrcViewRoutesTest {
     assertEquals(404, code(get(mvc, "irc_v_cres", "v")));
   }
 
+  /**
+   * The keys pull request 96 refuses on IRC table writes, on a view: the OpenHouse client sends a
+   * view's properties raw (it rewrites none of them, unlike a table's policy keys), so the same raw
+   * request reaches both APIs. Raw {@code policies} is a reserved view key, refused by the native
+   * validator on both; {@code updated.openhouse.policy} is an ordinary view property on both.
+   */
+  @Test
+  void policyKeysOnAViewAreTreatedAsNatively() throws Exception {
+    database("irc_v_n_pol");
+    database("irc_v_i_pol");
+    Map<String, String> raw = Collections.singletonMap("policies", "{}");
+    String nativeMsg =
+        nativeMessage(
+            post(mvc, createBody("irc_v_n_pol", "v", SCHEMA_ID_NAME, sql("irc_v_n_pol"), raw)));
+    assertEquals(
+        nativeMsg,
+        assertIrcError(
+                IrcViewWrite.create(
+                    mvc,
+                    "irc_v_i_pol",
+                    IrcViewWrite.createRequest(
+                        "v", SCHEMA, sql("irc_v_i_pol"), Namespace.of("irc_v_i_pol"), raw)),
+                400,
+                "BadRequestException")
+            .message());
+    Map<String, String> updated = new HashMap<>();
+    updated.put("owner", "o");
+    updated.put("updated.openhouse.policy", "{\"sharingEnabled\":true}");
+    views.add(new String[] {"irc_v_n_pol", "v"});
+    assertEquals(
+        201,
+        code(
+            post(
+                mvc, createBody("irc_v_n_pol", "v", SCHEMA_ID_NAME, sql("irc_v_n_pol"), updated))));
+    views.add(new String[] {"irc_v_i_pol", "v"});
+    IrcViewWrite.parsed(
+        IrcViewWrite.create(
+            mvc,
+            "irc_v_i_pol",
+            IrcViewWrite.createRequest(
+                "v", SCHEMA, sql("irc_v_i_pol"), Namespace.of("irc_v_i_pol"), updated)));
+    assertSameStored("irc_v_n_pol", "irc_v_i_pol");
+  }
+
   @Test
   void createWithAnUnsupportedDialectGetsTheNative400() throws Exception {
     database("irc_v_cdia");
