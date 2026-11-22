@@ -24,7 +24,16 @@ mkdir -p "$WORK"
 JDK17="${JAVA17_HOME:-${JAVA_HOME:?set JAVA17_HOME to a JDK 17}}"
 GRADLE="${GRADLE_BIN:-gradle}"
 M2="${HOME}/.m2/repository/org/scala-lang"
-SCALAC_CP="$M2/scala-compiler/2.12.18/scala-compiler-2.12.18.jar:$M2/scala-reflect/2.12.18/scala-reflect-2.12.18.jar:$M2/scala-library/2.12.18/scala-library-2.12.18.jar"
+# Locate a scala 2.12.18 jar in ~/.m2 first, then in the Gradle module cache (where the OpenHouse build
+# itself downloads it), so the harness works without a populated ~/.m2.
+scala_jar() {
+  local a="$1" f="$M2/$1/2.12.18/$1-2.12.18.jar"
+  [[ -f "$f" ]] || f="$(find "${GRADLE_USER_HOME:-$HOME/.gradle}/caches/modules-2/files-2.1/org.scala-lang/$a/2.12.18" -name "$a-2.12.18.jar" 2>/dev/null | head -1)"
+  [[ -f "$f" ]] || { echo "!! $a-2.12.18.jar not found in ~/.m2 or the Gradle cache" >&2; exit 1; }
+  echo "$f"
+}
+SCALA_LIB="$(scala_jar scala-library)"
+SCALAC_CP="$(scala_jar scala-compiler):$(scala_jar scala-reflect):$SCALA_LIB"
 
 # Classpath resolution is the slow part (~82s of gradle). It only changes when OpenHouse deps
 # change, so we cache it in $WORK/oh-cp.txt and reuse it for fast inner-loop iteration. Force a
@@ -34,7 +43,7 @@ if [[ "${FORCE_CP:-0}" != "1" && -s "$WORK/oh-cp.txt" ]]; then
 else
   echo ">> resolving OpenHouse itest runtime classpath (builds the runtime uber jar + fixtures)"
   ( cd "$REPO_ROOT" && "$GRADLE" -Dorg.gradle.java.home="$JDK17" -DcpOut="$WORK/oh-cp.txt" \
-      --init-script "$HERE/scripts/print-cp.init.gradle" \
+      --init-script "$HERE/scripts/print-cp.init.gradle" ${GRADLE_EXTRA_ARGS:-} \
       :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
 fi
 OHCP="$(cat "$WORK/oh-cp.txt")"
@@ -94,7 +103,6 @@ OPENS=(
   --add-opens=java.base/sun.security.action=ALL-UNNAMED
   --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
 )
-SCALA_LIB="$M2/scala-library/2.12.18/scala-library-2.12.18.jar"
 # Args are passed through as case-id filters (AND). E.g. `run-openhouse.sh delete parquet`
 # runs just the delete tests on parquet — a ~25s inner loop. No args runs the full matrix.
 exec "$JDK17/bin/java" "${OPENS[@]}" -Dio.netty.tryReflectionSetAccessible=true \

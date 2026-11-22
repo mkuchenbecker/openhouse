@@ -26,6 +26,8 @@ allprojects {
       dependencies.add('testImplementation', project(':services:housetables'))
     }
     tasks.register('printHarnessCp') {
+      // Build the project/uber jars on the classpath (a bare resolve() only names them, it does not build them).
+      dependsOn configurations.testRuntimeClasspath
       doLast {
         def cp = configurations.testRuntimeClasspath.resolve().collect { it.absolutePath }
         new File(System.getProperty('cpOut')).text = cp.join(':')
