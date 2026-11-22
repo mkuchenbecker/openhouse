@@ -45,7 +45,8 @@ final class CandidateViews {
       String baseVersion,
       TableMetadata candidate,
       Policies policies,
-      PartitionSpecMapper partitionSpecMapper) {
+      PartitionSpecMapper partitionSpecMapper,
+      boolean replace) {
     refuseUnpersistedChanges(base, baseMetadata, candidate, partitionSpecMapper);
     Table candidateTable = staticTable(candidate);
     TableDto.TableDtoBuilder view =
@@ -60,13 +61,15 @@ final class CandidateViews {
             .newIntermediateSchemas(null)
             .stageCreate(false)
             .stageReplace(false)
-            .replaceCommit(false)
+            .replaceCommit(replace)
             // The native mapper never carries these over from the stored table.
             .lastModifiedTime(0)
             .creationTime(0)
             .jsonSnapshots(null)
             .snapshotRefs(null);
-    if (snapshotsChanged(baseMetadata, candidate)) {
+    // A replace always carries the candidate's snapshots and refs, as the native client sends
+    // a replace commit: the replace rebuilds the table from them.
+    if (replace || snapshotsChanged(baseMetadata, candidate)) {
       view.jsonSnapshots(
               candidate.snapshots().stream()
                   .map(SnapshotParser::toJson)
@@ -80,7 +83,7 @@ final class CandidateViews {
     return view.build();
   }
 
-  private static boolean snapshotsChanged(TableMetadata base, TableMetadata candidate) {
+  static boolean snapshotsChanged(TableMetadata base, TableMetadata candidate) {
     return !snapshotIds(base).equals(snapshotIds(candidate))
         || !Objects.equals(base.refs(), candidate.refs());
   }
@@ -128,7 +131,7 @@ final class CandidateViews {
   }
 
   /** The candidate's spec as the native API would rebuild it from what it can express. */
-  private static PartitionSpec expressible(
+  static PartitionSpec expressible(
       TableMetadata candidate, PartitionSpecMapper partitionSpecMapper) {
     Table table = staticTable(candidate);
     TableDto spelled =
@@ -140,7 +143,7 @@ final class CandidateViews {
     return partitionSpecMapper.toPartitionSpec(spelled);
   }
 
-  private static boolean sameFields(PartitionSpec a, PartitionSpec b) {
+  static boolean sameFields(PartitionSpec a, PartitionSpec b) {
     return describe(a).equals(describe(b));
   }
 
@@ -158,7 +161,7 @@ final class CandidateViews {
   }
 
   /** A read-only {@link Table} over {@code metadata}, for the mappers that read one. */
-  private static Table staticTable(TableMetadata metadata) {
+  static Table staticTable(TableMetadata metadata) {
     return new BaseTable(
         new TableOperations() {
           @Override
