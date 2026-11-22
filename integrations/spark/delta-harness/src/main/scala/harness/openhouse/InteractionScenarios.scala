@@ -186,12 +186,11 @@ trait InteractionScenarios extends ScenarioKit {
         val p = tableProps(spark, table)
         assert(p.getOrElse("openhouse.tableUUID", "<absent>") == uuidBefore,
           s"tableUUID must be preserved across RTAS: $uuidBefore -> ${p.get("openhouse.tableUUID")}")
-        // G10 (confirmed live): RTAS silently WIPES the policies plane — the retention policy set
-        // before the replace is gone after it (while tableUUID survives). Characterizes the bug;
-        // if this fails, G10 was fixed — flip to a survival assertion and update AUDIT-FINDINGS.
+        // G10 was FIXED upstream (#652 "Merge existing policies on CREATE OR REPLACE"): the retention
+        // policy now survives the replace. Flipped to a survival assertion.
         val policiesAfter = p.get("policies")
-        assert(policiesAfter.forall(b => !b.toLowerCase.contains("retention")),
-          s"G10 appears FIXED — retention policy survived RTAS; update AUDIT-FINDINGS G10 and flip this test: $policiesAfter")
+        assert(policiesAfter.exists(_.toLowerCase.contains("retention")),
+          s"G10 regressed — retention policy was wiped by RTAS: $policiesAfter")
       }()
 
   // RTAS on a table with an existing branch: refs travel in the replace payload — branch survives,
@@ -365,20 +364,28 @@ trait InteractionScenarios extends ScenarioKit {
       }()
 
   // ── flags at CREATE + ALTER-to-MoR + compaction over evolved schema ────────────────────────
+  // #830: RTAS (replace.enabled) and WAP (write.wap.enabled) are mutually exclusive at CONFIGURATION
+  // time. Each flag set alone at CREATE is honored; the second flag is rejected (400) at CREATE or
+  // ALTER, and the RTAS-while-WAP guard at replace time can no longer be reached.
   val interactFlagsWapReplaceAtCreate: TableTest[CoreTable.type] =
     TableTest(Core)
       .sql("create")(t => s"CREATE TABLE $t ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
-        s"'write.format.default'='$seedFmt', 'write.wap.enabled'='true', 'replace.enabled'='true')")()
+        s"'write.format.default'='$seedFmt', 'write.wap.enabled'='true')")()
       .insert(3)()
       .step("interact.flags.wapReplaceAtCreate") { (spark, table) =>
         val p = tableProps(spark, table)
-        assert(p.get("write.wap.enabled").contains("true") && p.get("replace.enabled").contains("true"),
-          s"flags set at CREATE must be honored: wap=${p.get("write.wap.enabled")} replace=${p.get("replace.enabled")}")
+        assert(p.get("write.wap.enabled").contains("true"), s"wap flag set at CREATE must be honored: ${p.get("write.wap.enabled")}")
         spark.sql(s"ALTER TABLE $table CREATE BRANCH cb") // wap-at-create usable immediately
-        val e = Check.intercept[BadRequestException](
-          spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table"))
-        assert(e.getMessage.contains("while WAP"),
-          s"RTAS-while-WAP guard must fire from create-time flags too: ${e.getMessage.take(200)}")
+        val both = Check.intercept[BadRequestException](
+          spark.sql(s"CREATE TABLE ${table}_both ($columnDefinitions) USING iceberg TBLPROPERTIES (" +
+            s"'write.format.default'='$seedFmt', 'write.wap.enabled'='true', 'replace.enabled'='true')"))
+        assert(both.getMessage.contains("cannot enable RTAS") && both.getMessage.contains("WAP"),
+          s"CREATE with both flags must be rejected: ${both.getMessage.take(200)}")
+        val alter = Check.intercept[BadRequestException](
+          spark.sql(s"ALTER TABLE $table SET TBLPROPERTIES ('replace.enabled'='true')"))
+        assert(alter.getMessage.contains("cannot enable RTAS") && alter.getMessage.contains("WAP"),
+          s"enabling RTAS on a WAP table must be rejected: ${alter.getMessage.take(200)}")
+        assert(!tableProps(spark, table).get("replace.enabled").contains("true"), "rejected ALTER leaked replace.enabled")
       }()
 
   val interactMorAlterToMor: TableTest[CoreTable.type] =

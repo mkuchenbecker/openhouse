@@ -92,8 +92,10 @@ trait HazardReaderWriterScenarios extends ScenarioKit {
           s"PII tag not stored in policies before replace: '$before'")
         spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table WHERE ${Core.long0.columnName} <= 2")
         val after = tableProps(spark, table).getOrElse("policies", "")
-        assert(!(after.toLowerCase.contains("pii")),
-          s"H3 appears FIXED — PII column tag survived RTAS; update MODALITY-RECON H3 / AUDIT-FINDINGS: '$after'")
+        // H3 (policies half) was FIXED upstream by #652 (merge existing policies on RTAS): the PII
+        // column tag now survives the replace. Flipped to a survival assertion.
+        assert(after.toLowerCase.contains("pii"),
+          s"H3 regressed — PII column tag was wiped by RTAS: '$after'")
         val comment = spark.sql(s"DESCRIBE TABLE $table").collect().toSeq
           .find(_.getString(0) == Core.string0.columnName).map(_.getString(2)).getOrElse("")
         println(s"DIAG rtas.columnComment after replace: '${comment}' (was 'contains-pii')")

@@ -334,13 +334,20 @@ trait NegativeDdlScenarios extends ScenarioKit {
         assert(e.getMessage.contains("REPLACE TABLE AS SELECT is not enabled"), s"msg: ${e.getMessage.take(160)}")
       }()
 
+  // #830 moved the RTAS x replication exclusion from replace time to configuration time: with
+  // replace.enabled=true, turning replication ON is rejected up front (400), so the table can never
+  // reach a state where RTAS later fails with "while replication is enabled".
   val ddlRtasReplicationConflict: TableTest[CoreTable.type] =
     TableTest(Core).sql("create")(coreCreateParquet)().insert(3)()
       .sql("ddl.rtas.repl.enable")(t => s"ALTER TABLE $t SET TBLPROPERTIES ('replace.enabled'='true')")()
-      .sql("ddl.rtas.repl.policy")(t => s"ALTER TABLE $t SET POLICY (REPLICATION = ({destination:'clusterA'}))")()
       .step("ddl.rtas.replicationConflict") { (spark, table) =>
-        val e = Check.intercept[BadRequestException](spark.sql(s"CREATE OR REPLACE TABLE $table USING iceberg AS SELECT * FROM $table"))
-        assert(e.getMessage.contains("while replication is enabled"), s"msg: ${e.getMessage.take(160)}")
+        val e = Check.intercept[BadRequestException](
+          spark.sql(s"ALTER TABLE $table SET POLICY (REPLICATION = ({destination:'clusterA'}))"))
+        assert(e.getMessage.contains("cannot enable RTAS") && e.getMessage.contains("replication"),
+          s"msg: ${e.getMessage.take(200)}")
+        val p = tableProps(spark, table)
+        assert(p.get("replace.enabled").contains("true"), s"replace.enabled must be untouched: ${p.get("replace.enabled")}")
+        assert(!p.getOrElse("policies", "").toLowerCase.contains("replication"), s"rejected replication leaked into policies: ${p.get("policies")}")
       }()
 
   val ddlCtasRtasOperations: List[(String, TableTest[CoreTable.type])] = List(
