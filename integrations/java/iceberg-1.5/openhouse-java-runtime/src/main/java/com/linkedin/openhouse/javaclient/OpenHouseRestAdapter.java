@@ -209,6 +209,43 @@ public class OpenHouseRestAdapter implements RESTClient {
   }
 
   /** Does nothing: the backing catalog outlives every client {@code RESTSessionCatalog} builds. */
+  /**
+   * Iceberg 1.12's {@code RESTSessionCatalog} asks for the response headers of some calls (for
+   * example the ETag of a table load); {@code RESTClient}'s default for these overloads throws
+   * {@code UnsupportedOperationException("Returning response headers is not supported")}. An
+   * in-process call has no HTTP response headers, so these hand over none and otherwise answer as
+   * the overloads without them. Iceberg 1.5.2's {@code RESTClient} has no such overloads, so they
+   * carry no {@code @Override} and are unused there.
+   */
+  public <T extends RESTResponse> T get(
+      String path,
+      Map<String, String> queryParams,
+      Class<T> responseType,
+      Map<String, String> headers,
+      Consumer<ErrorResponse> errorHandler,
+      Consumer<Map<String, String>> responseHeaders) {
+    T response = get(path, queryParams, responseType, headers, errorHandler);
+    if (responseHeaders != null) {
+      responseHeaders.accept(Collections.emptyMap());
+    }
+    return response;
+  }
+
+  /** See {@link #get(String, Map, Class, Map, Consumer, Consumer)}. */
+  public <T extends RESTResponse> T post(
+      String path,
+      RESTRequest body,
+      Class<T> responseType,
+      Map<String, String> headers,
+      Consumer<ErrorResponse> errorHandler,
+      Consumer<Map<String, String>> responseHeaders) {
+    T response = post(path, body, responseType, headers, errorHandler);
+    if (responseHeaders != null) {
+      responseHeaders.accept(Collections.emptyMap());
+    }
+    return response;
+  }
+
   @Override
   public void close() {}
 
