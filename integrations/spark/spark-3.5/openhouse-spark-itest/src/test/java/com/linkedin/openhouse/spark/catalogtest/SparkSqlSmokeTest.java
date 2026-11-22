@@ -4,14 +4,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.linkedin.openhouse.housetables.client.model.ToggleStatus;
+import com.linkedin.openhouse.tables.exception.ViewExceptionHandler;
+import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
+import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
+import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
+import com.linkedin.openhouse.tablestest.SpringH2TestApplication;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.web.context.WebServerApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * Spark SQL smoke suite for the catalog path (work item T1). Each test records what Spark SQL does
@@ -40,6 +50,81 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
         return getSparkSession();
       default:
         throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  private static final String VIEWS_DB = "smoke_t1_views";
+  private static final String VIEWS_CATALOG = "openhouse_views";
+  private static ConfigurableApplicationContext viewsServer;
+
+  /**
+   * Session for scenarios that need views. Views are off in the default fixture, so these scenarios
+   * run against a second embedded tables service with the views feature gate open and a catalog
+   * with {@code iceberg-views-enabled} (the setup used by OpenHouseViewEnabledTestSpark3_5). The
+   * catalog path still selects the configuration here.
+   */
+  protected SparkSession viewsSparkSession() throws Exception {
+    switch (catalogPath()) {
+      case LEGACY:
+        return legacyViewsSession();
+      default:
+        throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  private SparkSession legacyViewsSession() throws Exception {
+    SparkSession base = getSparkSession();
+    synchronized (SparkSqlSmokeTest.class) {
+      if (viewsServer == null) {
+        org.apache.catalina.webresources.TomcatURLStreamHandlerFactory.disable();
+        ConfigurableApplicationContext server =
+            new SpringApplication(SpringH2TestApplication.class, ViewExceptionHandler.class)
+                .run("--server.port=0");
+        server
+            .getBean(ToggleStatusesRepository.class)
+            .save(
+                TableToggleStatus.builder()
+                    .databaseId(VIEWS_DB)
+                    .tableId(ViewsFeatureGate.GATE_PROBE_TABLE_ID)
+                    .featureId("views")
+                    .toggleStatusEnum(ToggleStatus.StatusEnum.ACTIVE)
+                    .build());
+        viewsServer = server;
+      }
+    }
+    String uri =
+        "http://localhost:" + ((WebServerApplicationContext) viewsServer).getWebServer().getPort();
+    SparkSession spark = base.newSession();
+    String prefix = "spark.sql.catalog." + VIEWS_CATALOG;
+    spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");
+    spark.conf().set(prefix + ".catalog-impl", "com.linkedin.openhouse.spark.OpenHouseCatalog");
+    spark.conf().set(prefix + ".uri", uri);
+    spark.conf().set(prefix + ".cluster", "local-cluster");
+    spark
+        .conf()
+        .set(prefix + ".auth-token", base.conf().get("spark.sql.catalog.openhouse.auth-token"));
+    spark.conf().set(prefix + ".iceberg-views-enabled", "true");
+    spark.conf().set(prefix + ".cache-enabled", "false");
+    spark.conf().set("spark.sql.iceberg.rewriteViewCommands.enabled", "true");
+    return spark;
+  }
+
+  /**
+   * Existing catalogtest classes close the shared session when they finish, so the next class
+   * builds its own. Do the same, and stop the views server, so this class leaves no session behind
+   * for classes (such as OpenHouseViewEnabledTestSpark3_5) that expect to create their own.
+   */
+  @AfterAll
+  static void releaseSessionAndViewsServer() {
+    scala.Option<SparkSession> active = SparkSession.getDefaultSession();
+    if (active.isDefined()) {
+      active.get().close();
+    }
+    synchronized (SparkSqlSmokeTest.class) {
+      if (viewsServer != null) {
+        viewsServer.close();
+        viewsServer = null;
+      }
     }
   }
 
@@ -305,18 +390,8 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     assertEquals(
         Arrays.asList("append", "overwrite"),
         rows(spark, "SELECT operation FROM " + t + ".snapshots ORDER BY operation"));
-    // Today, reading the table back once delete files exist fails inside the test classpath
-    // (shaded ORC classes cannot be cast to the unshaded ones). The merged row set can not be
-    // observed through SELECT; the failure is what is recorded.
-    Throwable read = failure(spark, "SELECT * FROM " + t + " ORDER BY id");
-    assertEquals("org.apache.spark.SparkException", read.getClass().getName());
-    assertTrue(read.getMessage().contains("Job aborted due to stage failure"), read.getMessage());
-    assertTrue(
-        read.getMessage()
-            .contains(
-                "java.lang.ClassCastException: class"
-                    + " org.apache.iceberg.shaded.org.apache.orc.TypeDescription cannot be cast"),
-        read.getMessage());
+    assertEquals(
+        Arrays.asList("1,a", "2,B", "3,c"), rows(spark, "SELECT * FROM " + t + " ORDER BY id"));
   }
 
   @Test
@@ -375,6 +450,25 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     assertEquals(
         Collections.singletonList(DB + ",s13_renamed,false"),
         rows(spark, "SHOW TABLES IN " + CAT_DB + " LIKE 's13_*'"));
+  }
+
+  @Test
+  public void s13b_rename_catalogQualifiedTarget() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s13b_rename");
+    String renamed = table("s13b_renamed");
+    fresh(spark, t, renamed);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+    spark.sql("INSERT INTO " + t + " VALUES (1)");
+
+    // Observed today: a target qualified with the catalog name is accepted (it does not fail).
+    spark.sql("ALTER TABLE " + t + " RENAME TO " + renamed);
+
+    assertFailure(spark, "SELECT * FROM " + t, TABLE_NOT_FOUND_CLASS, TABLE_NOT_FOUND);
+    assertEquals(Collections.singletonList("1"), rows(spark, "SELECT * FROM " + renamed));
+    assertEquals(
+        Collections.singletonList(DB + ",s13b_renamed,false"),
+        rows(spark, "SHOW TABLES IN " + CAT_DB + " LIKE 's13b_*'"));
   }
 
   @Test
@@ -438,35 +532,38 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
 
     spark.sql("ALTER TABLE " + t + " SET POLICY (SHARING=TRUE)");
     spark.sql("GRANT SELECT ON TABLE " + t + " TO smoke_user");
-    // Today SHOW GRANTS returns no rows even right after a successful grant.
+    // The fixture cannot observe grants: with no OPA base URI configured, OpaAuthorizationHandler
+    // (the AuthorizationHandler the embedded server uses) logs "Skipping grant role" and its list
+    // methods return nothing. No fixture in the repo (including the enforcing one in
+    // UnlockAuthorizationTest, which subclasses it without overriding grants) stores grants, so
+    // SHOW GRANTS is empty even right after a successful GRANT.
     assertEquals(0, rows(spark, "SHOW GRANTS ON TABLE " + t).size());
     spark.sql("REVOKE SELECT ON TABLE " + t + " FROM smoke_user");
     assertEquals(0, rows(spark, "SHOW GRANTS ON TABLE " + t).size());
   }
 
   @Test
-  public void s18_views_createRejected() throws Exception {
-    SparkSession spark = sparkSession();
-    String t = table("s18_views");
-    String v = table("s18_views_v");
+  public void s18_views_createSelectDrop() throws Exception {
+    SparkSession spark = viewsSparkSession();
+    String t = VIEWS_CATALOG + "." + VIEWS_DB + ".s18_views";
+    String v = VIEWS_CATALOG + "." + VIEWS_DB + ".s18_views_v";
     fresh(spark, t);
     spark.sql("CREATE TABLE " + t + " (id bigint)");
-    spark.sql("INSERT INTO " + t + " VALUES (1)");
+    spark.sql("INSERT INTO " + t + " VALUES (1),(2)");
 
-    // Today views are not available in the default session: CREATE VIEW fails resolving the
-    // session catalog's default schema.
-    assertFailure(
-        spark,
-        "CREATE VIEW " + v + " AS SELECT id FROM " + t,
-        "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
-        "[SCHEMA_NOT_FOUND] The schema `default` cannot be found");
+    // Views work on the view-enabled fixture; the default fixture session rejects CREATE VIEW.
+    spark.sql("CREATE VIEW " + v + " AS SELECT id FROM " + t);
+    assertEquals(Arrays.asList("1", "2"), rows(spark, "SELECT * FROM " + v + " ORDER BY id"));
+    assertEquals(
+        Collections.singletonList(VIEWS_DB + ",s18_views_v,false"),
+        rows(spark, "SHOW VIEWS IN " + VIEWS_CATALOG + "." + VIEWS_DB + " LIKE 's18_views_v'"));
+
+    spark.sql("DROP VIEW " + v);
+    assertEquals(
+        0,
+        rows(spark, "SHOW VIEWS IN " + VIEWS_CATALOG + "." + VIEWS_DB + " LIKE 's18_views_v'")
+            .size());
     assertFailure(spark, "SELECT * FROM " + v, TABLE_NOT_FOUND_CLASS, TABLE_NOT_FOUND);
-    assertFailure(
-        spark,
-        "DROP VIEW " + v,
-        "org.apache.spark.sql.catalyst.analysis.NoSuchViewException",
-        "[VIEW_NOT_FOUND]");
-    assertEquals(0, rows(spark, "SHOW VIEWS IN " + CAT_DB + " LIKE 's18_*'").size());
   }
 
   @Test
