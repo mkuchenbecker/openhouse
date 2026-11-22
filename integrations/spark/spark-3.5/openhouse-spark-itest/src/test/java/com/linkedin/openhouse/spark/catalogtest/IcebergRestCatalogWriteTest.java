@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
-import org.apache.iceberg.AppendFiles;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
@@ -26,6 +25,7 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
+import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -187,8 +187,12 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
     Assertions.assertEquals("p", parted.spec().fields().get(0).name());
     Assertions.assertEquals("v", parted.properties().get("user.key"));
     // The server owns the location and the UUID, and stamps its own properties.
+    // An OpenHouse table's directory is named by its OpenHouse UUID, not its Iceberg UUID.
     Assertions.assertTrue(
-        parted.location().contains("/" + DB + "/parted-" + current(parted).uuid()));
+        parted
+            .location()
+            .endsWith("/" + DB + "/parted-" + parted.properties().get("openhouse.tableUUID")),
+        parted.location());
     Assertions.assertEquals(DB, parted.properties().get("openhouse.databaseId"));
     assertSameView("parted");
     Assertions.assertTrue(rest.tableExists(id("parted")));
@@ -229,8 +233,13 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
     assertSameView("ops");
 
     table.updateSchema().addColumn("extra", Types.IntegerType.get()).commit();
-    table.updateSchema().renameColumn("data", "payload").commit();
-    Assertions.assertNotNull(table.schema().findField("payload"));
+    // Renaming a column is refused by the native schema-evolution rule (columns match by name).
+    Throwable rename = thrown(() -> table.updateSchema().renameColumn("data", "payload").commit());
+    Assertions.assertTrue(rename instanceof BadRequestException, rename.toString());
+    Assertions.assertTrue(
+        rename.getMessage().contains("invalid schema evolution"), rename.getMessage());
+    table.refresh();
+    Assertions.assertNotNull(table.schema().findField("data"));
     assertSameView("ops");
 
     table.updateProperties().set("user.a", "1").set("user.b", "2").commit();
@@ -345,16 +354,22 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
 
   // ---------------------------------------------------------------- concurrency
 
-  /** Two writers append from the same base: the second retries on the new base; nothing is lost. */
+  /**
+   * Two writers append to one table from the same base, through Iceberg's own transactions. Each
+   * commit attempt refreshes first (Iceberg's transaction and snapshot producer both do), so the
+   * second writer reapplies its append on top of the first. Nothing is lost.
+   */
   @Test
   void twoWritersRacingOnOneTableLoseNothing() throws Exception {
     rest.createTable(id("race"), SCHEMA);
     Table one = rest.loadTable(id("race"));
     Table two = rest2.loadTable(id("race"));
-    AppendFiles first = one.newAppend().appendFile(file(one, "one", null));
-    AppendFiles second = two.newAppend().appendFile(file(two, "two", null));
-    first.commit();
-    second.commit(); // refused once with 409, then retried by the client on the refreshed table
+    Transaction first = one.newTransaction();
+    first.newAppend().appendFile(file(one, "one", null)).commit();
+    Transaction second = two.newTransaction();
+    second.newAppend().appendFile(file(two, "two", null)).commit();
+    first.commitTransaction();
+    second.commitTransaction();
     Table after = openhouse.loadTable(id("race"));
     Assertions.assertEquals(
         new HashSet<>(
@@ -367,22 +382,45 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
     assertSameView("race");
   }
 
-  /** With retries off, the second writer fails with a commit conflict and changes nothing. */
+  /**
+   * A commit that reaches the server on a base another commit has replaced: the client's own table
+   * operations commit the second writer's snapshot on the base it loaded, after the first writer
+   * committed. The server refuses it (its requirement on main no longer holds) and the client gets
+   * a {@link CommitFailedException}; nothing changes. The writer then refreshes and retries, as
+   * Iceberg's retry loop does, and succeeds; nothing is lost.
+   */
   @Test
-  void aWriterThatDoesNotRetryGetsACommitConflict() throws Exception {
-    rest.createTable(
-        id("race_strict"),
-        SCHEMA,
-        PartitionSpec.unpartitioned(),
-        Collections.singletonMap("commit.retry.num-retries", "0"));
+  void aCommitOnAStaleBaseIsACommitConflictAndARetrySucceeds() throws Exception {
+    rest.createTable(id("race_strict"), SCHEMA);
     Table one = rest.loadTable(id("race_strict"));
     Table two = rest2.loadTable(id("race_strict"));
+    TableOperations ops = ((HasTableOperations) two).operations();
+    TableMetadata staleBase = ops.current();
+    Snapshot stale = two.newAppend().appendFile(file(two, "two", null)).apply();
     one.newAppend().appendFile(file(one, "one", null)).commit();
     String before = current(openhouse.loadTable(id("race_strict"))).metadataFileLocation();
-    Throwable t = thrown(() -> two.newAppend().appendFile(file(two, "two", null)).commit());
+    TableMetadata onStale =
+        TableMetadata.buildFrom(staleBase)
+            .addSnapshot(stale)
+            .setBranchSnapshot(stale.snapshotId(), "main")
+            .build();
+    Throwable t = thrown(() -> ops.commit(staleBase, onStale));
     Assertions.assertTrue(t instanceof CommitFailedException, t.toString());
+    Table after = openhouse.loadTable(id("race_strict"));
+    Assertions.assertEquals(before, current(after).metadataFileLocation());
     Assertions.assertEquals(
-        before, current(openhouse.loadTable(id("race_strict"))).metadataFileLocation());
+        Collections.singleton(after.location() + "/data/one.parquet"), files(after));
+
+    two.refresh();
+    two.newAppend().appendFile(file(two, "two", null)).commit();
+    Table retried = openhouse.loadTable(id("race_strict"));
+    Assertions.assertEquals(
+        new HashSet<>(
+            Arrays.asList(
+                retried.location() + "/data/one.parquet",
+                retried.location() + "/data/two.parquet")),
+        files(retried));
+    assertSameView("race_strict");
   }
 
   // ---------------------------------------------------------------- refused

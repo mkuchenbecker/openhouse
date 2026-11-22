@@ -43,7 +43,7 @@ public class IcebergRestSparkSqlTest extends OpenHouseSparkITest {
         .set(
             prefix + ".token",
             new DummyTokenInterceptor.DummySecurityJWT("irc_sql").buildNoopJWT());
-    for (String t : Arrays.asList("t", "ctas", "rtas", "renamed", "dropped", "nodrop")) {
+    for (String t : Arrays.asList("t", "ctas", "rtas", "renamed", "dropped", "nodrop", "mor")) {
       try {
         openhouse.dropTable(TableIdentifier.of(DB, t));
       } catch (RuntimeException ignored) {
@@ -99,10 +99,15 @@ public class IcebergRestSparkSqlTest extends OpenHouseSparkITest {
         rows("SELECT * FROM " + t("t") + " ORDER BY id"));
 
     spark.sql("ALTER TABLE " + t("t") + " ADD COLUMN extra int");
-    spark.sql("ALTER TABLE " + t("t") + " RENAME COLUMN data TO payload");
+    // Renaming a column is refused by the native schema-evolution rule (columns match by name).
+    Throwable rename =
+        thrown(() -> spark.sql("ALTER TABLE " + t("t") + " RENAME COLUMN data TO payload"));
+    Assertions.assertTrue(
+        String.valueOf(rename.getMessage()).contains("invalid schema evolution"),
+        rename.toString());
     spark.sql("ALTER TABLE " + t("t") + " SET TBLPROPERTIES ('user.k'='v')");
     Table table = viaOpenHouse("t");
-    Assertions.assertNotNull(table.schema().findField("payload"));
+    Assertions.assertNotNull(table.schema().findField("data"));
     Assertions.assertNotNull(table.schema().findField("extra"));
     Assertions.assertEquals("v", table.properties().get("user.k"));
 
@@ -113,6 +118,35 @@ public class IcebergRestSparkSqlTest extends OpenHouseSparkITest {
             || drop.getClass().getSimpleName().contains("BadRequest"),
         drop.toString());
     Assertions.assertNotNull(viaOpenHouse("t").schema().findField("extra"));
+  }
+
+  /**
+   * Merge-on-read row-level changes write delete files through the client's default FileIO (no
+   * FileIO is advertised by the server); both catalogs then read the same rows.
+   */
+  @Test
+  void mergeOnReadDeleteAndUpdate() {
+    spark.sql(
+        "CREATE TABLE "
+            + t("mor")
+            + " (id bigint, data string) TBLPROPERTIES ('write.delete.mode'='merge-on-read',"
+            + " 'write.update.mode'='merge-on-read', 'write.merge.mode'='merge-on-read')");
+    spark.sql("INSERT INTO " + t("mor") + " VALUES (1,'a'),(2,'b'),(3,'c')");
+    spark.sql("DELETE FROM " + t("mor") + " WHERE id = 2");
+    spark.sql("UPDATE " + t("mor") + " SET data = 'cc' WHERE id = 3");
+    Assertions.assertEquals(
+        Arrays.asList("[1,a]", "[3,cc]"), rows("SELECT * FROM " + t("mor") + " ORDER BY id"));
+    Assertions.assertEquals(
+        rows("SELECT * FROM " + t("mor") + " ORDER BY id"),
+        rows("SELECT * FROM openhouse." + DB + ".mor ORDER BY id"));
+    Assertions.assertTrue(
+        Integer.parseInt(
+                viaOpenHouse("mor")
+                    .currentSnapshot()
+                    .summary()
+                    .getOrDefault("total-delete-files", "0"))
+            > 0,
+        viaOpenHouse("mor").currentSnapshot().summary().toString());
   }
 
   @Test
