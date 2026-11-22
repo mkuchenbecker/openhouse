@@ -13,11 +13,13 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequest
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
+import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.services.IcebergCreates;
+import com.linkedin.openhouse.tables.services.IcebergUpdates;
 import com.linkedin.openhouse.tables.services.TableCommitService;
 import com.linkedin.openhouse.tables.services.TablesService;
 import java.util.Collections;
@@ -50,15 +52,20 @@ import org.springframework.stereotype.Component;
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
  *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
- *       its updates to it with Iceberg's own update classes, and hands the result to {@link
- *       TableCommitService} with the stored table's version as base, so a commit that landed in
- *       between is refused by the core's guards. A replace commit (see {@link #isReplace}) is
- *       handed over as a replace.
+ *       its updates to it with Iceberg's own update classes, runs the native update validation on
+ *       the request the OpenHouse client would send for it ({@link IcebergUpdates}), as the native
+ *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
+ *       stored table's version as base, so a commit that landed in between is refused by the core's
+ *       guards. A replace commit (see {@link #isReplace}) is handed over as a replace.
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
  *       when it does.
  *   <li>Drop and rename are the native drop and rename.
+ *   <li>A create or commit that sets or removes {@value #UPDATED_POLICY_KEY} is refused (400): the
+ *       routes cannot apply policy changes yet. So is a create that asks, through the properties
+ *       the OpenHouse client rewrites into request fields, for policies or a non-primary table
+ *       type, which the create would otherwise drop.
  * </ul>
  */
 @Component
@@ -66,6 +73,21 @@ public class IcebergRestWriteHandler {
 
   /** The reserved property the native create-with-data reads the table's storage from. */
   private static final String TABLE_LOCATION_KEY = "openhouse.tableLocation";
+
+  /**
+   * The request property OpenHouse's policy statements set ({@code ALTER TABLE ... SET POLICY},
+   * column tags). The OpenHouse Java client strips it and merges it into the native request's
+   * policies; a plain Iceberg client sends it as an ordinary property. The IRC routes do not yet
+   * translate it into a policy change (V5-1), so they refuse it rather than store it as a property
+   * and report a success that applied no policy. The native routes are unchanged.
+   */
+  static final String UPDATED_POLICY_KEY = "updated.openhouse.policy";
+
+  /** The stored policies, as a property; the OpenHouse client parses it into request policies. */
+  private static final String POLICIES_KEY = "policies";
+
+  /** The table type, as a property; the OpenHouse client reads it into the request's type. */
+  private static final String TABLE_TYPE_KEY = "openhouse.tableType";
 
   @Autowired private TablesApiValidator tablesApiValidator;
 
@@ -117,6 +139,9 @@ public class IcebergRestWriteHandler {
                   + "table; leave location unset",
               identifier, request.location()));
     }
+    if (request.properties() != null) {
+      refuseRewrittenCreateProperties(identifier, request.properties());
+    }
     return IcebergCreates.toCreateBody(
         identifier,
         clusterProperties.getClusterName(),
@@ -134,6 +159,9 @@ public class IcebergRestWriteHandler {
       String databaseId, String tableId, UpdateTableRequest request, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
+    if (touchesPolicyKey(request)) {
+      throw policyKeyRefused(identifier);
+    }
     if (isCreate(request)) {
       return commitCreate(identifier, request, actingPrincipal);
     }
@@ -152,6 +180,20 @@ public class IcebergRestWriteHandler {
           base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
     }
     boolean replace = isReplace(request);
+    // The native update validation, which the native table PUT and snapshots PUT (replace included)
+    // run before the service layer, on the request the OpenHouse client would send for this commit.
+    tablesApiValidator.validateUpdateTable(
+        clusterProperties.getClusterName(),
+        databaseId,
+        tableId,
+        IcebergUpdates.toUpdateBody(
+            identifier,
+            clusterProperties.getClusterName(),
+            base.getTableDto(),
+            base.getTableDto().getTableLocation(),
+            candidate,
+            replace,
+            partitionSpecMapper));
     CommitKind kind =
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
@@ -194,6 +236,7 @@ public class IcebergRestWriteHandler {
       update.applyTo(builder);
     }
     TableMetadata candidate = builder.build();
+    refuseRewrittenCreateProperties(identifier, candidate.properties());
     if (candidate.formatVersion() != clusterProperties.getClusterIcebergFormatVersion()) {
       throw new RequestValidationFailureException(
           String.format(
@@ -314,6 +357,64 @@ public class IcebergRestWriteHandler {
 
   private static String namespace(TableIdentifier identifier) {
     return String.join("\u001f", identifier.namespace().levels());
+  }
+
+  // ---------------------------------------------------------------- the policy request key
+
+  /** Whether the commit sets or removes {@link #UPDATED_POLICY_KEY}. */
+  static boolean touchesPolicyKey(UpdateTableRequest request) {
+    return request.updates().stream()
+        .anyMatch(
+            update ->
+                (update instanceof MetadataUpdate.SetProperties
+                        && ((MetadataUpdate.SetProperties) update)
+                            .updated()
+                            .containsKey(UPDATED_POLICY_KEY))
+                    || (update instanceof MetadataUpdate.RemoveProperties
+                        && ((MetadataUpdate.RemoveProperties) update)
+                            .removed()
+                            .contains(UPDATED_POLICY_KEY)));
+  }
+
+  /**
+   * Refuses a create's properties that the OpenHouse Java client would have turned into request
+   * fields and that the create would otherwise drop: {@link #UPDATED_POLICY_KEY}, a non-empty raw
+   * {@code policies} (the client parses it into the request's policies) and a table type other than
+   * the primary one ({@code openhouse.tableType}, which the client reads into the request's table
+   * type). The values the server sets itself, which a staged create returns and its completion
+   * sends back, are accepted.
+   */
+  private static void refuseRewrittenCreateProperties(
+      TableIdentifier identifier, Map<String, String> properties) {
+    if (properties.containsKey(UPDATED_POLICY_KEY)) {
+      throw policyKeyRefused(identifier);
+    }
+    String policies = properties.get(POLICIES_KEY);
+    if (policies != null && !policies.trim().isEmpty()) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s: policies cannot be set through the "
+                  + "Iceberg REST routes yet; use the OpenHouse client or the native OpenHouse API "
+                  + "to set policies",
+              identifier, POLICIES_KEY));
+    }
+    String tableType = properties.get(TABLE_TYPE_KEY);
+    if (tableType != null && !TableType.PRIMARY_TABLE.name().equals(tableType)) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s to %s: the table type cannot be set "
+                  + "through the Iceberg REST routes; they create %s tables",
+              identifier, TABLE_TYPE_KEY, tableType, TableType.PRIMARY_TABLE.name()));
+    }
+  }
+
+  private static RequestValidationFailureException policyKeyRefused(TableIdentifier identifier) {
+    return new RequestValidationFailureException(
+        String.format(
+            "Write to table %s sets or removes the table property %s: policies cannot be set "
+                + "through the Iceberg REST routes yet; use the OpenHouse client or the native "
+                + "OpenHouse API to change policies",
+            identifier, UPDATED_POLICY_KEY));
   }
 
   // ---------------------------------------------------------------- the commit's shape
