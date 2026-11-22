@@ -2,26 +2,15 @@ package com.linkedin.openhouse.tables.api.irc;
 
 import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
-import com.linkedin.openhouse.tables.api.spec.v0.request.components.ViewRepresentation;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllViewsResponseBody;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
-import com.linkedin.openhouse.tables.model.ReservedViewProperties;
 import com.linkedin.openhouse.tables.services.ViewsServiceImpl;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import org.apache.iceberg.MetadataUpdate;
-import org.apache.iceberg.SchemaParser;
-import org.apache.iceberg.UpdateRequirement;
-import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -31,16 +20,12 @@ import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.exceptions.ServiceFailureException;
 import org.apache.iceberg.exceptions.ServiceUnavailableException;
-import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.ImmutableLoadViewResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
-import org.apache.iceberg.view.SQLViewRepresentation;
-import org.apache.iceberg.view.ViewMetadata;
-import org.apache.iceberg.view.ViewVersion;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.security.access.AuthorizationServiceException;
@@ -78,8 +63,6 @@ public class IcebergRestViewHandler {
 
   /** The page size asked of the native list while collecting every view. */
   static final int LIST_PAGE_SIZE = 100;
-
-  private static final String SQL = "sql";
 
   private static final String NAMESPACE_SEPARATOR = Pattern.quote("\u001f");
 
@@ -136,7 +119,7 @@ public class IcebergRestViewHandler {
           "Cannot create view %s.%s: the server owns the view location; location must not be set",
           databaseId, request.name());
     }
-    CreateUpdateViewRequestBody body = createBody(databaseId, request);
+    CreateUpdateViewRequestBody body = IcebergRestViewSpelling.createBody(databaseId, request);
     onNamespace(() -> viewsApiHandler.createView(body, actingPrincipal));
     return onView(() -> response(load(databaseId, request.name(), actingPrincipal)));
   }
@@ -145,9 +128,12 @@ public class IcebergRestViewHandler {
       String namespace, String viewId, UpdateTableRequest request, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
     ViewsServiceImpl.LoadedView base = onView(() -> load(databaseId, viewId, actingPrincipal));
-    ViewMetadata candidate = apply(databaseId, viewId, base.getMetadata(), request);
     CreateUpdateViewRequestBody body =
-        replaceBody(databaseId, viewId, base.getView().getMetadataLocation(), candidate);
+        IcebergRestViewSpelling.replaceBody(
+            databaseId,
+            viewId,
+            base.getView().getMetadataLocation(),
+            IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request));
     onView(() -> viewsApiHandler.updateView(body, actingPrincipal));
     return onView(() -> response(load(databaseId, viewId, actingPrincipal)));
   }
@@ -180,125 +166,6 @@ public class IcebergRestViewHandler {
         .metadataLocation(loaded.getView().getMetadataLocation())
         .metadata(loaded.getMetadata())
         .build();
-  }
-
-  /** The create as the Java client's view operations send it for this definition. */
-  private static CreateUpdateViewRequestBody createBody(
-      String databaseId, CreateViewRequest request) {
-    ViewVersion version = request.viewVersion();
-    List<ViewRepresentation> representations = representations(version);
-    Map<String, String> properties = new HashMap<>(request.properties());
-    List<ViewRepresentation> sql =
-        representations.stream().filter(r -> SQL.equals(r.getType())).collect(Collectors.toList());
-    if (sql.size() == 1
-        && properties.keySet().stream()
-            .noneMatch(ReservedViewProperties.SOURCE_DIALECT::equalsIgnoreCase)) {
-      properties.put(ReservedViewProperties.SOURCE_DIALECT, sql.get(0).getDialect());
-    }
-    return CreateUpdateViewRequestBody.builder()
-        .viewId(request.name())
-        .databaseId(databaseId)
-        .schema(SchemaParser.toJson(request.schema(), false))
-        .representations(representations)
-        .defaultCatalog(version.defaultCatalog())
-        .defaultNamespace(levels(version.defaultNamespace()))
-        .viewProperties(properties)
-        .build();
-  }
-
-  /** The replace as the Java client's view operations send it: the complete definition. */
-  private static CreateUpdateViewRequestBody replaceBody(
-      String databaseId, String viewId, String baseMetadataLocation, ViewMetadata candidate) {
-    ViewVersion version = candidate.currentVersion();
-    return CreateUpdateViewRequestBody.builder()
-        .viewId(viewId)
-        .databaseId(databaseId)
-        .schema(SchemaParser.toJson(candidate.schema(), false))
-        .representations(representations(version))
-        .defaultCatalog(version.defaultCatalog())
-        .defaultNamespace(levels(version.defaultNamespace()))
-        .viewProperties(new HashMap<>(candidate.properties()))
-        .baseMetadataLocation(baseMetadataLocation)
-        .build();
-  }
-
-  /** SQL representations as the native API spells them; any other kind is sent by type only. */
-  private static List<ViewRepresentation> representations(ViewVersion version) {
-    return version.representations().stream()
-        .map(
-            representation ->
-                representation instanceof SQLViewRepresentation
-                    ? ViewRepresentation.builder()
-                        .type(SQL)
-                        .sql(((SQLViewRepresentation) representation).sql())
-                        .dialect(((SQLViewRepresentation) representation).dialect())
-                        .build()
-                    : ViewRepresentation.builder().type(representation.type()).build())
-        .collect(Collectors.toList());
-  }
-
-  /** Omitted when empty, as the Java client omits it. */
-  private static List<String> levels(Namespace namespace) {
-    return namespace == null || namespace.isEmpty() ? null : Arrays.asList(namespace.levels());
-  }
-
-  /**
-   * Checks the commit's requirements against the stored view and applies its updates to it. A
-   * failed requirement is the client's 409 ({@code CommitFailedException}); a requirement that is
-   * not a view's, an update that is not a view's, or one that would set what the server owns, is a
-   * 400 naming it.
-   */
-  private static ViewMetadata apply(
-      String databaseId, String viewId, ViewMetadata base, UpdateTableRequest request) {
-    List<UpdateRequirement> requirements =
-        request.requirements() == null ? Collections.emptyList() : request.requirements();
-    for (UpdateRequirement requirement : requirements) {
-      try {
-        requirement.validate(base);
-      } catch (CommitFailedException e) {
-        throw e;
-      } catch (ValidationException e) {
-        throw new BadRequestException("%s", e.getMessage());
-      }
-    }
-    List<MetadataUpdate> updates =
-        request.updates() == null ? Collections.emptyList() : request.updates();
-    ViewMetadata.Builder builder = ViewMetadata.buildFrom(base);
-    for (MetadataUpdate update : updates) {
-      refuseServerOwned(databaseId, viewId, base, update);
-      try {
-        update.applyTo(builder);
-      } catch (RuntimeException e) {
-        throw new BadRequestException(
-            "Cannot apply %s to view %s.%s: %s",
-            update.getClass().getSimpleName(), databaseId, viewId, e.getMessage());
-      }
-    }
-    try {
-      return builder.build();
-    } catch (RuntimeException e) {
-      throw new BadRequestException(
-          "Invalid commit on view %s.%s: %s", databaseId, viewId, e.getMessage());
-    }
-  }
-
-  private static void refuseServerOwned(
-      String databaseId, String viewId, ViewMetadata base, MetadataUpdate update) {
-    String field = null;
-    if (update instanceof MetadataUpdate.SetLocation
-        && !Objects.equals(base.location(), ((MetadataUpdate.SetLocation) update).location())) {
-      field = "location";
-    } else if (update instanceof MetadataUpdate.AssignUUID
-        && !base.uuid().equalsIgnoreCase(((MetadataUpdate.AssignUUID) update).uuid())) {
-      field = "view UUID";
-    } else if (update instanceof MetadataUpdate.UpgradeFormatVersion
-        && base.formatVersion() != ((MetadataUpdate.UpgradeFormatVersion) update).formatVersion()) {
-      field = "format version";
-    }
-    if (field != null) {
-      throw new BadRequestException(
-          "Commit on view %s.%s changes what the server owns: %s", databaseId, viewId, field);
-    }
   }
 
   // ---------------------------------------------------------------- namespaces and failures

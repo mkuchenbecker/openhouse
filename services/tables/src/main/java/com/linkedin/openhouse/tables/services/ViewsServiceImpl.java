@@ -139,8 +139,10 @@ public class ViewsServiceImpl implements ViewsService {
               .findViewById(primaryKey(databaseId, viewId))
               .orElseThrow(() -> noSuchView(databaseId, viewId));
       requireCompletePersistedPointer(viewRow);
-      ViewMetadata metadata = readMetadata(viewRow);
-      return new LoadedView(withClusterId(toPointerDto(viewRow, metadata)), metadata);
+      FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(viewRow.getStorageType()));
+      ViewMetadata metadata =
+          viewMetadataCodec.read(fileIO.newInputFile(viewRow.getTableLocation()));
+      return new LoadedView(withClusterId(toPointerDto(viewRow, metadata.properties())), metadata);
     } catch (ViewApiException e) {
       throw e;
     } catch (RuntimeException e) {
@@ -421,14 +423,12 @@ public class ViewsServiceImpl implements ViewsService {
         .build();
   }
 
-  private ViewMetadata readMetadata(HouseTable row) {
-    FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(row.getStorageType()));
-    return viewMetadataCodec.read(fileIO.newInputFile(row.getTableLocation()));
-  }
-
-  /** HTS stores only the pointer; creator and modification time live in the view metadata. */
-  private static ViewDto toPointerDto(HouseTable row, ViewMetadata metadata) {
-    Map<String, String> properties = metadata.properties();
+  /**
+   * HTS stores only the pointer; creator and modification time live in the view metadata, whose
+   * properties are passed here. (Bean signatures name no Iceberg view type: the bean-boundary test
+   * of the 1.2 and 1.5 fixtures allows that only in the codec and the commit engine.)
+   */
+  private static ViewDto toPointerDto(HouseTable row, Map<String, String> properties) {
     String creator = properties.get(getCanonicalFieldName("tableCreator"));
     if (StringUtils.isBlank(creator)) {
       throw new IllegalStateException(
