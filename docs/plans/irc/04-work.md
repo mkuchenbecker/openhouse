@@ -35,7 +35,7 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| I1 | ib | A clean branch at Apache 1.12.0 builds untouched. | none | Apache's own tests pass for api, core, orc, parquet, Spark 3.5, Spark 4.2. |
+| I1 | ib | A clean branch at Apache 1.12.0 builds untouched. **Proven 2026-11-22** for the modules listed in F4a; full Spark suites not run. | none | Apache's own tests pass for api, core, orc, parquet, Spark 3.5, Spark 4.2. |
 | I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or build plumbing. **Done 2026-11-22**: 13 reapply, 11 upstream, 5 plumbing (`05-iceberg-patch-ledger.md`). | P2 | 7 rows re-checked by Claude. |
 | I3 | ib | Core, API and ORC patches reapplied, one commit each. | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. | I3 | Same. |
@@ -99,5 +99,5 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 
 ## Ready now
 
-P1, P2 and I2 are done. I1's branch exists and its build baseline is running; I3 starts when it is in.
-T1 to T4 are ready. T1's scenarios are proposed in `06-smoke-suite.md`.
+P1, P2, I1 and I2 are done. In progress, delegated: T1 (smoke suite) and the first four patches of I3 and
+I4. T2, T3 and T4 are ready and not started.

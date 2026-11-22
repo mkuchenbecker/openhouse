@@ -78,3 +78,4 @@ transcription error and should be fixed here.
   and getting blocked far too early. It is not blocked.
 - S38. Use a branch. Main was never a requirement.
 - S39. The mkuchenbecker forks are a requirement.
+- S40. Claude must preserve its own context. Claude orchestrates. If Claude writes code itself, it has failed. Delegate.

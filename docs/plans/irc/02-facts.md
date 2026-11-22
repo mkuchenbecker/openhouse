@@ -30,6 +30,10 @@ observations, not decisions.
 - F3. The 29 LinkedIn commits on `openhouse-1.5.2` split as: build/release 6, core+api 9, ORC 5,
   Spark 3.5 9. The fork's `1.11.x` replayed a subset of core only. No Spark patch was replayed.
 - F4. Apache 1.11 and 1.12 require JDK 17 or 21 to build and emit Java 17 bytecode.
+- F4a. The untouched `openhouse-1.12.0` branch was built on this machine on 2026-11-22 with JDK 21. The full unit
+  suites of api, common, core (9075 tests), data, orc and parquet passed with zero failures. A six-class subset
+  passed on each of Spark 3.5 and Spark 4.2 (Scala 2.13). The full Spark suites and the REST compatibility kit
+  tests were not run.
 
 ## Engine side today (LinkedIn main)
 

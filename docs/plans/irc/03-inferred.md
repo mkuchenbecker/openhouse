@@ -59,6 +59,7 @@ changes that list.
   commit path, and the SQL extensions. Existing tests count where they are already black box (F20).
 - J18. Any difference the smoke suite shows between paths is written down as a priced decision for Mike.
   It is neither silently fixed nor silently accepted (S9).
+- J27. Delegated agents do all code, test, git and note changes (S40). Claude writes the briefs, reads the reports and decides what is done.
 
 ## Platforms
 
