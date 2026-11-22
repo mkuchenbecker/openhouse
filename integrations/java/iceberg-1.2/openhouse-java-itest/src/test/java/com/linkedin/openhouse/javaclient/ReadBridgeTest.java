@@ -110,8 +110,8 @@ class ReadBridgeTest {
                     PartitionSpec.unpartitioned(),
                     "file:/tmp/rb-multischema",
                     Collections.emptyMap()))
-            .addSchema(v1, 3)
-            .setCurrentSchema(1)
+            // adds v1 and makes it current; addSchema(Schema, int) is gone in newer Iceberg
+            .setCurrentSchema(v1, 3)
             .build();
 
     Map<String, String> config = new HashMap<>();
