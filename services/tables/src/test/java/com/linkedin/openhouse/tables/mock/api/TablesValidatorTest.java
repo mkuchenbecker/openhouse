@@ -2,7 +2,6 @@ package com.linkedin.openhouse.tables.mock.api;
 
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.*;
 import static com.linkedin.openhouse.tables.model.TableModelConstants.*;
-import static com.sun.org.apache.xalan.internal.xsltc.compiler.Constants.CHARACTERS;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
@@ -35,6 +34,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 public class TablesValidatorTest {
+
+  /**
+   * Alphabet for {@link #generateId}. Same value as the JDK-internal xalan constant this test used
+   * to import, which javac rejects once the source level is 9+ (java.xml does not export it).
+   */
+  private static final String CHARACTERS = "characters";
 
   @Autowired private TablesApiValidator tablesApiValidator;
 

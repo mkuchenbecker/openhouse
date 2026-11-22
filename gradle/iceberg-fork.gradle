@@ -1,0 +1,49 @@
+// Opt-in build: -PicebergFork builds and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12)
+// against the Iceberg commit pinned in scripts/iceberg-fork/iceberg-fork.properties, published by
+// scripts/iceberg-fork/publish-local.sh into build/iceberg-fork/repo.
+//
+// build.gradle applies this file only when -PicebergFork is set; the other switch-guarded spots
+// (root forces, Java target, iceberg-parquet/orc runtime jars, Spark classpath excludes) check the
+// same property. Without it the default build is unchanged. See docs/development/iceberg-fork.md.
+
+def pin = new Properties()
+file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
+
+def forkVersion = "${pin.getProperty('baseVersion')}-ohfork.${pin.getProperty('commit').take(12)}"
+def forkGroup = pin.getProperty('group')
+def forkRepo = file("${rootProject.buildDir}/iceberg-fork/repo")
+
+if (!file("${forkRepo}/.published-${forkVersion}").exists()) {
+  throw new GradleException(
+      "-PicebergFork: Iceberg ${forkGroup}:${forkVersion} is not published in ${forkRepo}. "
+          + "Run scripts/iceberg-fork/publish-local.sh first.")
+}
+logger.lifecycle("-PicebergFork: Iceberg 1.5 variant uses ${forkGroup}:${forkVersion} from ${forkRepo}")
+
+// Every iceberg_1_5_version consumer (conventions and module build files) picks this up.
+ext.iceberg_1_5_version = forkVersion
+
+// Replace the root build's ORC/Avro forces (see build.gradle) with what the fork's Iceberg needs.
+ext.icebergForkForces = [
+    "org.apache.avro:avro:${pin.getProperty('avroVersion')}",
+    "org.apache.orc:orc-core:${pin.getProperty('orcVersion')}",
+    "com.github.ben-manes.caffeine:caffeine:${pin.getProperty('caffeineVersion')}",
+]
+
+allprojects {
+  repositories {
+    // Only this group at exactly this version comes from the local repo, and only from there.
+    exclusiveContent {
+      forRepository {
+        maven {
+          name = 'icebergForkLocal'
+          url = forkRepo
+        }
+      }
+      filter {
+        includeVersionByRegex(
+            java.util.regex.Pattern.quote(forkGroup), '.*', java.util.regex.Pattern.quote(forkVersion))
+      }
+    }
+  }
+}

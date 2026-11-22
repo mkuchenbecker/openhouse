@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Builds the Iceberg commit pinned in iceberg-fork.properties and publishes the modules OpenHouse's
+# Iceberg 1.5 variant consumes into build/iceberg-fork/repo, for the opt-in -PicebergFork build.
+# Nothing is published remotely and ~/.m2 is not touched. Re-running is a no-op once the pinned
+# version is published; FORCE=1 republishes. See docs/development/iceberg-fork.md.
+#
+# Env: ICEBERG_FORK_WORKDIR  checkout + repo location (default: <openhouse>/build/iceberg-fork)
+#      ICEBERG_GRADLE_ARGS   extra Gradle arguments for the Iceberg build
+#      JAVA_HOME             a JDK 17 or 21 (Iceberg 1.12 needs 17+)
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+props="$root/scripts/iceberg-fork/iceberg-fork.properties"
+prop() { sed -n "s/^$1=//p" "$props"; }
+
+repo_url="$(prop repoUrl)"
+commit="$(prop commit)"
+group="$(prop group)"
+version="$(prop baseVersion)-ohfork.${commit:0:12}"
+work="${ICEBERG_FORK_WORKDIR:-$root/build/iceberg-fork}"
+src="$work/src"
+repo="$work/repo"
+marker="$repo/.published-$version"
+
+if [[ -f "$marker" && "${FORCE:-0}" != 1 ]]; then
+  echo "Iceberg $group:$version already published in $repo (FORCE=1 to republish)"
+  exit 0
+fi
+
+if [[ ! -d "$src/.git" ]]; then
+  git init -q "$src"
+  git -C "$src" remote add origin "$repo_url"
+fi
+git -C "$src" remote set-url origin "$repo_url"
+if ! git -C "$src" cat-file -e "$commit^{commit}" 2>/dev/null; then
+  git -C "$src" fetch --depth 1 origin "$commit"
+fi
+git -C "$src" -c advice.detachedHead=false checkout -q --force "$commit"
+test "$(git -C "$src" rev-parse HEAD)" = "$commit"
+
+modules=(iceberg-bom iceberg-api iceberg-bundled-guava iceberg-common iceberg-core iceberg-data
+  iceberg-parquet iceberg-orc iceberg-spark:iceberg-spark-runtime-3.5_2.12)
+tasks=()
+for m in "${modules[@]}"; do tasks+=(":$m:publishToMavenLocal"); done
+
+mkdir -p "$repo"
+(
+  cd "$src"
+  # shellcheck disable=SC2086
+  ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.jvmargs=-Xmx4g \
+    -DsparkVersions=3.5 -DscalaVersion=2.12 -DflinkVersions= -DkafkaVersions= \
+    -Dmaven.repo.local="$repo" -PpublishGroup="$group" -PpublishVersion="$version" \
+    ${ICEBERG_GRADLE_ARGS:-} "${tasks[@]}"
+)
+touch "$marker"
+echo "Published Iceberg $group:$version ($commit) to $repo"

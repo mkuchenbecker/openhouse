@@ -4,16 +4,18 @@ import com.linkedin.openhouse.hts.catalog.api.IcebergRow;
 import com.linkedin.openhouse.hts.catalog.api.IcebergRowPrimaryKey;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DeleteFile;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
-import org.apache.iceberg.data.GenericAppenderFactory;
+import org.apache.iceberg.avro.Avro;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
 import org.apache.iceberg.deletes.EqualityDeleteWriter;
@@ -21,7 +23,6 @@ import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.DataWriter;
-import org.apache.iceberg.io.FileAppenderFactory;
 import org.apache.iceberg.io.OutputFileFactory;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.util.ArrayUtil;
@@ -40,24 +41,60 @@ public final class IcebergDataUtils {
 
   private IcebergDataUtils() {}
 
-  private static FileAppenderFactory<Record> createAppenderFactory(
-      Table table, IcebergRowPrimaryKey icebergRowPrimaryKey) {
+  /**
+   * The equality-delete row schema for {@code icebergRowPrimaryKey}: the table's primary-key
+   * columns.
+   */
+  private static Schema deleteSchema(Table table, IcebergRowPrimaryKey icebergRowPrimaryKey) {
     List<String> icebergRowPrimaryKeyColumnNames =
         icebergRowPrimaryKey.getSchema().columns().stream()
             .map(Types.NestedField::name)
             .collect(Collectors.toList());
-    Schema deleteSchema = table.schema().select(icebergRowPrimaryKeyColumnNames);
+    return table.schema().select(icebergRowPrimaryKeyColumnNames);
+  }
+
+  /*
+   * The two writers below are what GenericAppenderFactory(schema, spec, equalityFieldIds,
+   * eqDeleteRowSchema, null) built for AVRO, written against the Avro builders directly because
+   * GenericAppenderFactory is gone from newer Iceberg. Both builders exist on every Iceberg line
+   * this module compiles against.
+   */
+  private static EqualityDeleteWriter<Record> newEqualityDeleteWriter(
+      Table table,
+      IcebergRowPrimaryKey icebergRowPrimaryKey,
+      EncryptedOutputFile outputFile,
+      StructLike partition)
+      throws IOException {
+    Schema deleteSchema = deleteSchema(table, icebergRowPrimaryKey);
     List<Integer> deleteSchemaFieldIds =
         deleteSchema.columns().stream()
             .map(Types.NestedField::fieldId)
             .collect(Collectors.toList());
-    return new GenericAppenderFactory(
-        table.schema(),
+    return Avro.writeDeletes(outputFile)
+        .createWriterFunc(org.apache.iceberg.data.avro.DataWriter::create)
+        .withPartition(partition)
+        .overwrite()
+        .rowSchema(deleteSchema)
+        .withSpec(table.spec())
+        .withKeyMetadata(outputFile.keyMetadata())
+        .equalityFieldIds(ArrayUtil.toIntArray(deleteSchemaFieldIds))
+        .buildEqualityWriter();
+  }
+
+  private static DataWriter<Record> newDataWriter(
+      Table table, EncryptedOutputFile outputFile, StructLike partition) throws IOException {
+    return new DataWriter<>(
+        Avro.write(outputFile)
+            .schema(table.schema())
+            .createWriterFunc(org.apache.iceberg.data.avro.DataWriter::create)
+            .metricsConfig(MetricsConfig.fromProperties(Collections.emptyMap()))
+            .overwrite()
+            .build(),
+        FileFormat.AVRO,
+        outputFile.encryptingOutputFile().location(),
         table.spec(),
-        ArrayUtil.toIntArray(deleteSchemaFieldIds),
-        deleteSchema,
-        null // Position Delete API is not required
-        );
+        partition,
+        outputFile.keyMetadata());
   }
 
   /**
@@ -83,9 +120,12 @@ public final class IcebergDataUtils {
               "Table %s is partitioned, deleting rows from partition table is not supported",
               table.name()));
     }
-    EqualityDeleteWriter<Record> deleteWriter =
-        createAppenderFactory(table, icebergRowPrimaryKey)
-            .newEqDeleteWriter(outputFile, FileFormat.AVRO, partitionKey);
+    EqualityDeleteWriter<Record> deleteWriter;
+    try {
+      deleteWriter = newEqualityDeleteWriter(table, icebergRowPrimaryKey, outputFile, partitionKey);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
     deleteWriter.write(icebergRowPrimaryKey.getRecord());
     try {
       deleteWriter.close();
@@ -122,9 +162,12 @@ public final class IcebergDataUtils {
               "Table %s is partitioned, inserting rows to partition table is not supported",
               table.name()));
     }
-    DataWriter<Record> dataWriter =
-        createAppenderFactory(table, icebergRow.getIcebergRowPrimaryKey())
-            .newDataWriter(outputFile, FileFormat.AVRO, partitionKey);
+    DataWriter<Record> dataWriter;
+    try {
+      dataWriter = newDataWriter(table, outputFile, partitionKey);
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
     GenericRecord genericRecord = icebergRow.getRecord();
     genericRecord.setField(icebergRow.getVersionColumnName(), icebergRow.getNextVersion());
 

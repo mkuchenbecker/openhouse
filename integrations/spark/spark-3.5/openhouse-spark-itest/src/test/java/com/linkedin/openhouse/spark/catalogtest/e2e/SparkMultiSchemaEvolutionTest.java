@@ -14,6 +14,12 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+/**
+ * Builds multi-schema metadata with {@code TableMetadata.Builder#setCurrentSchema(Schema, int)},
+ * which adds the schema and makes it current; {@code setCurrentSchema(int)} then restores the
+ * previous current schema where a step only adds one. Unlike {@code addSchema(Schema, int)} it
+ * exists on every Iceberg line OpenHouse builds against (1.2, 1.5, and the -PicebergFork line).
+ */
 public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
 
   @Test
@@ -43,12 +49,12 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
       TableMetadata metadata = ops.current();
       TableMetadata evolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(evolvedSchema, evolvedSchema.highestFieldId())
+              .setCurrentSchema(evolvedSchema, evolvedSchema.highestFieldId())
+              .setCurrentSchema(metadata.currentSchemaId())
               .build();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(evolvedMetadata)
-              .addSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
-              .setCurrentSchema(2)
+              .setCurrentSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
               .build();
 
       Assertions.assertEquals(finalEvolvedMetadata.schemas().size(), 3);
@@ -84,8 +90,7 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
       TableMetadata metadata = ops.current();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
-              .setCurrentSchema(1)
+              .setCurrentSchema(finalEvolvedSchema, finalEvolvedSchema.highestFieldId())
               .build();
 
       Assertions.assertEquals(finalEvolvedMetadata.schemas().size(), 2);
@@ -153,17 +158,16 @@ public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
 
       TableMetadata evolvedMetadata =
           TableMetadata.buildFrom(metadata)
-              .addSchema(schemaColumnOrdering2, schemaColumnOrdering2.highestFieldId())
+              .setCurrentSchema(schemaColumnOrdering2, schemaColumnOrdering2.highestFieldId())
+              .setCurrentSchema(metadata.currentSchemaId())
               .build();
       TableMetadata secondaryEvolvedMetadata =
           TableMetadata.buildFrom(evolvedMetadata)
-              .addSchema(schemaColumnOrdering3, schemaColumnOrdering3.highestFieldId())
-              .setCurrentSchema(2)
+              .setCurrentSchema(schemaColumnOrdering3, schemaColumnOrdering3.highestFieldId())
               .build();
       TableMetadata finalEvolvedMetadata =
           TableMetadata.buildFrom(secondaryEvolvedMetadata)
-              .addSchema(schemaColumnOrdering4, schemaColumnOrdering4.highestFieldId())
-              .setCurrentSchema(3)
+              .setCurrentSchema(schemaColumnOrdering4, schemaColumnOrdering4.highestFieldId())
               .build();
 
       Assertions.assertEquals(finalEvolvedMetadata.schemas().size(), 4);

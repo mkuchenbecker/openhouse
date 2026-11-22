@@ -18,6 +18,12 @@ ext {
 
 configurations.all {
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+    if (rootProject.hasProperty('icebergFork')) {
+        // The -PicebergFork build adds these thin jars (openhouse.iceberg-conventions-1.5.2); the
+        // shaded iceberg-spark-runtime already carries them, as it does iceberg-data.
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
+    }
 }
 dependencies {
     compileOnly (project(path: openhouseSparkRuntimeModule)) {
