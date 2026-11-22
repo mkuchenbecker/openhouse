@@ -760,11 +760,14 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
         "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')",
         "java.lang.UnsupportedOperationException",
         "Set properties on a database is not supported");
+    // Same per-line message as CREATE NAMESPACE in s19 (decision D14b, apache/iceberg#14507).
     assertFailure(
         spark,
         "DROP NAMESPACE " + CAT_DB,
         "java.lang.UnsupportedOperationException",
-        "Describing database is not supported");
+        IcebergLine.current() == IcebergLine.LEGACY
+            ? "Describing database is not supported"
+            : "Checking if database exists is not supported");
     assertFailure(
         spark,
         "SHOW NAMESPACES IN " + CAT_DB,
