@@ -1,8 +1,9 @@
 name: Post-Merge Build and Test
 
 # Runs the full build and tests after each merge to the integration branch, and writes the Gradle
-# cache there so pull requests targeting this branch can restore it. It does not publish, tag,
-# release or deploy anything.
+# cache there so pull requests targeting this branch can restore it. A second, independent job runs
+# the opt-in build against the pinned Iceberg fork (-PicebergFork) and its listed suites. Neither
+# publishes, tags, releases or deploys anything.
 on:
   push:
     branches:
@@ -25,3 +26,67 @@ jobs:
     uses: ./.github/workflows/build-run-tests.yml
     with:
       gradle-cache-write: true
+
+  # The opt-in build against the pinned Iceberg fork (-PicebergFork, docs/development/iceberg-fork.md).
+  # A separate job with no `needs`, so it runs beside the build above on its own runner and never
+  # holds it up. It runs only the opt-in suites and publishes nothing.
+  iceberg-fork-build:
+    name: Opt-in build against the Iceberg fork
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'microsoft'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          # Written on irc-integration (as the job above does), read-only on a branch run by hand.
+          cache-read-only: ${{ github.ref_name != 'irc-integration' }}
+
+      # The published fork depends only on the pinned commit and on what the script publishes, so
+      # the cache key is the commit plus the script's hash: the fork is rebuilt only when either
+      # changes. On a hit the script finds its markers and does nothing.
+      - name: Read the pinned Iceberg commit
+        id: pin
+        run: echo "commit=$(sed -n 's/^commit=//p' scripts/iceberg-fork/iceberg-fork.properties)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the published Iceberg fork
+        id: fork-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: build/iceberg-fork/repo
+          key: iceberg-fork-repo-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('scripts/iceberg-fork/publish-local.sh') }}
+
+      - name: Publish the Iceberg fork to build/iceberg-fork/repo
+        run: scripts/iceberg-fork/publish-local.sh
+
+      # Saved right after publishing, so a red test run below still keeps the fork for the next run.
+      - name: Save the published Iceberg fork
+        if: steps.fork-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: build/iceberg-fork/repo
+          key: ${{ steps.fork-cache.outputs.cache-primary-key }}
+
+      - name: Compile everything under -PicebergFork
+        run: ./gradlew -PicebergFork assemble testClasses
+
+      # The suites docs/plans/irc/25-optin-green-result.md lists, plus the Spark 4.2 IRC read module.
+      # The Spark 3.5 itest `test` task depends on its catalogTest and statementTest tasks.
+      - name: Run the opt-in suites under -PicebergFork
+        run: >-
+          ./gradlew -PicebergFork --continue
+          :services:tables:test
+          :iceberg:openhouse:internalcatalog:test
+          :iceberg:openhouse:htscatalog:test
+          :integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-itest:test
+          :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+          :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test

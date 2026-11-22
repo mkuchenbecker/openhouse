@@ -40,11 +40,14 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.view.ViewMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.data.domain.Page;
@@ -119,6 +122,16 @@ public class ViewsServiceImpl implements ViewsService {
 
   @Override
   public ViewDto getView(String databaseId, String viewId, String actingPrincipal) {
+    return loadView(databaseId, viewId, actingPrincipal).getView();
+  }
+
+  /**
+   * {@link #getView} together with the metadata it reads: the same gate, the same House Tables read
+   * and the same single read of the metadata file at the pointer, with the same failures. For
+   * callers that serve the metadata itself (the IRC view routes); not on {@link ViewsService},
+   * whose disabled implementation runs where the Iceberg view types do not exist.
+   */
+  public LoadedView loadView(String databaseId, String viewId, String actingPrincipal) {
     try {
       requireEnabled(databaseId);
       HouseTable viewRow =
@@ -126,12 +139,23 @@ public class ViewsServiceImpl implements ViewsService {
               .findViewById(primaryKey(databaseId, viewId))
               .orElseThrow(() -> noSuchView(databaseId, viewId));
       requireCompletePersistedPointer(viewRow);
-      return withClusterId(toPointerDto(viewRow));
+      FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(viewRow.getStorageType()));
+      ViewMetadata metadata =
+          viewMetadataCodec.read(fileIO.newInputFile(viewRow.getTableLocation()));
+      return new LoadedView(withClusterId(toPointerDto(viewRow, metadata.properties())), metadata);
     } catch (ViewApiException e) {
       throw e;
     } catch (RuntimeException e) {
       throw ViewFailureTranslator.translateReadFailureTo(e);
     }
+  }
+
+  /** A view's pointer and the metadata stored at it, read once. */
+  @Getter
+  @AllArgsConstructor
+  public static final class LoadedView {
+    private final ViewDto view;
+    private final ViewMetadata metadata;
   }
 
   @Override
@@ -399,11 +423,12 @@ public class ViewsServiceImpl implements ViewsService {
         .build();
   }
 
-  /** HTS stores only the pointer; creator and modification time live in the view metadata. */
-  private ViewDto toPointerDto(HouseTable row) {
-    FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(row.getStorageType()));
-    Map<String, String> properties =
-        viewMetadataCodec.read(fileIO.newInputFile(row.getTableLocation())).properties();
+  /**
+   * HTS stores only the pointer; creator and modification time live in the view metadata, whose
+   * properties are passed here. (Bean signatures name no Iceberg view type: the bean-boundary test
+   * of the 1.2 and 1.5 fixtures allows that only in the codec and the commit engine.)
+   */
+  private static ViewDto toPointerDto(HouseTable row, Map<String, String> properties) {
     String creator = properties.get(getCanonicalFieldName("tableCreator"));
     if (StringUtils.isBlank(creator)) {
       throw new IllegalStateException(

@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.javaclient;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -94,7 +95,11 @@ public class OpenHouseRestAdapter implements RESTClient {
     DELETE
   }
 
-  /** The REST routes this adapter serves. Patterns follow the Iceberg REST spec without prefix. */
+  /**
+   * The REST routes this adapter serves. Patterns follow the Iceberg REST spec without prefix, with
+   * the spec's path variable names ({@code table}, {@code view}), so that {@link #endpoint()} is
+   * the spec's endpoint string.
+   */
   enum Route {
     CONFIG(Method.GET, "v1/config"),
     LIST_NAMESPACES(Method.GET, "v1/namespaces"),
@@ -105,26 +110,38 @@ public class OpenHouseRestAdapter implements RESTClient {
     UPDATE_NAMESPACE(Method.POST, "v1/namespaces/{namespace}/properties"),
     LIST_TABLES(Method.GET, "v1/namespaces/{namespace}/tables"),
     CREATE_TABLE(Method.POST, "v1/namespaces/{namespace}/tables"),
-    TABLE_EXISTS(Method.HEAD, "v1/namespaces/{namespace}/tables/{name}"),
-    LOAD_TABLE(Method.GET, "v1/namespaces/{namespace}/tables/{name}"),
-    UPDATE_TABLE(Method.POST, "v1/namespaces/{namespace}/tables/{name}"),
-    DROP_TABLE(Method.DELETE, "v1/namespaces/{namespace}/tables/{name}"),
+    TABLE_EXISTS(Method.HEAD, "v1/namespaces/{namespace}/tables/{table}"),
+    LOAD_TABLE(Method.GET, "v1/namespaces/{namespace}/tables/{table}"),
+    UPDATE_TABLE(Method.POST, "v1/namespaces/{namespace}/tables/{table}"),
+    DROP_TABLE(Method.DELETE, "v1/namespaces/{namespace}/tables/{table}"),
     RENAME_TABLE(Method.POST, "v1/tables/rename"),
     REGISTER_TABLE(Method.POST, "v1/namespaces/{namespace}/register"),
-    REPORT_METRICS(Method.POST, "v1/namespaces/{namespace}/tables/{name}/metrics"),
+    REPORT_METRICS(Method.POST, "v1/namespaces/{namespace}/tables/{table}/metrics"),
     LIST_VIEWS(Method.GET, "v1/namespaces/{namespace}/views"),
     CREATE_VIEW(Method.POST, "v1/namespaces/{namespace}/views"),
-    LOAD_VIEW(Method.GET, "v1/namespaces/{namespace}/views/{name}"),
-    UPDATE_VIEW(Method.POST, "v1/namespaces/{namespace}/views/{name}"),
-    DROP_VIEW(Method.DELETE, "v1/namespaces/{namespace}/views/{name}"),
+    LOAD_VIEW(Method.GET, "v1/namespaces/{namespace}/views/{view}"),
+    UPDATE_VIEW(Method.POST, "v1/namespaces/{namespace}/views/{view}"),
+    DROP_VIEW(Method.DELETE, "v1/namespaces/{namespace}/views/{view}"),
     RENAME_VIEW(Method.POST, "v1/views/rename");
 
     private final Method method;
+    private final String pattern;
     private final String[] parts;
 
     Route(Method method, String pattern) {
       this.method = method;
+      this.pattern = pattern;
       this.parts = pattern.split("/", -1);
+    }
+
+    /**
+     * This route as an Iceberg REST endpoint string ({@code Endpoint.toString()} on 1.12): the
+     * method, a space and the path with the {@code {prefix}} segment, for example {@code POST
+     * /v1/{prefix}/namespaces/{namespace}/views}. The config route has none: it is how a client
+     * learns the endpoints.
+     */
+    String endpoint() {
+      return method + " /v1/{prefix}" + pattern.substring("v1".length());
     }
 
     /** Path variables when this route matches, otherwise {@code null}. */
@@ -259,17 +276,15 @@ public class OpenHouseRestAdapter implements RESTClient {
       Class<T> responseType,
       Consumer<ErrorResponse> errorHandler) {
     String[] requestParts = path.split("/", -1);
-    for (Route route : Route.values()) {
-      Map<String, String> vars = route.match(method, requestParts);
-      if (vars != null) {
-        Map<String, String> allVars =
-            ImmutableMap.<String, String>builder()
-                .putAll(queryParams == null ? Collections.emptyMap() : queryParams)
-                .putAll(vars)
-                .build();
-        Object response = handle(route, allVars, body);
-        return responseType == null || response == null ? null : responseType.cast(response);
-      }
+    Route route = route(method, requestParts);
+    if (route != null) {
+      Map<String, String> allVars =
+          ImmutableMap.<String, String>builder()
+              .putAll(queryParams == null ? Collections.emptyMap() : queryParams)
+              .putAll(route.match(method, requestParts))
+              .build();
+      Object response = handle(route, allVars, body);
+      return responseType == null || response == null ? null : responseType.cast(response);
     }
     ErrorResponse error =
         ErrorResponse.builder()
@@ -281,11 +296,100 @@ public class OpenHouseRestAdapter implements RESTClient {
     throw new RESTException("Unhandled error: %s", error);
   }
 
+  /** The route that serves {@code method path} (a path without prefix), or {@code null}. */
+  static Route route(Method method, String path) {
+    return route(method, path.split("/", -1));
+  }
+
+  private static Route route(Method method, String[] requestParts) {
+    for (Route route : Route.values()) {
+      if (route.match(method, requestParts) != null) {
+        return route;
+      }
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------------ config
+
+  /**
+   * The endpoints the config response advertises on the v3 line: every route but {@link
+   * Route#CONFIG}, as Iceberg endpoint strings. Derived from the dispatch table, so a route cannot
+   * be served without being advertised or advertised without being served.
+   */
+  static List<String> advertisedEndpoints() {
+    List<String> endpoints = new ArrayList<>();
+    for (Route route : Route.values()) {
+      if (route != Route.CONFIG) {
+        endpoints.add(route.endpoint());
+      }
+    }
+    return endpoints;
+  }
+
+  /**
+   * The config response: {@link #CONFIG_DEFAULTS}, plus on the v3 line ({@link IcebergLine}) the
+   * {@link #advertisedEndpoints()}.
+   *
+   * <p>Iceberg 1.12's {@code RESTSessionCatalog} calls only advertised endpoints and, when a server
+   * advertises none, assumes a fixed default set that has no view routes (and a transaction commit
+   * route this adapter does not serve), so it refused every view statement locally. Iceberg 1.5.2's
+   * config response has no endpoints, and its client calls every route; there the response is
+   * unchanged.
+   */
+  private static ConfigResponse configResponse() {
+    ConfigResponse.Builder builder = ConfigResponse.builder().withDefaults(CONFIG_DEFAULTS);
+    if (IcebergLine.current() == IcebergLine.V3) {
+      V3Endpoints.advertise(builder, advertisedEndpoints());
+    }
+    return builder.build();
+  }
+
+  /**
+   * Adds endpoints to a config response through Iceberg 1.12's public API, {@code
+   * Endpoint.create(String, String)} and {@code ConfigResponse.Builder.withEndpoints(List)}, looked
+   * up by name because neither exists on Iceberg 1.5.2, which this source also compiles against.
+   * Only called on the v3 line; if that line lacks either method the config call fails, rather than
+   * advertising nothing.
+   *
+   * <p>The class name is built from {@link RESTClient}'s package, not written as a string literal:
+   * the runtime jar's shadow relocation rewrites string literals that look like {@code org.*}
+   * names, and it turned that literal into a relocated name no class has.
+   */
+  private static final class V3Endpoints {
+    private static final String ENDPOINT_CLASS =
+        RESTClient.class.getPackage().getName() + ".Endpoint";
+
+    private V3Endpoints() {}
+
+    static void advertise(ConfigResponse.Builder builder, List<String> endpoints) {
+      try {
+        Class<?> endpointClass =
+            Class.forName(ENDPOINT_CLASS, true, ConfigResponse.class.getClassLoader());
+        java.lang.reflect.Method create =
+            endpointClass.getMethod("create", String.class, String.class);
+        List<Object> created = new ArrayList<>();
+        for (String endpoint : endpoints) {
+          int space = endpoint.indexOf(' ');
+          created.add(
+              create.invoke(null, endpoint.substring(0, space), endpoint.substring(space + 1)));
+        }
+        ConfigResponse.Builder.class
+            .getMethod("withEndpoints", List.class)
+            .invoke(builder, created);
+      } catch (ReflectiveOperationException e) {
+        throw new IllegalStateException(
+            "Iceberg " + IcebergLine.current() + " line without REST endpoints in ConfigResponse",
+            e);
+      }
+    }
+  }
+
   @SuppressWarnings("checkstyle:CyclomaticComplexity")
   private Object handle(Route route, Map<String, String> vars, Object body) {
     switch (route) {
       case CONFIG:
-        return ConfigResponse.builder().withDefaults(CONFIG_DEFAULTS).build();
+        return configResponse();
 
       case LIST_NAMESPACES:
         {
@@ -365,13 +469,13 @@ public class OpenHouseRestAdapter implements RESTClient {
         return CatalogHandlers.createView(backing, namespace(vars), (CreateViewRequest) body);
 
       case LOAD_VIEW:
-        return CatalogHandlers.loadView(backing, ident(vars));
+        return CatalogHandlers.loadView(backing, viewIdent(vars));
 
       case UPDATE_VIEW:
-        return CatalogHandlers.updateView(backing, ident(vars), (UpdateTableRequest) body);
+        return CatalogHandlers.updateView(backing, viewIdent(vars), (UpdateTableRequest) body);
 
       case DROP_VIEW:
-        CatalogHandlers.dropView(backing, ident(vars));
+        CatalogHandlers.dropView(backing, viewIdent(vars));
         return null;
 
       case RENAME_VIEW:
@@ -546,6 +650,14 @@ public class OpenHouseRestAdapter implements RESTClient {
   }
 
   private static TableIdentifier ident(Map<String, String> vars) {
-    return TableIdentifier.of(namespace(vars), RESTUtil.decodeString(vars.get("name")));
+    return ident(vars, "table");
+  }
+
+  private static TableIdentifier viewIdent(Map<String, String> vars) {
+    return ident(vars, "view");
+  }
+
+  private static TableIdentifier ident(Map<String, String> vars, String nameVariable) {
+    return TableIdentifier.of(namespace(vars), RESTUtil.decodeString(vars.get(nameVariable)));
   }
 }

@@ -1,0 +1,66 @@
+{
+  "row" : {
+    "entityType" : "VIEW",
+    "tableUUID" : "uuid",
+    "tableLocation" : "00001-uuid.metadata.json",
+    "tableVersion" : "00001-uuid.metadata.json",
+    "tableCreator" : "undefined",
+    "storageType" : "local"
+  },
+  "versions" : [ {
+    "file" : "00001-uuid.metadata.json",
+    "metadata" : {
+      "view-uuid" : "uuid",
+      "format-version" : 1,
+      "location" : "/tmp/gold_view_create/v-uuid",
+      "properties" : {
+        "owner" : "gold",
+        "openhouse.tableId" : "v",
+        "openhouse.lastModifiedTime" : "ts",
+        "openhouse.tableVersion" : "INITIAL_VERSION",
+        "openhouse.view.sourceDialect" : "spark",
+        "openhouse.creationTime" : "ts",
+        "openhouse.databaseId" : "gold_view_create",
+        "openhouse.tableLocation" : "/tmp/gold_view_create/v-uuid/00001-uuid.metadata.json",
+        "openhouse.tableUUID" : "uuid",
+        "replace.drop-dialect.allowed" : "false",
+        "openhouse.tableCreator" : "undefined"
+      },
+      "schemas" : [ {
+        "type" : "struct",
+        "schema-id" : 0,
+        "fields" : [ {
+          "id" : 1,
+          "name" : "id",
+          "required" : false,
+          "type" : "long"
+        }, {
+          "id" : 2,
+          "name" : "name",
+          "required" : false,
+          "type" : "string"
+        } ]
+      } ],
+      "current-version-id" : 1,
+      "versions" : [ {
+        "version-id" : 1,
+        "timestamp-ms" : 0,
+        "schema-id" : 0,
+        "summary" : {
+          "operation" : "create"
+        },
+        "default-catalog" : "openhouse",
+        "default-namespace" : [ "gold_view_create" ],
+        "representations" : [ {
+          "type" : "sql",
+          "sql" : "SELECT id, name FROM gold_view_create.t",
+          "dialect" : "spark"
+        } ]
+      } ],
+      "version-log" : [ {
+        "timestamp-ms" : 0,
+        "version-id" : 1
+      } ]
+    }
+  } ]
+}

@@ -11,8 +11,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /**
  * Renders every failure on the IRC routes as the spec's {@code ErrorResponse}, ahead of the global
  * {@code OpenHouseExceptionHandler}, which keeps rendering the native routes' own error bodies.
- * Scoped to the IRC controllers only, by their package: naming the write controller would load it
- * where its Iceberg API is absent. No stack trace is sent.
+ * Scoped to the IRC controllers only, by their package: naming the write or the view controller
+ * would load it where its Iceberg API is absent. No stack trace is sent.
  */
 @Slf4j
 @RestControllerAdvice(basePackageClasses = IcebergRestCatalogController.class)

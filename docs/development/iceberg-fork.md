@@ -70,10 +70,26 @@ same class.
   if database exists is not supported" on 1.12 instead of "Describing database is not supported"
   (decision D14b, apache/iceberg#14507).
 
-On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client refuses view
-statements locally ("Server does not support endpoint: POST /v1/{prefix}/namespaces/{namespace}/views"),
-because the in-process adapter's config response lists no endpoints. Those two smoke scenarios fail
-under the switch; that is a finding about the seam on 1.12, not fixed here.
+On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client calls only
+the endpoints a server advertises, and with none advertised assumes a default set without views. So
+on the 1.12 line the in-process adapter's config response lists every route it dispatches (all but
+config itself, derived from its route table); on the legacy line it lists none, as before, because
+Iceberg 1.5.2 has no endpoints in its config response. `OpenHouseRestAdapterEndpointsTest` keeps the
+list and the routes equal on both lines.
+
+The jobs client (`TablesClientFactory`, apps) declares `column-defaults` by the same rule as the
+Spark catalogs. The scheduler's own jar carries neither `IcebergLine` nor Iceberg, so there the line
+is not detectable and it declares the capability as before, with a warning.
+
+## CI
+
+`post-merge-build.yml` has a second job, `iceberg-fork-build`, that runs after each merge to
+`irc-integration` and by hand (`workflow_dispatch`): `publish-local.sh` (the published
+`build/iceberg-fork/repo` is cached, keyed on the pinned commit and the script), then
+`-PicebergFork assemble testClasses`, then the opt-in suites: `:services:tables:test`,
+`:iceberg:openhouse:internalcatalog:test`, `:iceberg:openhouse:htscatalog:test`, the 1.5 Java itest,
+the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`) and the Spark 4.2 itest. It does not
+block or wait for the default build job.
 
 ## Spark 4.2 over the IRC read routes
 
@@ -96,6 +112,6 @@ Java client over the native API (Iceberg's generic writers write the Parquet and
 client commits each append) and records what that client shows, for comparison. Its log and work
 directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`.
 
-Writes over IRC answer 406 until the write routes exist; the module pins what `INSERT` and
-`CREATE TABLE` show, so that test fails on purpose when they land.
+The service serves the IRC write routes; `SparkIrcWriteTest` pins that `CREATE TABLE` and `INSERT`
+succeed from Spark 4.2 and the rows read back, on tables it creates and drops.
 
