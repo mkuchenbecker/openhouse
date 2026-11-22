@@ -195,6 +195,79 @@ public class IrcWritePolicyKeyTest {
     assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_sc", "t")));
   }
 
+  // ---------------------------------------------------------------- the other rewritten keys
+
+  /*
+   * On a create the OpenHouse client also rewrites two more properties into request fields: the
+   * raw "policies" property becomes the request's policies, and "openhouse.tableType" its table
+   * type. A plain Iceberg client sends them raw, and the create keeps neither (the server sets
+   * both), so a value that would be lost is refused. The values the server itself sets (an empty
+   * "policies", PRIMARY_TABLE), which a staged create returns and its completion sends back, are
+   * accepted as before.
+   */
+
+  @Test
+  void aCreateThatSetsPoliciesAsAPropertyIsRefusedAndCreatesNothing() throws Exception {
+    created.add(new String[] {"irc_pk_pol", "t"});
+    for (boolean staged : new boolean[] {false, true}) {
+      MvcResult result =
+          IrcWrite.create(
+              mvc,
+              "irc_pk_pol",
+              create(staged, Collections.singletonMap("policies", "{\"sharingEnabled\":true}"))
+                  .build());
+      String message = assertIrcError(result, 400, "BadRequestException").message();
+      assertTrue(message.contains("policies"), message);
+      assertTrue(message.contains("Iceberg REST"), message);
+      assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_pol", "t")));
+    }
+    // The same through a staged create's completion.
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(mvc, "irc_pk_pol", create(true, Collections.emptyMap()).build()));
+    UpdateTableRequest completion =
+        IrcWrite.createCommit(
+            staged,
+            TableMetadata.buildFrom(TableMetadata.buildFrom(staged).discardChanges().build())
+                .setProperties(Collections.singletonMap("policies", "{\"sharingEnabled\":true}"))
+                .build()
+                .changes());
+    String message =
+        assertIrcError(
+                IrcWrite.commit(mvc, "irc_pk_pol", "t", completion), 400, "BadRequestException")
+            .message();
+    assertTrue(message.contains("policies"), message);
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_pol", "t")));
+  }
+
+  @Test
+  void aCreateThatAsksForAReplicaTableTypeIsRefusedAndCreatesNothing() throws Exception {
+    created.add(new String[] {"irc_pk_type", "t"});
+    for (boolean staged : new boolean[] {false, true}) {
+      MvcResult result =
+          IrcWrite.create(
+              mvc,
+              "irc_pk_type",
+              create(staged, Collections.singletonMap("openhouse.tableType", "REPLICA_TABLE"))
+                  .build());
+      String message = assertIrcError(result, 400, "BadRequestException").message();
+      assertTrue(message.contains("openhouse.tableType"), message);
+      assertTrue(message.contains("Iceberg REST"), message);
+      assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_type", "t")));
+    }
+  }
+
+  @Test
+  void aCreateWithTheValuesTheServerSetsIsAccepted() throws Exception {
+    created.add(new String[] {"irc_pk_same", "t"});
+    Map<String, String> props = new HashMap<>();
+    props.put("policies", "");
+    props.put("openhouse.tableType", "PRIMARY_TABLE");
+    TableMetadata after =
+        IrcWrite.parsed(IrcWrite.create(mvc, "irc_pk_same", create(false, props).build()));
+    assertEquals("PRIMARY_TABLE", after.properties().get("openhouse.tableType"));
+  }
+
   // ---------------------------------------------------------------- native: unchanged
 
   /**
