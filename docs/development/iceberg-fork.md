@@ -41,10 +41,34 @@ property:
 - `iceberg-parquet`/`iceberg-orc` are added at runtime on the 1.5 line and kept off the Spark 3.5
   test classpaths, where the shaded `iceberg-spark-runtime` already carries them.
 
-The Iceberg 1.2 / Spark 3.1 modules stay in the build (the 1.5 modules reuse their sources) and keep
-resolving LinkedIn's 1.2 artifacts, but compile to Java 17 against server modules built on the
-fork. Their results under the switch say nothing about either line; do not run them with it.
+The Iceberg 1.2 / Spark 3.1 projects are left out of the build under the switch (decision D15,
+`settings.gradle`): `apps/spark`, `integrations/java/iceberg-1.2/*`, `integrations/spark/spark-3.1/*`
+and `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`. The single-copy server modules compile
+against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The 1.5
+projects that reuse their source directories name the directories instead, `services:tables` tests
+use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
+share, is built on the Spark 3.5 / fork line. Tasks that need a left-out project, such as
+`dockerPrereqs`, do not work under the switch.
 
-Some tests fail under the switch because Iceberg itself behaves differently: v2 tables reject
-non-null column defaults, RTAS succeeds after a former partition source column is dropped, and
-`CREATE NAMESPACE` fails with the catalog's `namespaceExists` message. Do not skip them.
+## Behavior that differs by Iceberg line
+
+The client detects its line with `com.linkedin.openhouse.javaclient.IcebergLine`: it asks the
+Iceberg on the classpath to build format v3 metadata in memory, which LinkedIn's 1.2 and 1.5.2
+releases refuse and the 1.12 line accepts. Tests that expect different results per line use the
+same class.
+
+- Column defaults (decisions D5, D11a): on the 1.12 line the client applies no
+  `openhouse.read-bridge.column-default.*` overlay and the Spark catalogs do not declare the
+  `column-defaults` capability, so a table with `required-capability.column-defaults=true` is
+  refused with 422 `CLIENT_CAPABILITY_MISSING`. Iceberg 1.12 itself refuses a non-null
+  `initial-default` below format v3; tests that need one build a v3 table on that line.
+- `REPLACE TABLE ... AS SELECT` that drops a former partition source column succeeds on 1.12 and
+  fails Iceberg validation on 1.5.2 (decision D14a, apache/iceberg#11868).
+- `CREATE NAMESPACE` and `DROP NAMESPACE` are unsupported on both lines, with the message "Checking
+  if database exists is not supported" on 1.12 instead of "Describing database is not supported"
+  (decision D14b, apache/iceberg#14507).
+
+On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client refuses view
+statements locally ("Server does not support endpoint: POST /v1/{prefix}/namespaces/{namespace}/views"),
+because the in-process adapter's config response lists no endpoints. Those two smoke scenarios fail
+under the switch; that is a finding about the seam on 1.12, not fixed here.
