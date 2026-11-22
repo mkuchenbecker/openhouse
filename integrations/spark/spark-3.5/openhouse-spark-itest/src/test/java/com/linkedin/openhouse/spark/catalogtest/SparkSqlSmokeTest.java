@@ -37,6 +37,18 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
   /** The catalog path in use today. */
   protected static final String LEGACY = "legacy";
 
+  /**
+   * Iceberg's {@code RESTCatalog} over an in-process REST-shaped client that dispatches to today's
+   * {@code OpenHouseCatalog} (Spark 3.5 / Iceberg 1.5 only).
+   */
+  protected static final String REST_SHIM = "rest-shim";
+
+  private static final String LEGACY_CATALOG_IMPL = "com.linkedin.openhouse.spark.OpenHouseCatalog";
+  private static final String REST_SHIM_CATALOG_IMPL =
+      "com.linkedin.openhouse.spark.OpenHouseRestCatalog";
+
+  private static SparkSession restShimSession;
+
   private static final String DB = "smoke_t1";
   private static final String CAT_DB = "openhouse." + DB;
 
@@ -48,8 +60,26 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     switch (catalogPath()) {
       case LEGACY:
         return getSparkSession();
+      case REST_SHIM:
+        return restShimSession();
       default:
         throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  /**
+   * A session over the shared Spark context whose {@code openhouse} catalog is built by the
+   * REST-shaped catalog class; everything else matches the legacy session.
+   */
+  private SparkSession restShimSession() throws Exception {
+    SparkSession base = getSparkSession();
+    synchronized (SparkSqlSmokeTest.class) {
+      if (restShimSession == null || restShimSession.sparkContext() != base.sparkContext()) {
+        SparkSession spark = base.newSession();
+        spark.conf().set("spark.sql.catalog.openhouse.catalog-impl", REST_SHIM_CATALOG_IMPL);
+        restShimSession = spark;
+      }
+      return restShimSession;
     }
   }
 
@@ -66,13 +96,15 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
   protected SparkSession viewsSparkSession() throws Exception {
     switch (catalogPath()) {
       case LEGACY:
-        return legacyViewsSession();
+        return viewsSession(LEGACY_CATALOG_IMPL);
+      case REST_SHIM:
+        return viewsSession(REST_SHIM_CATALOG_IMPL);
       default:
         throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
     }
   }
 
-  private SparkSession legacyViewsSession() throws Exception {
+  private SparkSession viewsSession(String catalogImpl) throws Exception {
     SparkSession base = getSparkSession();
     synchronized (SparkSqlSmokeTest.class) {
       if (viewsServer == null) {
@@ -97,7 +129,7 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     SparkSession spark = base.newSession();
     String prefix = "spark.sql.catalog." + VIEWS_CATALOG;
     spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");
-    spark.conf().set(prefix + ".catalog-impl", "com.linkedin.openhouse.spark.OpenHouseCatalog");
+    spark.conf().set(prefix + ".catalog-impl", catalogImpl);
     spark.conf().set(prefix + ".uri", uri);
     spark.conf().set(prefix + ".cluster", "local-cluster");
     spark
@@ -121,6 +153,7 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
       active.get().close();
     }
     synchronized (SparkSqlSmokeTest.class) {
+      restShimSession = null;
       if (viewsServer != null) {
         viewsServer.close();
         viewsServer = null;
