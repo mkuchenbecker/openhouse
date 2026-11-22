@@ -22,7 +22,27 @@ pluginManagement {
   }
 }
 
-include ':apps:spark'
+// -PicebergFork (docs/development/iceberg-fork.md) builds the Iceberg 1.5 variant against the fork's
+// Iceberg 1.12 line. Under it the Iceberg 1.2 / Spark 3.1 projects below are left out of the build
+// (decision D15): the single-copy server modules compile against 1.12 there, so those projects could
+// only be a hybrid of 1.2 and 1.12 artifacts. The 1.5 projects that reuse their source directories
+// name the directories instead. Without the property every project is included exactly as before.
+def icebergFork = providers.gradleProperty('icebergFork').present
+def iceberg12LineProjects = [
+    ':apps:spark',
+    ':integrations:java:iceberg-1.2:openhouse-java-runtime',
+    ':integrations:java:iceberg-1.2:openhouse-java-itest',
+    ':integrations:spark:spark-3.1:openhouse-spark-runtime',
+    ':integrations:spark:spark-3.1:openhouse-spark-itest',
+    ':tables-test-fixtures:tables-test-fixtures-iceberg-1.2',
+]
+def includeUnlessForkExcluded = { String path ->
+  if (!(icebergFork && iceberg12LineProjects.contains(path))) {
+    include path
+  }
+}
+
+includeUnlessForkExcluded ':apps:spark'
 include ':apps:spark-3.5'
 
 include ':client:common'
@@ -32,12 +52,12 @@ include ':client:tableclient'
 include ':client:optimizerclient'
 include ':client:secureclient'
 
-include ':integrations:java:iceberg-1.2:openhouse-java-runtime'
-include ':integrations:java:iceberg-1.2:openhouse-java-itest'
+includeUnlessForkExcluded ':integrations:java:iceberg-1.2:openhouse-java-runtime'
+includeUnlessForkExcluded ':integrations:java:iceberg-1.2:openhouse-java-itest'
 include ':integrations:java:iceberg-1.5:openhouse-java-runtime'
 include ':integrations:java:iceberg-1.5:openhouse-java-itest'
-include ':integrations:spark:spark-3.1:openhouse-spark-runtime'
-include ':integrations:spark:spark-3.1:openhouse-spark-itest'
+includeUnlessForkExcluded ':integrations:spark:spark-3.1:openhouse-spark-runtime'
+includeUnlessForkExcluded ':integrations:spark:spark-3.1:openhouse-spark-itest'
 include ':integrations:spark:spark-3.5:openhouse-spark-runtime'
 include ':integrations:spark:spark-3.5:openhouse-spark-itest'
 
@@ -58,7 +78,7 @@ include ':apps:optimizer:analyzerapp'
 include ':libs:optimizer:scheduler'
 include ':apps:optimizer:schedulerapp'
 include ':services:tables'
-include ':tables-test-fixtures:tables-test-fixtures-iceberg-1.2'
+includeUnlessForkExcluded ':tables-test-fixtures:tables-test-fixtures-iceberg-1.2'
 include ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5'
 
 include ':cluster:configs'
@@ -69,10 +89,14 @@ include ':scripts:java:tools:dummytokens'
 
 include ':all-modules'
 
-project(':integrations:spark:spark-3.1:openhouse-spark-runtime').name = 'openhouse-spark-runtime_2.12'
-project(':apps:spark').name = 'openhouse-spark-apps_2.12'
+if (!icebergFork) {
+  project(':integrations:spark:spark-3.1:openhouse-spark-runtime').name = 'openhouse-spark-runtime_2.12'
+  project(':apps:spark').name = 'openhouse-spark-apps_2.12'
+}
 project(':apps:spark-3.5').name = 'openhouse-spark-apps-1.5_2.12'
-project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.2').name = 'tables-test-fixtures_2.12'
+if (!icebergFork) {
+  project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.2').name = 'tables-test-fixtures_2.12'
+}
 
 project(':integrations:java:iceberg-1.5:openhouse-java-runtime').name = 'openhouse-java-iceberg-1.5-runtime'
 project(':integrations:java:iceberg-1.5:openhouse-java-itest').name = 'openhouse-java-iceberg-1.5-itest'

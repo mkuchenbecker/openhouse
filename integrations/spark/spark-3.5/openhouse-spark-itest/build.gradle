@@ -10,7 +10,10 @@ ext {
 sourceSets {
   test {
     java {
-      srcDirs = ['src/test/java', project(':integrations:spark:spark-3.1:openhouse-spark-itest').sourceSets.test.java.srcDirs]
+      // Under -PicebergFork the spark-3.1 project is not in the build (settings.gradle).
+      srcDirs = ['src/test/java', rootProject.hasProperty('icebergFork')
+          ? [rootProject.file('integrations/spark/spark-3.1/openhouse-spark-itest/src/test/java')]
+          : project(':integrations:spark:spark-3.1:openhouse-spark-itest').sourceSets.test.java.srcDirs]
       exclude '**/PartitionTest.java', '**/AlterTable*.java', '**/CreateTable*.java', '**/DescribeTableTest.java', '**/DropTableTest.java', '**/ShowTablesTest.java', '**/InsertIntoTableTest.java'
     }
   }
