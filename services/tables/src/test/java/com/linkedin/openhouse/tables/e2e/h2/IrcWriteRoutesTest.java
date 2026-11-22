@@ -11,13 +11,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
+import com.linkedin.openhouse.tables.audit.model.OperationStatus;
+import com.linkedin.openhouse.tables.audit.model.OperationType;
+import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
 import com.linkedin.openhouse.tables.config.TablesMvcConstants;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import java.io.File;
@@ -74,6 +81,7 @@ public class IrcWriteRoutesTest {
 
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
+  @Autowired AuditHandler<TableAuditEvent> tableAuditHandler;
 
   private final List<String[]> created = new ArrayList<>();
 
@@ -1074,6 +1082,96 @@ public class IrcWriteRoutesTest {
             mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
         404,
         "NoSuchTableException");
+  }
+
+  // ---------------------------------------------------------------- table audit
+
+  private void expectAudited(String db, OperationType type, OperationStatus status) {
+    verify(tableAuditHandler, atLeastOnce())
+        .audit(
+            argThat(
+                (TableAuditEvent event) ->
+                    event != null
+                        && db.equals(event.getDatabaseName())
+                        && "t".equals(event.getTableName())
+                        && event.getOperationType() == type
+                        && event.getOperationStatus() == status));
+  }
+
+  /**
+   * Every IRC write is in the table audit as the native write it corresponds to: create, staged
+   * create, update, commit, replace commit, the commit completing a staged create, drop; a commit
+   * the native rules refuse as FAILED.
+   */
+  @Test
+  void irCWritesAreAuditedAsTheirNativeWrites() throws Exception {
+    track("irc_w_audit", "t");
+    IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_audit", ircCreatePlain("t")));
+    expectAudited("irc_w_audit", OperationType.CREATE, OperationStatus.SUCCESS);
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_audit", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_audit",
+            "t",
+            base,
+            TableMetadata.buildFrom(base)
+                .setProperties(
+                    with(Collections.emptyMap(), CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true"))
+                .build()));
+    expectAudited("irc_w_audit", OperationType.UPDATE, OperationStatus.SUCCESS);
+    TableMetadata b1 = IrcWrite.load(mvc, "irc_w_audit", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_audit",
+            "t",
+            b1,
+            IrcWrite.withMain(b1, IrcWrite.append(b1, "/tmp/irc_w_audit_a.orc"))));
+    expectAudited("irc_w_audit", OperationType.COMMIT, OperationStatus.SUCCESS);
+    TableMetadata b2 = IrcWrite.load(mvc, "irc_w_audit", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_audit",
+            "t",
+            IrcWrite.replace(
+                b2,
+                IrcWrite.replacement(b2, replacementSchema(b2), b2.spec(), Collections.emptyMap()),
+                Collections.emptyList())));
+    expectAudited("irc_w_audit", OperationType.REPLACE_COMMIT, OperationStatus.SUCCESS);
+    IrcWrite.commit(
+        mvc,
+        "irc_w_audit",
+        "t",
+        IrcWrite.simple(
+            b2,
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(
+                    Collections.singletonMap("openhouse.tableId", "x")))));
+    expectAudited("irc_w_audit", OperationType.UPDATE, OperationStatus.FAILED);
+    assertEquals(204, IrcWrite.drop(mvc, "irc_w_audit", "t").getResponse().getStatus());
+    expectAudited("irc_w_audit", OperationType.DELETE, OperationStatus.SUCCESS);
+
+    track("irc_w_audit2", "t");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_audit2",
+                CreateTableRequest.builder()
+                    .withName("t")
+                    .withSchema(SCHEMA)
+                    .setProperties(nativeBody("x").getTableProperties())
+                    .stageCreate()
+                    .build()));
+    expectAudited("irc_w_audit2", OperationType.STAGED_CREATE, OperationStatus.SUCCESS);
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc, "irc_w_audit2", "t", IrcWrite.createCommit(staged, Collections.emptyList())));
+    // Without data, the OpenHouse client completes a create transaction with a table PUT on the
+    // initial version, which the native audit records as a CREATE; with data, as a STAGED_COMMIT.
+    expectAudited("irc_w_audit2", OperationType.CREATE, OperationStatus.SUCCESS);
   }
 
   // ---------------------------------------------------------------- multi-level namespaces
