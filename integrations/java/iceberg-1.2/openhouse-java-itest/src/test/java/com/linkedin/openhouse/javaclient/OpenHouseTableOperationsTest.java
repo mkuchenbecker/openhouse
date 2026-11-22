@@ -574,6 +574,35 @@ public class OpenHouseTableOperationsTest {
     Assertions.assertSame(stamped, ops.currentConfig());
   }
 
+  /**
+   * A stamped column default reaches the loaded schema on the legacy Iceberg line only. On the v3
+   * line the client applies no read-bridge overlay (decision D11a). On both lines the config is
+   * still decoded (so a malformed entry still fails the load, see
+   * testMalformedConfigFailsBeforeTouchingStorage) and captured.
+   */
+  @Test
+  public void testDoRefreshOverlaysStampedDefaultOnLegacyLineOnly() {
+    String location = writeTempMetadata();
+    Map<String, String> stamped =
+        Collections.singletonMap(ReadBridge.COLUMN_DEFAULT_PREFIX + "1", "7");
+    TableApi mockTableApi = mock(TableApi.class);
+    GetTableResponseBody body = mock(GetTableResponseBody.class);
+    when(body.getTableLocation()).thenReturn(location);
+    when(body.getConfig()).thenReturn(stamped);
+    when(mockTableApi.getTableV1(anyString(), anyString())).thenReturn(Mono.just(body));
+
+    OpenHouseTableOperations ops = refreshableOps(mockTableApi, localFileIO());
+    ops.doRefresh();
+
+    Object loadedDefault = ops.current().schema().findField(1).initialDefault();
+    if (IcebergLine.current() == IcebergLine.LEGACY) {
+      Assertions.assertEquals(7, loadedDefault);
+    } else {
+      Assertions.assertNull(loadedDefault);
+    }
+    Assertions.assertSame(stamped, ops.currentConfig());
+  }
+
   /** Absent config on a real load => null. */
   @Test
   public void testDoRefreshNullConfigWhenAbsent() {
