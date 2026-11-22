@@ -351,9 +351,14 @@ public class OpenHouseRestAdapter implements RESTClient {
    * up by name because neither exists on Iceberg 1.5.2, which this source also compiles against.
    * Only called on the v3 line; if that line lacks either method the config call fails, rather than
    * advertising nothing.
+   *
+   * <p>The class name is built from {@link RESTClient}'s package, not written as a string literal:
+   * the runtime jar's shadow relocation rewrites string literals that look like {@code org.*}
+   * names, and it turned that literal into a relocated name no class has.
    */
   private static final class V3Endpoints {
-    private static final String ENDPOINT_CLASS = "org.apache.iceberg.rest.Endpoint";
+    private static final String ENDPOINT_CLASS =
+        RESTClient.class.getPackage().getName() + ".Endpoint";
 
     private V3Endpoints() {}
 
