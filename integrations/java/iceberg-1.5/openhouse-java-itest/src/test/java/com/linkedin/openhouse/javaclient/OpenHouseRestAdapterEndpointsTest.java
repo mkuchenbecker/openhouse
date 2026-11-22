@@ -62,12 +62,18 @@ public class OpenHouseRestAdapterEndpointsTest {
     assertEquals(EnumSet.complementOf(EnumSet.of(Route.CONFIG)), reached);
   }
 
-  /** The config response carries the endpoints on the v3 line and none on the legacy line. */
+  /**
+   * The config response carries the endpoints on the v3 line and none on the legacy line, and on
+   * both the server capability the tables service's IRC config advertises ({@code
+   * openhouse.capabilities=policies}, an override), so every REST-shaped path reads the same
+   * capability: here the backing OpenHouse catalog applies a policy patch itself.
+   */
   @Test
   void configAdvertisesTheEndpointsOnTheV3LineOnly() {
     ConfigResponse config = config();
     assertEquals(OpenHouseRestAdapter.CONFIG_DEFAULTS, config.defaults());
-    assertEquals(Collections.emptyMap(), config.overrides());
+    assertEquals(
+        Collections.singletonMap("openhouse.capabilities", "policies"), config.overrides());
     List<String> advertised = endpoints(config);
     if (IcebergLine.current() == IcebergLine.V3) {
       assertEquals(OpenHouseRestAdapter.advertisedEndpoints().size(), advertised.size());

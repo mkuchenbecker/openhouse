@@ -70,6 +70,16 @@ class IrcRestCatalogPolicyKeyTest {
     }
   }
 
+  /**
+   * The server's capability, as a client reads it: {@code RESTCatalog.properties()} is the client's
+   * configuration merged with the config response (defaults under it, overrides over it; {@code
+   * RESTSessionCatalog.initialize} on Iceberg 1.5.2 and 1.12 alike).
+   */
+  @Test
+  void theCatalogPropertiesNameThePolicyCapability() {
+    assertEquals("policies", rest.properties().get("openhouse.capabilities"));
+  }
+
   @Test
   void updatePropertiesWithThePolicyKeyAppliesThePolicy() {
     Table table = rest.loadTable(ID);
