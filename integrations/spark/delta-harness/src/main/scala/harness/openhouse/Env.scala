@@ -54,6 +54,32 @@ object Runner {
   basePackages = Array("com.linkedin.openhouse.housetables.model"))
 class HtsBootApp
 
+/**
+ * Real-HTS mode needs the in-memory `HouseTablesH2Repository` stub (a @Primary Spring Data repository
+ * shipped in tables-test-fixtures) switched OFF so the HTTP `HouseTableRepositoryImpl` is the sole
+ * HouseTableRepository. The fixture no longer carries a switch for that, and production/fixture code
+ * must not change, so the harness does it from outside: this initializer is registered through
+ * META-INF/spring.factories (written by run-openhouse.sh into the harness class dir) and, only when
+ * the system property `openhouse.htsStub.enabled=false` is set, drops the stub's bean definition
+ * before any bean is instantiated. With the property unset it does nothing.
+ */
+class HtsStubSuppressor
+    extends org.springframework.context.ApplicationContextInitializer[org.springframework.context.ConfigurableApplicationContext] {
+  import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
+  import org.springframework.beans.factory.support.{BeanDefinitionRegistry, BeanDefinitionRegistryPostProcessor}
+
+  override def initialize(ctx: org.springframework.context.ConfigurableApplicationContext): Unit =
+    if (System.getProperty("openhouse.htsStub.enabled") == "false")
+      ctx.addBeanFactoryPostProcessor(new BeanDefinitionRegistryPostProcessor with org.springframework.core.Ordered {
+        override def getOrder: Int = org.springframework.core.Ordered.LOWEST_PRECEDENCE
+        override def postProcessBeanDefinitionRegistry(r: BeanDefinitionRegistry): Unit =
+          r.getBeanDefinitionNames.filter(_.equalsIgnoreCase("houseTablesH2Repository")).foreach { n =>
+            r.removeBeanDefinition(n); println(s">> real-HTS: removed in-memory stub bean '$n'")
+          }
+        override def postProcessBeanFactory(f: ConfigurableListableBeanFactory): Unit = ()
+      })
+}
+
 /** Boots the embedded real House Table Service (H2, MySQL-mode) as its own Spring context. */
 object HtsEnv {
   import org.springframework.boot.builder.SpringApplicationBuilder

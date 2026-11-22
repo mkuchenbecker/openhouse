@@ -90,6 +90,10 @@ echo ">> ${#SCALA_SRCS[@]} source files"
   -classpath "$OHCP" -d "$WORK/classes" \
   "${SCALA_SRCS[@]}"
 
+# Register the harness's Spring initializer (real-HTS mode drops the in-memory HTS stub; see HtsStubSuppressor).
+mkdir -p "$WORK/classes/META-INF"
+echo "org.springframework.context.ApplicationContextInitializer=harness.HtsStubSuppressor" > "$WORK/classes/META-INF/spring.factories"
+
 echo ">> running on JDK 17 (embedded OpenHouse server + OpenHouse catalog)"
 OPENS=(
   --add-opens=java.base/java.lang=ALL-UNNAMED
@@ -105,5 +109,5 @@ OPENS=(
 )
 # Args are passed through as case-id filters (AND). E.g. `run-openhouse.sh delete parquet`
 # runs just the delete tests on parquet — a ~25s inner loop. No args runs the full matrix.
-exec "$JDK17/bin/java" "${OPENS[@]}" -Dio.netty.tryReflectionSetAccessible=true \
+exec "$JDK17/bin/java" ${HARNESS_JVM_ARGS:-} "${OPENS[@]}" -Dio.netty.tryReflectionSetAccessible=true \
   -cp "$WORK/classes:$SCALA_LIB:$OHCP" harness.Main "$@"
