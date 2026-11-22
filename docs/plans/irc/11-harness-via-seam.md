@@ -1,6 +1,6 @@
 # Delta-harness through the REST-shaped path (rest-shim)
 
-Bottom line: the full delta-harness runs through the in-process REST-shaped catalog path. With the real embedded house-table service, the counts match the legacy path. With the in-memory house-table stub, the REST-shaped path has one extra failure, a replace that is silently lost in 2 of 50 races. Everything here was run on 2026-11-22, except where a line says it was inferred from reading the code.
+Bottom line: the full delta-harness runs through the in-process REST-shaped catalog path. With the real embedded house-table service, the counts match the legacy path. With the in-memory house-table stub, the one extra failure, a replace that was silently lost in some races, was traced to a defect in the stand-in and is gone after commit 2969044d (0 of 200 races). The counts on both paths are now equal in both modes, and the legacy full-run figures are the earlier baseline. Everything here was run on 2026-11-22, except where a line says it was inferred from reading the code.
 
 ## Setup
 

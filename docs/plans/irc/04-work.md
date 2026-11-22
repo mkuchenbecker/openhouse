@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 44 items in two repos. Each names what it needs and how it is proven. There is no order
+Bottom line: 49 items in two repos. Each names what it needs and how it is proven. There is no order
 beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -41,7 +41,12 @@ native REST.
 | I3 | ib | Core, API and ORC patches reapplied, one commit each. **Done 2026-11-22**: all core, API and ORC patches (iceberg pull requests 3 to 7). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. **Done 2026-11-22** (same pull requests). | I3 | Same. |
 | I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
-| I6 | ib, oh | The openhouse fork build resolves the new line's artifacts from the mkuchenbecker Iceberg fork (S35, J25). | I1 | A throwaway module compiles against them in CI. |
+| I6a | oh | **In progress** on branch `irc/i6-iceberg-1.12-optin`. An opt-in build switch builds the newest OpenHouse variant against the fork's 1.12 line, and the default build is unchanged. The fork commit is pinned in the repo and published to a build-local Maven directory by a script. | I8 | The default build's CI is unchanged. The opt-in build compiles against the fork's artifacts. |
+| I6b | oh | **In progress** on the same branch. Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
+| I6c | oh | **In progress** on the same branch. Client fixes for 1.12 runtime changes: null table location, and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
+| I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
+| I6e | oh | **Waiting on Mike.** Fate of the Iceberg 1.2 / Spark 3.1 line once shared server modules need Java 17 and Iceberg 1.12. | a decision | The decision is recorded here. The 1.2 line is either kept with its own pinned copies or retired. |
+| I6f | oh | **Not started.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
 
 ## Client seam
 
@@ -109,14 +114,17 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 | X0 | ib, oh | Schema changes work on v2 tables that carry column defaults on the 1.12 line. | I3, a decision (see `10-v2-defaults.md`) | The second ALTER TABLE in the column-default Spark test passes on the new line. |
 | I9 | ib | Delete-file replication is safe on non-HDFS storage. | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
 
+The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.
+
 ## State
 
 Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. T2b is draft pull request 86 in
 mkuchenbecker/openhouse, into `irc/c1-rest-shaped-seam`, on branch `irc/t2b-harness-via-seam`. The harness
 path is selected by `HARNESS_CATALOG_PATH=legacy|rest-shim`. Stand-in stale-read defect fixed on
 `irc/t4b-faithful-standin` (commit 2969044d, pull request 83); lost RTAS 0 of 200 races afterwards. In
-progress, delegated: I5, Spark patches applied to the Spark 4.2 modules, branch `irc/spark42-patches`; I6
-scouting, what it takes for the openhouse build to consume the 1.12 line from the mkuchenbecker Iceberg
-fork. Waiting on a decision from Mike: X0, I9, and review of the seam design before C2 and the service
-items start. Not started: T6, I7 and all service items. Draft pull requests are open on both forks and
+progress, delegated: I5, Spark patches applied to the Spark 4.2 modules, branch `irc/spark42-patches`; I6a,
+I6b and I6c on branch `irc/i6-iceberg-1.12-optin`. I6 scouting is done, local only and nothing pushed (see
+`12-openhouse-on-1.12-scout.md`). Waiting on a decision from Mike: X0, I9, I6e, RTAS after a dropped
+partition source column behaves differently on 1.12 (one test), and review of the seam design before C2 and
+the service items start. Not started: T6, I7, I6d, I6f and all service items. Draft pull requests are open on both forks and
 none is merged.
