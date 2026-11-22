@@ -24,7 +24,9 @@ scripts/iceberg-fork/publish-local.sh  # once per pinned commit; FORCE=1 republi
 
 `publish-local.sh` fetches the pinned commit into `build/iceberg-fork/src`, then runs the fork's
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
-`build/iceberg-fork/repo` (never `~/.m2`). It needs the fork's `-PpublishGroup`/`-PpublishVersion`
+`build/iceberg-fork/repo` (never `~/.m2`). A second Iceberg build publishes the shaded
+`iceberg-spark-runtime-4.2_2.13` (one Iceberg build has one Scala version); it has its own marker
+file, so a repository published before it existed gains only that jar. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
 support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes several minutes; once the
 version is published it is a no-op. `./gradlew clean` deletes `build/`, so publish again after it.
 
@@ -72,3 +74,28 @@ On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's 
 statements locally ("Server does not support endpoint: POST /v1/{prefix}/namespaces/{namespace}/views"),
 because the in-process adapter's config response lists no endpoints. Those two smoke scenarios fail
 under the switch; that is a finding about the seam on 1.12, not fixed here.
+
+## Spark 4.2 over the IRC read routes
+
+`:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` exists only under the switch
+(`settings.gradle`). Its tests run Spark 4.2 (the pin file's `spark42Version`) with the fork's
+`iceberg-spark-runtime-4.2_2.13`, Iceberg's own `SparkCatalog` and `RESTCatalog`
+(`type=rest`, `uri=<service>/iceberg`, `token=<bearer>`) and nothing of OpenHouse on the classpath,
+against the tables service's IRC routes:
+
+```bash
+./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
+```
+
+The service runs in its own JVM, which the test starts on a free port (`IrcReadTestServiceProcess`)
+and stops when the test JVM exits: the service exactly as the Spark 3.5 tests embed it
+(`SpringH2TestApplication`, in-memory H2), with the dummy token interceptor and an authorization
+handler that denies one principal. It cannot share the Spark 4.2 JVM, which needs jackson-databind
+2.21 where the service runs on 2.13. The service JVM seeds the tables through the existing OpenHouse
+Java client over the native API (Iceberg's generic writers write the Parquet and ORC files, the
+client commits each append) and records what that client shows, for comparison. Its log and work
+directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`.
+
+Writes over IRC answer 406 until the write routes exist; the module pins what `INSERT` and
+`CREATE TABLE` show, so that test fails on purpose when they land.
+
