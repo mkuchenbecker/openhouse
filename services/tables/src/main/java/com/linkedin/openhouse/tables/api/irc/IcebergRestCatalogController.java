@@ -9,12 +9,18 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.Arrays;
 import java.util.List;
 import javax.servlet.http.HttpServletRequest;
+import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.RenameTableRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,8 +33,10 @@ import org.springframework.web.bind.annotation.RestController;
  * native routes' JSON and error bodies are untouched. Hidden from the service's generated OpenAPI
  * spec, from which the native clients are generated.
  *
- * <p>Every other request under the base path is answered in the spec's error shape: 406 for a route
- * of the specification this server does not serve yet, 400 for a path that is not an IRC route.
+ * <p>The write routes (create, staged create, commit, drop, rename) are {@link
+ * IcebergRestWriteHandler}'s. Every other request under the base path is answered in the spec's
+ * error shape: 406 for a route of the specification this server does not serve yet, 400 for a path
+ * that is not an IRC route.
  */
 @Hidden
 @RestController
@@ -40,6 +48,8 @@ public class IcebergRestCatalogController {
   private static final String V1 = BASE_PATH + "/v1";
 
   @Autowired private IcebergRestApiHandler handler;
+
+  @Autowired private IcebergRestWriteHandler writeHandler;
 
   @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC config: OK"))
   @GetMapping(V1 + "/config")
@@ -108,6 +118,62 @@ public class IcebergRestCatalogController {
     return IcebergRestJson.noContent();
   }
 
+  /**
+   * Creates a table or, with {@code stage-create}, returns the metadata a create would store
+   * without creating it. Not secured here, as the native create route is not: the service checks
+   * the create privilege.
+   */
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC create table: OK"))
+  @PostMapping(V1 + "/namespaces/{namespace}/tables")
+  public ResponseEntity<byte[]> createTable(
+      @PathVariable("namespace") String namespace, @RequestBody(required = false) byte[] body) {
+    String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    CreateTableRequest request = IcebergRestJson.read(body, CreateTableRequest.class);
+    String principal = extractAuthenticatedUserPrincipal();
+    if (request.stageCreate()) {
+      return IcebergRestJson.staged(writeHandler.stageCreateTable(databaseId, request, principal));
+    }
+    return IcebergRestJson.loadTable(writeHandler.createTable(databaseId, request, principal));
+  }
+
+  /** Commits requirements and updates to a table, completing a staged create when asked to. */
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC commit table: OK"))
+  @PostMapping(V1 + "/namespaces/{namespace}/tables/{table}")
+  public ResponseEntity<byte[]> commitTable(
+      @PathVariable("namespace") String namespace,
+      @PathVariable("table") String tableId,
+      @RequestBody(required = false) byte[] body) {
+    String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    UpdateTableRequest request = IcebergRestJson.read(body, UpdateTableRequest.class);
+    return IcebergRestJson.loadTable(
+        writeHandler.commitTable(
+            databaseId, tableId, request, extractAuthenticatedUserPrincipal()));
+  }
+
+  /**
+   * Drops a table, as the native drop does: {@code purgeRequested} is accepted and changes nothing,
+   * since the native drop always removes the table's files.
+   */
+  @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC drop table: NO_CONTENT"))
+  @DeleteMapping(V1 + "/namespaces/{namespace}/tables/{table}")
+  public ResponseEntity<byte[]> dropTable(
+      @PathVariable("namespace") String namespace,
+      @PathVariable("table") String tableId,
+      @RequestParam(value = "purgeRequested", required = false) String purgeRequested) {
+    writeHandler.dropTable(
+        IcebergRestApiHandler.databaseId(namespace), tableId, extractAuthenticatedUserPrincipal());
+    return IcebergRestJson.noContent();
+  }
+
+  /** Renames a table, as the native rename does. */
+  @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC rename table: NO_CONTENT"))
+  @PostMapping(V1 + "/tables/rename")
+  public ResponseEntity<byte[]> renameTable(@RequestBody(required = false) byte[] body) {
+    writeHandler.renameTable(
+        IcebergRestJson.read(body, RenameTableRequest.class), extractAuthenticatedUserPrincipal());
+    return IcebergRestJson.noContent();
+  }
+
   /** Routes of the IRC specification this server does not serve (yet), as METHOD and pattern. */
   private static final List<String[]> UNSERVED_SPEC_ROUTES =
       Arrays.asList(
@@ -115,9 +181,6 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces"},
           new String[] {"DELETE", "/v1/namespaces/*"},
           new String[] {"POST", "/v1/namespaces/*/properties"},
-          new String[] {"POST", "/v1/namespaces/*/tables"},
-          new String[] {"POST", "/v1/namespaces/*/tables/*"},
-          new String[] {"DELETE", "/v1/namespaces/*/tables/*"},
           new String[] {"POST", "/v1/namespaces/*/register"},
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
@@ -128,7 +191,6 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/tables/*/tasks"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/credentials"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/sign"},
-          new String[] {"POST", "/v1/tables/rename"},
           new String[] {"POST", "/v1/transactions/commit"},
           new String[] {"GET", "/v1/namespaces/*/views"},
           new String[] {"POST", "/v1/namespaces/*/views"},
