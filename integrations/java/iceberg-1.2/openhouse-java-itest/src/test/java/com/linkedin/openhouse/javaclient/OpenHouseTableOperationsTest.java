@@ -38,6 +38,7 @@ import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -910,11 +911,19 @@ public class OpenHouseTableOperationsTest {
   /**
    * {@link TableMetadata#newTableMetadata} reassigns ids and drops defaults. Put this schema back
    * so PUT tests can see writer/overlay defaults.
+   *
+   * <p>The table's format version depends on the Iceberg line (work item W4). Iceberg 1.12 accepts
+   * a non-null {@code initial-default} only from format v3 on, so on the v3 line the fixture builds
+   * a v3 table; on the legacy line it builds the default v2 table, because LinkedIn's 1.2 and 1.5.2
+   * cannot build v3 metadata. The assertions are the same on both lines.
    */
   private static TableMetadata tableWithSchema(String location, Schema schema) {
+    Map<String, String> properties =
+        IcebergLine.current() == IcebergLine.LEGACY
+            ? Collections.emptyMap()
+            : Collections.singletonMap(TableProperties.FORMAT_VERSION, "3");
     TableMetadata created =
-        TableMetadata.newTableMetadata(
-            schema, PartitionSpec.unpartitioned(), location, Collections.emptyMap());
+        TableMetadata.newTableMetadata(schema, PartitionSpec.unpartitioned(), location, properties);
     try {
       ObjectMapper mapper = new ObjectMapper();
       ObjectNode root = (ObjectNode) mapper.readTree(TableMetadataParser.toJson(created));
