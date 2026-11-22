@@ -49,6 +49,7 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.StaticTableOperations;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.Transaction;
@@ -930,12 +931,19 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
   /**
    * {@link OpenHouseTableBuilder} re-uses most of its functionality to {@link
    * BaseMetastoreCatalogTableBuilder}, except for: {@link
-   * OpenHouseTableBuilder#createTransaction()} and {@link
-   * OpenHouseTableBuilder#createOrReplaceTransaction()}
+   * OpenHouseTableBuilder#createTransaction()}, {@link
+   * OpenHouseTableBuilder#createOrReplaceTransaction()}, and the table location {@link
+   * OpenHouseTableBuilder#create()} builds its request with
    *
    * <p>Overridden behavior is only for CTAS statements, which is, OpenHouseService is contacted
    * with stage=true, and its returned metadata is used for further data processing.
    */
+  /**
+   * Location of the request-only metadata {@link OpenHouseTableBuilder#create()} builds when the
+   * caller gives none; the Tables service assigns the real one.
+   */
+  private static final String SERVICE_ASSIGNED_LOCATION = "openhouse:/location-assigned-by-service";
+
   private final class OpenHouseTableBuilder extends BaseMetastoreCatalogTableBuilder {
     private final TableIdentifier identifier;
     private final Schema schema;
@@ -943,11 +951,38 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
     private final ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.builder();
     private PartitionSpec spec = PartitionSpec.unpartitioned();
     private SortOrder sortOrder = SortOrder.unsorted();
+    private String location = null;
 
     OpenHouseTableBuilder(TableIdentifier identifier, Schema schema) {
       super(identifier, schema);
       this.identifier = identifier;
       this.schema = schema;
+    }
+
+    @Override
+    public TableBuilder withLocation(String newLocation) {
+      this.location = newLocation;
+      super.withLocation(newLocation);
+      return this;
+    }
+
+    /**
+     * Creates the table through the Tables service, which allocates its storage location.
+     *
+     * <p>The inherited create builds a {@link TableMetadata} locally only as the source of the
+     * create request (schema, spec, sort order, properties); {@link
+     * OpenHouseTableOperations#doCommit} never sends its location, and the returned table reloads
+     * the service's metadata and location. Newer Iceberg rejects a v1-v3 {@link TableMetadata}
+     * without a location, so when the caller gives none this supplies {@link
+     * #SERVICE_ASSIGNED_LOCATION}, which never leaves this method's request building. Its scheme
+     * has no FileSystem, so any accidental use fails instead of writing somewhere.
+     */
+    @Override
+    public Table create() {
+      if (location == null) {
+        super.withLocation(SERVICE_ASSIGNED_LOCATION);
+      }
+      return super.create();
     }
 
     @Override
