@@ -36,7 +36,7 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | I1 | ib | A clean branch at Apache 1.12.0 builds untouched. | none | Apache's own tests pass for api, core, orc, parquet, Spark 3.5, Spark 4.2. |
-| I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or drop, with evidence. | P2 | Reviewed row by row. |
+| I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or build plumbing. **Done 2026-11-22**: 13 reapply, 11 upstream, 5 plumbing (`05-iceberg-patch-ledger.md`). | P2 | 7 rows re-checked by Claude. |
 | I3 | ib | Core, API and ORC patches reapplied, one commit each. | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. | I3 | Same. |
 | I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
@@ -99,5 +99,5 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 
 ## Ready now
 
-P2 is done. P1's branch exists and awaits its CI proof. I1 and I2 need nothing else. T1 to T4 start when
-P1 is proven.
+P2 and I2 are done. P1's branch exists and its CI proof is running. I1's branch exists and its build
+baseline is running. I3 starts when I1 is proven. T1 to T4 start when P1 is proven.

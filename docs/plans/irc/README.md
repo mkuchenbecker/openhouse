@@ -11,6 +11,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `02-facts.md` | What was checked in the repos, with what was not verified | Observation |
 | `03-inferred.md` | Claude's judgements and three questions for Mike | Claude |
 | `04-work.md` | The list of work and dependencies | Claude |
+| `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 
 Suggested reading order for review: `03-inferred.md`, then `04-work.md`. A judgement rejected in the
 first changes the second.
