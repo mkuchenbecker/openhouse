@@ -28,6 +28,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -69,7 +70,10 @@ import org.springframework.test.web.servlet.MvcResult;
  * snapshot ids, which the test client draws at random, renamed to their order of first appearance
  * in the scenario ("S1", "S2", ... in strings, 1, 2, ... in numbers); inside the {@code policies}
  * property, the replication {@code cronSchedule} (drawn at random by the server) and the lock's
- * {@code creationTime}. Nothing else is touched.
+ * {@code creationTime}. Also dropped from snapshot summaries: {@link #CLIENT_LINE_SUMMARY_KEYS},
+ * which the Iceberg that builds this test's snapshots on the client side writes on the 1.12 line
+ * and not on 1.5.2; they say which Iceberg wrote the snapshot, not what the service stored. Nothing
+ * else is touched.
  *
  * <p>To rewrite the expected files, run with the environment variable {@code
  * STORED_METADATA_GOLDEN_DIR} set to {@code services/tables/src/test/resources/stored-metadata}.
@@ -366,12 +370,25 @@ public class StoredMetadataGoldenTest {
         || key.equals("current-snapshot-id");
   }
 
+  /**
+   * Snapshot summary keys that Iceberg 1.12's snapshot producer adds and 1.5.2's does not: the
+   * manifest counts and the writer's version string, which also names the fork's pinned commit.
+   * Absent on the default build, so dropping them changes nothing there.
+   */
+  private static final List<String> CLIENT_LINE_SUMMARY_KEYS =
+      Arrays.asList("manifests-created", "manifests-kept", "manifests-replaced", "iceberg-version");
+
   private static JsonNode rewrite(JsonNode node, String key, Map<Long, Integer> ids) {
     if (node.isObject()) {
       ObjectNode out = MAPPER.createObjectNode();
+      boolean summary = "summary".equals(key);
       node.fields()
           .forEachRemaining(
-              field -> out.set(field.getKey(), rewrite(field.getValue(), field.getKey(), ids)));
+              field -> {
+                if (!(summary && CLIENT_LINE_SUMMARY_KEYS.contains(field.getKey()))) {
+                  out.set(field.getKey(), rewrite(field.getValue(), field.getKey(), ids));
+                }
+              });
       return out;
     }
     if (node.isArray()) {
