@@ -217,9 +217,14 @@ public class OpenHouseCatalog extends BaseMetastoreViewCatalog
 
   protected FileIO loadFileIO(Map<String, String> properties) {
     String fileIOImpl = properties.get(CatalogProperties.FILE_IO_IMPL);
-    return fileIOImpl == null
-        ? new HadoopFileIO(this.conf)
-        : CatalogUtil.loadFileIO(fileIOImpl, properties, this.conf);
+    if (fileIOImpl != null) {
+      return CatalogUtil.loadFileIO(fileIOImpl, properties, this.conf);
+    }
+    // Without a Hadoop configuration (setConf never called, e.g. a plain Java client), use the
+    // no-arg HadoopFileIO and leave it unconfigured, as CatalogUtil.loadFileIO does for a null
+    // conf. Newer Iceberg's HadoopFileIO(Configuration) rejects null; its no-arg form falls back to
+    // a default configuration. Iceberg 1.5's fails on first file access, as a null conf did.
+    return this.conf == null ? new HadoopFileIO() : new HadoopFileIO(this.conf);
   }
 
   /**
