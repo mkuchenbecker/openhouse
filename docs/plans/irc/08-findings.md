@@ -134,3 +134,8 @@ The first version of the faithful stand-in fixed only one of the two source copi
 - The repository's pre-commit hook stashes with `git stash --keep-index` before running `spotlessCheck`. That removes the merge state, so `git commit` cannot complete a merge commit. Merge commits on the branches for pull requests 84 and 86 were built with `git commit-tree` after running `spotlessCheck` by hand. The pre-push hook ran normally.
 - Both hooks print `[[: not found`, so they do not fail the commit or push when `spotlessCheck` fails.
 - Spark SQL cannot set a column default on Iceberg 1.12 with Spark 3.5 or 4.2: all three statements are refused. On LinkedIn's 1.5.2 line `ALTER TABLE ADD COLUMN ... DEFAULT` silently drops the clause (read, not run). See `14-native-defaults-design.md`.
+
+## Sixth round (test loop and CI)
+
+- A fresh git worktree costs about one minute, not a cold build, because worktrees share the Gradle caches (measured: `:services:tables:test` 7m58s fresh against 7m01s warm).
+- A pull request whose branch carries commits that the target has as merge commits can be reported by GitHub as conflicting although git merges it cleanly; GitHub then starts no CI run. Merging the target into the branch fixes it (seen on pull requests 84 and 87).

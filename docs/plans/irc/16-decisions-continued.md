@@ -57,3 +57,17 @@ Dates are all 2026-11-22. Claude wrote every entry.
 - Why: this keeps the native API byte-for-byte unchanged and avoids a second deployment.
 - References: `07-seam-design.md`; work items V2 and V3 in `04-work.md`.
 - Reverse by: moving the routes.
+
+## D17. Briefing habits adopted from the iteration-friction diagnosis
+
+- Date: 2026-11-22.
+- Decision: briefs follow these habits.
+  - Every Gradle command in a brief carries `-Dorg.gradle.daemon.idletimeout=60000`.
+  - The inner loop runs only the touched test classes, and each full suite runs once at the end.
+  - Concurrency is budgeted by memory (never two Iceberg Spark runs together), not by a count of two.
+  - Dropping the 4 GB daemon heap override for OpenHouse is measured on the next job before it is adopted.
+- Why: the shared memory limit was saturated, with 10 out-of-memory kills and about 4.8 GB held by idle
+  daemons. Not adopted, because they change a repository or the environment and are Mike's to decide: more
+  memory, a CI cache for pull requests, and editing the ten sleeping tests.
+- References: `20-iteration-friction.md`; `18-state.md`, "Waiting on Mike".
+- Reverse by: removing the flag from briefs.

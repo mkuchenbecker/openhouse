@@ -27,8 +27,8 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | T1 | oh | A small Spark SQL smoke suite runs on Spark 3.5 against the real embedded service, with the catalog path as a parameter. **Done 2026-11-22** (pull request 80). | P1 | Green in CI. A deliberately broken rule turns it red. |
-| T2 | oh | The delta-harness is in the repo and runs on demand. **Done 2026-11-22** (draft pull request 85). Full runs recorded in `08-findings.md`. | P1 | One full recorded run. |
-| T2b | oh | The delta-harness runs through the in-process REST-shaped path, selected by `HARNESS_CATALOG_PATH=rest-shim`. **Done 2026-11-22** (draft pull request 86, into `irc/c1-rest-shaped-seam`). Counts and differences in `11-harness-via-seam.md`. | T2, C1 | The full harness runs in both modes on both paths, and the counts are recorded. |
+| T2 | oh | The delta-harness is in the repo and runs on demand. **Done 2026-11-22** (pull request 85). Full runs recorded in `08-findings.md`. | P1 | One full recorded run. |
+| T2b | oh | The delta-harness runs through the in-process REST-shaped path, selected by `HARNESS_CATALOG_PATH=rest-shim`. **Done 2026-11-22** (pull request 86). Counts and differences in `11-harness-via-seam.md`. | T2, C1 | The full harness runs in both modes on both paths, and the counts are recorded. |
 | T3 | oh | Black-box tests pin the catalog plugin's behavior as it is. **Done 2026-11-22** (pull request 81). | P1 | Green on unchanged code. |
 | T4 | oh | Black-box tests pin the service commit path over the native API, filling gaps only. **Done 2026-11-22** (pull request 82); conflict and soft-delete cases follow once the stand-in is faithful. | P1 | Green on unchanged code. |
 
@@ -40,10 +40,10 @@ native REST.
 | I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or build plumbing. **Done 2026-11-22**: 13 reapply, 11 upstream, 5 plumbing (`05-iceberg-patch-ledger.md`). | P2 | 7 rows re-checked by Claude. |
 | I3 | ib | Core, API and ORC patches reapplied, one commit each. **Done 2026-11-22**: all core, API and ORC patches (iceberg pull requests 3 to 7). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. **Done 2026-11-22** (same pull requests). | I3 | Same. |
-| I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
-| I6a | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. An opt-in build switch builds the newest OpenHouse variant against the fork's 1.12 line, and the default build is unchanged. The fork commit is pinned in the repo and published to a build-local Maven directory by a script. Iceberg side: pull request 9 (`irc/publish-plumbing`) merged into `openhouse-1.12.0` as merge commit 984904f02. | I8 | The default build's CI is unchanged. The opt-in build compiles against the fork's artifacts. |
-| I6b | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
-| I6c | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. Client fixes for 1.12 runtime changes: null table location (D13), and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
+| I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. **Done 2026-11-22 (iceberg pull request 10): full Spark 4.2 suite 6199 tests and extensions 2958 tests, 0 failures at the tip.** | I4 | Same. |
+| I6a | oh | Done 2026-11-22, merged (pull request 87). An opt-in build switch builds the newest OpenHouse variant against the fork's 1.12 line, and the default build is unchanged. The fork commit is pinned in the repo and published to a build-local Maven directory by a script. Iceberg side: pull request 9 (`irc/publish-plumbing`) merged into `openhouse-1.12.0` as merge commit 984904f02. | I8 | The default build's CI is unchanged. The opt-in build compiles against the fork's artifacts. |
+| I6b | oh | Done 2026-11-22, merged (pull request 87). Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
+| I6c | oh | Done 2026-11-22, merged (pull request 87). Client fixes for 1.12 runtime changes: null table location (D13), and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
 | I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
 | I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9 lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
 | I6f | oh | **Not started.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
@@ -62,7 +62,7 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | V1 | oh | The commit path accepts a complete candidate metadata. Rules and persistence run without native decoding. No behavior change. | T1, T4 | T1, T4 and the existing suite unchanged. |
-| V2 | oh | IRC config, namespaces, table list, load, exists. | T4 | `RESTCatalog` reads tables that the legacy path wrote. |
+| V2 | oh | IRC config, namespaces, table list, load, exists. **Done 2026-11-22 (pull request 88).** Result in `19-v2-irc-read-result.md`. | T4 | `RESTCatalog` reads tables that the legacy path wrote. |
 | V3 | oh | IRC table create, staged create, commit, drop, rename, with every existing rule holding. | V1, V2 | T4's scenarios through IRC leave the same stored state. Rule violations are rejected. |
 | V4 | oh | IRC views. | V2 | View scenarios through IRC match the native API. |
 | V5 | oh | OpenHouse capabilities are served and advertised over IRC. | V2, C2 | Grant, unlock, policy and column-default scenarios pass through IRC. |
@@ -102,8 +102,8 @@ Each exists on the native path only (J3).
 From `14-native-defaults-design.md`, adopted in D11. Tests come first for every row.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| W1 | ib | An ORC reader that does not opt in to default filling, or reads a name-mapped file, throws Apache's `ORC cannot read default value` for an absent field with a non-null `initial-default`. | none | A generic ORC read of a v3 table expects the throw. The ORC and Spark 3.5 ORC default suites still pass. |
-| W2 | ib | A Spark 3.5 test pins native-default behavior: Parquet, Avro and ORC fills, row and vectorized; the DEFAULT keyword gives NULL; DDL is refused; v2 is refused; no downgrade. | none | Green on the fork. |
+| W1 | ib | **Done 2026-11-22 (iceberg pull request 11).** An ORC reader that does not opt in to default filling, or reads a name-mapped file, throws Apache's `ORC cannot read default value` for an absent field with a non-null `initial-default`. | none | A generic ORC read of a v3 table expects the throw. The ORC and Spark 3.5 ORC default suites still pass. |
+| W2 | ib | **Done 2026-11-22 (iceberg pull request 11).** A Spark 3.5 test pins native-default behavior: Parquet, Avro and ORC fills, row and vectorized; the DEFAULT keyword gives NULL; DDL is refused; v2 is refused; no downgrade. | none | Green on the fork. |
 | W3 | oh | The new-line client neither overlays OpenHouse defaults nor declares `column-defaults`. The legacy build is unchanged. | I6a | On the opt-in build the catalog declares nothing and a stamped config does not reach `table.schema()`. The legacy build still passes. |
 | W4 | oh | The three `OpenHouseTableOperationsTest` fixtures are ported to v3 on the opt-in build. | I6a | The three tests pass on the opt-in build and still pass on legacy. |
 | W6 | oh | On the 1.12 service at v3, defaults persist unchanged and no read-bridge config is sent. An `initial-default` of an existing field never changes, only a new field may carry one, and `column-defaults` opt-in is refused on v3. A non-null `write-default` below v3 is refused with `COLUMN_DEFAULT_REQUIRES_V3`, and an ordinary commit cannot change the format version (the rules of former W5 and W10). | V9, X1 | A v3 table with an API-added default round-trips byte-equal. Each refusal has a test. |
@@ -130,16 +130,4 @@ The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on
 
 ## State
 
-Merged into `irc-integration` (mkuchenbecker/openhouse): pull requests 80 (T1, merge commit 37b89f0b), 81
-(T3, d5c34e74), 82 (T4, 85614361), 83 (T5, merge commit 2334b050), 84 (C1, merge commit 4f15a3a3) and 85
-(T2, 8bda0f6b). Pull requests 86 (T2b) and 87 (I6a to I6c) are ready and merge when their CI runs finish.
-Merged into `openhouse-1.12.0` (mkuchenbecker/iceberg): pull requests 3 to 9. Decided: I6e (D3). Left
-unaddressed: I9 (D4).
-
-In progress: I5 (Spark 4.2) and V2 (IRC read endpoints, branch `irc/v2-irc-read-endpoints`). Next when a
-build slot frees: W1 and W2 (Iceberg fork), then W3, W4, I6g and I6h together on the opt-in build, then C2
-and V1. Nothing is waiting on Mike. Decisions on two-way doors are in `13-decisions.md` and
-`16-decisions-continued.md`.
-
-Opt-in build result (`15-optin-build-result.md`): every listed suite passes except 10 tests, all from
-Iceberg behavior differences that W3, W4 and I6h address.
+The current state is in `18-state.md`.

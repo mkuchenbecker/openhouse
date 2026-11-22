@@ -1,6 +1,8 @@
 # Native column defaults on OpenHouse's 1.12 line: design
 
 Adopted by `13-decisions.md` D11 with the changes listed there. Written by a delegated agent from code reading and one Spark 3.5 experiment.
+Corrected by running (iceberg pull request 11): Spark 4.2 ORC readers already opt in and fill defaults, like Spark 3.5; statements below that Spark 4.2 ORC returns NULL or would error are wrong. On Spark 3.5 a write does not apply write defaults (INSERT with DEFAULT writes NULL, and a column-list INSERT that omits the column fails); Spark 4.2 applies them.
+
 
 Delegated agent, 2026-11-22. Marks: **[ran]** = run in my worktree `/home/user/iceberg-def` (detached at `irc/reapply-all` f180ae589, experiment test `spark/v3.5/spark/src/test/java/org/apache/iceberg/spark/source/TestNativeDefaultsExperiment.java`, uncommitted; output in scratchpad `natdef-run1.txt`, `natdef-run2.txt`). **[read]** = from code at the cited line. **[scout]** = from the i6 scout's logs. **[inferred]** = reasoning, not run. OpenHouse was not built. Nothing was pushed or committed.
 

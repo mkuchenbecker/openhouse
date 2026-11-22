@@ -7,6 +7,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 
 | File | What it is | Whose voice |
 | --- | --- | --- |
+| `18-state.md` | Start here. Current state: what is merged where, what is in progress, and how to audit | Claude |
 | `01-stated.md` | What Mike said | Mike |
 | `02-facts.md` | What was checked in the repos, with what was not verified | Observation |
 | `03-inferred.md` | Claude's judgements and three questions for Mike | Claude |
@@ -20,7 +21,9 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `13-decisions.md` | Decisions Claude made on two-way doors, each with reason, references and how to reverse it | Claude, not agreed unless it cites a statement |
 | `14-native-defaults-design.md` | Design for native column defaults on the new Iceberg line, with work items W1 to W11 | Observation by a delegated agent, adopted with changes in D11 |
 | `15-optin-build-result.md` | Result of building OpenHouse's Iceberg 1.5 variant against the fork's 1.12 line behind an opt-in switch | Observation by a delegated agent |
-| `16-decisions-continued.md` | Decisions D13 to D16, continuing `13-decisions.md` | Claude, not agreed unless it cites a statement |
+| `16-decisions-continued.md` | Decisions D13 to D17, continuing `13-decisions.md` | Claude, not agreed unless it cites a statement |
+| `19-v2-irc-read-result.md` | Result of the IRC read routes (V2): routes, test counts, ten differences from the OpenHouse client, and what write routes will need | Observation by a delegated agent |
+| `20-iteration-friction.md` | Diagnosis of slow test loops: memory, sleeping tests and uncached CI, with ranked changes | Observation by a delegated agent |
 | `17-delegation.md` | Which kind of agent takes which work item | Claude |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
