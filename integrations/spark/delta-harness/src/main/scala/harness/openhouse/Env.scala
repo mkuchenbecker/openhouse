@@ -119,10 +119,29 @@ object OpenHouseEnv {
       .map(is => scala.io.Source.fromInputStream(is, "UTF-8").mkString.trim)
       .getOrElse("default-token")
 
+  private val LegacyCatalogImpl = "com.linkedin.openhouse.spark.OpenHouseCatalog"
+  private val RestShimCatalogImpl = "com.linkedin.openhouse.spark.OpenHouseRestCatalog"
+
+  /**
+   * The catalog path under test: `legacy` (default) or `rest-shim`, from the system property
+   * `harness.catalogPath` or the environment variable `HARNESS_CATALOG_PATH`. `rest-shim` builds the
+   * `openhouse` catalog with `OpenHouseRestCatalog` (Iceberg's RESTCatalog over the in-process
+   * REST-shaped adapter), exactly as RestShimPathSparkSqlSmokeTest configures it: only `catalog-impl`
+   * of the `openhouse` catalog changes; `default_iceberg` and every other property stay as on legacy.
+   */
+  val catalogPath: String =
+    sys.props.get("harness.catalogPath").orElse(sys.env.get("HARNESS_CATALOG_PATH")).getOrElse("legacy") match {
+      case p @ ("legacy" | "rest-shim") => p
+      case other => throw new IllegalArgumentException(s"Unknown catalog path: $other (expected legacy or rest-shim)")
+    }
+
+  private def catalogImpl(name: String): String =
+    if (catalogPath == "rest-shim" && name == "openhouse") RestShimCatalogImpl else LegacyCatalogImpl
+
   private def wireCatalog(builder: SparkSession.Builder, name: String, uri: String, token: String): SparkSession.Builder =
     builder
       .config(s"spark.sql.catalog.$name", "org.apache.iceberg.spark.SparkCatalog")
-      .config(s"spark.sql.catalog.$name.catalog-impl", "com.linkedin.openhouse.spark.OpenHouseCatalog")
+      .config(s"spark.sql.catalog.$name.catalog-impl", catalogImpl(name))
       .config(s"spark.sql.catalog.$name.uri", uri)
       .config(s"spark.sql.catalog.$name.cluster", "local-cluster")
       .config(s"spark.sql.catalog.$name.auth-token", token)
@@ -177,6 +196,7 @@ object OpenHouseEnv {
       .config("spark.ui.enabled", "false")
 
     val wired = Seq("openhouse", "default_iceberg").foldLeft(base)(wireCatalog(_, _, uri, token))
+    println(s">> catalog path: $catalogPath (openhouse catalog-impl = ${catalogImpl("openhouse")})")
     (server, wired.getOrCreate(), uri, token, htsCtxOpt)
   }
 }
