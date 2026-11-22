@@ -112,6 +112,6 @@ Java client over the native API (Iceberg's generic writers write the Parquet and
 client commits each append) and records what that client shows, for comparison. Its log and work
 directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`.
 
-Writes over IRC answer 406 until the write routes exist; the module pins what `INSERT` and
-`CREATE TABLE` show, so that test fails on purpose when they land.
+The service serves the IRC write routes; `SparkIrcWriteTest` pins that `CREATE TABLE` and `INSERT`
+succeed from Spark 4.2 and the rows read back, on tables it creates and drops.
 
