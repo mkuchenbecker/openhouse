@@ -615,6 +615,279 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     assertEquals(0, rows(spark, "SHOW DATABASES IN openhouse LIKE 'smoke_t1_new_ns'").size());
   }
 
+  // ---------- scenarios added with the REST-shaped path (work item C1) ----------
+  // Each records today's behavior for something the scenarios above do not pin and that the REST
+  // client handles differently from today's catalog unless the seam keeps today's behavior.
+
+  /**
+   * Property keys every new table gets today; values that vary (ids, times, paths) are not pinned.
+   */
+  private static final List<String> NEW_TABLE_PROPERTY_KEYS =
+      Arrays.asList(
+          "current-snapshot-id",
+          "format",
+          "format-version",
+          "history.expire.max-ref-age-ms",
+          "openhouse.clusterId",
+          "openhouse.creationTime",
+          "openhouse.databaseId",
+          "openhouse.isTableReplicated",
+          "openhouse.lastModifiedTime",
+          "openhouse.tableCreator",
+          "openhouse.tableId",
+          "openhouse.tableLocation",
+          "openhouse.tableType",
+          "openhouse.tableUUID",
+          "openhouse.tableUri",
+          "openhouse.tableVersion",
+          "policies",
+          "write.format.default",
+          "write.metadata.delete-after-commit.enabled",
+          "write.metadata.previous-versions-max",
+          "write.parquet.compression-codec");
+
+  private static List<String> propertyKeys(SparkSession spark, String table) {
+    return spark.sql("SHOW TBLPROPERTIES " + table).collectAsList().stream()
+        .map(r -> r.getString(0))
+        .sorted()
+        .collect(Collectors.toList());
+  }
+
+  @Test
+  public void s21_ctas_tablePropertiesMatchCreate() throws Exception {
+    SparkSession spark = sparkSession();
+    String src = table("s21_ctas_src");
+    String t = table("s21_ctas");
+    fresh(spark, t, src);
+    spark.sql("CREATE TABLE " + src + " (id bigint, name string)");
+    spark.sql("INSERT INTO " + src + " VALUES (1,'a')");
+    spark.sql("CREATE TABLE " + t + " AS SELECT * FROM " + src);
+
+    // CTAS gets exactly the properties a plain CREATE TABLE gets (no client-added keys such as
+    // created-at), from a single create: the table version is still the initial one.
+    assertEquals(NEW_TABLE_PROPERTY_KEYS, propertyKeys(spark, t));
+    assertEquals(NEW_TABLE_PROPERTY_KEYS, propertyKeys(spark, src));
+    assertEquals(
+        Collections.singletonList("openhouse.tableVersion,INITIAL_VERSION"),
+        rows(spark, "SHOW TBLPROPERTIES " + t + " ('openhouse.tableVersion')"));
+    assertEquals(
+        Collections.singletonList("openhouse.tableId,s21_ctas"),
+        rows(spark, "SHOW TBLPROPERTIES " + t + " ('openhouse.tableId')"));
+    assertEquals(
+        Collections.singletonList("1"), rows(spark, "SELECT count(*) FROM " + t + ".snapshots"));
+  }
+
+  @Test
+  public void s22_rtas_keepsPropertiesAndHistory() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s22_rtas");
+    String created = table("s22_rtas_new");
+    fresh(spark, t, created);
+    spark.sql("CREATE TABLE " + t + " (id bigint, name string) TBLPROPERTIES ('team'='x')");
+    spark.sql("INSERT INTO " + t + " VALUES (1,'a')");
+    spark.sql("ALTER TABLE " + t + " SET TBLPROPERTIES ('replace.enabled'='true')");
+    spark.sql(
+        "CREATE OR REPLACE TABLE "
+            + t
+            + " TBLPROPERTIES ('extra'='y') AS SELECT 7L AS id, 'z' AS name, 'q' AS more");
+
+    assertEquals(Collections.singletonList("7,z,q"), rows(spark, "SELECT * FROM " + t));
+    assertEquals(
+        Arrays.asList("id,bigint,null", "name,string,null", "more,string,null"),
+        rows(spark, "DESCRIBE " + t));
+    // Existing properties survive a replace; the replace adds its own.
+    assertEquals(
+        Collections.singletonList("team,x"), rows(spark, "SHOW TBLPROPERTIES " + t + " ('team')"));
+    assertEquals(
+        Collections.singletonList("extra,y"),
+        rows(spark, "SHOW TBLPROPERTIES " + t + " ('extra')"));
+    assertEquals(
+        Collections.singletonList("replace.enabled,true"),
+        rows(spark, "SHOW TBLPROPERTIES " + t + " ('replace.enabled')"));
+    assertEquals(
+        Collections.singletonList("openhouse.creationTime,0"),
+        rows(spark, "SHOW TBLPROPERTIES " + t + " ('openhouse.creationTime')"));
+    // The snapshot history is kept.
+    assertEquals(
+        Arrays.asList("append", "append"),
+        rows(spark, "SELECT operation FROM " + t + ".snapshots ORDER BY committed_at"));
+
+    // CREATE OR REPLACE of a missing table creates it.
+    spark.sql("CREATE OR REPLACE TABLE " + created + " AS SELECT 1L AS id");
+    assertEquals(Collections.singletonList("1"), rows(spark, "SELECT * FROM " + created));
+  }
+
+  @Test
+  public void s23_replaceTable_gatedByReplaceEnabled() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s23_replace");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+
+    // REPLACE TABLE without AS SELECT goes through the same gate.
+    assertFailure(
+        spark,
+        "REPLACE TABLE " + t + " (id bigint, x string)",
+        "org.apache.iceberg.exceptions.BadRequestException",
+        "REPLACE TABLE AS SELECT is not enabled for table " + t);
+    assertEquals(Collections.singletonList("id,bigint,null"), rows(spark, "DESCRIBE " + t));
+
+    spark.sql("ALTER TABLE " + t + " SET TBLPROPERTIES ('replace.enabled'='true')");
+    spark.sql("REPLACE TABLE " + t + " (id bigint, x string)");
+    assertEquals(Arrays.asList("id,bigint,null", "x,string,null"), rows(spark, "DESCRIBE " + t));
+  }
+
+  @Test
+  public void s24_namespaces_otherStatementsUnsupported() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s24_namespaces");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+
+    assertFailure(
+        spark,
+        "DESCRIBE NAMESPACE " + CAT_DB,
+        "java.lang.UnsupportedOperationException",
+        "Describing database is not supported");
+    assertFailure(
+        spark,
+        "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')",
+        "java.lang.UnsupportedOperationException",
+        "Set properties on a database is not supported");
+    assertFailure(
+        spark,
+        "DROP NAMESPACE " + CAT_DB,
+        "java.lang.UnsupportedOperationException",
+        "Describing database is not supported");
+    assertFailure(
+        spark,
+        "SHOW NAMESPACES IN " + CAT_DB,
+        "java.lang.UnsupportedOperationException",
+        "Openhouse supports 2-lvl namespace <schema>.<table>");
+    assertEquals(
+        Collections.singletonList(DB + ",s24_namespaces,false"),
+        rows(spark, "SHOW TABLES IN " + CAT_DB + " LIKE 's24_namespaces'"));
+  }
+
+  @Test
+  public void s25_showTables_withoutDatabase() throws Exception {
+    SparkSession spark = sparkSession();
+    String noDatabase =
+        "DatabaseId was not provided, for SQL please run \"SHOW TABLES IN <databaseId>\" instead";
+    assertFailure(
+        spark,
+        "SHOW TABLES IN openhouse",
+        "org.apache.iceberg.exceptions.ValidationException",
+        noDatabase);
+    try {
+      spark.sql("USE openhouse");
+      assertFailure(
+          spark, "SHOW TABLES", "org.apache.iceberg.exceptions.ValidationException", noDatabase);
+    } finally {
+      spark.sql("USE spark_catalog");
+    }
+  }
+
+  @Test
+  public void s26_describeExtended_nameTypeProvider() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s26_describe");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+
+    List<String> detail = rows(spark, "DESCRIBE TABLE EXTENDED " + t);
+    assertTrue(detail.contains("Name," + t + ","), detail.toString());
+    assertTrue(detail.contains("Type,MANAGED,"), detail.toString());
+    assertTrue(detail.contains("Provider,iceberg,"), detail.toString());
+    assertTrue(
+        detail.stream().anyMatch(r -> r.startsWith("Location,/tmp/" + DB + "/s26_describe-")),
+        detail.toString());
+  }
+
+  @Test
+  public void s27_unlock_unlockedAndMissingTable() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s27_unlock");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+    spark.conf().set("spark.sql.openhouse.unlock.enabled", "true");
+    try {
+      // Unlocking a table that holds no lock is a no-op.
+      spark.sql("ALTER TABLE " + t + " UNLOCK");
+      assertFailure(
+          spark,
+          "ALTER TABLE " + table("s27_missing") + " UNLOCK",
+          "com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException",
+          "User table " + DB + ".s27_missing cannot be found");
+    } finally {
+      spark.conf().unset("spark.sql.openhouse.unlock.enabled");
+    }
+  }
+
+  @Test
+  public void s28_views_disabledByDefault() throws Exception {
+    SparkSession spark = sparkSession();
+    assertFailure(
+        spark,
+        "CREATE VIEW " + table("s28_view") + " AS SELECT 1",
+        "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+        "[SCHEMA_NOT_FOUND]");
+    assertEquals(0, rows(spark, "SHOW VIEWS IN " + CAT_DB).size());
+    spark.sql("DROP VIEW IF EXISTS " + table("s28_view"));
+  }
+
+  @Test
+  public void s29_rename_rejected() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s29_rename");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint)");
+
+    assertFailure(
+        spark,
+        "ALTER TABLE " + t + " RENAME TO " + DB + ".s29_rename",
+        "com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException",
+        "Cannot rename a table to the same current db name and table name: s29_rename");
+    assertFailure(
+        spark,
+        "ALTER TABLE " + t + " RENAME TO other_catalog." + DB + ".s29_renamed",
+        "java.lang.UnsupportedOperationException",
+        "Cannot rename tables across catalogs: from="
+            + t
+            + ", to=other_catalog."
+            + DB
+            + ".s29_renamed");
+    assertFailure(
+        spark,
+        "ALTER TABLE " + table("s29_missing") + " RENAME TO " + DB + ".s29_missing2",
+        TABLE_NOT_FOUND_CLASS,
+        TABLE_NOT_FOUND);
+  }
+
+  @Test
+  public void s30_metadataTablesAndProcedure() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s30_meta");
+    fresh(spark, t);
+    spark.sql("CREATE TABLE " + t + " (id bigint, name string)");
+    spark.sql("INSERT INTO " + t + " VALUES (1,'a')");
+    spark.sql("ALTER TABLE " + t + " ALTER COLUMN name COMMENT 'hello'");
+
+    assertEquals(
+        Collections.singletonList("1"), rows(spark, "SELECT count(*) FROM " + t + ".history"));
+    assertEquals(
+        Collections.singletonList("1"), rows(spark, "SELECT count(*) FROM " + t + ".files"));
+    assertEquals(
+        Arrays.asList("id,bigint,null", "name,string,hello"), rows(spark, "DESCRIBE " + t));
+    assertEquals(
+        Collections.singletonList("0,0,0,0,0,0"),
+        rows(
+            spark,
+            "CALL openhouse.system.expire_snapshots(table => '"
+                + DB
+                + ".s30_meta', retain_last => 1)"));
+  }
+
   @Test
   public void s20_missingTable_select() throws Exception {
     SparkSession spark = sparkSession();

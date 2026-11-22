@@ -1,6 +1,9 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.gen.tables.client.api.TableApi;
+import com.linkedin.openhouse.gen.tables.client.invoker.ApiClient;
+import com.linkedin.openhouse.gen.tables.client.model.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
@@ -34,6 +37,7 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.SparkSession;
@@ -151,6 +155,8 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
           id("cpc_rename", "t_from"),
           id("cpc_rename", "t_to"),
           id("cpc_grants", "t1"),
+          id("cpc_locked", "t1"),
+          id("cpc_table_handle", "t1"),
           id(SparkItestColumnDefaults.DATABASE, "cpc_capability"),
           id(SparkItestColumnDefaults.DATABASE, "cpc_capability_plain"));
 
@@ -609,6 +615,46 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
         }
       };
     }
+  }
+
+  // ------------------------------------------------------------- 16. locked table
+
+  @Test
+  void tableExistsOnTableLockedAgainstReads() {
+    TableIdentifier tid = id("cpc_locked", "t1");
+    catalog.createTable(tid, SCHEMA);
+    ApiClient client = new ApiClient();
+    client.setBasePath(getOpenHouseLocalServerURI().toString());
+    client.addDefaultHeader(
+        "Authorization", "Bearer " + spark.conf().get("spark.sql.catalog.openhouse.auth-token"));
+    TableApi controls = new TableApi(client);
+    controls
+        .createLockV1(
+            "cpc_locked",
+            "t1",
+            new CreateUpdateLockRequestBody()
+                .locked(true)
+                .reason(CreateUpdateLockRequestBody.ReasonEnum.SYSTEM_ONLY))
+        .block();
+    try {
+      // Existence is answered without loading the table, which the lock blocks.
+      Assertions.assertTrue(catalog.tableExists(tid));
+      Assertions.assertEquals(423, statusOf(thrown(() -> catalog.loadTable(tid))));
+    } finally {
+      controls.deleteLockByReasonV1("cpc_locked", "t1", "SYSTEM_ONLY").block();
+    }
+    Assertions.assertNotNull(catalog.loadTable(tid));
+  }
+
+  // ------------------------------------------------------------- 17. table handle
+
+  @Test
+  void loadedTableNameAndFileIO() {
+    TableIdentifier tid = id("cpc_table_handle", "t1");
+    catalog.createTable(tid, SCHEMA);
+    Table table = catalog.loadTable(tid);
+    Assertions.assertEquals("openhouse.cpc_table_handle.t1", table.name());
+    Assertions.assertEquals(HadoopFileIO.class, table.io().getClass());
   }
 
   // ------------------------------------------------------------- 15. invalid identifier
