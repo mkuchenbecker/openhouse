@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 61 items in two repos. Each names what it needs and how it is proven. There is no order
+Bottom line: 63 items in two repos. Each names what it needs and how it is proven. There is no order
 beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -41,12 +41,14 @@ native REST.
 | I3 | ib | Core, API and ORC patches reapplied, one commit each. **Done 2026-11-22**: all core, API and ORC patches (iceberg pull requests 3 to 7). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. **Done 2026-11-22** (same pull requests). | I3 | Same. |
 | I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
-| I6a | oh | **In progress** on branch `irc/i6-iceberg-1.12-optin`. An opt-in build switch builds the newest OpenHouse variant against the fork's 1.12 line, and the default build is unchanged. The fork commit is pinned in the repo and published to a build-local Maven directory by a script. | I8 | The default build's CI is unchanged. The opt-in build compiles against the fork's artifacts. |
-| I6b | oh | **In progress** on the same branch. Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
-| I6c | oh | **In progress** on the same branch. Client fixes for 1.12 runtime changes: null table location, and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
+| I6a | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. An opt-in build switch builds the newest OpenHouse variant against the fork's 1.12 line, and the default build is unchanged. The fork commit is pinned in the repo and published to a build-local Maven directory by a script. Iceberg side: pull request 9 (`irc/publish-plumbing`) merged into `openhouse-1.12.0` as merge commit 984904f02. | I8 | The default build's CI is unchanged. The opt-in build compiles against the fork's artifacts. |
+| I6b | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
+| I6c | oh | Done 2026-11-22 (draft pull request 87, branch `irc/i6-iceberg-1.12-optin`); merged when its CI run finishes. Client fixes for 1.12 runtime changes: null table location (D13), and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
 | I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
 | I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9 lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
 | I6f | oh | **Not started.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
+| I6g | oh | Under the opt-in switch the Iceberg 1.2 / Spark 3.1 projects are excluded from the build (D15). | I6a | The opt-in build resolves and compiles every remaining project, and the default build is unchanged. |
+| I6h | oh | Tests whose expected result differs by Iceberg line state both expectations (D14): the RTAS partition-column case and the `CREATE NAMESPACE` message. | I6a | Those two tests pass on both builds. |
 
 ## Client seam
 
@@ -110,14 +112,6 @@ From `14-native-defaults-design.md`, adopted in D11. Tests come first for every 
 | W9 | ib | Spark SQL statements for setting defaults. Not built now (D11). | none | Not applicable. |
 | W11 | ib | Later, only if needed: a Spark 4.2 ORC opt-in for default filling. | W1 | A Spark 4.2 ORC default-fill test. |
 
-## Who does the work
-
-Claude orchestrates and reviews every item before it is called done. Delegation by difficulty:
-
-- Smallest capable agent: P2, I2, T2, and all inventories and verification runs.
-- Mid-tier agent: T1, T3, T4, I3 to I5, V2, V4, V6, V7, V10, X5.
-- Most capable agent, or Claude directly: C1, C2, V1, V3, V5, V8, V9, V11, V12, N1 to N3, X1 to X4, X6, X7.
-
 ## Added since the list was written
 
 | ID | Repo | Leaves true | Needs | Proven by |
@@ -136,15 +130,16 @@ The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on
 
 ## State
 
-Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. Decided: I6e (D3). Left unaddressed: I9 (D4).
 Merged into `irc-integration` (mkuchenbecker/openhouse): pull requests 80 (T1, merge commit 37b89f0b), 81
-(T3, d5c34e74), 82 (T4, 85614361) and 85 (T2, 8bda0f6b). Merged into `openhouse-1.12.0`
-(mkuchenbecker/iceberg): pull requests 3 to 8 (merge commits d1bc71955, cf9dda5d0, ec85656d7, ad3935012,
-4856ced1e, b35e56908). That branch now contains the validated tip f180ae589.
+(T3, d5c34e74), 82 (T4, 85614361), 83 (T5, merge commit 2334b050), 84 (C1, merge commit 4f15a3a3) and 85
+(T2, 8bda0f6b). Pull requests 86 (T2b) and 87 (I6a to I6c) are ready and merge when their CI runs finish.
+Merged into `openhouse-1.12.0` (mkuchenbecker/iceberg): pull requests 3 to 9. Decided: I6e (D3). Left
+unaddressed: I9 (D4).
 
-Waiting only for their CI runs to finish before merging: pull requests 83 (T5), 84 (C1) and 86 (T2b). The
-branches for 84 and 86 are up to date with `irc-integration` (heads 955f762c and 6eed38e7).
+In progress: I5 (Spark 4.2) and V2 (IRC read endpoints, branch `irc/v2-irc-read-endpoints`). Next when a
+build slot frees: W1 and W2 (Iceberg fork), then W3, W4, I6g and I6h together on the opt-in build, then C2
+and V1. Nothing is waiting on Mike. Decisions on two-way doors are in `13-decisions.md` and
+`16-decisions-continued.md`.
 
-In progress: I5, and I6a to I6c. Next when a build slot frees: W1 and W2, C2, V1, V2. Not started after
-those: T6, T7, C3, C4, I7, I6d, I6f, W3 onward and the remaining service items. Nothing is waiting on
-Mike. Decisions on two-way doors are in `13-decisions.md`.
+Opt-in build result (`15-optin-build-result.md`): every listed suite passes except 10 tests, all from
+Iceberg behavior differences that W3, W4 and I6h address.

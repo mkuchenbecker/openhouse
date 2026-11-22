@@ -3,8 +3,7 @@
 Bottom line: decisions Claude made on two-way doors (S41, S43). Each has its reason, the evidence it rests
 on, and how to reverse it. None is agreed by Mike unless the entry cites a statement.
 
-Dates are all 2026-11-22. Claude wrote every entry. Where an entry says "Claude's reading" or "Claude's
-inference", that part is judgement and not something Mike said.
+Dates are all 2026-11-22. Claude wrote every entry; "Claude's reading" marks judgement Mike did not state.
 
 ## D1. Catalog path selection and the seam as built
 
@@ -147,3 +146,5 @@ inference", that part is judgement and not something Mike said.
 - Why: none can be undone. Iceberg cannot downgrade v3, and legacy clients cannot load v3.
 - References: `14-native-defaults-design.md`, "One-way doors"; item W8 in `04-work.md`.
 - Reverse by: not applicable; each door is approved per table.
+
+Continued in `16-decisions-continued.md` (D13 onward).
