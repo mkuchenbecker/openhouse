@@ -1,0 +1,78 @@
+# What Mike said
+
+Bottom line: this file holds only statements Mike made, paraphrased tightly and grouped. Nothing here is
+Claude's judgement. Claude's inferences live in `02-inferred.md`. If a line here is wrong, it is a
+transcription error and should be fixed here.
+
+## Goal
+
+- S1. Add Iceberg REST Catalog (IRC) spec support and Iceberg v3 support to OpenHouse.
+- S2. The work happens on the `mkuchenbecker` forks.
+- S3. The outcome is a series of changes across multiple repos that culminate in a valid state where IRC
+  is supported.
+- S4. Views, multi-table transactions, scan planning, credential vending, register, and replication of v3
+  tables are in scope. The work is massive.
+- S5. "v3" is a label. Functional changes are needed for it to work.
+
+## What is and is not a concern
+
+- S6. Consumers are not the concern. There is a catalog plugin in the Iceberg fork.
+- S7. The fate of the native API is not the concern.
+- S8. Migration is not a concern. Valid state is.
+- S9. Behavior changes are the most expensive thing. "Do not change behavior" is not to be taken to an
+  extreme.
+- S10. The surface area that matters for behavior is Spark SQL, not the catalog APIs.
+
+## Prerequisites
+
+- S11. Prerequisites are built first.
+- S12. A prerequisite for both repos is to sync with the LinkedIn upstream.
+- S13. The forks should be 1:1 equal to LinkedIn at the start.
+- S14. The fork's existing `1.11.x` branch needs validation. Preference: start from scratch and reapply.
+
+## Architecture
+
+- S15. Today's architecture is four layers: catalog plugin, OpenHouse client, OpenHouse service,
+  OpenHouse implementation.
+- S16. Client features should be modeled as capabilities.
+- S17. The direction is a native REST client.
+- S18. The OpenHouse client should probably be hidden behind a REST-shaped API, so the catalog path can be
+  swapped with a config.
+- S19. Confirmed: that seam is in-process, inside the plugin, with the legacy client implementing a
+  REST-shaped client interface.
+- S20. In that world the client is reusable outside LinkedIn through the plugin architecture.
+- S21. Ideally catalog capabilities are modeled so they compose with REST. Not strictly required.
+
+## Platforms
+
+- S22. Spark 3.5 is fine for now. The target to be looking at is 4.2+.
+- S23. A Spark 4.2 target platform with IRC is valid.
+
+## Tests
+
+- S24. The delta-harness does some of the work. Claude should use independent judgement and land it.
+- S25. Fewer tests that act as smoke tests may be the better way to get off the ground.
+- S26. When changing a module, use TDD and test it black box before changing it.
+- S27. Each piece of work has tests and is validated along the way.
+
+## Execution model
+
+- S28. This is a list of work and dependencies. Phases and sequencing are the wrong model.
+- S29. Claude is the orchestrator. It delegates to preserve its own context and uses less capable models
+  where the task allows.
+
+## How to work with Mike
+
+- S30. Keep what Mike said separate from what Claude inferred.
+- S31. "Continue" is not agreement with Claude's work. Inferred requirements stay Claude's judgement
+  until Mike says otherwise.
+- S32. About 200 lines of prose is the most Mike can review well at one time.
+- S33. Bottom line up front. Know the audience.
+
+## Decisions on Claude's questions (2026-11-22)
+
+- S34. Reset the openhouse fork's main to LinkedIn main, and rewrite history.
+- S35. The openhouse build depends on the mkuchenbecker Iceberg fork for the new Iceberg line.
+- S36. The clean Iceberg base is Apache 1.12.
+- S37. After the reset of main was refused by a repository rule: Claude is mistaking form for function
+  and getting blocked far too early. It is not blocked.
