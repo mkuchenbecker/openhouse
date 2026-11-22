@@ -124,3 +124,7 @@ revapi and spotless pass. Checkstyle fails in 4 files, each introduced by one br
 Not run: Flink, Kafka Connect, Spark 4.0 and 4.1, Scala 2.12, the spark-runtime modules, open-api tests,
 and Spark 4.2 beyond the six baseline classes. A fix for the 8 test failures and the 4 style failures is
 in progress. I8 is validated, with fixes in progress. It is not done.
+
+## Fourth round (harness through the REST-shaped path)
+
+The first version of the faithful stand-in fixed only one of the two source copies; the copy used by Spark integration tests and the harness still accepted two commits on one base version. Found by running the harness through the REST-shaped path.

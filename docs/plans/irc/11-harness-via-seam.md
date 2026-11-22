@@ -72,3 +72,17 @@ This is a metadata difference, visible in the `snapshots` and `history` tables a
 The first two rest-shim real-service attempts were killed by the out-of-memory killer (exit 137, about 4.2 to 4.4 GB resident). The memory cgroup was full while another process ran its Gradle test workers. Neither attempt reached the results printout. The third attempt, with the off-heap caps listed above, completed. The heap stayed at `-Xmx3g`.
 
 Legacy full-run counts come from the baseline record. The base commit for that record is bb8929e1. The only non-test change on `irc/c1-rest-shaped-seam` is the addition of the seam classes and an `iceberg-data` exclusion in the itest `build.gradle`. The harness's `print-cp.init.gradle` already applies that exclusion. Legacy was run again only as the `delete parquet` slice and in the 50-run race probe.
+
+## Stand-in defect and fix
+
+With `irc/t4b-faithful-standin` merged as first shipped, the RTAS was lost in 13 of 200 races on the REST-shaped path: 0 of 100 for orc and 13 of 100 for parquet.
+
+The cause is in the stand-in. The copy shipped in the test-fixtures jars reads the row through an entity finder, which can return a stale entity. The copy used by the tables-service tests uses the scalar query `findStoredLocation`.
+
+Commit 2969044d makes the fixtures copy use the scalar read. The new deterministic test `HouseTablesH2SaveVersionTest` failed before the fix and passes after it.
+
+After the fix, 0 of 200 races lost the RTAS in each of two separate probe runs. The instrumented run logged 1000 accepted saves and 406 rejected saves. 102 of the 200 races had at least one stale-version rejection, and every rejection was followed by an accepted retry.
+
+The full matrix on the REST-shaped path with the stub, on the corrected tree, gave 2574 cases: 2560 passed, 3 failed (the known lock cases), and 11 skipped.
+
+Not run on that tree: the legacy full matrix, real-service mode, and the Spark smoke and contract suites.
