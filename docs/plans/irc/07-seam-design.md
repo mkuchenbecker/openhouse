@@ -1,6 +1,6 @@
 # Design note: the catalog plugin seam
 
-**Proposal, not a decision. Delegated agent's reading of the code. Not agreed.**
+**Adopted on 2026-11-22 as built in pull request 84 (see `13-decisions.md` D1). Written before the seam was built; `09-seam-result.md` records what was measured.**
 
 Bottom line: the seam is feasible on the Iceberg 1.5.2 line without touching any class on today's
 path. A new `RESTCatalog` subclass gets the adapter through Iceberg's public constructor. 1.2.0 can

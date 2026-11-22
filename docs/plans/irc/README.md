@@ -17,6 +17,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `10-v2-defaults.md` | Whether column defaults on v2 tables survive the 1.12 line | Observation by a delegated agent |
 | `11-harness-via-seam.md` | Delta-harness counts through the REST-shaped path, and the differences it showed | Observation by a delegated agent |
 | `12-openhouse-on-1.12-scout.md` | Local scouting of OpenHouse on the fork's Iceberg 1.12 line: what compiles, what fails, and how the fork could be resolved | Observation by a delegated agent |
+| `13-decisions.md` | Decisions Claude made on two-way doors, each with reason, references and how to reverse it | Claude, not agreed unless it cites a statement |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
 

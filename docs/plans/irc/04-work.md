@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 49 items in two repos. Each names what it needs and how it is proven. There is no order
+Bottom line: 52 items in two repos. Each names what it needs and how it is proven. There is no order
 beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -13,7 +13,7 @@ native REST.
 - Tests come first. A change to a module starts with black-box tests of that module passing against the
   unchanged code.
 - An item is done when its "Proven by" holds and everything that passed before still passes.
-- A difference in Spark SQL behavior stops the item and goes to Mike as a priced decision (J18).
+- A difference in Spark SQL behavior is decided by Claude when it is a two-way door and recorded in `13-decisions.md`; only one-way doors go to Mike (D10).
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ native REST.
 | I6b | oh | **In progress** on the same branch. Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
 | I6c | oh | **In progress** on the same branch. Client fixes for 1.12 runtime changes: null table location, and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
 | I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
-| I6e | oh | **Waiting on Mike.** Fate of the Iceberg 1.2 / Spark 3.1 line once shared server modules need Java 17 and Iceberg 1.12. | a decision | The decision is recorded here. The 1.2 line is either kept with its own pinned copies or retired. |
+| I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9 lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
 | I6f | oh | **Not started.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
 
 ## Client seam
@@ -111,20 +111,25 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 | T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
 | I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | **Done 2026-11-22** (branch `irc/reapply-all` tip f180ae589, draft pull request 8 in mkuchenbecker/iceberg). The 8 test failures and 4 checkstyle failures are fixed on their source branches and merged forward. Verified by the touched classes plus compile and style on the combined branch; full suites not re-run after the fixes. |
-| X0 | ib, oh | Schema changes work on v2 tables that carry column defaults on the 1.12 line. | I3, a decision (see `10-v2-defaults.md`) | The second ALTER TABLE in the column-default Spark test passes on the new line. |
-| I9 | ib | Delete-file replication is safe on non-HDFS storage. | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
+| X0 | ib, oh | The new Iceberg line has a defined, tested behavior for existing v2 tables that carry OpenHouse column defaults, with native Iceberg defaults as the target (S47, D5). | I3 | Defined by the design in progress. |
+| I9 | ib | Recorded and deliberately unaddressed (S45, D4). | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
+| C3 | oh | A gated RTAS on the REST-shaped path writes no data file before the server rejects it. | C1 | No orphan file after a rejected RTAS, on both paths. |
+| C4 | oh | Property and policy commits from a stale handle fail on the REST-shaped path as they do on the legacy path. | C1 | `rawCommitWithStaleBaseFails` passes on both paths for property-only commits. |
+| T7 | oh | Storage performance tiering replaces the replication-factor property. | nothing | Not designed (S45). |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.
 
 ## State
 
-Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. T2b is draft pull request 86 in
-mkuchenbecker/openhouse, into `irc/c1-rest-shaped-seam`, on branch `irc/t2b-harness-via-seam`. The harness
-path is selected by `HARNESS_CATALOG_PATH=legacy|rest-shim`. Stand-in stale-read defect fixed on
-`irc/t4b-faithful-standin` (commit 2969044d, pull request 83); lost RTAS 0 of 200 races afterwards. In
-progress, delegated: I5, Spark patches applied to the Spark 4.2 modules, branch `irc/spark42-patches`; I6a,
-I6b and I6c on branch `irc/i6-iceberg-1.12-optin`. I6 scouting is done, local only and nothing pushed (see
-`12-openhouse-on-1.12-scout.md`). Waiting on a decision from Mike: X0, I9, I6e, RTAS after a dropped
-partition source column behaves differently on 1.12 (one test), and review of the seam design before C2 and
-the service items start. Not started: T6, I7, I6d, I6f and all service items. Draft pull requests are open on both forks and
-none is merged.
+Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. Decided: I6e (D3). Recorded and deliberately
+unaddressed: I9 (D4).
+
+In progress: I5 (Spark patches applied to the Spark 4.2 modules, branch `irc/spark42-patches`); I6a, I6b
+and I6c (branch `irc/i6-iceberg-1.12-optin`); the X0 design; and merges of the green pull requests into
+`irc-integration` and of the Iceberg patch pull requests into `openhouse-1.12.0` (D6). Merges are in
+progress and are controlled by Claude on branches.
+
+Nothing is waiting on Mike. Decisions on two-way doors are in `13-decisions.md`.
+
+Next when a build slot frees: C2, V1, V2. Not started after those: T6, T7, C3, C4, I7, I6d, I6f and the
+remaining service items.

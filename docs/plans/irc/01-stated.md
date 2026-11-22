@@ -79,3 +79,18 @@ transcription error and should be fixed here.
 - S38. Use a branch. Main was never a requirement.
 - S39. The mkuchenbecker forks are a requirement.
 - S40. Claude must preserve its own context. Claude orchestrates. If Claude writes code itself, it has failed. Delegate.
+
+## Statements of 2026-11-22, later
+
+- S41. Claude is not to wait for Mike for anything that Claude could decide and that is a two-way door.
+- S42. When Mike asks for status, assume he has zero context from his last message.
+- S43. Making a design and expecting a review was a failure: it blocked needlessly. The decisions made
+  should be recorded with references that can be audited later.
+- S44. "i don't care about spark 1.2."
+- S45. Replication is a leaking implementation detail. Make a task but leave it unaddressed, because Mike
+  does not care. Long term, imagine performance tiering with managed performance. He cannot state strongly
+  enough how much replication is an implementation detail.
+- S46. Merges are fully controlled by Claude on branches. Each commit must have its qualitative "why"
+  captured for auditability.
+- S47. Column defaults are tricky. Mike thinks Parquet should be the target over ORC, with native Iceberg
+  default values rather than OpenHouse default values.
