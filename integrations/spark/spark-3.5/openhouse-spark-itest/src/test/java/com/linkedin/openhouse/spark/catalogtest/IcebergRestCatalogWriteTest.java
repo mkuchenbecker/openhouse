@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Arrays;
 import java.util.Collections;
@@ -227,7 +228,11 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
             .withPartitionPath("p=x")
             .build();
     table.newRowDelta().addDeletes(positions).commit();
-    Assertions.assertEquals("overwrite", table.currentSnapshot().operation());
+    // A row delta that only adds delete files: "overwrite" on Iceberg 1.5.2, "delete" on 1.12,
+    // whose BaseRowDelta names that case a delete. The client names it; the server stores it.
+    Assertions.assertEquals(
+        IcebergLine.current() == IcebergLine.LEGACY ? "overwrite" : "delete",
+        table.currentSnapshot().operation());
     Assertions.assertEquals(
         "1", openhouse.loadTable(id("ops")).currentSnapshot().summary().get("added-delete-files"));
     assertSameView("ops");

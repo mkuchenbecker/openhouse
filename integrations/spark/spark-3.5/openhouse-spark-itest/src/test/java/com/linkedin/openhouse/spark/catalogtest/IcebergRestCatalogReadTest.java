@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.OpaAuthorizationHandler;
@@ -152,6 +153,11 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
 
   /** The plain existing Java client, configured like the engine's catalog. */
   private Catalog javaCatalog() {
+    return javaCatalog(Collections.emptyMap());
+  }
+
+  /** {@link #javaCatalog()} with {@code extra} catalog properties. */
+  private Catalog javaCatalog(Map<String, String> extra) {
     Map<String, String> properties = new HashMap<>();
     String prefix = "spark.sql.catalog.openhouse.";
     scala.collection.JavaConverters.mapAsJavaMap(spark.conf().getAll())
@@ -161,6 +167,7 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
                 properties.put(k.substring(prefix.length()), v);
               }
             });
+    properties.putAll(extra);
     return CatalogUtil.loadCatalog(
         "com.linkedin.openhouse.javaclient.OpenHouseCatalog",
         "openhouse",
@@ -384,12 +391,17 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
         ((HasTableOperations) viaOpenHouse).operations().getClass().getName());
     // last-updated-ms: the server sends the stored value, but RESTCatalog 1.5.2 rebuilds the
     // metadata to attach its location (LoadTableResponse.tableMetadata()), and Iceberg's builder
-    // stamps the current time. Everything else in the metadata is identical.
+    // stamps the current time. Iceberg 1.12 keeps the stored value, so on that line the two agree.
+    // Everything else in the metadata is identical.
     TableMetadata r = current(viaRest);
     TableMetadata o = current(viaOpenHouse);
-    Assertions.assertTrue(
-        r.lastUpdatedMillis() > o.lastUpdatedMillis(),
-        r.lastUpdatedMillis() + " vs " + o.lastUpdatedMillis());
+    if (IcebergLine.current() == IcebergLine.LEGACY) {
+      Assertions.assertTrue(
+          r.lastUpdatedMillis() > o.lastUpdatedMillis(),
+          r.lastUpdatedMillis() + " vs " + o.lastUpdatedMillis());
+    } else {
+      Assertions.assertEquals(o.lastUpdatedMillis(), r.lastUpdatedMillis());
+    }
     Assertions.assertEquals(withoutLastUpdated(o), withoutLastUpdated(r));
   }
 
@@ -401,11 +413,22 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
    * RESTCatalog that declares it (as a configured header) loads the stored metadata and receives
    * the read-bridge config in the load response, which Iceberg applies only as table FileIO
    * properties; it does not apply column defaults.
+   *
+   * <p>The OpenHouse client that creates and loads the table must declare the capability. On the
+   * legacy line that is the engine's catalog. On the v3 line the engine's catalog declares nothing
+   * (decision D11a), so a Java client declaring it through its configured header stands in for a
+   * legacy client, and it applies no read-bridge overlay.
    */
   @Test
   void aTableRequiringACapabilityIsGatedAsForTheExistingClient() throws Exception {
     TableIdentifier id = TableIdentifier.of(SparkItestColumnDefaults.DATABASE, "irc_capability");
-    engineOpenhouse
+    boolean legacyLine = IcebergLine.current() == IcebergLine.LEGACY;
+    Catalog declaringOpenhouse =
+        legacyLine
+            ? engineOpenhouse
+            : javaCatalog(
+                Collections.singletonMap("header." + CAPABILITIES_HEADER, "column-defaults"));
+    declaringOpenhouse
         .buildTable(
             id,
             new Schema(
@@ -437,13 +460,15 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
             token("irc_reader"),
             Collections.singletonMap("header." + CAPABILITIES_HEADER, "column-defaults"))) {
       Table viaRest = declaring.loadTable(id);
-      Table viaEngine = engineOpenhouse.loadTable(id);
+      Table viaEngine = declaringOpenhouse.loadTable(id);
       Assertions.assertEquals(
           current(viaEngine).metadataFileLocation(), current(viaRest).metadataFileLocation());
       Assertions.assertEquals(viaEngine.properties(), viaRest.properties());
-      // The engine's client applies the column defaults the config carries to its schema; the
-      // RESTCatalog applies none and shows the schema as stored.
-      Assertions.assertEquals("US", viaEngine.schema().findField("country").initialDefault());
+      // On the legacy line the engine's client applies the column defaults the config carries to
+      // its schema; on the v3 line it applies none (decision D11a). The RESTCatalog applies none
+      // and shows the schema as stored.
+      Assertions.assertEquals(
+          legacyLine ? "US" : null, viaEngine.schema().findField("country").initialDefault());
       Assertions.assertNull(viaRest.schema().findField("country").initialDefault());
       Assertions.assertEquals(
           viaEngine.schema().asStruct().fields().size(),

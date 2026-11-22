@@ -4,6 +4,7 @@ import static org.mockito.ArgumentMatchers.*;
 
 import com.linkedin.openhouse.cluster.storage.filesystem.ParameterizedHdfsStorageProvider;
 import com.linkedin.openhouse.datalayout.strategy.DataLayoutStrategy;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.jobs.util.DatabaseTableFilter;
 import com.linkedin.openhouse.jobs.util.DirectoryMetadata;
 import com.linkedin.openhouse.jobs.util.HistoryConfig;
@@ -79,8 +80,31 @@ public class TablesClientTest {
   private DatabaseApi dbApiMock;
   private StorageClient storageClient;
 
+  /**
+   * The jobs client declares {@code column-defaults} as the Spark catalogs do on the same Iceberg
+   * line (decision D11a, work item W12): on the legacy line, as before; on the v3 line not, so the
+   * scheduler does not pick up tables the v3 catalogs of its jobs would refuse.
+   */
   @Test
-  void testSystemActionHeaderIsSentOnlyWhenRequestedAndColumnDefaultsAlways() throws IOException {
+  void testDeclaresColumnDefaultsAsTheSparkCatalogsDoOnThisIcebergLine() {
+    Assertions.assertEquals(
+        IcebergLine.current().usesReadBridge(), TablesClientFactory.declaresColumnDefaults());
+  }
+
+  /**
+   * Without IcebergLine on the classpath (the scheduler's own jar carries neither it nor Iceberg),
+   * the line cannot be detected and the client declares {@code column-defaults} as before.
+   */
+  @Test
+  void testDeclaresColumnDefaultsAsBeforeWhenTheIcebergLineCannotBeDetected() {
+    Assertions.assertTrue(
+        TablesClientFactory.declaresColumnDefaults(
+            "com.linkedin.openhouse.javaclient.NoSuchIcebergLine"));
+  }
+
+  @Test
+  void testSystemActionHeaderIsSentOnlyWhenRequestedAndColumnDefaultsPerIcebergLine()
+      throws IOException {
     List<String> declarations = Collections.synchronizedList(new ArrayList<>());
     List<String> capabilities = Collections.synchronizedList(new ArrayList<>());
     HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
@@ -113,7 +137,10 @@ public class TablesClientTest {
       server.stop(0);
     }
     Assertions.assertEquals(Arrays.asList("SYSTEM", "SYSTEM", null, null), declarations);
-    Assertions.assertEquals(Collections.nCopies(4, "column-defaults"), capabilities);
+    Assertions.assertEquals(
+        Collections.nCopies(
+            4, IcebergLine.current() == IcebergLine.LEGACY ? "column-defaults" : null),
+        capabilities);
   }
 
   @BeforeEach
