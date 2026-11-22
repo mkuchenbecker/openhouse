@@ -53,6 +53,16 @@ final class CommitPathHttp {
             .accept(MediaType.APPLICATION_JSON));
   }
 
+  /** POST with an explicit path database, for path/body mismatch cases. */
+  static ResultActions post(MockMvc mvc, String pathDb, CreateUpdateTableRequestBody body)
+      throws Exception {
+    return mvc.perform(
+        MockMvcRequestBuilders.post(String.format("%s/databases/%s/tables/", V1, pathDb))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body.toJson())
+            .accept(MediaType.APPLICATION_JSON));
+  }
+
   static ResultActions put(MockMvc mvc, CreateUpdateTableRequestBody body) throws Exception {
     return mvc.perform(
         MockMvcRequestBuilders.put(tableUrl(body.getDatabaseId(), body.getTableId()))
@@ -128,6 +138,16 @@ final class CommitPathHttp {
 
   static ResultActions unlock(MockMvc mvc, String db, String table) throws Exception {
     return mvc.perform(MockMvcRequestBuilders.delete(tableUrl(db, table) + "/lock"));
+  }
+
+  /** A builder pre-filled from {@code body}; the request class has no toBuilder of its own. */
+  static IcebergSnapshotsRequestBody.IcebergSnapshotsRequestBodyBuilder copy(
+      IcebergSnapshotsRequestBody body) {
+    return IcebergSnapshotsRequestBody.builder()
+        .baseTableVersion(body.getBaseTableVersion())
+        .jsonSnapshots(body.getJsonSnapshots())
+        .snapshotRefs(body.getSnapshotRefs())
+        .createUpdateTableRequestBody(body.getCreateUpdateTableRequestBody());
   }
 
   static String json(ResultActions actions) throws Exception {
