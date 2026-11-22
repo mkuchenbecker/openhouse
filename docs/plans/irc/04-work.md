@@ -26,10 +26,10 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| T1 | oh | A small Spark SQL smoke suite runs on Spark 3.5 against the real embedded service, with the catalog path as a parameter. | P1 | Green in CI. A deliberately broken rule turns it red. |
+| T1 | oh | A small Spark SQL smoke suite runs on Spark 3.5 against the real embedded service, with the catalog path as a parameter. **Done 2026-11-22** (pull request 80). | P1 | Green in CI. A deliberately broken rule turns it red. |
 | T2 | oh | The delta-harness is in the repo and runs on demand. | P1 | One full recorded run. |
-| T3 | oh | Black-box tests pin the catalog plugin's behavior as it is. | P1 | Green on unchanged code. |
-| T4 | oh | Black-box tests pin the service commit path over the native API, filling gaps only. | P1 | Green on unchanged code. |
+| T3 | oh | Black-box tests pin the catalog plugin's behavior as it is. **Done 2026-11-22** (pull request 81). | P1 | Green on unchanged code. |
+| T4 | oh | Black-box tests pin the service commit path over the native API, filling gaps only. **Done 2026-11-22** (pull request 82); conflict and soft-delete cases follow once the stand-in is faithful. | P1 | Green on unchanged code. |
 
 ## Iceberg line
 
@@ -37,7 +37,7 @@ native REST.
 | --- | --- | --- | --- | --- |
 | I1 | ib | A clean branch at Apache 1.12.0 builds untouched. **Proven 2026-11-22** for the modules listed in F4a; full Spark suites not run. | none | Apache's own tests pass for api, core, orc, parquet, Spark 3.5, Spark 4.2. |
 | I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or build plumbing. **Done 2026-11-22**: 13 reapply, 11 upstream, 5 plumbing (`05-iceberg-patch-ledger.md`). | P2 | 7 rows re-checked by Claude. |
-| I3 | ib | Core, API and ORC patches reapplied, one commit each. | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
+| I3 | ib | Core, API and ORC patches reapplied, one commit each. **In progress**: 4 of 13 done (iceberg pull request 3). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
 | I4 | ib | Spark 3.5 patches reapplied, one commit each. | I3 | Same. |
 | I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
 | I6 | ib, oh | The openhouse fork build resolves the new line's artifacts from the mkuchenbecker Iceberg fork (S35, J25). | I1 | A throwaway module compiles against them in CI. |
@@ -97,7 +97,16 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 - Mid-tier agent: T1, T3, T4, I3 to I5, V2, V4, V6, V7, V10, X5.
 - Most capable agent, or Claude directly: C1, C2, V1, V3, V5, V8, V9, V11, V12, N1 to N3, X1 to X4, X6, X7.
 
-## Ready now
+## Added since the list was written
 
-P1, P2, I1 and I2 are done. In progress, delegated: T1 (smoke suite) and the first four patches of I3 and
-I4. T2, T3 and T4 are ready and not started.
+| ID | Repo | Leaves true | Needs | Proven by |
+| --- | --- | --- | --- | --- |
+| T5 | oh | The house table test stand-in checks versions and deletes like the real store. | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
+| T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
+| I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
+
+## State
+
+Done: P1, P2, I1, I2, T1, T3, T4. In progress, delegated: I3 (delete-file replication chain), T5, and a
+design note for C1 (`07-seam-design.md`). Not started: T2, T6, I7. The four test and notes pull requests
+are open as drafts against `irc-integration` and are not merged.
