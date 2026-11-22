@@ -1,0 +1,87 @@
+[ {
+  "file" : "00000-uuid.metadata.json",
+  "metadata" : {
+    "format-version" : 2,
+    "table-uuid" : "uuid",
+    "location" : "/tmp/gold_create_plain/t-uuid",
+    "last-sequence-number" : 0,
+    "last-updated-ms" : 0,
+    "last-column-id" : 6,
+    "current-schema-id" : 0,
+    "schemas" : [ {
+      "type" : "struct",
+      "schema-id" : 0,
+      "fields" : [ {
+        "id" : 1,
+        "name" : "id",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 2,
+        "name" : "name",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 3,
+        "name" : "timestampCol",
+        "required" : true,
+        "type" : "timestamp"
+      }, {
+        "id" : 4,
+        "name" : "stats",
+        "required" : true,
+        "type" : "double"
+      }, {
+        "id" : 5,
+        "name" : "count",
+        "required" : true,
+        "type" : "int"
+      }, {
+        "id" : 6,
+        "name" : "timeLong",
+        "required" : true,
+        "type" : "long"
+      } ]
+    } ],
+    "default-spec-id" : 0,
+    "partition-specs" : [ {
+      "spec-id" : 0,
+      "fields" : [ ]
+    } ],
+    "last-partition-id" : 999,
+    "default-sort-order-id" : 0,
+    "sort-orders" : [ {
+      "order-id" : 0,
+      "fields" : [ ]
+    } ],
+    "properties" : {
+      "write.parquet.compression-codec" : "zstd",
+      "policies" : "",
+      "write.metadata.delete-after-commit.enabled" : "false",
+      "user.c" : "d",
+      "openhouse.isTableReplicated" : "false",
+      "openhouse.clusterId" : "local-cluster",
+      "openhouse.tableId" : "t",
+      "openhouse.lastModifiedTime" : "ts",
+      "openhouse.tableVersion" : "INITIAL_VERSION",
+      "user.a" : "b",
+      "write.format.default" : "orc",
+      "openhouse.creationTime" : "ts",
+      "openhouse.tableUri" : "local-cluster.gold_create_plain.t",
+      "write.metadata.previous-versions-max" : "100",
+      "openhouse.databaseId" : "gold_create_plain",
+      "openhouse.tableType" : "PRIMARY_TABLE",
+      "openhouse.tableLocation" : "/tmp/gold_create_plain/t-uuid/00000-uuid.metadata.json",
+      "openhouse.tableUUID" : "uuid",
+      "history.expire.max-ref-age-ms" : "604800000",
+      "openhouse.tableCreator" : "testUser"
+    },
+    "current-snapshot-id" : -1,
+    "refs" : { },
+    "snapshots" : [ ],
+    "statistics" : [ ],
+    "partition-statistics" : [ ],
+    "snapshot-log" : [ ],
+    "metadata-log" : [ ]
+  }
+} ]
