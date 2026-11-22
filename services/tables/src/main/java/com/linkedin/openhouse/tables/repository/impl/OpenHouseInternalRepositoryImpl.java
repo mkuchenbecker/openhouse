@@ -69,6 +69,7 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.Transaction;
@@ -247,6 +248,33 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
     return convertToTableDto(
         table, fileIOManager, partitionSpecMapper, policiesMapper, tableTypeMapper);
+  }
+
+  @Override
+  public TableMetadata stageCreate(TableDto tableDto) {
+    TableIdentifier tableIdentifier =
+        TableIdentifier.of(tableDto.getDatabaseId(), tableDto.getTableId());
+    Schema writeSchema = IcebergSchemaHelper.getSchemaFromSchemaJson(tableDto.getSchema());
+    Optional<HouseTable> occupant = catalog.findEntityById(tableIdentifier);
+    if (occupant.isPresent()) {
+      throw new AlreadyExistsException(
+          occupant.get().getEntityType(), tableDto.getDatabaseId() + "." + tableDto.getTableId());
+    }
+    creationEligibilityCheck(tableDto);
+    PartitionSpec partitionSpec = partitionSpecMapper.toPartitionSpec(tableDto);
+    Map<String, String> tableProps = computePropsForTableCreation(tableDto);
+    String tableLocation =
+        storageSelector
+            .selectStorage(tableDto.getDatabaseId(), tableDto.getTableId())
+            .allocateTableLocation(
+                tableDto.getDatabaseId(),
+                tableDto.getTableId(),
+                tableDto.getTableUUID(),
+                tableDto.getTableCreator(),
+                tableProps);
+    SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
+    return TableMetadata.newTableMetadata(
+        writeSchema, partitionSpec, sortOrder, tableLocation, tableProps);
   }
 
   protected Table createTable(

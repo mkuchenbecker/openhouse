@@ -9,6 +9,8 @@ import com.linkedin.openhouse.tables.api.spec.v0.response.components.AclPolicy;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.util.List;
+import java.util.UUID;
+import org.apache.iceberg.TableMetadata;
 import org.springframework.data.domain.Page;
 import org.springframework.data.util.Pair;
 
@@ -93,6 +95,29 @@ public interface TablesService {
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
       String tableCreatorUpdater,
       Boolean failOnExist);
+
+  /**
+   * Creates the table {@code createUpdateTableRequestBody} describes, exactly as {@link
+   * #putTable(CreateUpdateTableRequestBody, String, Boolean)} with {@code failOnExist} creates one,
+   * except that the table's OpenHouse UUID (which decides its location) is {@code tableUUID}
+   * instead of one derived from the request. For a caller that told its client the table's location
+   * before the create, in a staged create ({@link #stageCreateTable}).
+   */
+  Pair<TableDto, Boolean> createTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody,
+      String tableCreator,
+      UUID tableUUID);
+
+  /**
+   * What {@link #putTable(CreateUpdateTableRequestBody, String, Boolean)} would create for {@code
+   * createUpdateTableRequestBody}, after the same create checks in the same order (existence,
+   * create privilege, client capability, the create's own repository checks), with nothing written:
+   * no metadata file, no house-table row.
+   *
+   * @return the table's Iceberg metadata as the create would initialize it
+   */
+  TableMetadata stageCreateTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody, String tableCreator);
 
   /**
    * Delete a table represented by databaseId and tableId if actingPrincipal has the right privilege
