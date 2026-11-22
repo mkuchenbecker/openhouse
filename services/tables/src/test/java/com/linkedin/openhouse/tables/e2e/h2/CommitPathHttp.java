@@ -7,8 +7,16 @@ import static com.linkedin.openhouse.tables.model.TableModelConstants.buildGetTa
 
 import com.google.gson.Gson;
 import com.jayway.jsonpath.JsonPath;
+import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
+import org.junit.jupiter.api.Assertions;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -160,5 +168,67 @@ final class CommitPathHttp {
         .baseTableVersion(JsonPath.read(getJson, "$.tableLocation"))
         .stageCreate(false)
         .build();
+  }
+
+  /** Schema JSON with {@code column} removed. */
+  static String dropColumn(String schemaJson, String column) {
+    Schema schema = IcebergSchemaHelper.getSchemaFromSchemaJson(schemaJson);
+    return IcebergSchemaHelper.getSchemaJsonFromSchema(
+        new Schema(
+            schema.columns().stream()
+                .filter(f -> !f.name().equals(column))
+                .collect(Collectors.toList())));
+  }
+
+  /** Schema JSON with {@code column} given a new type, keeping its id and name. */
+  static String retypeColumn(String schemaJson, String column, Type type) {
+    Schema schema = IcebergSchemaHelper.getSchemaFromSchemaJson(schemaJson);
+    return IcebergSchemaHelper.getSchemaJsonFromSchema(
+        new Schema(
+            schema.columns().stream()
+                .map(
+                    f ->
+                        f.name().equals(column)
+                            ? Types.NestedField.of(f.fieldId(), f.isOptional(), f.name(), type)
+                            : f)
+                .collect(Collectors.toList())));
+  }
+
+  /** Schema JSON where {@code from} is renamed to {@code to}, keeping its id and type. */
+  static String renameColumn(String schemaJson, String from, String to) {
+    Schema schema = IcebergSchemaHelper.getSchemaFromSchemaJson(schemaJson);
+    return IcebergSchemaHelper.getSchemaJsonFromSchema(
+        new Schema(
+            schema.columns().stream()
+                .map(
+                    f ->
+                        f.name().equals(from)
+                            ? Types.NestedField.of(f.fieldId(), f.isOptional(), to, f.type())
+                            : f)
+                .collect(Collectors.toList())));
+  }
+
+  /** Schema JSON with one more optional column appended under a fresh id. */
+  static String addColumn(String schemaJson, String column, Type type) {
+    Schema schema = IcebergSchemaHelper.getSchemaFromSchemaJson(schemaJson);
+    List<Types.NestedField> columns = new ArrayList<>(schema.columns());
+    int nextId = columns.stream().mapToInt(Types.NestedField::fieldId).max().getAsInt() + 1;
+    columns.add(Types.NestedField.optional(nextId, column, type));
+    return IcebergSchemaHelper.getSchemaJsonFromSchema(new Schema(columns));
+  }
+
+  /** Asserts the HTTP status and that the error message contains the stable leading part. */
+  static void expectError(ResultActions actions, int status, String messagePart) throws Exception {
+    Assertions.assertEquals(status, status(actions), json(actions));
+    String message = message(actions);
+    Assertions.assertTrue(
+        message.contains(messagePart),
+        "expected message to contain [" + messagePart + "] but was [" + message + "]");
+  }
+
+  /** Asserts that a fresh GET returns exactly what an earlier GET returned. */
+  static void expectUnchanged(MockMvc mvc, String before, String db, String table)
+      throws Exception {
+    Assertions.assertEquals(before, json(get(mvc, db, table)));
   }
 }
