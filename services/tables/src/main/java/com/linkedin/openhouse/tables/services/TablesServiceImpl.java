@@ -25,6 +25,7 @@ import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
+import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultException;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
@@ -76,6 +77,23 @@ public class TablesServiceImpl implements TablesService {
         openHouseInternalRepository
             .findById(TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
             .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+    checkLoad(tableDto, actingPrincipal);
+    return tableDto;
+  }
+
+  @Override
+  public TableDtoWithMetadata loadTable(String databaseId, String tableId, String actingPrincipal) {
+    TableDtoWithMetadata loaded =
+        openHouseInternalRepository
+            .findWithMetadataById(
+                TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
+            .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+    checkLoad(loaded.getTableDto(), actingPrincipal);
+    return loaded;
+  }
+
+  /** The checks every table load passes, in order: lock, privilege, lock access, capability. */
+  private void checkLoad(TableDto tableDto, String actingPrincipal) {
     // Restricts reading table to users with lock admin Privileges
     if (LockPolicyValidator.isLegacyLocked(tableDto)) {
       authorizationUtils.checkLockTablePrivilege(tableDto, actingPrincipal, Privileges.LOCK_ADMIN);
@@ -84,7 +102,6 @@ public class TablesServiceImpl implements TablesService {
         tableDto, actingPrincipal, Privileges.GET_TABLE_METADATA);
     authorizationUtils.checkSystemOnlyLockAccess(tableDto, actingPrincipal);
     clientCapabilityGate.checkLoad(tableDto);
-    return tableDto;
   }
 
   /**

@@ -7,6 +7,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockReason;
 import com.linkedin.openhouse.tables.api.spec.v0.response.components.AclPolicy;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.util.Pair;
@@ -24,6 +25,14 @@ public interface TablesService {
    * @return TableDto.
    */
   TableDto getTable(String databaseId, String tableId, String actingPrincipal);
+
+  /**
+   * Same lookup and the same checks, in the same order, as {@link #getTable}; also returns the
+   * Iceberg table metadata the {@link TableDto} was built from, from the same load.
+   *
+   * @throws com.linkedin.openhouse.common.exception.NoSuchUserTableException if table is not found.
+   */
+  TableDtoWithMetadata loadTable(String databaseId, String tableId, String actingPrincipal);
 
   /**
    * Check whether a table identified by databaseId and tableId exists.

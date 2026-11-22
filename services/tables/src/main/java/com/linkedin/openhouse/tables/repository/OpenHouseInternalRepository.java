@@ -4,6 +4,7 @@ import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
+import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
@@ -27,6 +28,12 @@ public interface OpenHouseInternalRepository
    * full table state.
    */
   Optional<TableDto> findTableRefById(TableDtoPrimaryKey tableDtoPrimaryKey);
+
+  /**
+   * Like {@link #findById}, from the same single load of the table, and also returns the Iceberg
+   * table metadata the {@link TableDto} was converted from.
+   */
+  Optional<TableDtoWithMetadata> findWithMetadataById(TableDtoPrimaryKey tableDtoPrimaryKey);
 
   List<TableDtoPrimaryKey> findAllIds();
 
