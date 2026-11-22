@@ -1,0 +1,1108 @@
+package com.linkedin.openhouse.tables.e2e.h2;
+
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
+import static com.linkedin.openhouse.tables.e2e.h2.CommitPathHttp.*;
+import static com.linkedin.openhouse.tables.e2e.h2.IrcHttp.assertIrcError;
+import static com.linkedin.openhouse.tables.e2e.h2.IrcHttp.body;
+import static com.linkedin.openhouse.tables.model.IcebergSnapshotsModelTestUtilities.obtainSnapshotRefsFromSnapshot;
+import static com.linkedin.openhouse.tables.model.TableModelConstants.HEALTH_SCHEMA_LITERAL;
+import static com.linkedin.openhouse.tables.model.TableModelConstants.SORT_ORDER;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
+import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
+import com.linkedin.openhouse.tables.config.TablesMvcConstants;
+import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotParser;
+import org.apache.iceberg.SortOrder;
+import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.UpdateRequirement;
+import org.apache.iceberg.catalog.Catalog;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.UpdateTableRequest;
+import org.apache.iceberg.types.Types;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
+import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+
+/**
+ * The Iceberg REST Catalog (IRC) write routes at the HTTP boundary, on the full Spring context with
+ * the real internal catalog (same context as {@link IrcReadRoutesTest}).
+ *
+ * <p>Two kinds of test. Equivalence: the same write is made through the native API on one table and
+ * through IRC on another, and every metadata file each leaves is compared after the golden test's
+ * normalization (database names aside). Rules: a request that breaks a native rule is refused with
+ * the mapped IRC error, carrying the native message, and changes nothing. Every IRC request is
+ * built the way Iceberg's {@code RESTCatalog} builds it (see {@link IrcWrite}) and every response
+ * is parsed with the client's own parsers.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@Import(IrcReadRoutesTest.StubDefaults.class)
+@ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
+public class IrcWriteRoutesTest {
+  private static final String CAPABILITIES = TablesMvcConstants.HTTP_HEADER_CLIENT_CAPABILITIES;
+  private static final String DEFAULTS_DB = "irc_defaults";
+
+  @Autowired MockMvc mvc;
+  @Autowired Catalog catalog;
+
+  private final List<String[]> created = new ArrayList<>();
+
+  @AfterEach
+  void cleanUp() throws Exception {
+    for (String[] key : created) {
+      mvc.perform(
+          MockMvcRequestBuilders.delete(tableUrl(key[0], key[1]))
+              .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS));
+    }
+    created.clear();
+  }
+
+  // ---------------------------------------------------------------- fixtures
+
+  private static final Schema SCHEMA =
+      IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL);
+
+  /** The native test table without policies (IRC cannot send policies yet). */
+  private static CreateUpdateTableRequestBody nativeBody(String db) {
+    return newTable(db, "t").toBuilder().policies(null).build();
+  }
+
+  private static CreateUpdateTableRequestBody plainBody(String db) {
+    return nativeBody(db).toBuilder().timePartitioning(null).clustering(null).build();
+  }
+
+  /** The IRC create equivalent to {@link #nativeBody}: same schema, spec, properties. */
+  private static CreateTableRequest ircCreate(String table) {
+    return CreateTableRequest.builder()
+        .withName(table)
+        .withSchema(SCHEMA)
+        .withPartitionSpec(
+            PartitionSpec.builderFor(SCHEMA)
+                .hour("timestampCol")
+                .identity("id")
+                .truncate("name", 10)
+                .build())
+        .setProperties(nativeBody("x").getTableProperties())
+        .build();
+  }
+
+  private static CreateTableRequest ircCreatePlain(String table) {
+    return CreateTableRequest.builder()
+        .withName(table)
+        .withSchema(SCHEMA)
+        .setProperties(nativeBody("x").getTableProperties())
+        .build();
+  }
+
+  private String createNative(CreateUpdateTableRequestBody body) throws Exception {
+    created.add(new String[] {body.getDatabaseId(), body.getTableId()});
+    post(mvc, body).andExpect(status().isCreated());
+    return json(get(mvc, body.getDatabaseId(), body.getTableId()));
+  }
+
+  private void track(String db, String table) {
+    created.add(new String[] {db, table});
+  }
+
+  private void assertSameStored(String nativeDb, String ircDb) throws Exception {
+    String expected = StoredMetadata.normalized(catalog, nativeDb, "t").replace(nativeDb, "DB");
+    String actual = StoredMetadata.normalized(catalog, ircDb, "t").replace(ircDb, "DB");
+    assertEquals(expected, actual);
+  }
+
+  private String stored(String db) throws Exception {
+    return StoredMetadata.normalized(catalog, db, "t");
+  }
+
+  private static Map<String, String> with(Map<String, String> props, String key, String value) {
+    Map<String, String> out = new HashMap<>(props);
+    out.put(key, value);
+    return out;
+  }
+
+  /** Every file left under the database's directory of the test storage. */
+  private static List<String> filesUnder(String db) {
+    File root = new File("/tmp/" + db);
+    List<String> files = new ArrayList<>();
+    collect(root, files);
+    return files;
+  }
+
+  private static void collect(File file, List<String> out) {
+    if (!file.exists()) {
+      return;
+    }
+    if (file.isFile()) {
+      out.add(file.getPath());
+      return;
+    }
+    File[] children = file.listFiles();
+    if (children != null) {
+      for (File child : children) {
+        collect(child, out);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- create
+
+  @Test
+  void createStoresWhatTheNativeCreateStores() throws Exception {
+    createNative(nativeBody("irc_w_n_create"));
+    track("irc_w_i_create", "t");
+    MvcResult result = IrcWrite.create(mvc, "irc_w_i_create", ircCreate("t"));
+    TableMetadata response = IrcWrite.parsed(result);
+    assertSameStored("irc_w_n_create", "irc_w_i_create");
+    // The response is the stored table at the location the native API reports.
+    String nativeView = json(get(mvc, "irc_w_i_create", "t"));
+    assertEquals(str(nativeView, "$.tableLocation"), response.metadataFileLocation());
+    assertEquals(str(nativeView, "$.tableUUID"), response.uuid());
+  }
+
+  @Test
+  void createUnpartitionedStoresWhatTheNativeCreateStores() throws Exception {
+    createNative(plainBody("irc_w_n_plain"));
+    track("irc_w_i_plain", "t");
+    IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_i_plain", ircCreatePlain("t")));
+    assertSameStored("irc_w_n_plain", "irc_w_i_plain");
+  }
+
+  @Test
+  void createWithASortOrderStoresWhatTheNativeCreateStores() throws Exception {
+    createNative(plainBody("irc_w_n_csort").toBuilder().sortOrder(SORT_ORDER).build());
+    track("irc_w_i_csort", "t");
+    CreateTableRequest request =
+        CreateTableRequest.builder()
+            .withName("t")
+            .withSchema(SCHEMA)
+            .withWriteOrder(SortOrder.builderFor(SCHEMA).asc("id").build())
+            .setProperties(nativeBody("x").getTableProperties())
+            .build();
+    IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_i_csort", request));
+    assertSameStored("irc_w_n_csort", "irc_w_i_csort");
+  }
+
+  @Test
+  void createOfAnExistingTableIs409AlreadyExists() throws Exception {
+    createNative(nativeBody("irc_w_exists"));
+    String before = stored("irc_w_exists");
+    String nativeMessage =
+        message(post(mvc, nativeBody("irc_w_exists")).andExpect(status().is(409)));
+    assertEquals(
+        nativeMessage,
+        assertIrcError(
+                IrcWrite.create(mvc, "irc_w_exists", ircCreate("t")), 409, "AlreadyExistsException")
+            .message());
+    assertEquals(before, stored("irc_w_exists"));
+  }
+
+  @Test
+  void createThatNamesALocationIsRefusedAndNamesTheField() throws Exception {
+    CreateTableRequest request =
+        CreateTableRequest.builder()
+            .withName("t")
+            .withSchema(SCHEMA)
+            .withLocation("/tmp/elsewhere")
+            .build();
+    String message =
+        assertIrcError(IrcWrite.create(mvc, "irc_w_loc", request), 400, "BadRequestException")
+            .message();
+    assertTrue(message.contains("location"), message);
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_loc", "t")));
+    assertTrue(filesUnder("irc_w_loc").isEmpty());
+  }
+
+  @Test
+  void createWithAnInexpressiblePartitionSpecIsRefused() throws Exception {
+    CreateTableRequest request =
+        CreateTableRequest.builder()
+            .withName("t")
+            .withSchema(SCHEMA)
+            .withPartitionSpec(PartitionSpec.builderFor(SCHEMA).bucket("id", 4).build())
+            .build();
+    String message =
+        assertIrcError(IrcWrite.create(mvc, "irc_w_bucket", request), 400, "BadRequestException")
+            .message();
+    assertTrue(message.contains("partition spec"), message);
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_bucket", "t")));
+  }
+
+  @Test
+  void createWithReservedPropertiesGetsWhatTheNativeCreateGets() throws Exception {
+    Map<String, String> props =
+        with(nativeBody("x").getTableProperties(), "openhouse.tableId", "other");
+    createNative(nativeBody("irc_w_n_resv").toBuilder().tableProperties(props).build());
+    track("irc_w_i_resv", "t");
+    IrcWrite.parsed(
+        IrcWrite.create(
+            mvc,
+            "irc_w_i_resv",
+            CreateTableRequest.builder()
+                .withName("t")
+                .withSchema(SCHEMA)
+                .withPartitionSpec(ircCreate("t").spec())
+                .setProperties(props)
+                .build()));
+    assertSameStored("irc_w_n_resv", "irc_w_i_resv");
+  }
+
+  // ---------------------------------------------------------------- staged create
+
+  @Test
+  void stagedCreateLeavesNoTableNoRowAndNoFile() throws Exception {
+    CreateTableRequest request =
+        CreateTableRequest.builder()
+            .withName("t")
+            .withSchema(SCHEMA)
+            .withPartitionSpec(ircCreate("t").spec())
+            .setProperties(nativeBody("x").getTableProperties())
+            .stageCreate()
+            .build();
+    TableMetadata staged = IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_stage", request));
+    assertTrue(staged.location().contains("/irc_w_stage/t-" + staged.uuid()), staged.location());
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_stage", "t")));
+    assertEquals(
+        404, IrcHttp.get(mvc, IrcWrite.table("irc_w_stage", "t")).getResponse().getStatus());
+    assertTrue(filesUnder("irc_w_stage").isEmpty(), filesUnder("irc_w_stage").toString());
+  }
+
+  /** What the native staged create does today: it writes a metadata file and no house-table row. */
+  @Test
+  void nativeStagedCreateWritesAMetadataFileAndNoRow() throws Exception {
+    NativeCtas.stage(mvc, nativeBody("irc_w_nstage"));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_nstage", "t")));
+    List<String> files =
+        filesUnder("irc_w_nstage").stream()
+            .filter(path -> !path.endsWith(".crc"))
+            .collect(Collectors.toList());
+    assertEquals(1, files.size(), files.toString());
+    assertTrue(files.get(0).endsWith(".metadata.json"), files.toString());
+  }
+
+  @Test
+  void stagedCreateThenCommitWithoutDataStoresWhatTheNativeCreateStores() throws Exception {
+    createNative(nativeBody("irc_w_n_sc"));
+    track("irc_w_i_sc", "t");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_i_sc",
+                CreateTableRequest.builder()
+                    .withName("t")
+                    .withSchema(SCHEMA)
+                    .withPartitionSpec(ircCreate("t").spec())
+                    .setProperties(nativeBody("x").getTableProperties())
+                    .stageCreate()
+                    .build()));
+    TableMetadata committed =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc, "irc_w_i_sc", "t", IrcWrite.createCommit(staged, Collections.emptyList())));
+    assertEquals(staged.uuid(), committed.uuid());
+    assertEquals(staged.location(), committed.location());
+    assertSameStored("irc_w_n_sc", "irc_w_i_sc");
+  }
+
+  @Test
+  void stagedCreateThenCommitWithDataStoresWhatTheNativeCtasStores() throws Exception {
+    track("irc_w_n_ctas", "t");
+    NativeCtas.createWithData(mvc, nativeBody("irc_w_n_ctas"), "/tmp/irc_w_n_ctas_a.orc")
+        .andExpect(status().isCreated());
+    track("irc_w_i_ctas", "t");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_i_ctas",
+                CreateTableRequest.builder()
+                    .withName("t")
+                    .withSchema(SCHEMA)
+                    .withPartitionSpec(ircCreate("t").spec())
+                    .setProperties(nativeBody("x").getTableProperties())
+                    .stageCreate()
+                    .build()));
+    Snapshot snapshot = IrcWrite.append(staged, "/tmp/irc_w_i_ctas_a.orc");
+    TableMetadata committed =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_i_ctas",
+                "t",
+                IrcWrite.createCommit(
+                    staged,
+                    IrcWrite.withMain(
+                            TableMetadata.buildFrom(staged).discardChanges().build(), snapshot)
+                        .changes())));
+    assertEquals(snapshot.snapshotId(), committed.currentSnapshot().snapshotId());
+    assertSameStored("irc_w_n_ctas", "irc_w_i_ctas");
+  }
+
+  @Test
+  void createCommitOnAnExistingTableIs409CommitFailed() throws Exception {
+    createNative(nativeBody("irc_w_cc_exists"));
+    String before = stored("irc_w_cc_exists");
+    TableMetadata staged = IrcWrite.load(mvc, "irc_w_cc_exists", "t");
+    assertIrcError(
+        IrcWrite.commit(
+            mvc, "irc_w_cc_exists", "t", IrcWrite.createCommit(staged, Collections.emptyList())),
+        409,
+        "CommitFailedException");
+    assertEquals(before, stored("irc_w_cc_exists"));
+  }
+
+  // ---------------------------------------------------------------- commits
+
+  @Test
+  void propertySetAndUnsetStoreWhatTheNativePutsStore() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_n_prop"));
+    createNative(nativeBody("irc_w_i_prop"));
+    CreateUpdateTableRequestBody b = bodyFromGet(v0);
+    put(mvc, b.toBuilder().tableProperties(with(b.getTableProperties(), "user.key", "v1")).build())
+        .andExpect(status().isOk());
+    CreateUpdateTableRequestBody b1 = bodyFromGet(json(get(mvc, "irc_w_n_prop", "t")));
+    Map<String, String> props = new HashMap<>(b1.getTableProperties());
+    props.remove("user.key");
+    put(mvc, b1.toBuilder().tableProperties(props).build()).andExpect(status().isOk());
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_i_prop", "t");
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_i_prop",
+                "t",
+                base,
+                TableMetadata.buildFrom(base)
+                    .setProperties(Collections.singletonMap("user.key", "v1"))
+                    .build()));
+    assertEquals("v1", after.properties().get("user.key"));
+    TableMetadata base1 = IrcWrite.load(mvc, "irc_w_i_prop", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_i_prop",
+            "t",
+            base1,
+            TableMetadata.buildFrom(base1)
+                .removeProperties(Collections.singleton("user.key"))
+                .build()));
+    assertSameStored("irc_w_n_prop", "irc_w_i_prop");
+  }
+
+  @Test
+  void addingAColumnStoresWhatTheNativePutStores() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_n_schema"));
+    createNative(nativeBody("irc_w_i_schema"));
+    CreateUpdateTableRequestBody b = bodyFromGet(v0);
+    put(
+            mvc,
+            b.toBuilder().schema(addColumn(b.getSchema(), "added", Types.StringType.get())).build())
+        .andExpect(status().isOk());
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_i_schema", "t");
+    Schema evolved =
+        NativeCtas.table(base, IrcWrite.IO)
+            .updateSchema()
+            .addColumn("added", Types.StringType.get())
+            .apply();
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_i_schema",
+            "t",
+            base,
+            TableMetadata.buildFrom(base)
+                .setCurrentSchema(evolved, evolved.highestFieldId())
+                .build()));
+    assertSameStored("irc_w_n_schema", "irc_w_i_schema");
+  }
+
+  @Test
+  void sortOrderChangeStoresWhatTheNativePutStores() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_n_sort"));
+    createNative(nativeBody("irc_w_i_sort"));
+    put(mvc, bodyFromGet(v0).toBuilder().sortOrder(SORT_ORDER).build()).andExpect(status().isOk());
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_i_sort", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_i_sort",
+            "t",
+            base,
+            TableMetadata.buildFrom(base)
+                .setDefaultSortOrder(SortOrder.builderFor(base.schema()).asc("id").build())
+                .build()));
+    assertSameStored("irc_w_n_sort", "irc_w_i_sort");
+  }
+
+  @Test
+  void appendStoresWhatTheNativeSnapshotsPutStores() throws Exception {
+    createNative(nativeBody("irc_w_n_app"));
+    createNative(nativeBody("irc_w_i_app"));
+    TableMetadata nativeBase = IrcWrite.load(mvc, "irc_w_n_app", "t");
+    Snapshot nativeSnap = IrcWrite.append(nativeBase, "/tmp/irc_w_n_app_a.orc");
+    String getJson = json(get(mvc, "irc_w_n_app", "t"));
+    putSnapshots(
+            mvc,
+            "irc_w_n_app",
+            "t",
+            IcebergSnapshotsRequestBody.builder()
+                .baseTableVersion(str(getJson, "$.tableLocation"))
+                .jsonSnapshots(Collections.singletonList(SnapshotParser.toJson(nativeSnap)))
+                .snapshotRefs(obtainSnapshotRefsFromSnapshot(SnapshotParser.toJson(nativeSnap)))
+                .createUpdateTableRequestBody(bodyFromGet(getJson))
+                .build())
+        .andExpect(status().isOk());
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_i_app", "t");
+    Snapshot snap = IrcWrite.append(base, "/tmp/irc_w_i_app_a.orc");
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(mvc, "irc_w_i_app", "t", base, IrcWrite.withMain(base, snap)));
+    assertEquals(snap.snapshotId(), after.currentSnapshot().snapshotId());
+    assertSameStored("irc_w_n_app", "irc_w_i_app");
+  }
+
+  @Test
+  void aBranchAndATagAreStored() throws Exception {
+    createNative(nativeBody("irc_w_refs"));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_refs", "t");
+    Snapshot snap = IrcWrite.append(base, "/tmp/irc_w_refs_a.orc");
+    TableMetadata appended =
+        IrcWrite.parsed(
+            IrcWrite.commit(mvc, "irc_w_refs", "t", base, IrcWrite.withMain(base, snap)));
+    TableMetadata refs =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_refs",
+                "t",
+                appended,
+                TableMetadata.buildFrom(appended)
+                    .setRef(
+                        "b1",
+                        org.apache.iceberg.SnapshotRef.branchBuilder(snap.snapshotId()).build())
+                    .setRef(
+                        "t1", org.apache.iceberg.SnapshotRef.tagBuilder(snap.snapshotId()).build())
+                    .build()));
+    assertEquals(snap.snapshotId(), refs.ref("b1").snapshotId());
+    assertTrue(refs.ref("t1").isTag());
+    TableMetadata reloaded = IrcWrite.load(mvc, "irc_w_refs", "t");
+    assertEquals(refs.refs(), reloaded.refs());
+  }
+
+  @Test
+  void aCommitWithNoChangesWritesNothing() throws Exception {
+    createNative(nativeBody("irc_w_noop"));
+    String before = stored("irc_w_noop");
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_noop", "t");
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_noop",
+                "t",
+                new UpdateTableRequest(
+                    Collections.singletonList(new UpdateRequirement.AssertTableUUID(base.uuid())),
+                    Collections.emptyList())));
+    assertEquals(base.metadataFileLocation(), after.metadataFileLocation());
+    assertEquals(before, stored("irc_w_noop"));
+  }
+
+  // ---------------------------------------------------------------- refused commits
+
+  private void expectRefusedUnchanged(
+      String db, UpdateTableRequest request, int status, String type, String nativeMessage)
+      throws Exception {
+    String before = stored(db);
+    String message = assertIrcError(IrcWrite.commit(mvc, db, "t", request), status, type).message();
+    if (nativeMessage != null) {
+      assertEquals(nativeMessage, message);
+    }
+    assertEquals(before, stored(db));
+  }
+
+  @Test
+  void aFailedRequirementIs409CommitFailedAndChangesNothing() throws Exception {
+    createNative(nativeBody("irc_w_req"));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_req", "t");
+    expectRefusedUnchanged(
+        "irc_w_req",
+        new UpdateTableRequest(
+            Collections.singletonList(
+                new UpdateRequirement.AssertTableUUID("00000000-0000-0000-0000-000000000000")),
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap("user.k", "v")))),
+        409,
+        "CommitFailedException",
+        null);
+    // A stale ref assertion, as two writers appending from the same base would send.
+    Snapshot first = IrcWrite.append(base, "/tmp/irc_w_req_a.orc");
+    IrcWrite.parsed(IrcWrite.commit(mvc, "irc_w_req", "t", base, IrcWrite.withMain(base, first)));
+    Snapshot second = IrcWrite.append(base, "/tmp/irc_w_req_b.orc");
+    expectRefusedUnchanged(
+        "irc_w_req",
+        IrcWrite.simple(base, IrcWrite.withMain(base, second).changes()),
+        409,
+        "CommitFailedException",
+        null);
+  }
+
+  @Test
+  void reservedPropertyChangesGetTheNative400() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_resv"));
+    CreateUpdateTableRequestBody b = bodyFromGet(v0);
+    String nativeMessage =
+        message(
+            put(
+                    mvc,
+                    b.toBuilder()
+                        .tableProperties(with(b.getTableProperties(), "openhouse.tableId", "x"))
+                        .build())
+                .andExpect(status().isBadRequest()));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_resv", "t");
+    expectRefusedUnchanged(
+        "irc_w_resv",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base)
+                .setProperties(Collections.singletonMap("openhouse.tableId", "x"))
+                .build()
+                .changes()),
+        400,
+        "BadRequestException",
+        nativeMessage);
+    // Removing a reserved key and editing the raw policies key are refused the same way.
+    expectRefusedUnchanged(
+        "irc_w_resv",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base)
+                .removeProperties(Collections.singleton("openhouse.tableCreator"))
+                .build()
+                .changes()),
+        400,
+        "BadRequestException",
+        null);
+    expectRefusedUnchanged(
+        "irc_w_resv",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base)
+                .setProperties(Collections.singletonMap("policies", "{}"))
+                .build()
+                .changes()),
+        400,
+        "BadRequestException",
+        null);
+  }
+
+  @Test
+  void locationUuidAndFormatVersionChangesAreRefusedAndNamed() throws Exception {
+    createNative(nativeBody("irc_w_fixed"));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_fixed", "t");
+    List<Object[]> cases =
+        Arrays.asList(
+            new Object[] {new MetadataUpdate.SetLocation("/tmp/elsewhere"), "location"},
+            new Object[] {
+              new MetadataUpdate.AssignUUID("00000000-0000-0000-0000-000000000001"), "UUID"
+            });
+    for (Object[] c : cases) {
+      String before = stored("irc_w_fixed");
+      String message =
+          assertIrcError(
+                  IrcWrite.commit(
+                      mvc,
+                      "irc_w_fixed",
+                      "t",
+                      IrcWrite.simple(base, Collections.singletonList((MetadataUpdate) c[0]))),
+                  400,
+                  "BadRequestException")
+              .message();
+      assertTrue(message.contains((String) c[1]), message);
+      assertEquals(before, stored("irc_w_fixed"));
+    }
+  }
+
+  @Test
+  void partitionEvolutionGetsTheNative400() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_part"));
+    String nativeMessage =
+        message(
+            put(mvc, bodyFromGet(v0).toBuilder().clustering(null).build())
+                .andExpect(status().isBadRequest()));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_part", "t");
+    PartitionSpec timeOnly = PartitionSpec.builderFor(base.schema()).hour("timestampCol").build();
+    expectRefusedUnchanged(
+        "irc_w_part",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base).setDefaultPartitionSpec(timeOnly).build().changes()),
+        400,
+        "BadRequestException",
+        nativeMessage);
+  }
+
+  @Test
+  void droppingAColumnGetsTheNative400() throws Exception {
+    String v0 = createNative(plainBody("irc_w_drop_col"));
+    CreateUpdateTableRequestBody b = bodyFromGet(v0);
+    String nativeMessage =
+        message(
+            put(mvc, b.toBuilder().schema(dropColumn(b.getSchema(), "stats")).build())
+                .andExpect(status().isBadRequest()));
+    assertTrue(nativeMessage.contains("stats") || !nativeMessage.isEmpty(), nativeMessage);
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_drop_col", "t");
+    Schema dropped =
+        NativeCtas.table(base, IrcWrite.IO).updateSchema().deleteColumn("stats").apply();
+    expectRefusedUnchanged(
+        "irc_w_drop_col",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base)
+                .setCurrentSchema(dropped, base.lastColumnId())
+                .build()
+                .changes()),
+        400,
+        "BadRequestException",
+        null);
+  }
+
+  @Test
+  void aLockedTableIsRefusedWithTheNativeMessage() throws Exception {
+    createNative(nativeBody("irc_w_lock"));
+    lock(mvc, "irc_w_lock", "t").andExpect(status().isCreated());
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_lock", "t");
+    String nativeMessage =
+        message(
+            put(
+                    mvc,
+                    bodyFromGet(json(get(mvc, "irc_w_lock", "t")))
+                        .toBuilder()
+                        .tableProperties(
+                            with(
+                                bodyFromGet(json(get(mvc, "irc_w_lock", "t"))).getTableProperties(),
+                                "user.k",
+                                "v"))
+                        .build())
+                .andExpect(status().isBadRequest()));
+    expectRefusedUnchanged(
+        "irc_w_lock",
+        IrcWrite.simple(
+            base,
+            TableMetadata.buildFrom(base)
+                .setProperties(Collections.singletonMap("user.k", "v"))
+                .build()
+                .changes()),
+        400,
+        "BadRequestException",
+        nativeMessage);
+    unlock(mvc, "irc_w_lock", "t").andExpect(status().isNoContent());
+  }
+
+  @Test
+  void aMissingTableIs404() throws Exception {
+    TableMetadata base = IrcWrite.load(mvc, createNativeAndReturnDb("irc_w_missing"), "t");
+    assertIrcError(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_missing",
+            "nope",
+            IrcWrite.simple(
+                base,
+                Collections.singletonList(
+                    new MetadataUpdate.SetProperties(Collections.singletonMap("k", "v"))))),
+        404,
+        "NoSuchTableException");
+    assertIrcError(IrcWrite.drop(mvc, "irc_w_missing", "nope"), 404, "NoSuchTableException");
+  }
+
+  private String createNativeAndReturnDb(String db) throws Exception {
+    createNative(nativeBody(db));
+    return db;
+  }
+
+  @Test
+  void aTableRequiringACapabilityIsGatedOnCommitAsNatively() throws Exception {
+    track(DEFAULTS_DB, "w1");
+    mvc.perform(
+            MockMvcRequestBuilders.post("/v1/databases/" + DEFAULTS_DB + "/tables/")
+                .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(
+                    newTable(DEFAULTS_DB, "w1")
+                        .toBuilder()
+                        .tableProperties(
+                            with(
+                                newTable(DEFAULTS_DB, "w1").getTableProperties(),
+                                "required-capability.column-defaults",
+                                "true"))
+                        .build()
+                        .toJson()))
+        .andExpect(status().isCreated());
+    String getJson =
+        json(
+            mvc.perform(
+                MockMvcRequestBuilders.get(tableUrl(DEFAULTS_DB, "w1"))
+                    .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS)));
+    CreateUpdateTableRequestBody b = bodyFromGet(getJson);
+    String nativeMessage =
+        message(
+            put(
+                    mvc,
+                    b.toBuilder()
+                        .tableProperties(with(b.getTableProperties(), "user.k", "v"))
+                        .build())
+                .andExpect(status().is(422)));
+    MvcResult loaded =
+        IrcHttp.perform(
+            mvc,
+            IrcHttp.request(HttpMethod.GET, IrcWrite.table(DEFAULTS_DB, "w1"))
+                .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS));
+    TableMetadata base = IrcWrite.parsed(loaded);
+    assertEquals(
+        nativeMessage,
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    DEFAULTS_DB,
+                    "w1",
+                    IrcWrite.simple(
+                        base,
+                        Collections.singletonList(
+                            new MetadataUpdate.SetProperties(
+                                Collections.singletonMap("user.k", "v"))))),
+                422,
+                "ClientCapabilityMissingException")
+            .message());
+  }
+
+  // ---------------------------------------------------------------- replace
+
+  private String rtasTable(String db) throws Exception {
+    String v0 = createNative(nativeBody(db));
+    CreateUpdateTableRequestBody b = bodyFromGet(v0);
+    put(
+            mvc,
+            b.toBuilder()
+                .tableProperties(
+                    with(b.getTableProperties(), CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true"))
+                .build())
+        .andExpect(status().isOk());
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    Snapshot snap = IrcWrite.append(base, "/tmp/" + db + "_a.orc");
+    IrcWrite.parsed(IrcWrite.commit(mvc, db, "t", base, IrcWrite.withMain(base, snap)));
+    return db;
+  }
+
+  private static Schema replacementSchema(TableMetadata base) {
+    return NativeCtas.table(base, IrcWrite.IO)
+        .updateSchema()
+        .addColumn("r", Types.LongType.get())
+        .apply();
+  }
+
+  @Test
+  void replaceStoresWhatTheNativeReplaceCommitStores() throws Exception {
+    rtasTable("irc_w_n_rtas");
+    rtasTable("irc_w_i_rtas");
+
+    // Native: what the OpenHouse client sends for the same replace transaction.
+    TableMetadata nativeBase = IrcWrite.load(mvc, "irc_w_n_rtas", "t");
+    TableMetadata nativeReplacement =
+        IrcWrite.replacement(
+            nativeBase, replacementSchema(nativeBase), nativeBase.spec(), Collections.emptyMap());
+    Snapshot nativeSnap = IrcWrite.append(nativeReplacement, "/tmp/irc_w_n_rtas_r.orc");
+    TableMetadata nativeAfter = IrcWrite.withMain(nativeReplacement, nativeSnap);
+    String getJson = json(get(mvc, "irc_w_n_rtas", "t"));
+    CreateUpdateTableRequestBody inner =
+        bodyFromGet(getJson)
+            .toBuilder()
+            .schema(IcebergSchemaHelper.getSchemaJsonFromSchema(nativeAfter.schema()))
+            .replaceCommit(true)
+            .build();
+    putSnapshots(
+            mvc,
+            "irc_w_n_rtas",
+            "t",
+            IcebergSnapshotsRequestBody.builder()
+                .baseTableVersion(str(getJson, "$.tableLocation"))
+                .jsonSnapshots(
+                    nativeAfter.snapshots().stream()
+                        .map(SnapshotParser::toJson)
+                        .collect(Collectors.toList()))
+                .snapshotRefs(obtainSnapshotRefsFromSnapshot(SnapshotParser.toJson(nativeSnap)))
+                .createUpdateTableRequestBody(inner)
+                .build())
+        .andExpect(status().isOk());
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_i_rtas", "t");
+    TableMetadata replacement =
+        IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
+    Snapshot snap = IrcWrite.append(replacement, "/tmp/irc_w_i_rtas_r.orc");
+    TableMetadata then =
+        IrcWrite.withMain(TableMetadata.buildFrom(replacement).discardChanges().build(), snap);
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc, "irc_w_i_rtas", "t", IrcWrite.replace(base, replacement, then.changes())));
+    assertEquals(snap.snapshotId(), after.currentSnapshot().snapshotId());
+    assertSameStored("irc_w_n_rtas", "irc_w_i_rtas");
+  }
+
+  @Test
+  void replaceIsRefusedWithTheNativeMessageWhenRtasIsNotEnabled() throws Exception {
+    String v0 = createNative(nativeBody("irc_w_rtas_off"));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rtas_off", "t");
+    TableMetadata replacement =
+        IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
+    String message =
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_rtas_off",
+                    "t",
+                    IrcWrite.replace(base, replacement, Collections.emptyList())),
+                400,
+                "BadRequestException")
+            .message();
+    assertTrue(message.contains("REPLACE TABLE AS SELECT is not enabled"), message);
+    assertEquals(v0.length() > 0, true);
+  }
+
+  @Test
+  void replaceIsRefusedWhileWapIsEnabled() throws Exception {
+    rtasTable("irc_w_rtas_wap");
+    TableMetadata base0 = IrcWrite.load(mvc, "irc_w_rtas_wap", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_rtas_wap",
+            "t",
+            base0,
+            TableMetadata.buildFrom(base0)
+                .setProperties(
+                    Collections.singletonMap(CatalogConstants.WAP_ENABLED_TABLE_PROP, "true"))
+                .build()));
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rtas_wap", "t");
+    TableMetadata replacement =
+        IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
+    String before = stored("irc_w_rtas_wap");
+    String message =
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_rtas_wap",
+                    "t",
+                    IrcWrite.replace(base, replacement, Collections.emptyList())),
+                400,
+                "BadRequestException")
+            .message();
+    assertTrue(message.contains("while WAP"), message);
+    assertEquals(before, stored("irc_w_rtas_wap"));
+  }
+
+  @Test
+  void replaceOfALockedTableIsRefusedWithTheNativeLockMessage() throws Exception {
+    rtasTable("irc_w_rtas_lock");
+    lock(mvc, "irc_w_rtas_lock", "t").andExpect(status().isCreated());
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rtas_lock", "t");
+    TableMetadata replacement =
+        IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
+    String message =
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_rtas_lock",
+                    "t",
+                    IrcWrite.replace(base, replacement, Collections.emptyList())),
+                400,
+                "BadRequestException")
+            .message();
+    assertTrue(message.contains("is in locked state and cannot be written to"), message);
+    unlock(mvc, "irc_w_rtas_lock", "t").andExpect(status().isNoContent());
+  }
+
+  @Test
+  void replaceKeepsTheStoredPolicies() throws Exception {
+    // Native table with policies (sharing only: replication would refuse a replace).
+    CreateUpdateTableRequestBody body = newTable("irc_w_rtas_pol", "t");
+    createNative(
+        body.toBuilder()
+            .policies(body.getPolicies().toBuilder().replication(null).sharingEnabled(true).build())
+            .tableProperties(
+                with(body.getTableProperties(), CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true"))
+            .build());
+    String policiesBefore = IrcWrite.load(mvc, "irc_w_rtas_pol", "t").properties().get("policies");
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rtas_pol", "t");
+    TableMetadata replacement =
+        IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_rtas_pol",
+            "t",
+            IrcWrite.replace(base, replacement, Collections.emptyList())));
+    TableMetadata after = IrcWrite.load(mvc, "irc_w_rtas_pol", "t");
+    assertEquals(policiesBefore, after.properties().get("policies"));
+    assertTrue(after.schema().findField("r") != null);
+  }
+
+  // ---------------------------------------------------------------- drop and rename
+
+  @Test
+  void dropIsTheNativeDrop() throws Exception {
+    createNative(nativeBody("irc_w_drop"));
+    assertFalse(filesUnder("irc_w_drop").isEmpty());
+    MvcResult result = IrcWrite.drop(mvc, "irc_w_drop", "t");
+    assertEquals(204, result.getResponse().getStatus(), body(result));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_drop", "t")));
+    // The native drop purges the table's files whatever purgeRequested says.
+    assertTrue(filesUnder("irc_w_drop").isEmpty(), filesUnder("irc_w_drop").toString());
+
+    createNative(nativeBody("irc_w_drop"));
+    MvcResult purge =
+        IrcHttp.perform(
+            mvc,
+            IrcHttp.request(HttpMethod.DELETE, IrcWrite.table("irc_w_drop", "t"))
+                .param("purgeRequested", "true"));
+    assertEquals(204, purge.getResponse().getStatus(), body(purge));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_drop", "t")));
+  }
+
+  @Test
+  void renameIsTheNativeRename() throws Exception {
+    createNative(nativeBody("irc_w_ren"));
+    track("irc_w_ren", "t2");
+    String before = str(json(get(mvc, "irc_w_ren", "t")), "$.tableUUID");
+    MvcResult result =
+        IrcWrite.rename(
+            mvc, TableIdentifier.of("irc_w_ren", "t"), TableIdentifier.of("irc_w_ren", "t2"));
+    assertEquals(204, result.getResponse().getStatus(), body(result));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_ren", "t")));
+    assertEquals(before, str(json(get(mvc, "irc_w_ren", "t2")), "$.tableUUID"));
+  }
+
+  @Test
+  void renameRefusalsAreTheNativeOnes() throws Exception {
+    createNative(nativeBody("irc_w_ren2"));
+    createNative(newTable("irc_w_ren2", "u").toBuilder().policies(null).build());
+    // Target exists: 409.
+    String nativeExists =
+        message(rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "u").andExpect(status().is(409)));
+    assertEquals(
+        nativeExists,
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_ren2", "t"),
+                    TableIdentifier.of("irc_w_ren2", "u")),
+                409,
+                "AlreadyExistsException")
+            .message());
+    // Case-only rename and a rename across databases: the native 400.
+    String nativeCase =
+        message(
+            rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "T").andExpect(status().isBadRequest()));
+    assertEquals(
+        nativeCase,
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_ren2", "t"),
+                    TableIdentifier.of("irc_w_ren2", "T")),
+                400,
+                "BadRequestException")
+            .message());
+    String nativeAcross =
+        message(
+            rename(mvc, "irc_w_ren2", "t", "irc_w_other", "t").andExpect(status().isBadRequest()));
+    assertEquals(
+        nativeAcross,
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_ren2", "t"),
+                    TableIdentifier.of("irc_w_other", "t")),
+                400,
+                "BadRequestException")
+            .message());
+    // Missing source: 404.
+    assertIrcError(
+        IrcWrite.rename(
+            mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
+        404,
+        "NoSuchTableException");
+  }
+
+  // ---------------------------------------------------------------- still unserved
+
+  @Test
+  void namespaceWritesStillAnswer406() throws Exception {
+    for (Object[] route :
+        new Object[][] {
+          {HttpMethod.POST, "/v1/namespaces"},
+          {HttpMethod.DELETE, "/v1/namespaces/irc_w_ns"},
+          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/properties"},
+          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/register"},
+          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/tables/t/metrics"},
+          {HttpMethod.POST, "/v1/transactions/commit"}
+        }) {
+      assertIrcError(
+          IrcHttp.perform(
+              mvc,
+              IrcHttp.request((HttpMethod) route[0], (String) route[1])
+                  .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                  .content("{}")),
+          406,
+          "UnsupportedOperationException");
+    }
+  }
+
+  @Test
+  void anUnknownUpdateIs400() throws Exception {
+    createNative(nativeBody("irc_w_unknown"));
+    String before = stored("irc_w_unknown");
+    MvcResult result =
+        IrcHttp.perform(
+            mvc,
+            IrcHttp.request(HttpMethod.POST, IrcWrite.table("irc_w_unknown", "t"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"requirements\":[],\"updates\":[{\"action\":\"no-such-update\"}]}"));
+    assertIrcError(result, 400, "BadRequestException");
+    assertEquals(before, stored("irc_w_unknown"));
+    assertNotEquals(INITIAL_TABLE_VERSION, before);
+  }
+}
