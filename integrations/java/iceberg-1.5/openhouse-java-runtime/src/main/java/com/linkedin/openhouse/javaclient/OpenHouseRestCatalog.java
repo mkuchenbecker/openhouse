@@ -127,8 +127,16 @@ public class OpenHouseRestCatalog extends RESTCatalog
     return backing;
   }
 
-  // ------------------------------------------------------------------ today's answers, via the
-  // adapter
+  // ------------------------------------------------- today's answers, via the adapter
+
+  /**
+   * The properties the caller passed, as today's catalog returns them; {@code RESTCatalog} would
+   * return them merged with the adapter's config defaults.
+   */
+  @Override
+  public Map<String, String> properties() {
+    return backing.properties();
+  }
 
   /** {@code HEAD v1/namespaces/{ns}}; today's catalog rejects it as unsupported. */
   @Override

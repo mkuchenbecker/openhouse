@@ -29,6 +29,7 @@ import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
+import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateNamespacePropertiesRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -107,6 +108,7 @@ public class OpenHouseRestAdapter implements RESTClient {
     UPDATE_TABLE(Method.POST, "v1/namespaces/{namespace}/tables/{name}"),
     DROP_TABLE(Method.DELETE, "v1/namespaces/{namespace}/tables/{name}"),
     RENAME_TABLE(Method.POST, "v1/tables/rename"),
+    REGISTER_TABLE(Method.POST, "v1/namespaces/{namespace}/register"),
     REPORT_METRICS(Method.POST, "v1/namespaces/{namespace}/tables/{name}/metrics"),
     LIST_VIEWS(Method.GET, "v1/namespaces/{namespace}/views"),
     CREATE_VIEW(Method.POST, "v1/namespaces/{namespace}/views"),
@@ -312,6 +314,9 @@ public class OpenHouseRestAdapter implements RESTClient {
       case RENAME_TABLE:
         CatalogHandlers.renameTable(backing, (RenameTableRequest) body);
         return null;
+
+      case REGISTER_TABLE:
+        return CatalogHandlers.registerTable(backing, namespace(vars), (RegisterTableRequest) body);
 
       case REPORT_METRICS:
         // Today's path has no server-side metrics endpoint; reports are accepted and dropped.
