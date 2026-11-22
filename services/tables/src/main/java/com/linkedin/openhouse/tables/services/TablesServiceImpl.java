@@ -4,11 +4,8 @@ import static com.linkedin.openhouse.common.utils.PageableUtil.createPageable;
 
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.exception.AlreadyExistsException;
-import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.LockConflictException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
-import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
-import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
@@ -21,6 +18,9 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.spec.v0.response.components.AclPolicy;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.Privileges;
+import com.linkedin.openhouse.tables.commit.CommitContext;
+import com.linkedin.openhouse.tables.commit.CommitKind;
+import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -36,9 +36,8 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.apache.iceberg.exceptions.BadRequestException;
-import org.apache.iceberg.exceptions.CommitFailedException;
-import org.apache.iceberg.exceptions.CommitStateUnknownException;
+import java.util.function.Supplier;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -166,21 +165,25 @@ public class TablesServiceImpl implements TablesService {
         throw new IllegalStateException(
             String.format("Staged Table %s.%s was illegally persisted", databaseId, tableId));
       }
-      checkIfLockPoliciesUpdated(tableDto.get(), createUpdateTableRequestBody);
-      if (LockPolicyValidator.isLegacyLocked(tableDto.get())) {
-        throw new UnsupportedClientOperationException(
-            UnsupportedClientOperationException.Operation.LOCKED_TABLE_OPERATION,
-            String.format(
-                "Table %s.%s is in locked state and cannot be updated.", databaseId, tableId));
-      }
-      authorizationUtils.checkTableWritePathPrivileges(
-          tableDto.get(), tableCreatorUpdater, Privileges.UPDATE_TABLE_METADATA);
-      authorizationUtils.checkSystemOnlyLockAccess(tableDto.get(), tableCreatorUpdater);
-
-      // An optimization to avoid persisting unchanged TableDto into HouseTable.
-      if (!updateNeeded(tableDto.get(), createUpdateTableRequestBody)) {
-        return Pair.of(tableDto.get(), /*creation didn't occur*/ false);
-      }
+      // Decode the request into a commit on the stored table and hand it to the commit core,
+      // which runs the update rules in their native order and persists it.
+      TableDto existing = tableDto.get();
+      Supplier<TableDto> mapped =
+          memoize(() -> tablesMapper.toTableDto(existing, createUpdateTableRequestBody));
+      return newCommitCore()
+          .commit(
+              new TableCommit(
+                  TableIdentifier.of(databaseId, tableId),
+                  createUpdateTableRequestBody.getBaseTableVersion(),
+                  existing,
+                  mapped,
+                  CommitContext.builder()
+                      .kind(CommitKind.TABLE_UPDATE)
+                      .principal(tableCreatorUpdater)
+                      .requestedPolicies(createUpdateTableRequestBody.getPolicies())
+                      .clusterId(createUpdateTableRequestBody.getClusterId())
+                      .unchanged(() -> mapped.get().equals(existing))
+                      .build()));
     } else {
       // Check if table creator has the privilege to create a table in this DB.
       authorizationUtils.checkDatabasePrivilege(
@@ -221,50 +224,35 @@ public class TablesServiceImpl implements TablesService {
 
   private Pair<TableDto, Boolean> saveTableDto(
       TableDto tableDtoToSave, Optional<TableDto> tableDto) {
-    try {
-      return Pair.of(openHouseInternalRepository.save(tableDtoToSave), !tableDto.isPresent());
-    } catch (BadRequestException e) {
-      throw new RequestValidationFailureException(e.getMessage(), e);
-    } catch (CommitFailedException ce) {
-      throw new EntityConcurrentModificationException(
-          tableDtoToSave.getTableUri(),
-          String.format(
-              "databaseId : %s, tableId : %s, version: %s %s",
-              tableDtoToSave.getDatabaseId(),
-              tableDtoToSave.getTableId(),
-              tableDtoToSave.getTableVersion(),
-              "The requested table has been modified/created by other processes."),
-          ce);
-    } catch (CommitStateUnknownException commitStateUnknownException) {
-      throw new OpenHouseCommitStateUnknownException(
-          tableDtoToSave.getTableUri(),
-          String.format(
-              "databaseId : %s, tableId : %s, version: %s %s",
-              tableDtoToSave.getDatabaseId(),
-              tableDtoToSave.getTableId(),
-              tableDtoToSave.getTableVersion(),
-              "Commit regarding to the requested table is not acknowledged."),
-          commitStateUnknownException);
-    }
+    return Pair.of(
+        TableCommitCore.saveTableUpdate(openHouseInternalRepository, tableDtoToSave),
+        !tableDto.isPresent());
   }
 
-  private void checkIfLockPoliciesUpdated(
-      TableDto tableDto, CreateUpdateTableRequestBody requestBody) {
-    if (requestBody.getPolicies() != null
-        && requestBody.getPolicies().getLockState() != null
-        && requestBody.getPolicies().getLockState().isLocked()
-            != tableDto.getPolicies().getLockState().isLocked()) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Lock state cannot be updated for Table %s.%s",
-              tableDto.getDatabaseId(), tableDto.getTableId()));
-    }
+  /** The commit core, over this service's collaborators. */
+  TableCommitCore newCommitCore() {
+    return new TableCommitCore(
+        openHouseInternalRepository,
+        authorizationUtils,
+        clientCapabilityGate,
+        readBridgeStripProtection);
   }
 
-  /** Return true if update is needed. */
-  private boolean updateNeeded(
-      TableDto existingTableDto, CreateUpdateTableRequestBody requestBody) {
-    return !tablesMapper.toTableDto(existingTableDto, requestBody).equals(existingTableDto);
+  /** {@code supplier}, computed once on first call. */
+  static <T> Supplier<T> memoize(Supplier<T> supplier) {
+    return new Supplier<T>() {
+      private T value;
+      private boolean computed;
+
+      @Override
+      public T get() {
+        if (!computed) {
+          value = supplier.get();
+          computed = true;
+        }
+        return value;
+      }
+    };
   }
 
   @Override
