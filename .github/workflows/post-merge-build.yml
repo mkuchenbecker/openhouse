@@ -13,9 +13,12 @@ on:
 permissions:
   contents: read
 
+# Merges arrive faster than the build takes, so cancelling in-progress runs meant no run ever finished.
+# A running build is allowed to finish; GitHub keeps at most one pending run in the group, and a newer
+# pending run replaces an older pending one, so every merge is covered by some completed run.
 concurrency:
   group: post-merge-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-run-tests:
