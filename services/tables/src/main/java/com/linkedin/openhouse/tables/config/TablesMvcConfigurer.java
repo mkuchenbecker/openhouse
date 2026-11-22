@@ -2,6 +2,8 @@ package com.linkedin.openhouse.tables.config;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.configs.ClusterPropertiesUtil;
+import com.linkedin.openhouse.tables.api.irc.IcebergRestAuthenticationInterceptor;
+import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
@@ -43,7 +45,17 @@ public class TablesMvcConfigurer implements WebMvcConfigurer {
               .addInterceptor(interceptor)
               .addPathPatterns("/**")
               .excludePathPatterns(
-                  "/actuator/**", "/**/api-docs/**", "/**/swagger-ui/**", "/favicon.ico", "/error");
+                  "/actuator/**",
+                  "/**/api-docs/**",
+                  "/**/swagger-ui/**",
+                  "/favicon.ico",
+                  "/error",
+                  IcebergRestCatalogController.BASE_PATH + "/**");
+          // The IRC routes run the same token interceptor, answering a refusal in the IRC spec's
+          // error shape.
+          registry
+              .addInterceptor(new IcebergRestAuthenticationInterceptor(interceptor))
+              .addPathPatterns(IcebergRestCatalogController.BASE_PATH + "/**");
           addOpenAPISecurityScheme();
         });
   }
