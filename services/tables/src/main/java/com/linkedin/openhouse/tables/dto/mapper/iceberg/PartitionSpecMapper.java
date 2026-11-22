@@ -118,6 +118,27 @@ public class PartitionSpecMapper {
    */
   @Named("toClusteringSpec")
   public List<ClusteringColumn> toClusteringSpec(Table table) {
+    List<ClusteringColumn> clustering = toClusteringColumns(table);
+    int count = clustering == null ? 0 : clustering.size();
+    if (count > ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS) {
+      throw new IllegalStateException(
+          String.format(
+              "Max allowed clustering columns supported %s, actual %s",
+              ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS, count));
+    }
+    return clustering;
+  }
+
+  /**
+   * {@link #toClusteringSpec} without its limit on the number of clustering columns: every
+   * clustering column of the table's spec, as the OpenHouse client's request spells them, so that a
+   * request validator can refuse too many with its own message.
+   *
+   * @param table an iceberg table
+   * @return {@link ClusteringColumn}s, or null if the table is not clustered
+   */
+  @Named("toClusteringColumns")
+  public List<ClusteringColumn> toClusteringColumns(Table table) {
     PartitionSpec partitionSpec = table.spec();
     List<PartitionField> clusteringFields =
         partitionSpec.fields().stream()
@@ -128,12 +149,6 @@ public class PartitionSpecMapper {
                       table.schema().findField(x.sourceId()).type().typeId());
                 })
             .collect(Collectors.toList());
-    if (clusteringFields.size() > ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS) {
-      throw new IllegalStateException(
-          String.format(
-              "Max allowed clustering columns supported %s, actual %s",
-              ValidatorConstants.MAX_ALLOWED_CLUSTERING_COLUMNS, clusteringFields.size()));
-    }
     List<ClusteringColumn> clustering = null;
     if (!clusteringFields.isEmpty()) {
       clustering =
