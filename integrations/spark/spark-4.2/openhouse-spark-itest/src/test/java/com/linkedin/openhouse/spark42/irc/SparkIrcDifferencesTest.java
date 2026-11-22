@@ -74,8 +74,58 @@ public class SparkIrcDifferencesTest {
     Assertions.assertEquals(DB, info.get("Namespace"), info.toString());
     Assertions.assertEquals(table, info.get("Table"), info.toString());
     Assertions.assertNull(info.get("Name"), info.toString());
+    // The detail rows, in order. Spark 3.5 with the OpenHouse catalog shows Name, Type, Location,
+    // Provider, Owner, Table Properties for the same kind of table (Spark 4.2 changed the layout).
+    Assertions.assertEquals(
+        Arrays.asList(
+            "Catalog",
+            "Namespace",
+            "Database",
+            "Table",
+            "Type",
+            "Location",
+            "Provider",
+            "Table_type",
+            "Table Properties",
+            "Statistics"),
+        section(table, "# Detailed Table Information"));
+    // Spark 3.5 with the OpenHouse catalog (Iceberg 1.12 runtime) also lists _row_id and
+    // _last_updated_sequence_number for the same format-v2 table.
+    Assertions.assertEquals(
+        Arrays.asList("_spec_id", "_partition", "_file", "_pos", "_deleted"),
+        section(table, "# Metadata Columns"));
+    Assertions.assertEquals("MANAGED", info.get("Type"), info.toString());
+    Assertions.assertEquals("EXTERNAL", info.get("Table_type"), info.toString());
     Assertions.assertEquals(view.get("location").asText(), info.get("Location"), info.toString());
     Assertions.assertEquals("iceberg", info.get("Provider"), info.toString());
+  }
+
+  /** The row names of a DESCRIBE TABLE EXTENDED section, up to the next blank row. */
+  private static List<String> section(String table, String header) throws Exception {
+    List<String> keys = new ArrayList<>();
+    boolean in = false;
+    for (List<Object> row : rows("DESCRIBE TABLE EXTENDED " + name(table))) {
+      String key = String.valueOf(row.get(0));
+      if (in && key.isEmpty()) {
+        break;
+      }
+      if (in) {
+        keys.add(key);
+      }
+      in |= key.equals(header);
+    }
+    return keys;
+  }
+
+  /**
+   * Spark 3.5 with the OpenHouse catalog refuses to list namespaces under a database
+   * (UnsupportedOperationException "Openhouse supports 2-lvl namespace"); over IRC the list is
+   * empty, since databases have one level.
+   */
+  @org.junit.jupiter.api.Test
+  void namespacesUnderADatabaseAreAnEmptyList() throws Exception {
+    Assertions.assertEquals(
+        java.util.Collections.emptyList(), rows("SHOW NAMESPACES IN irc." + DB));
   }
 
   @ParameterizedTest
