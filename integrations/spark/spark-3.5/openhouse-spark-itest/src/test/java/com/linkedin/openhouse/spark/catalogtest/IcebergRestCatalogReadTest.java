@@ -248,6 +248,9 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
         NoSuchNamespaceException.class,
         "irc_read_never",
         thrown(() -> rest.listTables(Namespace.of("irc_read_never"))));
+    // The existing client lists nothing for a database that does not exist.
+    Assertions.assertEquals(
+        Collections.emptyList(), openhouse.listTables(Namespace.of("irc_read_never")));
   }
 
   @Test
@@ -411,6 +414,13 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
       Assertions.assertEquals(
           current(viaEngine).metadataFileLocation(), current(viaRest).metadataFileLocation());
       Assertions.assertEquals(viaEngine.properties(), viaRest.properties());
+      // The engine's client applies the column defaults the config carries to its schema; the
+      // RESTCatalog applies none and shows the schema as stored.
+      Assertions.assertEquals("US", viaEngine.schema().findField("country").initialDefault());
+      Assertions.assertNull(viaRest.schema().findField("country").initialDefault());
+      Assertions.assertEquals(
+          viaEngine.schema().asStruct().fields().size(),
+          viaRest.schema().asStruct().fields().size());
       Map<String, String> ioProperties = viaRest.io().properties();
       Assertions.assertEquals(
           "\"US\"", ioProperties.get(READ_BRIDGE_PREFIX + "2"), ioProperties.toString());
@@ -457,6 +467,21 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
           ForbiddenException.class,
           "Operation on table irc_read_auth.t1 failed as user irc_stranger is unauthorized",
           thrown(() -> asStranger.loadTable(id)));
+      // RESTCatalog 1.5.2 checks existence by loading the table, so a principal that may not read
+      // it is refused; the existing client asks the existence route, which answers anyone.
+      assertThrown(
+          ForbiddenException.class,
+          "Operation on table irc_read_auth.t1 failed as user irc_stranger is unauthorized",
+          thrown(() -> asStranger.tableExists(id)));
+      Map<String, String> strangerProperties = new HashMap<>(ownerProperties);
+      strangerProperties.put("auth-token", token(STRANGER));
+      Catalog nativeStranger =
+          CatalogUtil.loadCatalog(
+              "com.linkedin.openhouse.javaclient.OpenHouseCatalog",
+              "openhouse",
+              strangerProperties,
+              spark.sparkContext().hadoopConfiguration());
+      Assertions.assertTrue(nativeStranger.tableExists(id));
     }
 
     assertThrown(
