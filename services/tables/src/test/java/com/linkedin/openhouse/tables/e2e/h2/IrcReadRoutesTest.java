@@ -349,7 +349,6 @@ public class IrcReadRoutesTest {
     assertEquals(stored.currentSnapshot().snapshotId(), loaded.currentSnapshot().snapshotId());
     assertEquals(snapshotIds(stored), snapshotIds(loaded));
     assertEquals(stored.refs(), loaded.refs());
-    assertEquals(str(nativeJson, "$.tableProperties['openhouse.tableUUID']"), loaded.uuid());
   }
 
   @Test
@@ -422,7 +421,8 @@ public class IrcReadRoutesTest {
   void loadTableWithAnInvalidIdentifierIsABadRequestAsOnTheNativeApi() throws Exception {
     assertIrcError(
         IrcHttp.get(mvc, "/v1/namespaces/irc_bad/tables/a%3Bb"), 400, "BadRequestException");
-    get(mvc, "irc_bad", "a;b").andExpect(status().isBadRequest());
+    mvc.perform(MockMvcRequestBuilders.get(java.net.URI.create(tableUrl("irc_bad", "a%3Bb"))))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

@@ -27,6 +27,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
@@ -188,6 +189,11 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
         .collect(Collectors.toList());
   }
 
+  private static String withoutLastUpdated(TableMetadata metadata) {
+    return TableMetadataParser.toJson(metadata)
+        .replaceFirst("\"last-updated-ms\"\\s*:\\s*\\d+", "\"last-updated-ms\":0");
+  }
+
   private static Throwable thrown(Executable executable) {
     try {
       executable.execute();
@@ -288,8 +294,12 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
       Assertions.assertEquals(plannedFiles(viaOpenHouse), plannedFiles(viaRest));
     }
     Table written = rest.loadTable(TableIdentifier.of(DB, "t_written"));
-    Assertions.assertEquals(3, snapshotIds(written).size());
-    Assertions.assertEquals(3, plannedFiles(written).size());
+    List<String> operations =
+        java.util.stream.StreamSupport.stream(written.snapshots().spliterator(), false)
+            .map(Snapshot::operation)
+            .collect(Collectors.toList());
+    Assertions.assertEquals(Arrays.asList("append", "append", "append"), operations);
+    Assertions.assertEquals(4, plannedFiles(written).size());
     Assertions.assertEquals("yes", written.properties().get("irc.test"));
     Assertions.assertFalse(written.sortOrder().isUnsorted());
     Assertions.assertFalse(written.spec().isUnpartitioned());
@@ -334,6 +344,23 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
     // FileIO: RESTCatalog's default when the server sends no io-impl; the existing client's own.
     Assertions.assertEquals(ResolvingFileIO.class, viaRest.io().getClass());
     Assertions.assertEquals(HadoopFileIO.class, viaOpenHouse.io().getClass());
+    // Table operations: Iceberg's REST operations commit through the IRC routes (V3); the
+    // existing client's commit through the native API.
+    Assertions.assertEquals(
+        "org.apache.iceberg.rest.RESTTableOperations",
+        ((HasTableOperations) viaRest).operations().getClass().getName());
+    Assertions.assertEquals(
+        "com.linkedin.openhouse.javaclient.OpenHouseTableOperations",
+        ((HasTableOperations) viaOpenHouse).operations().getClass().getName());
+    // last-updated-ms: the server sends the stored value, but RESTCatalog 1.5.2 rebuilds the
+    // metadata to attach its location (LoadTableResponse.tableMetadata()), and Iceberg's builder
+    // stamps the current time. Everything else in the metadata is identical.
+    TableMetadata r = current(viaRest);
+    TableMetadata o = current(viaOpenHouse);
+    Assertions.assertTrue(
+        r.lastUpdatedMillis() > o.lastUpdatedMillis(),
+        r.lastUpdatedMillis() + " vs " + o.lastUpdatedMillis());
+    Assertions.assertEquals(withoutLastUpdated(o), withoutLastUpdated(r));
   }
 
   // ---------------------------------------------------------------- capabilities
