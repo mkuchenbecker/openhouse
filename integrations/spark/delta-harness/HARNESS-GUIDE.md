@@ -241,6 +241,12 @@ The following are product-behavior findings, and each is demonstrated live by na
 
 The first group is guard gaps, where an operation that can corrupt or mislead is not blocked.
 
+Status on the `irc-integration` base (see `BASELINE-*.md`): G10 and the policies half of H3 are FIXED
+upstream (#652 merges existing policies on RTAS), and their cases now assert survival. G2 (#650 rejects
+RTAS on a locked table) could not be re-checked: a LEGACY lock now makes the Spark client fail to parse
+the table's policies, so `interact.rtas.onLockedTable`, `control.lock.enforcement` and
+`hazard.lock.starvesMaintenance` fail at their lock precondition.
+
 - **G2 is that RTAS on a locked table succeeds.** The lock rejects an `UPDATE`, and then `CREATE OR
   REPLACE` replaces the locked table, taking it from three rows to two, because the replace path never
   reaches the lock check. This is a data-loss-class gap with the cleanest one-line fix, and it is
