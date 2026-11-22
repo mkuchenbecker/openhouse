@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -34,6 +36,7 @@ public class CommitPathTableCountLimitTest {
       "has 2 live tables, reaching the configured limit of 2.";
 
   @Autowired MockMvc mvc;
+  @Autowired HouseTableRepository houseTables;
 
   @AfterEach
   void cleanUp() {
@@ -53,13 +56,22 @@ public class CommitPathTableCountLimitTest {
     }
   }
 
-  /** The stand-in lists soft-deleted tables with deletedAtMs=0; the real timestamp is its key. */
-  private long deletedAtMsOf(String db, String table) {
-    return HouseTablesH2Repository.softDeletedTables.keySet().stream()
-        .filter(k -> k.getDatabaseId().equals(db) && k.getTableId().equals(table))
-        .mapToLong(k -> k.getDeletedAtMs())
-        .max()
-        .getAsLong();
+  /**
+   * DELETE over HTTP is a hard delete (the tables service purges), so a soft-deleted row can only
+   * be made in the store, the way the house tables service does it for a non-purge delete.
+   */
+  private void softDelete(String db, String table) {
+    houseTables.deleteById(
+        HouseTablePrimaryKey.builder().databaseId(db).tableId(table).build(), false);
+  }
+
+  /** The deletion timestamp the soft-deleted listing reports for the table. */
+  private long deletedAtMsOf(String db, String table) throws Exception {
+    List<Number> deletedAt =
+        read(
+            json(softDeleted(mvc, db)),
+            "$.pageResults.content[?(@.tableId=='" + table + "')].deletedAtMs");
+    return deletedAt.get(0).longValue();
   }
 
   private int softDeletedListingCount(String db, String table) throws Exception {
@@ -98,7 +110,7 @@ public class CommitPathTableCountLimitTest {
   void restoreAtTheLimitIsRejectedWith422AndSucceedsAfterADrop() throws Exception {
     String db = "cl_restore";
     fill(db);
-    delete(mvc, db, "t1").andExpect(status().isNoContent());
+    softDelete(db, "t1");
     long deletedAtMs = deletedAtMsOf(db, "t1");
     post(mvc, newTable(db, "t3")).andExpect(status().isCreated());
 
@@ -111,9 +123,9 @@ public class CommitPathTableCountLimitTest {
 
     delete(mvc, db, "t3").andExpect(status().isNoContent());
     restore(mvc, db, "t1", deletedAtMs).andExpect(status().isNoContent());
-    // The restored table counts as live again: the database is full and a create is refused. (GET
-    // of the restored table is not asserted: DELETE purged its files and the stand-in store keeps
-    // the row, so loading it fails.)
+    // The restored table counts as live again: the database is full and a create is refused. A
+    // soft delete keeps the files, so the restored table loads.
+    get(mvc, db, "t1").andExpect(status().isOk());
     expectError(post(mvc, newTable(db, "t4")), 422, "Database " + db + " " + LIMIT_MESSAGE_TAIL);
     assertEquals(0, softDeletedListingCount(db, "t1"));
 

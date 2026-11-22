@@ -18,6 +18,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
@@ -62,6 +64,7 @@ public class CommitPathAuthorizationTest {
 
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
+  @Autowired HouseTableRepository houseTables;
   @MockBean AuthorizationHandler authorizationHandler;
 
   private final List<String[]> created = new ArrayList<>();
@@ -92,6 +95,15 @@ public class CommitPathAuthorizationTest {
             any(), any(DatabaseDto.class), any(Privileges.class)))
         .thenReturn(allowed);
     when(authorizationHandler.checkSystemOnlyLockAccess(any(), any(), any())).thenCallRealMethod();
+  }
+
+  /**
+   * DELETE over HTTP is a hard delete (the tables service purges), so a soft-deleted row can only
+   * be made in the store, the way the house tables service does it for a non-purge delete.
+   */
+  private void softDelete(String db, String table) {
+    houseTables.deleteById(
+        HouseTablePrimaryKey.builder().databaseId(db).tableId(table).build(), false);
   }
 
   private String create(String db, String table) throws Exception {
@@ -196,7 +208,7 @@ public class CommitPathAuthorizationTest {
   @Test
   void deniedRestoreIs403AndTableStaysDeleted() throws Exception {
     create("auth_rst", "t");
-    delete(mvc, "auth_rst", "t").andExpect(status().isNoContent());
+    softDelete("auth_rst", "t");
     long deletedAtMs = deletedAtMsOf("auth_rst", "t");
     stubDecision(false);
 
@@ -213,7 +225,7 @@ public class CommitPathAuthorizationTest {
   @Test
   void deniedPurgeIs403AndSoftDeletedTableRemains() throws Exception {
     create("auth_prg", "t");
-    delete(mvc, "auth_prg", "t").andExpect(status().isNoContent());
+    softDelete("auth_prg", "t");
     long deletedAtMs = deletedAtMsOf("auth_prg", "t");
     stubDecision(false);
 
@@ -291,18 +303,14 @@ public class CommitPathAuthorizationTest {
     assertTrue(json(get(mvc, "auth_primary", "t")).contains("user.primary"));
   }
 
-  /**
-   * The stand-in house table store lists soft-deleted tables with {@code deletedAtMs=0}, and
-   * restore rejects a non-positive value, so the real timestamp is read from the stand-in's own
-   * record.
-   */
+  /** The deletion timestamp the soft-deleted listing reports for the table. */
   private long deletedAtMsOf(String db, String table) throws Exception {
     assertEquals(1, softDeletedListingCount(db, table));
-    return HouseTablesH2Repository.softDeletedTables.keySet().stream()
-        .filter(k -> k.getDatabaseId().equals(db) && k.getTableId().equals(table))
-        .mapToLong(k -> k.getDeletedAtMs())
-        .max()
-        .getAsLong();
+    List<Number> deletedAt =
+        read(
+            json(softDeleted(mvc, db)),
+            "$.pageResults.content[?(@.tableId=='" + table + "')].deletedAtMs");
+    return deletedAt.get(0).longValue();
   }
 
   private int softDeletedListingCount(String db, String table) throws Exception {

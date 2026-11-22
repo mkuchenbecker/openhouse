@@ -126,7 +126,7 @@ public class TableCountLimitTest {
     createTables(db, LIMIT);
     String restored = "t_seed_0";
     houseTableRepository.deleteById(
-        HouseTablePrimaryKey.builder().databaseId(db).tableId(restored).build(), true);
+        HouseTablePrimaryKey.builder().databaseId(db).tableId(restored).build(), false);
     SoftDeletedTablePrimaryKey softKey =
         HouseTablesH2Repository.softDeletedTables.keySet().stream()
             .filter(k -> k.getDatabaseId().equals(db) && k.getTableId().equals(restored))
@@ -210,13 +210,14 @@ public class TableCountLimitTest {
             .tableId("a_view")
             .tableUUID("view-uuid-" + db)
             .tableLocation("file:/warehouse/" + db + "/a_view/metadata.json")
+            .tableVersion(INITIAL_TABLE_VERSION)
             .storageType("local")
             .entityType("VIEW")
             .build());
     TableDto doomed = dto(db, "t_soft_deleted", false);
     openHouseInternalRepository.save(doomed);
     houseTableRepository.deleteById(
-        HouseTablePrimaryKey.builder().databaseId(db).tableId("t_soft_deleted").build(), true);
+        HouseTablePrimaryKey.builder().databaseId(db).tableId("t_soft_deleted").build(), false);
     assertFalse(openHouseInternalRepository.existsById(key(db, "t_soft_deleted")));
 
     // One live table, one view and one soft-deleted table: only the live table counts.
