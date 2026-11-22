@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.e2e.h2;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -80,6 +81,7 @@ public class ViewsCorruptPointerH2Test {
             .tableUUID(UUID.randomUUID().toString())
             .tableLocation(blankLocation ? "" : STORED_LOCATION)
             .storageType(blankLocation ? "local" : "")
+            .tableVersion(INITIAL_TABLE_VERSION)
             .tableCreator("DUMMY_ANONYMOUS_USER")
             .creationTime(1L)
             .lastModifiedTime(1L)

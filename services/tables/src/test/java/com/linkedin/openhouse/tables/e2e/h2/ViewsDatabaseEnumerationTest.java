@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.e2e.h2;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -30,6 +31,7 @@ public class ViewsDatabaseEnumerationTest {
             .tableId("only_view")
             .tableUUID("view-uuid")
             .tableLocation("file:/warehouse/views_only_database/only_view/metadata.json")
+            .tableVersion(INITIAL_TABLE_VERSION)
             .storageType("local")
             .entityType("VIEW")
             .build());
