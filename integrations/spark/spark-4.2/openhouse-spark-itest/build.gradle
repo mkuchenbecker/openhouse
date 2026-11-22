@@ -1,0 +1,97 @@
+// Spark 4.2 (Scala 2.13) on the fork's Iceberg 1.12 line reads OpenHouse tables over the Iceberg
+// REST Catalog (IRC) routes of the tables service, with Iceberg's own SparkCatalog and RESTCatalog
+// and no OpenHouse class in the Spark JVM. Only under -PicebergFork (settings.gradle); see
+// docs/development/iceberg-fork.md.
+//
+// Two classpaths, two JVMs:
+// - test: Spark 4.2 and the fork's shaded iceberg-spark-runtime-4.2_2.13, nothing of OpenHouse.
+// - service: the tables service as the Spark 3.5 tests embed it (tables-test-fixtures, in-memory
+//   H2 stores), plus the existing OpenHouse Java client that seeds the tables through the native
+//   API. The test starts it in its own JVM (IrcReadTestServiceProcess) and stops it.
+// The service cannot share the Spark 4.2 JVM: Spark 4.2 needs jackson-databind 2.21 (its
+// jackson-module-scala refuses anything else) while the service runs on Spring Boot 2.7's 2.13, and
+// the service's unshaded Iceberg jars would sit next to the engine's shaded runtime.
+plugins {
+  id 'java'
+}
+
+def pin = new Properties()
+rootProject.file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
+def spark42Version = pin.getProperty('spark42Version')
+def icebergVersion = rootProject.ext.iceberg_1_5_version
+def forkRepo = rootProject.file("${rootProject.buildDir}/iceberg-fork/repo")
+if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
+  throw new GradleException(
+      "-PicebergFork: iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
+}
+
+java {
+  sourceCompatibility = JavaVersion.VERSION_17
+  targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+  service {
+    java.srcDirs = ['src/service/java']
+  }
+}
+
+configurations {
+  // The Spark 4.2 JVM keeps the versions Spark and the shaded runtime declare: the root build's
+  // forces (Jackson 2.13.4 for the services, ORC/Avro/Caffeine for the 1.5 line) do not apply.
+  [testCompileClasspath, testRuntimeClasspath].each { it.resolutionStrategy.forcedModules = [] }
+  serviceImplementation {
+    exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
+  }
+}
+
+dependencies {
+  testImplementation "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
+  testImplementation("org.apache.spark:spark-sql_2.13:${spark42Version}")
+
+  // The service JVM: what the Spark 3.5 tests embed, and the existing Java client.
+  serviceImplementation project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')
+  // The authorization handler the service main overrides lives in services:tables, which the
+  // fixtures depend on at runtime only (as the Spark 3.5 itest compiles against it).
+  serviceCompileOnly project(path: ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12', configuration: 'runtimeElements')
+  serviceImplementation project(':services:common')
+  serviceImplementation(project(path: ':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime', configuration: 'shadow'))
+  serviceImplementation "com.linkedin.iceberg:iceberg-data:${icebergVersion}"
+  serviceImplementation "com.linkedin.iceberg:iceberg-parquet:${icebergVersion}"
+  serviceImplementation "com.linkedin.iceberg:iceberg-orc:${icebergVersion}"
+  serviceImplementation("org.apache.hadoop:hadoop-client:2.10.0") {
+    // As openhouse.hadoop-conventions.
+    exclude group: 'junit', module: 'junit'
+    exclude group: 'javax', module: 'servlet-api'
+    exclude group: 'org.mortbay.jetty', module: 'servlet-api'
+    exclude group: 'com.zaxxer', module: 'HikariCP-java7'
+    exclude group: 'org.apache.commons', module: 'commons-lang3'
+    exclude group: 'com.codahale.metrics', module: 'metrics-core'
+    exclude group: 'com.squareup.okhttp', module: 'okhttp'
+  }
+  serviceImplementation 'org.slf4j:slf4j-simple:1.7.36'
+  serviceCompileOnly 'org.springframework.boot:spring-boot-starter-tomcat:' + spring_web_version
+}
+
+def extraJvmArgs = [
+    'java.io', 'java.lang.invoke', 'java.lang.reflect', 'java.lang', 'java.math', 'java.net',
+    'java.nio', 'java.text', 'java.time', 'java.util.concurrent.atomic', 'java.util.concurrent',
+    'java.util.regex', 'java.util', 'jdk.internal.ref', 'jdk.internal.reflect', 'sun.util.calendar',
+    'sun.nio.ch', 'sun.nio.cs', 'sun.security.action'
+].collect { "--add-opens=java.base/${it}=ALL-UNNAMED" } + ['--add-opens=java.sql/java.sql=ALL-UNNAMED']
+
+tasks.named('test') {
+  dependsOn tasks.named('serviceClasses')
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  doFirst {
+    systemProperty 'irc42.service.classpath', serviceClasspath.asPath
+    systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'irc42.workdir', "${temporaryDir}"
+  }
+  // The outcome depends on a server outside Gradle's view: never skip the run as up to date.
+  outputs.upToDateWhen { false }
+}
