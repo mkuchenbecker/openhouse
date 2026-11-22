@@ -143,7 +143,7 @@ public class IcebergRestCatalogController {
       @PathVariable("namespace") String namespace,
       @PathVariable("table") String tableId,
       @RequestBody(required = false) byte[] body) {
-    String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    String databaseId = IcebergRestApiHandler.tableDatabaseId(namespace, tableId);
     UpdateTableRequest request = IcebergRestJson.read(body, UpdateTableRequest.class);
     return IcebergRestJson.loadTable(
         writeHandler.commitTable(
@@ -161,7 +161,9 @@ public class IcebergRestCatalogController {
       @PathVariable("table") String tableId,
       @RequestParam(value = "purgeRequested", required = false) String purgeRequested) {
     writeHandler.dropTable(
-        IcebergRestApiHandler.databaseId(namespace), tableId, extractAuthenticatedUserPrincipal());
+        IcebergRestApiHandler.tableDatabaseId(namespace, tableId),
+        tableId,
+        extractAuthenticatedUserPrincipal());
     return IcebergRestJson.noContent();
   }
 

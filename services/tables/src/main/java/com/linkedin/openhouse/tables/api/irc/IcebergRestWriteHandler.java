@@ -299,7 +299,10 @@ public class IcebergRestWriteHandler {
   /** The native rename, with its rules (same database, not a case-only change, target absent). */
   public void renameTable(RenameTableRequest request, String actingPrincipal) {
     request.validate();
-    String fromDatabaseId = IcebergRestApiHandler.databaseId(namespace(request.source()));
+    // The source is a table (none exists in a multi-level namespace: 404), the destination's
+    // namespace is where it goes (a multi-level one is malformed: 400), as on the other routes.
+    String fromDatabaseId =
+        IcebergRestApiHandler.tableDatabaseId(namespace(request.source()), request.source().name());
     String toDatabaseId = IcebergRestApiHandler.databaseId(namespace(request.destination()));
     tablesApiHandler.renameTable(
         fromDatabaseId,
