@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.jayway.jsonpath.JsonPath;
+import java.net.URI;
 import java.util.Map;
 import org.apache.iceberg.rest.IrcClientParsers;
 import org.apache.iceberg.rest.responses.ErrorResponse;
@@ -39,6 +40,19 @@ final class IrcHttp {
 
   static MvcResult head(MockMvc mvc, String path) throws Exception {
     return perform(mvc, request(HttpMethod.HEAD, path));
+  }
+
+  /**
+   * Sends {@code path} as an already encoded URI, the way {@code RESTCatalog} sends it: a {@code
+   * %1F} namespace separator arrives as the separator. ({@link #get} treats the path as a template
+   * and encodes its {@code %} again.)
+   */
+  static MvcResult getEncoded(MockMvc mvc, String path) throws Exception {
+    return perform(mvc, MockMvcRequestBuilders.request(HttpMethod.GET, URI.create(BASE + path)));
+  }
+
+  static MvcResult headEncoded(MockMvc mvc, String path) throws Exception {
+    return perform(mvc, MockMvcRequestBuilders.request(HttpMethod.HEAD, URI.create(BASE + path)));
   }
 
   static String body(MvcResult result) throws Exception {

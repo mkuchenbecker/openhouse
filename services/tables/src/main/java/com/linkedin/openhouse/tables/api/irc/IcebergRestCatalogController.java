@@ -92,7 +92,7 @@ public class IcebergRestCatalogController {
       @RequestParam(value = "snapshots", required = false) String snapshots) {
     return IcebergRestJson.loadTable(
         handler.loadTable(
-            IcebergRestApiHandler.databaseId(databaseId),
+            IcebergRestApiHandler.tableDatabaseId(databaseId, tableId),
             tableId,
             snapshots,
             extractAuthenticatedUserPrincipal()));

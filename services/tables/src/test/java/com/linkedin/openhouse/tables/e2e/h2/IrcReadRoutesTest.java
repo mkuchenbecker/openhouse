@@ -44,6 +44,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.rest.IrcClientParsers;
 import org.apache.iceberg.rest.responses.ConfigResponse;
+import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
@@ -255,9 +256,36 @@ public class IrcReadRoutesTest {
 
   @Test
   void aMultiLevelNamespaceIsABadRequest() throws Exception {
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb"), 400, "BadRequestException");
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb/tables"), 400, "BadRequestException");
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb/tables/t"), 400, "BadRequestException");
+    assertIrcError(IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb"), 400, "BadRequestException");
+    assertIrcError(
+        IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb/tables"), 400, "BadRequestException");
+  }
+
+  /**
+   * No table exists in a namespace of more than one level, since none can exist. The answer is 404
+   * {@code NoSuchTableException}, not 400: {@code RESTCatalog} (1.5.2 and 1.12) loads metadata
+   * tables such as {@code db.t.snapshots} by first loading the table {@code snapshots} in the
+   * namespace {@code db.t}, and falls back to the metadata table of {@code db.t} only on that 404.
+   * An empty level is still a malformed request.
+   */
+  @Test
+  void aTableInAMultiLevelNamespaceDoesNotExist() throws Exception {
+    create("irc_meta", "t1");
+    ErrorResponse error =
+        assertIrcError(
+            IrcHttp.getEncoded(mvc, "/v1/namespaces/irc_meta%1Ft1/tables/snapshots"),
+            404,
+            "NoSuchTableException");
+    assertEquals("Table does not exist: irc_meta.t1.snapshots", error.message());
+    assertIrcError(
+        IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb/tables/t"), 404, "NoSuchTableException");
+    assertEquals(
+        404,
+        IrcHttp.headEncoded(mvc, "/v1/namespaces/irc_meta%1Ft1/tables/snapshots")
+            .getResponse()
+            .getStatus());
+    assertIrcError(
+        IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1F/tables/t"), 400, "BadRequestException");
   }
 
   // ---------------------------------------------------------------- tables

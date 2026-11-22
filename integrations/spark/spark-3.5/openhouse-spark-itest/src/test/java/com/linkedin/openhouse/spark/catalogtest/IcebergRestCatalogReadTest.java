@@ -336,6 +336,32 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
   }
 
   /**
+   * RESTCatalog loads the metadata table {@code db.t.snapshots} by first asking for the table
+   * {@code snapshots} in the namespace {@code db.t}, and loads the metadata table of {@code db.t}
+   * only when that answers 404. A name that is no metadata table stays a missing table.
+   */
+  @Test
+  void metadataTablesLoadThroughTheRestCatalog() throws Exception {
+    Table snapshots = rest.loadTable(TableIdentifier.of(DB, "t_written", "snapshots"));
+    long rows = 0;
+    try (CloseableIterable<FileScanTask> tasks = snapshots.newScan().planFiles()) {
+      for (FileScanTask task : tasks) {
+        try (CloseableIterable<org.apache.iceberg.StructLike> taskRows = task.asDataTask().rows()) {
+          for (org.apache.iceberg.StructLike ignored : taskRows) {
+            rows++;
+          }
+        }
+      }
+    }
+    Assertions.assertEquals(
+        snapshotIds(openhouse.loadTable(TableIdentifier.of(DB, "t_written"))).size(), rows);
+    assertThrown(
+        NoSuchTableException.class,
+        "irc_read.t_written.never",
+        thrown(() -> rest.loadTable(TableIdentifier.of(DB, "t_written", "never"))));
+  }
+
+  /**
    * Differences between what the two clients show for the same table, pinned as observed. Each one
    * is listed in the V2 report with its cause.
    */
