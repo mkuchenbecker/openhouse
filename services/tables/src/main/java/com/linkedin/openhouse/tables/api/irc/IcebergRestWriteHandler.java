@@ -13,6 +13,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequest
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
+import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
@@ -62,7 +63,9 @@ import org.springframework.stereotype.Component;
  *       when it does.
  *   <li>Drop and rename are the native drop and rename.
  *   <li>A create or commit that sets or removes {@value #UPDATED_POLICY_KEY} is refused (400): the
- *       routes cannot apply policy changes yet.
+ *       routes cannot apply policy changes yet. So is a create that asks, through the properties
+ *       the OpenHouse client rewrites into request fields, for policies or a non-primary table
+ *       type, which the create would otherwise drop.
  * </ul>
  */
 @Component
@@ -79,6 +82,12 @@ public class IcebergRestWriteHandler {
    * and report a success that applied no policy. The native routes are unchanged.
    */
   static final String UPDATED_POLICY_KEY = "updated.openhouse.policy";
+
+  /** The stored policies, as a property; the OpenHouse client parses it into request policies. */
+  private static final String POLICIES_KEY = "policies";
+
+  /** The table type, as a property; the OpenHouse client reads it into the request's type. */
+  private static final String TABLE_TYPE_KEY = "openhouse.tableType";
 
   @Autowired private TablesApiValidator tablesApiValidator;
 
@@ -130,8 +139,8 @@ public class IcebergRestWriteHandler {
                   + "table; leave location unset",
               identifier, request.location()));
     }
-    if (request.properties() != null && request.properties().containsKey(UPDATED_POLICY_KEY)) {
-      throw policyKeyRefused(identifier);
+    if (request.properties() != null) {
+      refuseRewrittenCreateProperties(identifier, request.properties());
     }
     return IcebergCreates.toCreateBody(
         identifier,
@@ -227,6 +236,7 @@ public class IcebergRestWriteHandler {
       update.applyTo(builder);
     }
     TableMetadata candidate = builder.build();
+    refuseRewrittenCreateProperties(identifier, candidate.properties());
     if (candidate.formatVersion() != clusterProperties.getClusterIcebergFormatVersion()) {
       throw new RequestValidationFailureException(
           String.format(
@@ -364,6 +374,38 @@ public class IcebergRestWriteHandler {
                         && ((MetadataUpdate.RemoveProperties) update)
                             .removed()
                             .contains(UPDATED_POLICY_KEY)));
+  }
+
+  /**
+   * Refuses a create's properties that the OpenHouse Java client would have turned into request
+   * fields and that the create would otherwise drop: {@link #UPDATED_POLICY_KEY}, a non-empty raw
+   * {@code policies} (the client parses it into the request's policies) and a table type other than
+   * the primary one ({@code openhouse.tableType}, which the client reads into the request's table
+   * type). The values the server sets itself, which a staged create returns and its completion
+   * sends back, are accepted.
+   */
+  private static void refuseRewrittenCreateProperties(
+      TableIdentifier identifier, Map<String, String> properties) {
+    if (properties.containsKey(UPDATED_POLICY_KEY)) {
+      throw policyKeyRefused(identifier);
+    }
+    String policies = properties.get(POLICIES_KEY);
+    if (policies != null && !policies.trim().isEmpty()) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s: policies cannot be set through the "
+                  + "Iceberg REST routes yet; use the OpenHouse client or the native OpenHouse API "
+                  + "to set policies",
+              identifier, POLICIES_KEY));
+    }
+    String tableType = properties.get(TABLE_TYPE_KEY);
+    if (tableType != null && !TableType.PRIMARY_TABLE.name().equals(tableType)) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s to %s: the table type cannot be set "
+                  + "through the Iceberg REST routes; they create %s tables",
+              identifier, TABLE_TYPE_KEY, tableType, TableType.PRIMARY_TABLE.name()));
+    }
   }
 
   private static RequestValidationFailureException policyKeyRefused(TableIdentifier identifier) {
