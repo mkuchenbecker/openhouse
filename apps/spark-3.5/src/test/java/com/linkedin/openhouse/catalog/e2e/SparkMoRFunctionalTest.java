@@ -14,16 +14,18 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.MetricsConfig;
 import org.apache.iceberg.PartitionKey;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.actions.RewriteDataFiles;
-import org.apache.iceberg.data.GenericAppenderFactory;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
+import org.apache.iceberg.data.orc.GenericOrcWriter;
 import org.apache.iceberg.deletes.EqualityDeleteWriter;
 import org.apache.iceberg.encryption.EncryptedOutputFile;
 import org.apache.iceberg.io.OutputFileFactory;
+import org.apache.iceberg.orc.ORC;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.spark.actions.SparkActions;
@@ -293,18 +295,21 @@ public class SparkMoRFunctionalTest extends OpenHouseSparkITest {
       Table table, List<Integer> equalityFieldIds, Schema eqDeleteRowSchema, Record deleteRecord) {
     OutputFileFactory fileFactory =
         OutputFileFactory.builderFor(table, 1, 1).format(FileFormat.ORC).build();
-    GenericAppenderFactory appenderFactory =
-        new GenericAppenderFactory(
-            table.schema(),
-            table.spec(),
-            ArrayUtil.toIntArray(equalityFieldIds),
-            eqDeleteRowSchema,
-            null);
-
     EncryptedOutputFile file = createEncryptedOutputFile(null, fileFactory);
 
+    // What GenericAppenderFactory#newEqDeleteWriter built for ORC; that factory is gone from newer
+    // Iceberg, while these ORC builders exist on every line this test compiles against.
     EqualityDeleteWriter<Record> eqDeleteWriter =
-        appenderFactory.newEqDeleteWriter(file, FileFormat.ORC, null);
+        ORC.writeDeletes(file)
+            .createWriterFunc(GenericOrcWriter::buildWriter)
+            .withPartition(null)
+            .overwrite()
+            .metricsConfig(MetricsConfig.fromProperties(Collections.emptyMap()))
+            .rowSchema(eqDeleteRowSchema)
+            .withSpec(table.spec())
+            .withKeyMetadata(file.keyMetadata())
+            .equalityFieldIds(ArrayUtil.toIntArray(equalityFieldIds))
+            .buildEqualityWriter();
 
     try (EqualityDeleteWriter<Record> clsEqDeleteWriter = eqDeleteWriter) {
       clsEqDeleteWriter.write(deleteRecord);
