@@ -1112,6 +1112,16 @@ public class IrcWriteRoutesTest {
                 .content("{\"requirements\":[],\"updates\":[{\"action\":\"no-such-update\"}]}"));
     assertIrcError(result, 400, "BadRequestException");
     assertEquals(before, stored("irc_w_unknown"));
+    // A write route without a body is a 400 too.
+    for (String path :
+        new String[] {
+          IrcWrite.tables("irc_w_unknown"),
+          IrcWrite.table("irc_w_unknown", "t"),
+          "/v1/tables/rename"
+        }) {
+      assertIrcError(
+          IrcHttp.perform(mvc, IrcHttp.request(HttpMethod.POST, path)), 400, "BadRequestException");
+    }
     assertNotEquals(INITIAL_TABLE_VERSION, before);
   }
 }

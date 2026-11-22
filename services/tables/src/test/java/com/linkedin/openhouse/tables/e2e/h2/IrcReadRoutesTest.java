@@ -164,7 +164,12 @@ public class IrcReadRoutesTest {
         IrcHttp.perform(
             mvc, IrcHttp.request(HttpMethod.GET, "/v1/config").param("warehouse", "anything"));
     assertEquals(200, result.getResponse().getStatus(), body(result));
-    assertTrue(IrcClientParsers.parse(body(result), ConfigResponse.class).defaults().isEmpty());
+    // The same defaults as without a warehouse
+    // (configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo).
+    assertEquals(
+        IrcClientParsers.parse(body(IrcHttp.get(mvc, "/v1/config")), ConfigResponse.class)
+            .defaults(),
+        IrcClientParsers.parse(body(result), ConfigResponse.class).defaults());
   }
 
   // ---------------------------------------------------------------- namespaces
@@ -525,12 +530,8 @@ public class IrcReadRoutesTest {
       {HttpMethod.POST, "/v1/namespaces"},
       {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t"},
-      {HttpMethod.DELETE, "/v1/namespaces/irc_x/tables/t"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/metrics"},
-      {HttpMethod.POST, "/v1/tables/rename"},
       {HttpMethod.POST, "/v1/transactions/commit"},
       {HttpMethod.GET, "/v1/namespaces/irc_x/views"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/views"},

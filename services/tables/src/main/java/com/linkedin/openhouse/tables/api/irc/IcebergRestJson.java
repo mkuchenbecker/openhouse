@@ -122,6 +122,9 @@ public final class IcebergRestJson {
    * or requirement this Iceberg line does not know, is a 400 {@code BadRequestException}.
    */
   public static <T extends RESTRequest> T read(byte[] body, Class<T> type) {
+    if (body == null || body.length == 0) {
+      throw new BadRequestException("Invalid %s: no body", type.getSimpleName());
+    }
     T request;
     try {
       request = MAPPER.readValue(body, type);
