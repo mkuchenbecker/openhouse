@@ -40,7 +40,7 @@ import org.springframework.test.web.servlet.MockMvc;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Import(IrcReadRoutesTest.StubDefaults.class)
+@Import({IrcReadRoutesTest.StubDefaults.class, IrcViewRoutesTest.ViewAudit.class})
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 public class StoredViewMetadataGoldenTest {
   @Autowired MockMvc mvc;
