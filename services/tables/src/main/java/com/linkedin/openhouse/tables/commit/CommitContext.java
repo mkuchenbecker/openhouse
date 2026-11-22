@@ -44,4 +44,12 @@ public class CommitContext {
    * CommitKind#SNAPSHOTS_UPDATE}.
    */
   boolean replace;
+
+  /**
+   * The native request validation the route runs before the service layer (the native routes run it
+   * in their API handler), for callers of the candidate entry point ({@code TableCommitService}),
+   * which runs it first, inside the commit's audit, as the native handler's validation is inside
+   * the native route's audit. {@code null}: none.
+   */
+  Runnable validation;
 }

@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import java.util.HashMap;
@@ -19,9 +20,10 @@ import org.apache.iceberg.catalog.TableIdentifier;
  *
  * <p>The request carries the candidate's schema, partition spec (as time partitioning and
  * clustering, every clustering column, as the client sends them, so that too many are refused by
- * the validator's own rule), sort order and properties; the stored table's policies (which the
- * client parses from the stored {@code policies} property) and table type; and the stored version
- * as base.
+ * the validator's own rule), sort order and properties; the policies the client would send (the
+ * stored ones, which the client parses from the stored {@code policies} property, or those a policy
+ * patch in the commit's properties merges onto them, see {@link PolicyPatch}) and the stored table
+ * type; and the stored version as base.
  */
 public final class IcebergUpdates {
   private IcebergUpdates() {}
@@ -38,6 +40,27 @@ public final class IcebergUpdates {
       TableMetadata candidate,
       boolean replace,
       PartitionSpecMapper partitionSpecMapper) {
+    return toUpdateBody(
+        identifier,
+        clusterId,
+        stored,
+        baseVersion,
+        candidate,
+        replace,
+        stored.getPolicies(),
+        partitionSpecMapper);
+  }
+
+  /** {@link #toUpdateBody} with the policies the request carries, {@code policies}. */
+  public static CreateUpdateTableRequestBody toUpdateBody(
+      TableIdentifier identifier,
+      String clusterId,
+      TableDto stored,
+      String baseVersion,
+      TableMetadata candidate,
+      boolean replace,
+      Policies policies,
+      PartitionSpecMapper partitionSpecMapper) {
     Table table = CandidateViews.staticTable(candidate);
     CreateUpdateTableRequestBody.CreateUpdateTableRequestBodyBuilder body =
         CreateUpdateTableRequestBody.builder();
@@ -51,7 +74,7 @@ public final class IcebergUpdates {
         .timePartitioning(partitionSpecMapper.toTimePartitionSpec(table))
         .clustering(partitionSpecMapper.toClusteringColumns(table))
         .tableProperties(new HashMap<>(candidate.properties()))
-        .policies(stored.getPolicies())
+        .policies(policies)
         .sortOrder(SortOrderParser.toJson(candidate.sortOrder()))
         .baseTableVersion(baseVersion)
         .replaceCommit(replace)

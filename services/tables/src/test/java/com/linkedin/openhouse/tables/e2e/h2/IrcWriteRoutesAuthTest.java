@@ -10,8 +10,10 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.google.gson.Gson;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
@@ -106,6 +108,45 @@ public class IrcWriteRoutesAuthTest {
                 "ForbiddenException")
             .message());
     assertEquals(404, CommitPathHttp.status(get(mvc, DB, "t1")));
+  }
+
+  /**
+   * A policy change by a principal without the privilege: the native refusal of the client's
+   * request (the key stripped, the patch merged into its policies) is the IRC refusal.
+   */
+  @Test
+  void aDeniedPolicyChangeIs403AsNatively() throws Exception {
+    create("t3");
+    TableMetadata base = IrcWrite.load(mvc, DB, "t3");
+    String getJson = json(get(mvc, DB, "t3"));
+    stubDecision(false);
+    String nativeMessage =
+        message(
+            put(
+                    mvc,
+                    bodyFromGet(getJson)
+                        .toBuilder()
+                        .policies(new Gson().fromJson("{\"sharingEnabled\":true}", Policies.class))
+                        .build())
+                .andExpect(status().isForbidden()));
+    String message =
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    DB,
+                    "t3",
+                    IrcWrite.simple(
+                        base,
+                        Collections.singletonList(
+                            new MetadataUpdate.SetProperties(
+                                Collections.singletonMap(
+                                    "updated.openhouse.policy", "{\"sharingEnabled\": TRUE}"))))),
+                403,
+                "ForbiddenException")
+            .message();
+    assertEquals(nativeMessage, message);
+    stubDecision(true);
+    assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, DB, "t3").metadataFileLocation());
   }
 
   @Test

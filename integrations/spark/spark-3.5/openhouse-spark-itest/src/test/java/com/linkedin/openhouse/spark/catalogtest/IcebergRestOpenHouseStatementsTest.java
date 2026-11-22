@@ -22,7 +22,8 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Two catalogs point at the same server: {@code irc}, configured as a user would, and {@code
  * irc_adv}, which also sets {@code openhouse.capabilities=policies,grants,unlock} on the client
- * side, standing in for a server that advertises them (this server does not yet).
+ * side. The server's own config override ({@code policies}) wins over that client value, so the two
+ * must behave the same: grants and unlock stay unavailable whatever is claimed.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
@@ -122,24 +123,6 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
     return statements;
   }
 
-  /**
-   * Each policy statement on {@code catalog} fails with an outcome that starts with {@code
-   * expected} and contains {@code mentions}, and stores nothing.
-   */
-  private void assertPolicies(String catalog, String expected, String mentions) {
-    String policiesBefore = viaOpenHouse().properties().get("policies");
-    for (Map.Entry<String, String> statement : policyStatements(catalog).entrySet()) {
-      String outcome = outcome(statement.getValue());
-      Assertions.assertTrue(
-          outcome.startsWith(expected) && outcome.contains(mentions),
-          statement.getKey() + " on " + catalog + ": " + outcome);
-      // Nothing is stored: no policy change and no stray patch property.
-      Map<String, String> properties = viaOpenHouse().properties();
-      Assertions.assertFalse(properties.containsKey(POLICY_KEY), statement.getKey());
-      Assertions.assertEquals(policiesBefore, properties.get("policies"), statement.getKey());
-    }
-  }
-
   private void assertGrants(String catalog) {
     for (Map.Entry<String, String> statement : grantStatements(catalog).entrySet()) {
       Assertions.assertEquals(
@@ -174,17 +157,26 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
   }
 
   @Test
-  void policyStatementsFailBeforeWritingUnlessPoliciesAreAdvertised() {
-    // This server advertises no capabilities: the statement fails in the client and sends
-    // nothing.
-    assertPolicies(
-        PLAIN,
-        "java.lang.UnsupportedOperationException: Catalog 'irc' does not support OpenHouse"
-            + " policies",
-        "openhouse.capabilities");
-    // Where 'policies' is advertised the statement goes to the server, which refuses the patch
-    // key it cannot yet apply (decision D25), with Iceberg's BadRequestException naming it.
-    assertPolicies(ADVERTISED, "org.apache.iceberg.exceptions.BadRequestException", POLICY_KEY);
+  void policyStatementsApplyWhereTheServerAdvertisesPolicies() {
+    // This server advertises openhouse.capabilities=policies in its config response, which
+    // overrides the client-side value of irc_adv: on both catalogs the resolver offers policies,
+    // the statement sends its patch, and the server applies it as a policy change. A server that
+    // does not advertise policies is refused in the client before anything is sent
+    // (OpenHouseCapabilitiesTest, which controls the config response).
+    for (String catalog : Arrays.asList(PLAIN, ADVERTISED)) {
+      for (Map.Entry<String, String> statement : policyStatements(catalog).entrySet()) {
+        Assertions.assertEquals(
+            "ok", outcome(statement.getValue()), statement.getKey() + " on " + catalog);
+        Assertions.assertFalse(
+            viaOpenHouse().properties().containsKey(POLICY_KEY), statement.getKey());
+      }
+    }
+    String policies = viaOpenHouse().properties().get("policies");
+    for (String applied :
+        Arrays.asList(
+            "\"retention\"", "\"history\"", "\"columnTags\"", "\"sharingEnabled\": true")) {
+      Assertions.assertTrue(policies.contains(applied), applied + " in " + policies);
+    }
   }
 
   @Test

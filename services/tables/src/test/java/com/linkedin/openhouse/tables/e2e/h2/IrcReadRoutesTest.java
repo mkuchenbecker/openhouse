@@ -137,12 +137,16 @@ public class IrcReadRoutesTest {
   // ---------------------------------------------------------------- config
 
   /**
-   * Two defaults, no overrides. Clients do not post metrics reports: the metrics route answers 406
-   * until it is served, and RESTCatalog posts a report after every scan and commit and logs each
-   * refusal with a stack trace (seen in the V3 write itests). Clients use HadoopFileIO, the
+   * Two defaults and one override. Clients do not post metrics reports: the metrics route answers
+   * 406 until it is served, and RESTCatalog posts a report after every scan and commit and logs
+   * each refusal with a stack trace (seen in the V3 write itests). Clients use HadoopFileIO, the
    * existing OpenHouse client's FileIO: with RESTCatalog's default (ResolvingFileIO) a Spark
    * merge-on-read delete fails, since this Iceberg line opens delete files with write properties
-   * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate).
+   * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The
+   * override {@code openhouse.capabilities} names the OpenHouse features these routes serve (V5-2):
+   * {@code policies}, the policy patch of OpenHouse's policy statements. It is an override so that
+   * the client's merged catalog properties say what the server serves, whatever the client was
+   * configured with.
    */
   @Test
   void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {
@@ -153,10 +157,17 @@ public class IrcReadRoutesTest {
     expected.put("rest-metrics-reporting-enabled", "false");
     expected.put("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
     assertEquals(expected, JsonPath.read(json, "$.defaults"));
-    assertEquals(Collections.emptyMap(), JsonPath.read(json, "$.overrides"));
+    Map<String, String> overrides = Collections.singletonMap("openhouse.capabilities", "policies");
+    assertEquals(overrides, JsonPath.read(json, "$.overrides"));
     ConfigResponse config = IrcClientParsers.parse(json, ConfigResponse.class);
     assertEquals(expected, config.defaults());
-    assertTrue(config.overrides().isEmpty());
+    assertEquals(overrides, config.overrides());
+    // What the client's catalog properties then hold, whatever it was configured with.
+    assertEquals(
+        "policies",
+        config
+            .merge(Collections.singletonMap("openhouse.capabilities", "configured"))
+            .get("openhouse.capabilities"));
   }
 
   @Test
