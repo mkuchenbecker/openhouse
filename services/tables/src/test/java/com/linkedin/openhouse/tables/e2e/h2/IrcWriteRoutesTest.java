@@ -1076,6 +1076,62 @@ public class IrcWriteRoutesTest {
         "NoSuchTableException");
   }
 
+  // ---------------------------------------------------------------- multi-level namespaces
+
+  private MvcResult encoded(HttpMethod method, String path, Object body) throws Exception {
+    org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request =
+        MockMvcRequestBuilders.request(method, java.net.URI.create(IrcHttp.BASE + path));
+    if (body != null) {
+      request
+          .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+          .content(org.apache.iceberg.rest.IrcClientParsers.toJson(body));
+    }
+    return IrcHttp.perform(mvc, request);
+  }
+
+  /**
+   * As on the read routes: a table route in a namespace of more than one level names a table that
+   * cannot exist (404 {@code NoSuchTableException}, which is also what {@code RESTCatalog} needs to
+   * fall back to a metadata table such as {@code db.t.snapshots}); a route that names a namespace
+   * to create in, or to rename into, is malformed (400). Nothing is written.
+   */
+  @Test
+  void writeRoutesInAMultiLevelNamespace() throws Exception {
+    createNative(nativeBody("irc_w_ml"));
+    String before = stored("irc_w_ml");
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_ml", "t");
+    UpdateTableRequest update =
+        IrcWrite.simple(
+            base,
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap("user.k", "v"))));
+    assertIrcError(
+        encoded(HttpMethod.POST, "/v1/namespaces/irc_w_ml%1Ft/tables/snapshots", update),
+        404,
+        "NoSuchTableException");
+    assertIrcError(
+        encoded(HttpMethod.DELETE, "/v1/namespaces/irc_w_ml%1Ft/tables/snapshots", null),
+        404,
+        "NoSuchTableException");
+    assertIrcError(
+        encoded(HttpMethod.POST, "/v1/namespaces/irc_w_ml%1Fx/tables", ircCreate("t")),
+        400,
+        "BadRequestException");
+    assertIrcError(
+        IrcWrite.rename(
+            mvc,
+            TableIdentifier.of("irc_w_ml", "t", "snapshots"),
+            TableIdentifier.of("irc_w_ml", "u")),
+        404,
+        "NoSuchTableException");
+    assertIrcError(
+        IrcWrite.rename(
+            mvc, TableIdentifier.of("irc_w_ml", "t"), TableIdentifier.of("irc_w_ml", "x", "u")),
+        400,
+        "BadRequestException");
+    assertEquals(before, stored("irc_w_ml"));
+  }
+
   // ---------------------------------------------------------------- still unserved
 
   @Test

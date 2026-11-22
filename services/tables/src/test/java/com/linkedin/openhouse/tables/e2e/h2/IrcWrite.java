@@ -164,13 +164,31 @@ final class IrcWrite {
     return new UpdateTableRequest(requirements, updates);
   }
 
+  /**
+   * {@code new AddSchema(schema, schema.highestFieldId())} on Iceberg 1.5, {@code new
+   * AddSchema(schema)} on 1.12 (which dropped the two-argument constructor), so these helpers
+   * compile on both lines.
+   */
+  static MetadataUpdate addSchema(Schema schema) {
+    try {
+      for (java.lang.reflect.Constructor<?> c : MetadataUpdate.AddSchema.class.getConstructors()) {
+        if (c.getParameterCount() == 2) {
+          return (MetadataUpdate) c.newInstance(schema, schema.highestFieldId());
+        }
+      }
+      return MetadataUpdate.AddSchema.class.getConstructor(Schema.class).newInstance(schema);
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
   /** {@code RESTSessionCatalog.createChanges} (private there), line for line. */
   static List<MetadataUpdate> createChanges(TableMetadata meta) {
     ImmutableList.Builder<MetadataUpdate> changes = ImmutableList.builder();
     changes.add(new MetadataUpdate.AssignUUID(meta.uuid()));
     changes.add(new MetadataUpdate.UpgradeFormatVersion(meta.formatVersion()));
     Schema schema = meta.schema();
-    changes.add(new MetadataUpdate.AddSchema(schema, schema.highestFieldId()));
+    changes.add(addSchema(schema));
     changes.add(new MetadataUpdate.SetCurrentSchema(-1));
     PartitionSpec spec = meta.spec();
     if (spec != null && spec.isPartitioned()) {
