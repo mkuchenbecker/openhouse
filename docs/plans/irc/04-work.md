@@ -19,7 +19,7 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| P1 | oh | Branch `irc-integration` equals LinkedIn main and is where all work lands (J26). **Branch created 2026-11-22**; CI proof pending. | none | Same commit id. CI green on it. |
+| P1 | oh | Branch `irc-integration` equals LinkedIn main and is where all work lands (J26). **Proven 2026-11-22**: CI green on the fork. | none | Same commit id. CI green on it. |
 | P2 | ib | Fork `openhouse-1.2.0` and `openhouse-1.5.2` equal LinkedIn's. **Done 2026-11-22** (`8d4afa5c`, `af77f055`). | none | Same commit ids. |
 
 ## Test foundation
@@ -99,5 +99,5 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 
 ## Ready now
 
-P2 and I2 are done. P1's branch exists and its CI proof is running. I1's branch exists and its build
-baseline is running. I3 starts when I1 is proven. T1 to T4 start when P1 is proven.
+P1, P2 and I2 are done. I1's branch exists and its build baseline is running; I3 starts when it is in.
+T1 to T4 are ready. T1's scenarios are proposed in `06-smoke-suite.md`.
