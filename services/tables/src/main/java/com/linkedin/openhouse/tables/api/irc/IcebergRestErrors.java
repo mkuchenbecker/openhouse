@@ -20,6 +20,7 @@ import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.ForbiddenException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.exceptions.NoSuchViewException;
 import org.apache.iceberg.exceptions.NotAuthorizedException;
 import org.apache.iceberg.exceptions.ServiceFailureException;
 import org.apache.iceberg.exceptions.ServiceUnavailableException;
@@ -53,6 +54,9 @@ public final class IcebergRestErrors {
     String message = failure.getMessage() != null ? failure.getMessage() : failure.toString();
     if (failure instanceof NoSuchUserTableException || failure instanceof NoSuchTableException) {
       return error(HttpStatus.NOT_FOUND, NoSuchTableException.class, message);
+    }
+    if (failure instanceof NoSuchViewException) {
+      return error(HttpStatus.NOT_FOUND, NoSuchViewException.class, message);
     }
     if (failure instanceof NoSuchNamespaceException) {
       return error(HttpStatus.NOT_FOUND, NoSuchNamespaceException.class, message);
@@ -112,6 +116,9 @@ public final class IcebergRestErrors {
     }
     if (failure instanceof NotAuthorizedException) {
       return error(HttpStatus.UNAUTHORIZED, NotAuthorizedException.class, message);
+    }
+    if (failure instanceof ServiceUnavailableException) {
+      return error(HttpStatus.SERVICE_UNAVAILABLE, ServiceUnavailableException.class, message);
     }
     if (failure instanceof AuthorizationServiceException
         || failure instanceof StorageDependencyUnavailableException

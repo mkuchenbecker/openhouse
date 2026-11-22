@@ -215,7 +215,7 @@ public class IcebergRestApiHandler {
    * Fails unless the native API reports {@code databaseId}: it holds a table, or the database list
    * shows it (which also counts databases holding only views).
    */
-  private void requireNamespace(String databaseId) {
+  void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);
     if (tablesService.searchTables(databaseId).isEmpty() && !databaseIds().contains(databaseId)) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", databaseId);
