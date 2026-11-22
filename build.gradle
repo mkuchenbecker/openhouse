@@ -36,6 +36,13 @@ ext {
   otel_annotations_version = "2.12.0" // Match agent version
 }
 
+// Opt-in: -PicebergFork builds the Iceberg 1.5 variant against a locally published Iceberg fork
+// (docs/development/iceberg-fork.md). Absent, nothing below changes.
+def icebergFork = hasProperty('icebergFork')
+if (icebergFork) {
+  apply from: 'gradle/iceberg-fork.gradle'
+}
+
 // OpenTelemetry Java Agent for distributed tracing.
 // The agent JAR is not a compile dependency; it is attached at JVM startup via -javaagent.
 configurations {
@@ -89,9 +96,15 @@ allprojects {
       resolutionStrategy {
         force 'com.fasterxml.jackson:jackson-bom:2.13.4'
         force 'com.fasterxml.jackson.core:jackson-databind:2.13.4'
-        force 'org.apache.orc:orc-core:1.8.3'
+        if (!icebergFork) {
+          force 'org.apache.orc:orc-core:1.8.3'
+        }
         force 'com.google.guava:guava:33.5.0-jre'
-        force 'org.apache.avro:avro:1.11.4' // CVE-2024-47561; outranks strict transitive pin via iceberg-core
+        if (!icebergFork) {
+          force 'org.apache.avro:avro:1.11.4' // CVE-2024-47561; outranks strict transitive pin via iceberg-core
+        } else {
+          rootProject.ext.icebergForkForces.each { force it }
+        }
       }
     }
   }

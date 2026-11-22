@@ -3,6 +3,7 @@ package com.linkedin.openhouse.spark.catalogtest;
 import static org.apache.spark.sql.functions.*;
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.List;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -124,15 +125,34 @@ public class RTASTest extends OpenHouseSparkITest {
     }
   }
 
+  /**
+   * With the OpenHouse gate open, an RTAS that drops the former partition source column reaches
+   * Iceberg's own validation. The result depends on the Iceberg line (decision D14a): LinkedIn's
+   * 1.5.2 cannot bind the old spec {@code identity(id)} to the new schema and fails; Iceberg 1.12
+   * keeps specs whose source column is gone unbound (apache/iceberg#11868) and the RTAS succeeds.
+   */
   @Test
   public void testRTASPartitionColumnDropEnabledReachesIcebergValidation() throws Exception {
     try (SparkSession spark = getSparkSession()) {
-      createTableWithFormerPartitionColumn(spark, getOpenHouseCatalog(spark));
+      Catalog catalog = getOpenHouseCatalog(spark);
+      createTableWithFormerPartitionColumn(spark, catalog);
       spark.sql(
           String.format(
               "ALTER TABLE %s SET TBLPROPERTIES ('replace.partition-column-drop.enabled'='true')",
               tableName));
 
+      if (IcebergLine.current() == IcebergLine.V3) {
+        spark.sql(
+            String.format(
+                "REPLACE TABLE %s USING iceberg AS SELECT data FROM %s", tableName, sourceName));
+        Table replaced = catalog.loadTable(tableIdent);
+        assertEquals(1, replaced.schema().columns().size(), replaced.schema().toString());
+        assertEquals("data", replaced.schema().columns().get(0).name());
+        assertTrue(replaced.spec().isUnpartitioned());
+        assertEquals(
+            3, spark.sql(String.format("SELECT data FROM %s", tableName)).collectAsList().size());
+        return;
+      }
       SparkException exception =
           assertThrows(
               SparkException.class,

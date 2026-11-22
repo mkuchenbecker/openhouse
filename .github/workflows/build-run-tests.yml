@@ -2,6 +2,14 @@ name: Gradle Build and Run Tests
 
 on:
   workflow_call: # Allow to be run by other workflows
+    inputs:
+      gradle-cache-write:
+        description: >-
+          Let this run write the Gradle cache. When false (the default), the cache is written only
+          on the repository's default branch, as before.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   build-and-run-tests:
@@ -29,6 +37,9 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
+        with:
+          # Same as the action's own default (read-only off the default branch) unless the caller opts in.
+          cache-read-only: ${{ !inputs.gradle-cache-write && github.ref_name != github.event.repository.default_branch }}
 
       - name: Build with Gradle
         run: ./gradlew clean build

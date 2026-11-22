@@ -6,8 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Collections;
 import java.util.List;
 import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.MetadataUpdateParser;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.UpdateRequirements;
@@ -102,7 +104,7 @@ public class OpenHouseRestAdapterTest {
   void createIsNotReplace() {
     List<MetadataUpdate> updates =
         ImmutableList.of(
-            new MetadataUpdate.AddSchema(SCHEMA, SCHEMA.highestFieldId()),
+            addSchema(SCHEMA),
             new MetadataUpdate.SetCurrentSchema(-1),
             new MetadataUpdate.AddPartitionSpec(PartitionSpec.unpartitioned()),
             new MetadataUpdate.SetDefaultPartitionSpec(-1),
@@ -112,5 +114,18 @@ public class OpenHouseRestAdapterTest {
         new UpdateTableRequest(UpdateRequirements.forCreateTable(updates), updates);
     assertTrue(OpenHouseRestAdapter.isCreate(request));
     assertFalse(OpenHouseRestAdapter.isReplace(request));
+  }
+
+  /**
+   * An {@code add-schema} update. Built from its JSON form because Iceberg 1.5.2 and 1.12 share no
+   * {@code AddSchema} constructor (1.5.2 takes the last column id, 1.12 does not).
+   */
+  private static MetadataUpdate addSchema(Schema schema) {
+    return MetadataUpdateParser.fromJson(
+        "{\"action\":\"add-schema\",\"schema\":"
+            + SchemaParser.toJson(schema)
+            + ",\"last-column-id\":"
+            + schema.highestFieldId()
+            + "}");
   }
 }

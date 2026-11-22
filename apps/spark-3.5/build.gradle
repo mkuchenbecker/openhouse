@@ -18,6 +18,12 @@ ext {
 
 configurations.all {
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+    if (rootProject.hasProperty('icebergFork')) {
+        // The -PicebergFork build adds these thin jars (openhouse.iceberg-conventions-1.5.2); the
+        // shaded iceberg-spark-runtime already carries them, as it does iceberg-data.
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
+    }
 }
 dependencies {
     compileOnly (project(path: openhouseSparkRuntimeModule)) {
@@ -59,16 +65,25 @@ dependencies {
 }
 
 // because we depend on project(':apps:openhouse-spark-apps_2.12').sourceSets
-evaluationDependsOn(':apps:openhouse-spark-apps_2.12')
+// Under -PicebergFork that project is not in the build (settings.gradle), so its directories are
+// named directly.
+def icebergFork = rootProject.hasProperty('icebergFork')
+if (!icebergFork) {
+    evaluationDependsOn(':apps:openhouse-spark-apps_2.12')
+}
 sourceSets {
     main {
         java {
-            srcDirs = ['src/main/java', project(':apps:openhouse-spark-apps_2.12').sourceSets.main.java.srcDirs]
+            srcDirs = ['src/main/java', icebergFork
+                ? [rootProject.file('apps/spark/src/main/java')]
+                : project(':apps:openhouse-spark-apps_2.12').sourceSets.main.java.srcDirs]
         }
     }
     test {
         java {
-            srcDirs = ['src/test/java', project(':apps:openhouse-spark-apps_2.12').sourceSets.test.java.srcDirs]
+            srcDirs = ['src/test/java', icebergFork
+                ? [rootProject.file('apps/spark/src/test/java')]
+                : project(':apps:openhouse-spark-apps_2.12').sourceSets.test.java.srcDirs]
         }
     }
 }

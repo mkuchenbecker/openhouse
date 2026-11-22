@@ -1,7 +1,11 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
+import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import com.linkedin.openhouse.tablestest.SparkItestColumnDefaults;
 import java.util.Arrays;
@@ -13,6 +17,7 @@ import org.apache.iceberg.spark.Spark3Util;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -20,6 +25,12 @@ import org.junit.jupiter.params.provider.ValueSource;
  * Catalog → ReadBridge overlay → Spark's Iceberg table. The Spark ORC row reader fills {@code
  * initial-default} (linkedin/iceberg#267–269), so the ORC backfill cases run; Spark Parquet readers
  * do not, so the Parquet cases are disabled.
+ *
+ * <p>Every case has an expectation per Iceberg line ({@link IcebergLine}). The read bridge is the
+ * legacy line's mechanism: there each case asserts the overlay and the filled rows. On the v3 line
+ * the client neither overlays nor declares {@code column-defaults} (decisions D5 and D11a), so
+ * creating a table that requires the capability is refused with the service's 422 {@code
+ * CLIENT_CAPABILITY_MISSING}, and that refusal is what each case asserts there.
  */
 public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
 
@@ -31,12 +42,16 @@ public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
     String fqtn = "openhouse." + DATABASE + ".members_overlay";
     try (SparkSession spark = getSparkSession()) {
       spark.sql("DROP TABLE IF EXISTS " + fqtn);
-      spark.sql(
+      if (!createBridged(
+          spark,
+          fqtn,
           "CREATE TABLE "
               + fqtn
               + " (id bigint, name string) USING iceberg TBLPROPERTIES ('"
               + CAPABILITY_PROP
-              + "'='true')");
+              + "'='true')")) {
+        return;
+      }
       spark.sql("INSERT INTO " + fqtn + " VALUES (1, 'Alice')");
       spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN country string");
       spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN tier int");
@@ -72,12 +87,16 @@ public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
     String fqtn = String.format("openhouse.%s.members_collections_%s", DATABASE, vectorized);
     try (SparkSession spark = getSparkSession()) {
       spark.sql("DROP TABLE IF EXISTS " + fqtn);
-      spark.sql(
+      if (!createBridged(
+          spark,
+          fqtn,
           String.format(
               "CREATE TABLE %s (id bigint, tags array<struct<a:int>>,"
                   + " attrs map<string, struct<a:int>>) USING iceberg TBLPROPERTIES ("
                   + "'write.format.default'='orc', 'read.orc.vectorization.enabled'='%b', '%s'='true')",
-              fqtn, vectorized, CAPABILITY_PROP));
+              fqtn, vectorized, CAPABILITY_PROP))) {
+        return;
+      }
       spark.sql(
           "INSERT INTO "
               + fqtn
@@ -123,11 +142,15 @@ public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
 
     try (SparkSession spark = getSparkSession()) {
       spark.sql("DROP TABLE IF EXISTS " + fqtn);
-      spark.sql(
+      if (!createBridged(
+          spark,
+          fqtn,
           String.format(
               "CREATE TABLE %s (id bigint, name string) USING iceberg TBLPROPERTIES ("
                   + "'write.format.default'='%s', '%s'='%b', '%s'='true')",
-              fqtn, fileFormat, vectorizationProp, vectorized, CAPABILITY_PROP));
+              fqtn, fileFormat, vectorizationProp, vectorized, CAPABILITY_PROP))) {
+        return;
+      }
       spark.sql("INSERT INTO " + fqtn + " VALUES (1, 'Alice')");
       spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN country string");
       spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN tier int");
@@ -155,6 +178,45 @@ public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
 
       spark.sql("DROP TABLE " + fqtn);
     }
+  }
+
+  /**
+   * Creates a table that requires {@code column-defaults}. On the legacy line the Spark catalog
+   * declares the capability and the table is created: returns true, and the caller goes on with the
+   * legacy assertions. On the v3 line it declares none, so the service refuses the create with the
+   * 422 {@code CLIENT_CAPABILITY_MISSING}: asserts that and returns false.
+   */
+  private static boolean createBridged(SparkSession spark, String fqtn, String createSql) {
+    if (IcebergLine.current() == IcebergLine.LEGACY) {
+      spark.sql(createSql);
+      return true;
+    }
+    assertCapabilityMissing(fqtn.substring("openhouse.".length()), () -> spark.sql(createSql));
+    return false;
+  }
+
+  /**
+   * The statement fails with the service's 422 {@code CLIENT_CAPABILITY_MISSING} for {@code table}
+   * ({@code db.table}), raised by the OpenHouse client as {@link
+   * WebClientResponseWithMessageException}.
+   */
+  static void assertCapabilityMissing(String table, Executable statement) {
+    Throwable thrown = null;
+    try {
+      statement.execute();
+    } catch (Throwable t) {
+      thrown = t;
+    }
+    assertNotNull(thrown, "expected the 422 CLIENT_CAPABILITY_MISSING, nothing was thrown");
+    assertEquals(
+        WebClientResponseWithMessageException.class, thrown.getClass(), String.valueOf(thrown));
+    assertEquals(422, ((WebClientResponseWithMessageException) thrown).getStatusCode());
+    assertTrue(
+        thrown
+            .getMessage()
+            .contains(
+                "CLIENT_CAPABILITY_MISSING: " + table + " requires the column-defaults capability"),
+        thrown.getMessage());
   }
 
   private static void assertRowsEqual(List<Object[]> expectedRows, List<Object[]> actualRows) {

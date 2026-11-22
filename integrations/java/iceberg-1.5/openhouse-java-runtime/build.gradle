@@ -32,17 +32,28 @@ ext {
 // This module ALSO has its own src/main/java (a Gradle-default source root) for single-copy,
 // iceberg-1.5-only classes that have no iceberg-1.2 counterpart, e.g. OpenHouseViewOperations
 // (binds to the 1.5-only Iceberg view API).
+// Under -PicebergFork the iceberg-1.2 project is not in the build (settings.gradle), so the same
+// directories are named directly.
+def iceberg12Runtime = 'integrations/java/iceberg-1.2/openhouse-java-runtime'
 sourceSets {
   main {
     java {
-      def base = project(':integrations:java:iceberg-1.2:openhouse-java-runtime')
-      srcDirs += base.sourceSets.main.java.srcDirs.findAll {
-        !it.absolutePath.endsWith('src/iceberg-version-specific/java')
+      if (rootProject.hasProperty('icebergFork')) {
+        srcDirs += rootProject.file("${iceberg12Runtime}/src/main/java")
+      } else {
+        def base = project(':integrations:java:iceberg-1.2:openhouse-java-runtime')
+        srcDirs += base.sourceSets.main.java.srcDirs.findAll {
+          !it.absolutePath.endsWith('src/iceberg-version-specific/java')
+        }
       }
       srcDirs += 'src/iceberg-version-specific/java'
     }
     resources {
-      srcDirs += project(':integrations:java:iceberg-1.2:openhouse-java-runtime').sourceSets.main.resources.srcDirs
+      if (rootProject.hasProperty('icebergFork')) {
+        srcDirs += rootProject.file("${iceberg12Runtime}/src/main/resources")
+      } else {
+        srcDirs += project(':integrations:java:iceberg-1.2:openhouse-java-runtime').sourceSets.main.resources.srcDirs
+      }
     }
   }
 }

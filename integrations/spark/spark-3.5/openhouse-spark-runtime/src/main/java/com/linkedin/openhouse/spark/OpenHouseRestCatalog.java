@@ -13,8 +13,8 @@ package com.linkedin.openhouse.spark;
 public class OpenHouseRestCatalog extends com.linkedin.openhouse.javaclient.OpenHouseRestCatalog {
 
   /**
-   * The Spark {@link OpenHouseCatalog}, so every request still declares the {@code column-defaults}
-   * capability, as it does today.
+   * The Spark {@link OpenHouseCatalog}, so every request declares the same capabilities as today's
+   * path: {@code column-defaults} on the legacy Iceberg line, none on the v3 line.
    */
   @Override
   protected com.linkedin.openhouse.javaclient.OpenHouseCatalog newBackingCatalog() {

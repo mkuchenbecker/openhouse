@@ -4,6 +4,7 @@ import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.gen.tables.client.api.TableApi;
 import com.linkedin.openhouse.gen.tables.client.invoker.ApiClient;
 import com.linkedin.openhouse.gen.tables.client.model.CreateUpdateLockRequestBody;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
@@ -520,7 +521,26 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     String db = SparkItestColumnDefaults.DATABASE;
     TableIdentifier tid = id(db, "cpc_capability");
     TableIdentifier plain = id(db, "cpc_capability_plain");
-    catalog.buildTable(tid, SCHEMA).withProperty(CAPABILITY_PROP, "true").create();
+    // The engine catalog declares column-defaults on the legacy Iceberg line only (decision D11a).
+    // On the v3 line a catalog that declares it explicitly stands in for a legacy client.
+    Catalog declaring;
+    if (IcebergLine.current() == IcebergLine.LEGACY) {
+      declaring = catalog;
+    } else {
+      assertWebClient(
+          422,
+          "422 Unprocessable Entity , {\"status\":\"UNPROCESSABLE_ENTITY\"",
+          "CLIENT_CAPABILITY_MISSING: d1_column_default.cpc_capability requires the column-defaults capability",
+          thrown(
+              () ->
+                  catalog.buildTable(tid, SCHEMA).withProperty(CAPABILITY_PROP, "true").create()));
+      declaring =
+          catalogWith(
+              javaCatalogImpl(),
+              Collections.singletonMap(
+                  "header.X-OpenHouse-Client-Capabilities", "column-defaults"));
+    }
+    declaring.buildTable(tid, SCHEMA).withProperty(CAPABILITY_PROP, "true").create();
     catalog.createTable(plain, SCHEMA);
 
     Catalog undeclared = catalogWith(javaCatalogImpl(), Collections.emptyMap());
@@ -533,7 +553,7 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     // Handle loaded through the non-declaring catalog while the table did not yet require the
     // capability; the table then starts requiring it, and the stale handle commits.
     Table handle = undeclared.loadTable(plain);
-    catalog.loadTable(plain).updateProperties().set(CAPABILITY_PROP, "true").commit();
+    declaring.loadTable(plain).updateProperties().set(CAPABILITY_PROP, "true").commit();
     Throwable commit =
         thrown(() -> handle.newAppend().appendFile(file("/path/to/cap.parquet")).commit());
     assertWebClient(
@@ -542,7 +562,7 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
         "CLIENT_CAPABILITY_MISSING: d1_column_default.cpc_capability_plain requires the column-defaults capability",
         commit);
     Assertions.assertNull(commit.getCause());
-    Assertions.assertTrue(dataFilePaths(catalog.loadTable(plain)).isEmpty());
+    Assertions.assertTrue(dataFilePaths(declaring.loadTable(plain)).isEmpty());
   }
 
   // ------------------------------------------------------------- 14. authorization

@@ -5,6 +5,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.regex.Pattern;
+import org.apache.iceberg.BaseMetadataTable;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.BaseTransaction;
 import org.apache.iceberg.CatalogProperties;
@@ -207,6 +209,43 @@ public class OpenHouseRestAdapter implements RESTClient {
   }
 
   /** Does nothing: the backing catalog outlives every client {@code RESTSessionCatalog} builds. */
+  /**
+   * Iceberg 1.12's {@code RESTSessionCatalog} asks for the response headers of some calls (for
+   * example the ETag of a table load); {@code RESTClient}'s default for these overloads throws
+   * {@code UnsupportedOperationException("Returning response headers is not supported")}. An
+   * in-process call has no HTTP response headers, so these hand over none and otherwise answer as
+   * the overloads without them. Iceberg 1.5.2's {@code RESTClient} has no such overloads, so they
+   * carry no {@code @Override} and are unused there.
+   */
+  public <T extends RESTResponse> T get(
+      String path,
+      Map<String, String> queryParams,
+      Class<T> responseType,
+      Map<String, String> headers,
+      Consumer<ErrorResponse> errorHandler,
+      Consumer<Map<String, String>> responseHeaders) {
+    T response = get(path, queryParams, responseType, headers, errorHandler);
+    if (responseHeaders != null) {
+      responseHeaders.accept(Collections.emptyMap());
+    }
+    return response;
+  }
+
+  /** See {@link #get(String, Map, Class, Map, Consumer, Consumer)}. */
+  public <T extends RESTResponse> T post(
+      String path,
+      RESTRequest body,
+      Class<T> responseType,
+      Map<String, String> headers,
+      Consumer<ErrorResponse> errorHandler,
+      Consumer<Map<String, String>> responseHeaders) {
+    T response = post(path, body, responseType, headers, errorHandler);
+    if (responseHeaders != null) {
+      responseHeaders.accept(Collections.emptyMap());
+    }
+    return response;
+  }
+
   @Override
   public void close() {}
 
@@ -252,10 +291,7 @@ public class OpenHouseRestAdapter implements RESTClient {
         {
           Namespace parent =
               vars.containsKey("parent")
-                  ? Namespace.of(
-                      RESTUtil.NAMESPACE_SPLITTER
-                          .splitToStream(vars.get("parent"))
-                          .toArray(String[]::new))
+                  ? Namespace.of(vars.get("parent").split(NAMESPACE_SEPARATOR, -1))
                   : Namespace.empty();
           return CatalogHandlers.listNamespaces(backing, parent);
         }
@@ -298,7 +334,7 @@ public class OpenHouseRestAdapter implements RESTClient {
         return null;
 
       case LOAD_TABLE:
-        return CatalogHandlers.loadTable(backing, ident(vars));
+        return loadTable(ident(vars));
 
       case UPDATE_TABLE:
         return updateTable(ident(vars), (UpdateTableRequest) body);
@@ -471,14 +507,42 @@ public class OpenHouseRestAdapter implements RESTClient {
         .build();
   }
 
+  /**
+   * {@code CatalogHandlers.loadTable} as in Iceberg 1.5.2, which 1.12 replaced with an overload
+   * that takes a snapshot mode; this is its {@code ALL} mode, the only one 1.5.2 has.
+   */
+  private LoadTableResponse loadTable(TableIdentifier ident) {
+    Table table = backing.loadTable(ident);
+    if (table instanceof BaseTable) {
+      return LoadTableResponse.builder()
+          .withTableMetadata(((BaseTable) table).operations().current())
+          .build();
+    } else if (table instanceof BaseMetadataTable) {
+      // Metadata tables are loaded on the client side.
+      throw new NoSuchTableException("Table does not exist: %s", ident);
+    }
+    throw new IllegalStateException("Cannot wrap catalog that does not produce BaseTable");
+  }
+
   // ------------------------------------------------------------------ path variables
+
+  // The REST namespace separators, decoded here because Iceberg 1.5.2 and 1.12 share no helper for
+  // it: 1.12 dropped RESTUtil.NAMESPACE_SPLITTER and its decodeNamespace takes the separator. The
+  // client side (RESTSessionCatalog) uses these defaults on both lines; CONFIG sets no other.
+  private static final String NAMESPACE_SEPARATOR = Pattern.quote("\u001f");
+  private static final String NAMESPACE_ESCAPED_SEPARATOR = Pattern.quote("%1F");
 
   private static Namespace namespace(Map<String, String> vars) {
     String encoded = vars.get("namespace");
     // An empty namespace is encoded as an empty path segment.
-    return encoded == null || encoded.isEmpty()
-        ? Namespace.empty()
-        : RESTUtil.decodeNamespace(encoded);
+    if (encoded == null || encoded.isEmpty()) {
+      return Namespace.empty();
+    }
+    String[] levels = encoded.split(NAMESPACE_ESCAPED_SEPARATOR, -1);
+    for (int i = 0; i < levels.length; i++) {
+      levels[i] = RESTUtil.decodeString(levels[i]);
+    }
+    return Namespace.of(levels);
   }
 
   private static TableIdentifier ident(Map<String, String> vars) {
