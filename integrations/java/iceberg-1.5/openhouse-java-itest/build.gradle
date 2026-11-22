@@ -10,7 +10,10 @@ ext {
 sourceSets {
   test {
     java {
-      srcDirs += project(':integrations:java:iceberg-1.2:openhouse-java-itest').sourceSets.test.java.srcDirs
+      // Under -PicebergFork the iceberg-1.2 project is not in the build (settings.gradle).
+      srcDirs += rootProject.hasProperty('icebergFork')
+          ? [rootProject.file('integrations/java/iceberg-1.2/openhouse-java-itest/src/test/java')]
+          : project(':integrations:java:iceberg-1.2:openhouse-java-itest').sourceSets.test.java.srcDirs
     }
   }
 }
