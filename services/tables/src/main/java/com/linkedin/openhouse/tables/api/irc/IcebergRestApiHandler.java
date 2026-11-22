@@ -7,16 +7,17 @@ import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.services.DatabasesService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
-import org.apache.iceberg.rest.RESTUtil;
 import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
@@ -134,9 +135,17 @@ public class IcebergRestApiHandler {
         refsOnly);
   }
 
+  /**
+   * The REST namespace level separator, as it arrives in a decoded path parameter. Split here
+   * because Iceberg 1.5.2 and 1.12 share no helper for it: 1.12 dropped {@code
+   * RESTUtil.NAMESPACE_SPLITTER}, and its {@code decodeNamespace} takes the separator as an
+   * argument that 1.5.2's lacks.
+   */
+  private static final String NAMESPACE_SEPARATOR = Pattern.quote("\u001f");
+
   /** The database a single-level namespace path parameter names. */
   public static String databaseId(String namespace) {
-    List<String> levels = RESTUtil.NAMESPACE_SPLITTER.splitToList(namespace);
+    List<String> levels = Arrays.asList(namespace.split(NAMESPACE_SEPARATOR, -1));
     if (levels.size() != 1 || levels.get(0).isEmpty()) {
       throw new BadRequestException(
           "OpenHouse namespaces are databases and have exactly one level: %s",
