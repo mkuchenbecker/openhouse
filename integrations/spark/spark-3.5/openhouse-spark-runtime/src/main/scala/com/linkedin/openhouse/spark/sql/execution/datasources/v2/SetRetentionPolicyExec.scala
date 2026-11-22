@@ -1,6 +1,8 @@
 package com.linkedin.openhouse.spark.sql.execution.datasources.v2
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.linkedin.openhouse.capabilities.OpenHouseTableProperties
+import com.linkedin.openhouse.spark.capabilities.OpenHouseCapabilities
 import com.linkedin.openhouse.spark.sql.catalyst.parser.extensions.OpenhouseParseException
 import java.time.{DateTimeException, ZoneId}
 import org.apache.iceberg.spark.source.SparkTable
@@ -43,7 +45,7 @@ case class SetRetentionPolicyExec(
       }
     }
     catalog.loadTable(ident) match {
-      case iceberg: SparkTable if iceberg.table().properties().containsKey("openhouse.tableId") =>
+      case iceberg: SparkTable if iceberg.table().properties().containsKey(OpenHouseTableProperties.TABLE_ID) =>
         if (timeZone.isDefined &&
             !colName.flatMap(name => Option(iceberg.table().schema().findType(name)))
               .contains(Types.StringType.get())) {
@@ -62,8 +64,10 @@ case class SetRetentionPolicyExec(
         }
         val policy = mapper.createObjectNode()
         policy.set("retention", retention)
+        // On an Iceberg REST server that does not advertise policies, fail instead of storing the patch.
+        OpenHouseCapabilities.requirePolicies(catalog)
         iceberg.table().updateProperties()
-          .set("updated.openhouse.policy", mapper.writeValueAsString(policy))
+          .set(OpenHouseTableProperties.POLICY_PATCH, mapper.writeValueAsString(policy))
           .commit()
 
       case table =>

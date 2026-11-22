@@ -174,10 +174,16 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
   }
 
   @Test
-  void policyStatementsReachTheServerWhichRefusesThePatchKey() {
-    // The server refuses the request property it cannot yet apply (decision D25), with Iceberg's
-    // BadRequestException naming the key.
-    assertPolicies(PLAIN, "org.apache.iceberg.exceptions.BadRequestException", POLICY_KEY);
+  void policyStatementsFailBeforeWritingUnlessPoliciesAreAdvertised() {
+    // This server advertises no capabilities: the statement fails in the client and sends
+    // nothing.
+    assertPolicies(
+        PLAIN,
+        "java.lang.UnsupportedOperationException: Catalog 'irc' does not support OpenHouse"
+            + " policies",
+        "openhouse.capabilities");
+    // Where 'policies' is advertised the statement goes to the server, which refuses the patch
+    // key it cannot yet apply (decision D25), with Iceberg's BadRequestException naming it.
     assertPolicies(ADVERTISED, "org.apache.iceberg.exceptions.BadRequestException", POLICY_KEY);
   }
 
