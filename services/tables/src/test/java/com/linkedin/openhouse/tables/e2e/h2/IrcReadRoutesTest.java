@@ -255,9 +255,11 @@ public class IrcReadRoutesTest {
 
   @Test
   void aMultiLevelNamespaceIsABadRequest() throws Exception {
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb"), 400, "BadRequestException");
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb/tables"), 400, "BadRequestException");
-    assertIrcError(IrcHttp.get(mvc, "/v1/namespaces/a%1Fb/tables/t"), 400, "BadRequestException");
+    assertIrcError(IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb"), 400, "BadRequestException");
+    assertIrcError(
+        IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb/tables"), 400, "BadRequestException");
+    assertIrcError(
+        IrcHttp.getEncoded(mvc, "/v1/namespaces/a%1Fb/tables/t"), 400, "BadRequestException");
   }
 
   // ---------------------------------------------------------------- tables
