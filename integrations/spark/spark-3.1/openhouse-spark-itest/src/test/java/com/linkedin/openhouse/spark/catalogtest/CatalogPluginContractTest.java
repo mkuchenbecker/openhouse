@@ -1,6 +1,9 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.gen.tables.client.api.TableApi;
+import com.linkedin.openhouse.gen.tables.client.invoker.ApiClient;
+import com.linkedin.openhouse.gen.tables.client.model.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
@@ -34,6 +37,7 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.sql.SparkSession;
@@ -55,6 +59,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * Black-box contract of the engine-side catalog plugin, observed through the public Iceberg API
  * against the real embedded tables service. Every assertion records what the plugin does today; it
  * is not a statement of what it should do.
+ *
+ * <p>The catalog path is a parameter, as in the Spark SQL smoke suite: {@link #catalogPath()} names
+ * the path and {@link #sparkSession()}, {@link #engineCatalogImpl()} and {@link #javaCatalogImpl()}
+ * are the only places that turn it into configuration. This class runs the {@link #LEGACY} path
+ * (the only path on the Iceberg 1.2 / Spark 3.1 line); the Spark 3.5 module adds a subclass for the
+ * REST-shaped path.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class CatalogPluginContractTest extends OpenHouseSparkITest {
@@ -69,15 +79,94 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
   private static final String READER = "cpc_reader";
   private static final String STRANGER = "cpc_stranger";
 
+  /** The catalog path in use today. */
+  protected static final String LEGACY = "legacy";
+
+  /** Iceberg's RESTCatalog over the in-process REST-shaped client (Iceberg 1.5 line only). */
+  protected static final String REST_SHIM = "rest-shim";
+
   private SparkSession spark;
   private Catalog catalog;
   private ConfigurableApplicationContext authServer;
   private URI authServerUri;
 
+  /** The catalog path under test. */
+  protected String catalogPath() {
+    return LEGACY;
+  }
+
+  /** The engine (Spark) catalog class for the path. */
+  protected String engineCatalogImpl() {
+    switch (catalogPath()) {
+      case LEGACY:
+        return "com.linkedin.openhouse.spark.OpenHouseCatalog";
+      case REST_SHIM:
+        return "com.linkedin.openhouse.spark.OpenHouseRestCatalog";
+      default:
+        throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  /** The plain Java client catalog class (declares no capabilities) for the path. */
+  protected String javaCatalogImpl() {
+    switch (catalogPath()) {
+      case LEGACY:
+        return "com.linkedin.openhouse.javaclient.OpenHouseCatalog";
+      case REST_SHIM:
+        return "com.linkedin.openhouse.javaclient.OpenHouseRestCatalog";
+      default:
+        throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  /** The session whose {@code openhouse} catalog is built by {@link #engineCatalogImpl()}. */
+  protected SparkSession sparkSession() throws Exception {
+    SparkSession base = getSparkSession();
+    switch (catalogPath()) {
+      case LEGACY:
+        return base;
+      case REST_SHIM:
+        SparkSession session = base.newSession();
+        session.conf().set("spark.sql.catalog.openhouse.catalog-impl", engineCatalogImpl());
+        return session;
+      default:
+        throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
+    }
+  }
+
+  /**
+   * Tables this suite creates on the shared embedded server. Each path's run drops them first so
+   * the suite can run once per path in one JVM (the Spark 3.5 module runs both paths).
+   */
+  private static final List<TableIdentifier> CREATED_TABLES =
+      Arrays.asList(
+          id("cpc_ns_a", "t1"),
+          id("cpc_ns_b", "t1"),
+          id("cpc_create_twice", "t1"),
+          id("cpc_overwrite", "t1"),
+          id("cpc_props", "t1"),
+          id("cpc_reserved_update", "t1"),
+          id("cpc_reserved_create", "t1"),
+          id("cpc_spec", "t1"),
+          id("cpc_concurrent", "t1"),
+          id("cpc_raw_commit", "t1"),
+          id("cpc_drop", "t_nopurge"),
+          id("cpc_drop", "t_purge"),
+          id("cpc_rename", "t_from"),
+          id("cpc_rename", "t_to"),
+          id("cpc_grants", "t1"),
+          id("cpc_locked", "t1"),
+          id("cpc_table_handle", "t1"),
+          id(SparkItestColumnDefaults.DATABASE, "cpc_capability"),
+          id(SparkItestColumnDefaults.DATABASE, "cpc_capability_plain"));
+
   @BeforeAll
   void start() throws Exception {
-    spark = getSparkSession();
+    spark = sparkSession();
     catalog = getOpenHouseCatalog(spark);
+    for (TableIdentifier leftover : CREATED_TABLES) {
+      catalog.dropTable(leftover);
+    }
   }
 
   @AfterAll
@@ -434,8 +523,7 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     catalog.buildTable(tid, SCHEMA).withProperty(CAPABILITY_PROP, "true").create();
     catalog.createTable(plain, SCHEMA);
 
-    Catalog undeclared =
-        catalogWith("com.linkedin.openhouse.javaclient.OpenHouseCatalog", Collections.emptyMap());
+    Catalog undeclared = catalogWith(javaCatalogImpl(), Collections.emptyMap());
     assertWebClient(
         422,
         "422 Unprocessable Entity , {\"status\":\"UNPROCESSABLE_ENTITY\"",
@@ -500,10 +588,7 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
         "auth-token", new DummyTokenInterceptor.DummySecurityJWT(principal).buildNoopJWT());
     properties.put("cache-enabled", "false");
     return CatalogUtil.loadCatalog(
-        "com.linkedin.openhouse.spark.OpenHouseCatalog",
-        "openhouse",
-        properties,
-        new Configuration());
+        engineCatalogImpl(), "openhouse", properties, new Configuration());
   }
 
   @org.springframework.context.annotation.Configuration
@@ -530,6 +615,46 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
         }
       };
     }
+  }
+
+  // ------------------------------------------------------------- 16. locked table
+
+  @Test
+  void tableExistsOnTableLockedAgainstReads() {
+    TableIdentifier tid = id("cpc_locked", "t1");
+    catalog.createTable(tid, SCHEMA);
+    ApiClient client = new ApiClient();
+    client.setBasePath(getOpenHouseLocalServerURI().toString());
+    client.addDefaultHeader(
+        "Authorization", "Bearer " + spark.conf().get("spark.sql.catalog.openhouse.auth-token"));
+    TableApi controls = new TableApi(client);
+    controls
+        .createLockV1(
+            "cpc_locked",
+            "t1",
+            new CreateUpdateLockRequestBody()
+                .locked(true)
+                .reason(CreateUpdateLockRequestBody.ReasonEnum.SYSTEM_ONLY))
+        .block();
+    try {
+      // Existence is answered without loading the table, which the lock blocks.
+      Assertions.assertTrue(catalog.tableExists(tid));
+      Assertions.assertEquals(423, statusOf(thrown(() -> catalog.loadTable(tid))));
+    } finally {
+      controls.deleteLockByReasonV1("cpc_locked", "t1", "SYSTEM_ONLY").block();
+    }
+    Assertions.assertNotNull(catalog.loadTable(tid));
+  }
+
+  // ------------------------------------------------------------- 17. table handle
+
+  @Test
+  void loadedTableNameAndFileIO() {
+    TableIdentifier tid = id("cpc_table_handle", "t1");
+    catalog.createTable(tid, SCHEMA);
+    Table table = catalog.loadTable(tid);
+    Assertions.assertEquals("openhouse.cpc_table_handle.t1", table.name());
+    Assertions.assertEquals(HadoopFileIO.class, table.io().getClass());
   }
 
   // ------------------------------------------------------------- 15. invalid identifier
