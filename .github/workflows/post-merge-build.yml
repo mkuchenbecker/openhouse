@@ -1,0 +1,24 @@
+name: Post-Merge Build and Test
+
+# Runs the full build and tests after each merge to the integration branch, and writes the Gradle
+# cache there so pull requests targeting this branch can restore it. It does not publish, tag,
+# release or deploy anything.
+on:
+  push:
+    branches:
+      - irc-integration
+  workflow_dispatch:
+
+# Read-only: the called build job only checks out sources and runs Gradle, Docker Compose and Python.
+permissions:
+  contents: read
+
+concurrency:
+  group: post-merge-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-run-tests:
+    uses: ./.github/workflows/build-run-tests.yml
+    with:
+      gradle-cache-write: true
