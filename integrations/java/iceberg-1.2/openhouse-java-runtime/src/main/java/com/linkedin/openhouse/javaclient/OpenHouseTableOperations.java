@@ -174,6 +174,10 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
    * <p>Decode first so a bad config never hits storage. {@link ReadBridgeException} is wrapped as
    * {@link Tasks.UnrecoverableException} so Iceberg's retry loop does not re-read the file. The
    * wrap includes {@link #tableName()} so a Spark job over many tables can tell which one failed.
+   *
+   * <p>Only the legacy Iceberg line overlays ({@link IcebergLine#usesReadBridge}). On the v3 line
+   * column defaults are native Iceberg defaults stored in the metadata, so the metadata is returned
+   * as read (decision D11a); the config is still decoded, so a malformed entry still fails.
    */
   protected TableMetadata loadMetadata(String metadataLocation, Map<String, String> fetched) {
     final ReadBridge bridge;
@@ -183,6 +187,9 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
       throw unrecoverableBridge(e);
     }
     TableMetadata raw = TableMetadataParser.read(io(), metadataLocation);
+    if (!IcebergLine.current().usesReadBridge()) {
+      return raw;
+    }
     try {
       return bridge.apply(raw);
     } catch (ReadBridgeException e) {

@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import java.util.Collections;
 import java.util.Set;
 
@@ -21,11 +22,19 @@ import java.util.Set;
 public class OpenHouseCatalog extends com.linkedin.openhouse.javaclient.OpenHouseCatalog {
 
   /**
-   * Declares {@link #COLUMN_DEFAULTS_CAPABILITY}: Spark reads rows through Iceberg's readers, which
-   * apply the column defaults this catalog loads into the schema.
+   * Declares {@link #COLUMN_DEFAULTS_CAPABILITY} on the legacy Iceberg line: Spark reads rows
+   * through Iceberg's readers, which apply the column defaults this catalog loads into the schema.
+   *
+   * <p>On the v3 line ({@link IcebergLine}) it declares nothing. That line applies no read-bridge
+   * overlay, so a table that requires the capability is refused by the service (422 {@code
+   * CLIENT_CAPABILITY_MISSING}) instead of being read differently by legacy and new clients
+   * (decisions D5 and D11a). Its column defaults are native format v3 defaults, which need no
+   * capability.
    */
   @Override
   protected Set<String> capabilities() {
-    return Collections.singleton(COLUMN_DEFAULTS_CAPABILITY);
+    return IcebergLine.current().usesReadBridge()
+        ? Collections.singleton(COLUMN_DEFAULTS_CAPABILITY)
+        : Collections.emptySet();
   }
 }
