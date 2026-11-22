@@ -137,9 +137,7 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
     }
     try {
       String current =
-          this.findByDatabaseIdIgnoreCaseAndTableIdIgnoreCase(
-                  entity.getDatabaseId(), entity.getTableId())
-              .map(HouseTable::getTableLocation)
+          this.findStoredLocation(entity.getDatabaseId(), entity.getTableId())
               .orElse(INITIAL_TABLE_VERSION);
       if (!current.equals(entity.getTableVersion())) {
         throw new HouseTableConcurrentUpdateException(
