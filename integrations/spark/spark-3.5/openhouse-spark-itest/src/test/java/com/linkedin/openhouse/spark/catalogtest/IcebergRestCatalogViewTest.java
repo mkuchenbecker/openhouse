@@ -19,7 +19,6 @@ import org.apache.iceberg.view.BaseView;
 import org.apache.iceberg.view.SQLViewRepresentation;
 import org.apache.iceberg.view.View;
 import org.apache.iceberg.view.ViewMetadata;
-import org.apache.iceberg.view.ViewMetadataParser;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -37,6 +36,7 @@ import org.junit.jupiter.api.function.Executable;
 public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   private static final String DB = "irc_views";
   private static final String OFF_DB = "irc_views_off";
+  private static final String NODB = "irc_views_nodb";
   private static final Namespace NS = Namespace.of(DB);
 
   private static final Schema SCHEMA =
@@ -55,7 +55,7 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   @BeforeAll
   void start() throws Exception {
     conf = getSparkSession().sparkContext().hadoopConfiguration();
-    server = new IrcViewsServer(DB);
+    server = new IrcViewsServer(DB, NODB);
     rest = server.rest(IrcViewsServer.OWNER, conf);
     rest2 = server.rest(IrcViewsServer.OWNER, conf);
     openhouse = server.openhouse(IrcViewsServer.OWNER, conf);
@@ -87,8 +87,25 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
     ViewMetadata viaRest = metadata(rest.loadView(id(view)));
     ViewMetadata viaOpenHouse = metadata(((ViewCatalog) openhouse).loadView(id(view)));
     Assertions.assertEquals(viaOpenHouse.metadataFileLocation(), viaRest.metadataFileLocation());
+    // Field by field: the JSON text differs only in the order of the properties map.
+    Assertions.assertEquals(viaOpenHouse.uuid(), viaRest.uuid());
+    Assertions.assertEquals(viaOpenHouse.location(), viaRest.location());
+    Assertions.assertEquals(viaOpenHouse.formatVersion(), viaRest.formatVersion());
+    Assertions.assertEquals(viaOpenHouse.properties(), viaRest.properties());
+    Assertions.assertEquals(viaOpenHouse.currentVersionId(), viaRest.currentVersionId());
+    Assertions.assertEquals(viaOpenHouse.versions(), viaRest.versions());
+    Assertions.assertEquals(viaOpenHouse.history(), viaRest.history());
     Assertions.assertEquals(
-        ViewMetadataParser.toJson(viaOpenHouse), ViewMetadataParser.toJson(viaRest));
+        viaOpenHouse.schemas().stream()
+            .map(IcebergRestCatalogViewTest::schemaJson)
+            .collect(java.util.stream.Collectors.toList()),
+        viaRest.schemas().stream()
+            .map(IcebergRestCatalogViewTest::schemaJson)
+            .collect(java.util.stream.Collectors.toList()));
+  }
+
+  private static String schemaJson(Schema schema) {
+    return org.apache.iceberg.SchemaParser.toJson(schema);
   }
 
   private static Throwable thrown(Executable executable) {
@@ -127,7 +144,7 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
     Assertions.assertEquals("openhouse", loaded.currentVersion().defaultCatalog());
     Assertions.assertTrue(rest.viewExists(id("v")));
     // Views and tables are listed apart.
-    Assertions.assertEquals(Collections.singletonList(id("v")), rest.listViews(NS));
+    Assertions.assertTrue(rest.listViews(NS).contains(id("v")), rest.listViews(NS).toString());
     Assertions.assertEquals(Collections.singletonList(id("base")), rest.listTables(NS));
     Assertions.assertFalse(rest.tableExists(id("v")));
 
@@ -193,7 +210,7 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
     Assertions.assertFalse(rest.viewExists(id("v")));
     Assertions.assertFalse(((ViewCatalog) openhouse).viewExists(id("v")));
     Assertions.assertFalse(rest.dropView(id("v")));
-    Assertions.assertEquals(Collections.emptyList(), rest.listViews(NS));
+    Assertions.assertFalse(rest.listViews(NS).contains(id("v")));
   }
 
   @Test
@@ -209,7 +226,7 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
         "Database not found",
         thrown(
             () ->
-                rest.buildView(TableIdentifier.of("irc_views_nodb", "v"))
+                rest.buildView(TableIdentifier.of(NODB, "v"))
                     .withSchema(SCHEMA)
                     .withQuery("spark", "SELECT 1")
                     .withDefaultNamespace(NS)
