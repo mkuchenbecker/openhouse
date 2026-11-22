@@ -37,8 +37,8 @@ native REST.
 | --- | --- | --- | --- | --- |
 | I1 | ib | A clean branch at Apache 1.12.0 builds untouched. **Proven 2026-11-22** for the modules listed in F4a; full Spark suites not run. | none | Apache's own tests pass for api, core, orc, parquet, Spark 3.5, Spark 4.2. |
 | I2 | ib | A ledger marks each of LinkedIn's 29 commits as already upstream, reapply, or build plumbing. **Done 2026-11-22**: 13 reapply, 11 upstream, 5 plumbing (`05-iceberg-patch-ledger.md`). | P2 | 7 rows re-checked by Claude. |
-| I3 | ib | Core, API and ORC patches reapplied, one commit each. **In progress**: 4 of 13 done (iceberg pull request 3). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
-| I4 | ib | Spark 3.5 patches reapplied, one commit each. | I3 | Same. |
+| I3 | ib | Core, API and ORC patches reapplied, one commit each. **Done 2026-11-22**: all core, API and ORC patches (iceberg pull requests 3 to 7). | I1, I2 | Each patch's test fails before and passes after. Apache tests still pass. |
+| I4 | ib | Spark 3.5 patches reapplied, one commit each. **Done 2026-11-22** (same pull requests). | I3 | Same. |
 | I5 | ib | The same Spark patches applied to the Spark 4.2 module where they apply. | I4 | Same. |
 | I6 | ib, oh | The openhouse fork build resolves the new line's artifacts from the mkuchenbecker Iceberg fork (S35, J25). | I1 | A throwaway module compiles against them in CI. |
 
@@ -104,9 +104,13 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 | T5 | oh | The house table test stand-in checks versions and deletes like the real store. **Done 2026-11-22** (pull request 83). | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
 | T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
+| I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | Combined validation record. In progress. |
+| X0 | ib, oh | Schema changes work on v2 tables that carry column defaults on the 1.12 line. | I3, a decision (see `10-v2-defaults.md`) | The second ALTER TABLE in the column-default Spark test passes on the new line. |
+| I9 | ib | Delete-file replication is safe on non-HDFS storage. | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
 
 ## State
 
-Done: P1, P2, I1, I2, T1, T3, T4, T5, C1. In progress, delegated: I3 (7 of 13 patches ported; budgeted
-rewrite chain running). Not started: T2, T6, I7, C2 and all service items. Six draft pull requests are
-open against `irc-integration` on the openhouse fork and are not merged.
+Done: P1, P2, I1, I2, I3, I4, T1, T3, T4, T5, C1. In progress, delegated: I8 (combined validation), T2
+(delta-harness). Waiting on a decision from Mike: X0, I9, and review of the seam design before C2 and the
+service items start. Not started: T6, I5, I6, I7 and all service items. Draft pull requests are open on
+both forks and none is merged.

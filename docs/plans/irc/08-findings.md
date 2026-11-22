@@ -48,3 +48,14 @@ Fixing any of these is a behavior change and needs a decision.
 - Apache 1.12 already writes an application name into snapshot summaries under its own key. LinkedIn's
   patch adds its own key next to it. Both are kept.
 - The repo's commit hooks fail under JDK 17 unless extra compiler exports are passed.
+
+## Second round (Iceberg patches and the 1.12 line)
+
+- All 13 LinkedIn patches are reapplied for Spark 3.5, each with a failing-then-passing test (iceberg fork, pull requests 3 to 7). A combined validation run is in progress.
+- LinkedIn's delete-file replication default (3) makes every merge-on-read delete throw on any file IO that is not Hadoop's. Iceberg's REST catalog uses such a wrapper by default. A forwarding fix was added, labelled as not from LinkedIn.
+- The same default throws on S3 and other non-HDFS storage, on LinkedIn's line too. Left as it is; a decision is needed for use outside LinkedIn.
+- Parquet delete files never receive the replication factor, on LinkedIn's line or the new one. Left as it is.
+- LinkedIn's split-size key only affects compaction scans and streaming reads, never ordinary batch scans. Ported with exactly that reach.
+- Column defaults on v2 tables: reads and writes work on the 1.12 line, but any schema change on a table with a default fails in the client. See `10-v2-defaults.md`.
+- On the 1.12 line Parquet and Avro readers fill defaults too. On LinkedIn's line only ORC does. Opted-in Parquet tables would show a default where they show NULL today.
+- The delta-harness is being landed on the new base as a deep check (work item T2).
