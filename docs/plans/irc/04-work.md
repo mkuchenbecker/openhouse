@@ -28,6 +28,7 @@ native REST.
 | --- | --- | --- | --- | --- |
 | T1 | oh | A small Spark SQL smoke suite runs on Spark 3.5 against the real embedded service, with the catalog path as a parameter. **Done 2026-11-22** (pull request 80). | P1 | Green in CI. A deliberately broken rule turns it red. |
 | T2 | oh | The delta-harness is in the repo and runs on demand. **Done 2026-11-22** (draft pull request 85). Full runs recorded in `08-findings.md`. | P1 | One full recorded run. |
+| T2b | oh | The delta-harness runs through the in-process REST-shaped path, selected by `HARNESS_CATALOG_PATH=rest-shim`. **Done 2026-11-22** (draft pull request 86, into `irc/c1-rest-shaped-seam`). Counts and differences in `11-harness-via-seam.md`. | T2, C1 | The full harness runs in both modes on both paths, and the counts are recorded. |
 | T3 | oh | Black-box tests pin the catalog plugin's behavior as it is. **Done 2026-11-22** (pull request 81). | P1 | Green on unchanged code. |
 | T4 | oh | Black-box tests pin the service commit path over the native API, filling gaps only. **Done 2026-11-22** (pull request 82); conflict and soft-delete cases follow once the stand-in is faithful. | P1 | Green on unchanged code. |
 
@@ -110,8 +111,10 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 
 ## State
 
-Done: P1, P2, I1, I2, I3, I4, T1, T2, T3, T4, T5, C1. In progress, delegated: I8 (validated, fixes in
-progress), T2b (delta-harness through the in-process REST-shaped path, branch `irc/t2b-harness-via-seam`,
-needs T2 and C1). Waiting on a decision from Mike: X0, I9, and review of the seam design before C2 and the
-service items start. Not started: T6, I5, I6, I7 and all service items. Draft pull requests are open on
+Done: P1, P2, I1, I2, I3, I4, T1, T2, T2b, T3, T4, T5, C1. T2b is draft pull request 86 in
+mkuchenbecker/openhouse, into `irc/c1-rest-shaped-seam`, on branch `irc/t2b-harness-via-seam`. The harness
+path is selected by `HARNESS_CATALOG_PATH=legacy|rest-shim`. In progress, delegated: I8 (validated, fixes
+in progress). Re-probe of the RTAS-versus-INSERT race with the compare-and-set stand-in from
+`irc/t4b-faithful-standin`. Waiting on a decision from Mike: X0, I9, and review of the seam design before C2
+and the service items start. Not started: T6, I5, I6, I7 and all service items. Draft pull requests are open on
 both forks and none is merged.

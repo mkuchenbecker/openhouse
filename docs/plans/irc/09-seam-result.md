@@ -17,6 +17,8 @@ is untouched: three production files were added and none was modified. Observed 
 
 ## Differences that remain between the two paths
 
+The full delta-harness gives identical counts on both paths with the real embedded house-table service (2792 cases, 2778 passed, 3 failed, 11 skipped) and one extra failure on the REST-shaped path with the stub (2574 cases, 2559 passed, 4 failed, 11 skipped, against 2560 passed and 3 failed on the legacy path). The legacy full-run counts were taken from the earlier baseline run and were not repeated for this note. The counts and both differences are detailed in `11-harness-via-seam.md`.
+
 | What differs | Today's path | REST-shaped path | Shown by a test? | Fixable where |
 | --- | --- | --- | --- | --- |
 | When the RTAS / REPLACE gate runs, and what it leaves behind | Stage-replace is sent before any data is written, so a gated table fails there. | No stage-replace; data files are written first, then the server's gate rejects the commit and the data file stays in the table directory. | No test; seen on disk by hand. | Only by calling the backing stage-replace before delegating, or by a REST replace signal. Decision needed. |
@@ -31,6 +33,8 @@ is untouched: three production files were added and none was modified. Observed 
 | View replace / alter | Client-side view commit. | Built client-side and committed through a handler that retries up to 4 times on conflict. | None; s18 covers create, select and drop only. Not verified. | Own view-commit handler in the new classes. |
 | Multi-table `RESTCatalog.commitTransaction` | No such API. | No route; fails with `BadRequestException`. | None. | Not applicable (new API). Decision whether to route it. |
 | Iceberg 1.2 / Spark 3.1 line | Today's path. | No seam (out of scope). | Contract tests on spark-3.1 run the legacy path only. | Separate copy needed. Decision. |
+| Concurrent RTAS and INSERT, in-memory house-table stub | No loss in 50 of 50 stub races. 0 of 50 lost with the real service on the REST-shaped path. | RTAS silently lost in 2 of 50 stub races (orc only), leaving 4 rows where 2 or 3 are valid. | Yes: `surface.conc.rtasVsAppend @ orc`. Diagnosed by reading: the stub has no version check, and the adapter's reload-then-commit changes the timing so the two commits overlap. | The stub, which has no version check. The real service gave no loss. |
+| Snapshot history after an INSERT commits just before an RTAS (final rows the same) | INSERT's snapshot removed in 50 of 50 runs (stub). | INSERT's snapshot kept in the table history in 30 of 50 stub races and 41 of 50 real-service races. | No case asserts it. Cause by reading: the adapter applies the replace to a freshly loaded head (`OpenHouseRestAdapter.java:406-410`), while the legacy path commits metadata built from the transaction's starting point, and the server removes snapshots the client payload does not list. | Not decided. |
 
 ## Where the design note was wrong
 
