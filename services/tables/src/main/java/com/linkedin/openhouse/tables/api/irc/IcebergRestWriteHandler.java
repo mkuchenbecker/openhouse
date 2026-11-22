@@ -37,12 +37,12 @@ import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.TableMetadata;
-import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.stereotype.Component;
 
 /**
@@ -60,7 +60,8 @@ import org.springframework.stereotype.Component;
  *       the request the OpenHouse client would send for it ({@link IcebergUpdates}), as the native
  *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
  *       stored table's version as base, so a commit that landed in between is refused by the core's
- *       guards. A replace commit (see {@link #isReplace}) is handed over as a replace.
+ *       guards. A replace commit (see {@link IcebergRestRequirements#isReplace}) is handed over as
+ *       a replace.
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
@@ -79,6 +80,7 @@ import org.springframework.stereotype.Component;
  * </ul>
  */
 @Component
+@ConditionalOnClass(name = IcebergRestWriteController.WRITE_API_CLASS)
 public class IcebergRestWriteHandler {
 
   /** The reserved property the native create-with-data reads the table's storage from. */
@@ -184,14 +186,12 @@ public class IcebergRestWriteHandler {
       String databaseId, String tableId, UpdateTableRequest request, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
-    if (isCreate(request)) {
+    if (IcebergRestRequirements.isCreate(request)) {
       return commitCreate(identifier, request, actingPrincipal);
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     TableMetadata baseMetadata = base.getMetadata();
-    for (UpdateRequirement requirement : request.requirements()) {
-      requirement.validate(baseMetadata);
-    }
+    IcebergRestRequirements.validate(request, baseMetadata);
     if (request.updates().isEmpty()) {
       return new IcebergRestLoadedTable(
           base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
@@ -208,7 +208,7 @@ public class IcebergRestWriteHandler {
         patch
             .map(p -> PolicyPatch.apply(base.getTableDto().getPolicies(), p, identifier.toString()))
             .orElse(null);
-    boolean replace = isReplace(request);
+    boolean replace = IcebergRestRequirements.isReplace(request);
     CommitKind kind =
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
@@ -300,9 +300,7 @@ public class IcebergRestWriteHandler {
         tablesService.tableExists(databaseId, tableId)
             ? Optional.of(tableCommitService.loadBase(identifier).getMetadata())
             : Optional.empty();
-    for (UpdateRequirement requirement : request.requirements()) {
-      requirement.validate(existing.orElse(null));
-    }
+    IcebergRestRequirements.validate(request, existing.orElse(null));
     TableMetadata.Builder builder = TableMetadata.buildFromEmpty();
     for (MetadataUpdate update : request.updates()) {
       update.applyTo(builder);
@@ -467,44 +465,6 @@ public class IcebergRestWriteHandler {
                   + "through the Iceberg REST routes; they create %s tables",
               identifier, TABLE_TYPE_KEY, tableType, TableType.PRIMARY_TABLE.name()));
     }
-  }
-
-  // ---------------------------------------------------------------- the commit's shape
-
-  /**
-   * A commit that completes a staged create: it requires that the table does not exist ({@code
-   * assert-create}), which only a create transaction asserts.
-   */
-  static boolean isCreate(UpdateTableRequest request) {
-    return request.requirements().stream()
-        .anyMatch(UpdateRequirement.AssertTableDoesNotExist.class::isInstance);
-  }
-
-  /**
-   * A replace commit, as Iceberg's {@code RESTTableOperations} sends one (1.5 and 1.12 alike). The
-   * client sends no replace intent; the shape reveals it. A replace always sets the current schema,
-   * the default spec and the default sort order ({@code RESTSessionCatalog.replaceTransaction} adds
-   * any of the three the replacement lacks), and {@code UpdateRequirements.forReplaceTable} never
-   * asserts the current schema, default spec or default sort order. An ordinary commit that sets
-   * any of the three always asserts the matching id ({@code UpdateRequirements.forUpdateTable}), so
-   * Iceberg's own clients cannot send an ordinary commit of this shape. The same rule as the
-   * in-process seam's adapter ({@code OpenHouseRestAdapter.isReplace}).
-   */
-  static boolean isReplace(UpdateTableRequest request) {
-    if (isCreate(request)) {
-      return false;
-    }
-    List<MetadataUpdate> updates = request.updates();
-    List<UpdateRequirement> requirements = request.requirements();
-    return updates.stream().anyMatch(MetadataUpdate.SetCurrentSchema.class::isInstance)
-        && updates.stream().anyMatch(MetadataUpdate.SetDefaultPartitionSpec.class::isInstance)
-        && updates.stream().anyMatch(MetadataUpdate.SetDefaultSortOrder.class::isInstance)
-        && requirements.stream()
-            .noneMatch(
-                requirement ->
-                    requirement instanceof UpdateRequirement.AssertCurrentSchemaID
-                        || requirement instanceof UpdateRequirement.AssertDefaultSpecID
-                        || requirement instanceof UpdateRequirement.AssertDefaultSortOrderID);
   }
 
   /** The table as stored now, at the location the native API reports. */
