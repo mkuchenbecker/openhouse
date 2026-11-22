@@ -16,6 +16,14 @@ sourceSets {
   }
 }
 
+// iceberg-data (pulled in transitively by the embedded tables service) puts unshaded ORC/Parquet
+// reader classes next to the shaded ones in iceberg-spark-runtime, which breaks merge-on-read reads
+// (shaded TypeDescription cannot be cast to org.apache.orc.TypeDescription). apps/spark-3.5 excludes
+// it the same way and its merge-on-read tests read tables back.
+configurations.testRuntimeClasspath {
+  exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+}
+
 dependencies {
 
   testImplementation 'com.google.code.gson:gson:2.8.9'
