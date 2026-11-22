@@ -1,0 +1,206 @@
+[ {
+  "file" : "00000-uuid.metadata.json",
+  "metadata" : {
+    "format-version" : 2,
+    "table-uuid" : "uuid",
+    "location" : "/tmp/gold_policy/t-uuid",
+    "last-sequence-number" : 0,
+    "last-updated-ms" : 0,
+    "last-column-id" : 6,
+    "current-schema-id" : 0,
+    "schemas" : [ {
+      "type" : "struct",
+      "schema-id" : 0,
+      "fields" : [ {
+        "id" : 1,
+        "name" : "id",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 2,
+        "name" : "name",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 3,
+        "name" : "timestampCol",
+        "required" : true,
+        "type" : "timestamp"
+      }, {
+        "id" : 4,
+        "name" : "stats",
+        "required" : true,
+        "type" : "double"
+      }, {
+        "id" : 5,
+        "name" : "count",
+        "required" : true,
+        "type" : "int"
+      }, {
+        "id" : 6,
+        "name" : "timeLong",
+        "required" : true,
+        "type" : "long"
+      } ]
+    } ],
+    "default-spec-id" : 0,
+    "partition-specs" : [ {
+      "spec-id" : 0,
+      "fields" : [ {
+        "name" : "timestampCol_hour",
+        "transform" : "hour",
+        "source-id" : 3,
+        "field-id" : 1000
+      }, {
+        "name" : "id",
+        "transform" : "identity",
+        "source-id" : 1,
+        "field-id" : 1001
+      }, {
+        "name" : "name_trunc",
+        "transform" : "truncate[10]",
+        "source-id" : 2,
+        "field-id" : 1002
+      } ]
+    } ],
+    "last-partition-id" : 1002,
+    "default-sort-order-id" : 0,
+    "sort-orders" : [ {
+      "order-id" : 0,
+      "fields" : [ ]
+    } ],
+    "properties" : {
+      "write.parquet.compression-codec" : "zstd",
+      "policies" : "{\n  \"retention\": {\n    \"count\": 3,\n    \"granularity\": \"HOUR\"\n  },\n  \"sharingEnabled\": false,\n  \"replication\": {\n    \"config\": [\n      {\n        \"destination\": \"CLUSTER1\",\n        \"interval\": \"12H\",\n        \"cronSchedule\": \"cron\"\n      }\n    ]\n  },\n  \"history\": {\n    \"maxAge\": 3,\n    \"granularity\": \"DAY\",\n    \"versions\": 10\n  }\n}",
+      "write.metadata.delete-after-commit.enabled" : "false",
+      "user.c" : "d",
+      "openhouse.isTableReplicated" : "false",
+      "openhouse.clusterId" : "local-cluster",
+      "openhouse.tableId" : "t",
+      "openhouse.lastModifiedTime" : "ts",
+      "openhouse.tableVersion" : "INITIAL_VERSION",
+      "user.a" : "b",
+      "write.format.default" : "orc",
+      "openhouse.creationTime" : "ts",
+      "openhouse.tableUri" : "local-cluster.gold_policy.t",
+      "write.metadata.previous-versions-max" : "100",
+      "openhouse.databaseId" : "gold_policy",
+      "openhouse.tableType" : "PRIMARY_TABLE",
+      "openhouse.tableLocation" : "/tmp/gold_policy/t-uuid/00000-uuid.metadata.json",
+      "openhouse.tableUUID" : "uuid",
+      "history.expire.max-ref-age-ms" : "604800000",
+      "openhouse.tableCreator" : "testUser"
+    },
+    "current-snapshot-id" : -1,
+    "refs" : { },
+    "snapshots" : [ ],
+    "statistics" : [ ],
+    "partition-statistics" : [ ],
+    "snapshot-log" : [ ],
+    "metadata-log" : [ ]
+  }
+}, {
+  "file" : "00001-uuid.metadata.json",
+  "metadata" : {
+    "format-version" : 2,
+    "table-uuid" : "uuid",
+    "location" : "/tmp/gold_policy/t-uuid",
+    "last-sequence-number" : 0,
+    "last-updated-ms" : 0,
+    "last-column-id" : 6,
+    "current-schema-id" : 0,
+    "schemas" : [ {
+      "type" : "struct",
+      "schema-id" : 0,
+      "fields" : [ {
+        "id" : 1,
+        "name" : "id",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 2,
+        "name" : "name",
+        "required" : true,
+        "type" : "string"
+      }, {
+        "id" : 3,
+        "name" : "timestampCol",
+        "required" : true,
+        "type" : "timestamp"
+      }, {
+        "id" : 4,
+        "name" : "stats",
+        "required" : true,
+        "type" : "double"
+      }, {
+        "id" : 5,
+        "name" : "count",
+        "required" : true,
+        "type" : "int"
+      }, {
+        "id" : 6,
+        "name" : "timeLong",
+        "required" : true,
+        "type" : "long"
+      } ]
+    } ],
+    "default-spec-id" : 0,
+    "partition-specs" : [ {
+      "spec-id" : 0,
+      "fields" : [ {
+        "name" : "timestampCol_hour",
+        "transform" : "hour",
+        "source-id" : 3,
+        "field-id" : 1000
+      }, {
+        "name" : "id",
+        "transform" : "identity",
+        "source-id" : 1,
+        "field-id" : 1001
+      }, {
+        "name" : "name_trunc",
+        "transform" : "truncate[10]",
+        "source-id" : 2,
+        "field-id" : 1002
+      } ]
+    } ],
+    "last-partition-id" : 1002,
+    "default-sort-order-id" : 0,
+    "sort-orders" : [ {
+      "order-id" : 0,
+      "fields" : [ ]
+    } ],
+    "properties" : {
+      "write.parquet.compression-codec" : "zstd",
+      "policies" : "{\n  \"retention\": {\n    \"count\": 3,\n    \"granularity\": \"HOUR\"\n  },\n  \"sharingEnabled\": true,\n  \"replication\": {\n    \"config\": [\n      {\n        \"destination\": \"CLUSTER1\",\n        \"interval\": \"12H\",\n        \"cronSchedule\": \"cron\"\n      }\n    ]\n  },\n  \"history\": {\n    \"maxAge\": 3,\n    \"granularity\": \"DAY\",\n    \"versions\": 10\n  }\n}",
+      "write.metadata.delete-after-commit.enabled" : "false",
+      "user.c" : "d",
+      "openhouse.isTableReplicated" : "false",
+      "openhouse.clusterId" : "local-cluster",
+      "openhouse.tableId" : "t",
+      "openhouse.lastModifiedTime" : "ts",
+      "openhouse.tableVersion" : "/tmp/gold_policy/t-uuid/00000-uuid.metadata.json",
+      "user.a" : "b",
+      "write.format.default" : "orc",
+      "openhouse.creationTime" : "ts",
+      "openhouse.tableUri" : "local-cluster.gold_policy.t",
+      "write.metadata.previous-versions-max" : "100",
+      "openhouse.databaseId" : "gold_policy",
+      "openhouse.tableType" : "PRIMARY_TABLE",
+      "openhouse.tableLocation" : "/tmp/gold_policy/t-uuid/00001-uuid.metadata.json",
+      "openhouse.tableUUID" : "uuid",
+      "history.expire.max-ref-age-ms" : "604800000",
+      "openhouse.tableCreator" : "testUser"
+    },
+    "current-snapshot-id" : -1,
+    "refs" : { },
+    "snapshots" : [ ],
+    "statistics" : [ ],
+    "partition-statistics" : [ ],
+    "snapshot-log" : [ ],
+    "metadata-log" : [ {
+      "timestamp-ms" : 0,
+      "metadata-file" : "/tmp/gold_policy/t-uuid/00000-uuid.metadata.json"
+    } ]
+  }
+} ]

@@ -1,11 +1,12 @@
 package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.common.api.spec.TableUri;
-import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
-import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.authorization.Privileges;
+import com.linkedin.openhouse.tables.commit.CommitContext;
+import com.linkedin.openhouse.tables.commit.CommitKind;
+import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
@@ -16,8 +17,7 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
 import java.util.Optional;
-import org.apache.iceberg.exceptions.BadRequestException;
-import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
@@ -73,51 +73,45 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
             icebergSnapshotRequestBody);
 
     if (tableDto.isPresent()) {
-      // A locked table must reject every write, including CREATE OR REPLACE (RTAS). The lock is
-      // checked here — before the replace-vs-update split — so the replace path can no longer
-      // bypass it and silently overwrite a locked table.
-      if (LockPolicyValidator.isLegacyLocked(tableDto.get())) {
-        throw new UnsupportedClientOperationException(
-            UnsupportedClientOperationException.Operation.LOCKED_TABLE_OPERATION,
-            String.format(
-                "Table %s.%s is in locked state and cannot be written to", databaseId, tableId));
-      }
-      authorizationUtils.checkTableWritePathPrivileges(
-          tableDto.get(), tableCreatorUpdater, Privileges.UPDATE_TABLE_METADATA);
-      authorizationUtils.checkSystemOnlyLockAccess(tableDto.get(), tableCreatorUpdater);
-    } else {
-      authorizationUtils.checkDatabasePrivilege(
-          databaseId, tableCreatorUpdater, Privileges.CREATE_TABLE);
+      // A commit on the stored table, replace (RTAS) commits included: the commit core runs the
+      // lock check before the replace-vs-update split, so a replace cannot bypass the lock.
+      TableDto mapped = tableDtoToSave;
+      return new TableCommitCore(
+              openHouseInternalRepository,
+              authorizationUtils,
+              clientCapabilityGate,
+              readBridgeStripProtection)
+          .commit(
+              new TableCommit(
+                  TableIdentifier.of(databaseId, tableId),
+                  icebergSnapshotRequestBody.getBaseTableVersion(),
+                  tableDto.get(),
+                  () -> mapped,
+                  CommitContext.builder()
+                      .kind(CommitKind.SNAPSHOTS_UPDATE)
+                      .principal(tableCreatorUpdater)
+                      .clusterId(clusterId)
+                      .build()));
     }
+    authorizationUtils.checkDatabasePrivilege(
+        databaseId, tableCreatorUpdater, Privileges.CREATE_TABLE);
     clientCapabilityGate.checkWrite(
         databaseId, tableId, tableDto, tableDtoToSave.getTableProperties());
-    tableDtoToSave = LockPolicyValidator.prepare(tableDto.orElse(null), tableDtoToSave);
+    tableDtoToSave = LockPolicyValidator.prepare(null, tableDtoToSave);
     try {
       tableDtoToSave = readBridgeStripProtection.prepare(tableDtoToSave);
     } catch (ColumnDefaultException e) {
       throw new UnsupportedClientOperationException(
           UnsupportedClientOperationException.Operation.COLUMN_DEFAULT, e.getMessage(), e);
     }
-    try {
-      return Pair.of(openHouseInternalRepository.save(tableDtoToSave), !tableDto.isPresent());
-    } catch (BadRequestException e) {
-      throw new RequestValidationFailureException(e.getMessage(), e);
-    } catch (CommitFailedException ce) {
-      throw new EntityConcurrentModificationException(
-          TableUri.builder()
-              .tableId(tableId)
-              .databaseId(databaseId)
-              .clusterId(
-                  icebergSnapshotRequestBody.getCreateUpdateTableRequestBody().getClusterId())
-              .build()
-              .toString(),
-          String.format(
-              "databaseId : %s, tableId : %s, version: %s %s",
-              databaseId,
-              tableId,
-              icebergSnapshotRequestBody.getBaseTableVersion(),
-              "The requested table has been modified/created by other processes."),
-          ce);
-    }
+    return Pair.of(
+        TableCommitCore.saveSnapshots(
+            openHouseInternalRepository,
+            tableDtoToSave,
+            databaseId,
+            tableId,
+            clusterId,
+            icebergSnapshotRequestBody.getBaseTableVersion()),
+        true);
   }
 }
