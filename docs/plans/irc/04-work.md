@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 79 items in two repos, counted across this file and `30-work-defaults.md`. Each names what it
+Bottom line: 81 items in two repos, counted across this file and `30-work-defaults.md`. Each names what it
 needs and how it is proven. There is no order beyond the "Needs" column: an item can land whenever its needs are
 in, and landing it leaves a valid state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -55,8 +55,8 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | C1 | oh | A config value runs the plugin as `RESTCatalog` over the legacy client. Default unchanged. **Done 2026-11-22** on the Spark 3.5 line (pull request 84); differences listed in `09-seam-result.md`. | T1, T3 | T1 and T3 pass on both paths. Differences listed. |
-| C2-1 | oh | The `openhouse-catalog-capabilities` module (names, interfaces, `UnlockReason`, `Privileges`, `Principal`). The Java runtime's catalogs implement it through adapters. Old `javaclient.api` types are kept. | none | Unit tests. Spark 3.5 `statementTest` and `catalogTest` unchanged. |
-| C2-2 | oh | The resolver in the 3.5 extensions replaces `IcebergCatalogMapper` at all 5 call sites. Policy execs check `policies`. `HasIcebergCatalog` is used where present. | C1, C2-1 | Resolver unit tests (legacy, shim and fake-`RESTCatalog` properties). Smoke tests s16, s17 and s27 green on legacy and rest-shim. |
+| C2-1 | oh | **In progress on `irc/c2-capabilities-resolver`.** The `openhouse-catalog-capabilities` module (names, interfaces, `UnlockReason`, `Privileges`, `Principal`). The Java runtime's catalogs implement it through adapters. Old `javaclient.api` types are kept. | none | Unit tests. Spark 3.5 `statementTest` and `catalogTest` unchanged. |
+| C2-2 | oh | **In progress on `irc/c2-capabilities-resolver`.** The resolver in the 3.5 extensions replaces `IcebergCatalogMapper` at all 5 call sites. Policy execs check `policies`. `HasIcebergCatalog` is used where present. | C1, C2-1 | Resolver unit tests (legacy, shim and fake-`RESTCatalog` properties). Smoke tests s16, s17 and s27 green on legacy and rest-shim. |
 | C2-3 | oh | `OpenHouseRestCapabilityClient` (`HTTPClient`, `AuthManager`, `ResourcePaths`), used by the resolver. | C2-2, V5-3 | Spark 3.5 itest: GRANT, REVOKE, SHOW GRANTS and UNLOCK on `type=rest`. |
 
 ## Service
@@ -66,11 +66,11 @@ native REST.
 | V1 | oh | **Done 2026-11-22 (pull request 89).** The commit path accepts a complete candidate metadata. Rules and persistence run without native decoding. No behavior change. Result in `23-v1-commit-core-result.md`. | T1, T4 | T1, T4 and the existing suite unchanged. |
 | V2 | oh | IRC config, namespaces, table list, load, exists. **Done 2026-11-22 (pull request 88).** Result in `19-v2-irc-read-result.md`. | T4 | `RESTCatalog` reads tables that the legacy path wrote. |
 | V3 | oh | **Done 2026-11-22 (pull request 94).** IRC table create, staged create, commit, drop, rename, with every existing rule holding. Result in `27-v3-irc-write-result.md`. | V1, V2 | T4's scenarios through IRC leave the same stored state. Rule violations are rejected. |
-| V4 | oh | IRC views. In progress on `irc/v4-irc-view-routes`. | V2 | View scenarios through IRC match the native API. |
-| V5-0 | oh | **In progress on `irc/v3-irc-write-gaps`.** Red pins: an IRC commit with `updated.openhouse.policy` stores the stray key; a policy statement on `type=rest` "succeeds"; GRANT and UNLOCK say unsupported. The interim refusal of D25 lands with it. | V3 | An `IrcWriteRoutesTest` case, plus a Spark 3.5 `IcebergRestSparkSqlTest` case. |
-| V5-gap | oh | **In progress on `irc/v3-irc-write-gaps`.** The RTAS-versus-replication check and other `validateUpdateTable` checks are pinned on IRC updates, then fixed if missing. | V3 | A red MockMvc test. |
-| V5-1 | oh | Server-side policy patch translation on commit, create and staged completion, with validators. The wire shape is a one-way door at release (D24). | V5-0 | An IRC patch and a native PUT with client-merged policies give a byte-equal `policies` property. Every rule is refused with the native status and message. Audit event. |
-| V5-2 | oh | Config advertises `openhouse.capabilities=policies`, and the adapter's config says the same. One-way door at release (D24). | V5-1 | Config test. V5-0's policy pins flip to green. |
+| V4 | oh | **Done 2026-11-22 (pull request 95).** IRC views, without rename (D27). Result in `31-v4-irc-views-result.md`. | V2 | View scenarios through IRC match the native API. |
+| V5-0 | oh | **Done 2026-11-22 (pull request 96).** Red pins for the stray policy key, with the interim refusal of D25 (a 400, so the interim outcome is a refusal, not a policy). | V3 | An `IrcWriteRoutesTest` case, plus a Spark 3.5 `IcebergRestSparkSqlTest` case. |
+| V5-gap | oh | **Done 2026-11-22 (pull request 96).** The native update validator now runs on IRC commits and replaces; the gaps are recorded in `27-v3-irc-write-result.md`. | V3 | A red MockMvc test. |
+| V5-1 | oh | **In progress on `irc/v5-policies-over-irc`.** Server-side policy patch translation on commit, create and staged completion, with validators. The wire shape is a one-way door at release (D24). | V5-0 | An IRC patch and a native PUT with client-merged policies give a byte-equal `policies` property. Every rule is refused with the native status and message. Audit event. |
+| V5-2 | oh | **In progress on `irc/v5-policies-over-irc`.** Config advertises `openhouse.capabilities=policies`, and the adapter's config says the same. One-way door at release (D24). | V5-1 | Config test. V5-0's policy pins flip to green. |
 | V5-3 | oh | ACL and lock routes under `/iceberg`, advertising `grants,unlock`. One-way door at release (D24). | V5-2 | MockMvc equivalence with the native routes: status, message, authorization calls, audit and lock state after. |
 | V3b | oh | The IRC config route's FileIO default follows the cluster's storage configuration. | V3 | A cluster configured for a non-Hadoop storage advertises the matching FileIO. |
 | V3c | oh | Failed IRC requests appear in the service audit. | V3 | A refused IRC request produces the same audit event class as a refused native one. |
@@ -78,6 +78,7 @@ native REST.
 | V7 | oh | IRC register table. | V3 | A registered table loads and commits. |
 | V8 | oh | Multi-table commit. Investigate first (J24). | V3 | Two tables commit together or neither does, under injected failure. |
 | V9 | oh | The service links the new Iceberg line. Service modules on JDK 17. Existing clients unchanged. | I3, I6, T1, T4 | Whole existing suite. T1 on legacy paths. T2 full run. |
+| V10a | oh | The service's IRC config route advertises exactly the endpoints it serves, including view support, so Iceberg 1.12 clients use HEAD existence checks and views and do not assume routes that are not served. | V4 | A 1.12 `RESTCatalog` creates and loads a view and uses HEAD for existence against the service. |
 | V10 | oh | IRC endpoint list advertised. View registration. Spec revision of the new line. | V9, V4 | A current `RESTCatalog` negotiates against it. |
 | V11 | oh | IRC scan planning. | V9, V2 | Planned scans return the same files as client-side planning. |
 | V12 | oh | IRC credentials and signing. Investigate first (J24). | V9, V2 | Defined by the investigation. |
@@ -111,7 +112,7 @@ Each exists on the native path only (J3).
 
 ## Column defaults on the new line
 
-Rows W1 to W12 are in `30-work-defaults.md`. They are part of the total in the bottom line.
+Rows W1 to W13 are in `30-work-defaults.md`. They are part of the total in the bottom line.
 
 ## Added since the list was written
 
@@ -126,8 +127,8 @@ Rows W1 to W12 are in `30-work-defaults.md`. They are part of the total in the b
 | C3 | oh | A gated RTAS on the REST-shaped path writes no data file before the server rejects it. | C1 | No orphan file after a rejected RTAS, on both paths. |
 | C4 | oh | Property and policy commits from a stale handle fail on the REST-shaped path as they do on the legacy path. | C1 | `rawCommitWithStaleBaseFails` passes on both paths for property-only commits. |
 | T7 | oh | Storage performance tiering replaces the replication-factor property. | nothing | Not designed (S45). |
-| C5 | oh | **In progress on `irc/c5-optin-ci`.** The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
-| I10 | oh | **In progress on `irc/c5-optin-ci`.** A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
+| C5 | oh | **Done 2026-11-22 (pull request 97).** The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
+| I10 | oh | **Done 2026-11-22 (pull request 97).** A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
 | N3a | oh | **Done 2026-11-22 (pull request 92).** Result in `26-n3a-spark42-read-result.md`. Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.

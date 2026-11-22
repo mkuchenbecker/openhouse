@@ -9,10 +9,14 @@ design, evidence and decisions. Dated 2026-11-22.
 - The native API and Spark 3.5 with the OpenHouse catalog are unchanged.
 - An unmodified Iceberg `RESTCatalog`, and Spark 3.5 through it, can read and write OpenHouse tables under
   `/iceberg` with the native rules (`27-v3-irc-write-result.md`).
-- Spark 4.2 on the fork's Iceberg 1.12 can read OpenHouse tables over IRC under the opt-in build
-  (`26-n3a-spark42-read-result.md`).
-- Not yet over IRC: views (in progress), policies, grants, unlock, metrics, register, multi-table commits, scan
-  planning and credentials.
+- Views work over IRC for an unmodified `RESTCatalog` and Spark 3.5, without rename. They do not yet work for
+  Iceberg 1.12 clients until the config route advertises view support (`31-v4-irc-views-result.md`).
+- Spark 4.2 on the fork's Iceberg 1.12 can read OpenHouse tables over IRC, and can now also create tables and
+  insert rows over IRC, under the opt-in build (`26-n3a-spark42-read-result.md`, `32-optin-green-ci-result.md`).
+- Policies over IRC are refused with a clear 400 until the translation lands (D25).
+- The opt-in Iceberg 1.12 build passes all its listed suites.
+- Not yet over IRC: policies (refused), grants, unlock, metrics, register, multi-table commits, scan planning and
+  credentials.
 - Format v3 tables are not yet supported by the service.
 
 ## Integration branches
@@ -37,6 +41,10 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 92 | N3a: Spark 4.2 on Iceberg 1.12 reads OpenHouse over IRC, opt-in build only (`26-n3a-spark42-read-result.md`) | 8b9bfe83 |
 | 93 | The post-merge build no longer cancels a running build | f60e32dd |
 | 94 | V3: the IRC table write routes (`27-v3-irc-write-result.md`) | 14f23870 |
+| 96 | V5-0, V5-gap: IRC writes run the native update validator and refuse policy keys | 0010df15 |
+| 95 | V4: the IRC view routes (`31-v4-irc-views-result.md`) | 71b3e826 |
+| 97 | C5, W12, I10: the opt-in build is green and under post-merge CI (`32-optin-green-ci-result.md`) | e353a36d |
+| 98 | Fix-forward: the Iceberg 1.2 line boots again (`27-v3-irc-write-result.md`, follow-ups) | cc76d485 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -51,26 +59,27 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
-P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, N3a, W1 to W4, and the X0 design. The meaning of each
+P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, N3a, C5, W1 to W4, W12, I10,
+and the X0 design. The meaning of each
 item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V4 (IRC view routes), on branch `irc/v4-irc-view-routes`.
-- C5 with W12 and I10, on branch `irc/c5-optin-ci`.
-- V5-0 and V5-gap, with the interim refusal of policy keys (D25), on branch `irc/v3-irc-write-gaps`.
+- V5-1 with V5-2 (policies over IRC), on branch `irc/v5-policies-over-irc`.
+- C2-1 with C2-2 (capabilities module and resolver), on branch `irc/c2-capabilities-resolver`.
 
 ## Next
 
-V5-1, V5-2, V5-3, C2-1, C2-2, C2-3, N3b, N3-x1, N3-x2, V6, V7, I6f, then V9 and the v3 items. The capabilities
+V5-3, C2-3, V10a, N3b, N3-x1, N3-x2, V6, V7, V3b, V3c, I6f, then V9 and the v3 items. The capabilities
 items come from `28-capabilities-over-irc-design.md` (D23) and are listed in `04-work.md`.
 
 ## Known red on `irc-integration`
 
-None known on the default build. Last completed post-merge build: run 45062814318 on 94877d49, passed (27
-minutes; the Gradle cache was restored and saved about 8 minutes). Later merges are building. Under the opt-in
-build two view cases on the in-process REST-shaped path fail until C5 lands, and the Spark 4.2 write test pins a
-406 that pull request 94 made obsolete. Both are being fixed on `irc/c5-optin-ci`.
+The default build was red on `irc-integration` from 14f23870 (pull request 94) until cc76d485 (pull request 98),
+on the Iceberg 1.2 fixture. The fix was verified locally on the merged head (the three failing tasks and the Spark
+3.1 itest tasks pass). No post-merge run has yet been read for cc76d485. The first run of the opt-in post-merge job
+is also pending. The last completed post-merge build read was run 45062814318 on 94877d49, which passed (27
+minutes).
 
 ## How work is tested
 
@@ -78,7 +87,8 @@ Under D18, before a merge an agent runs the test classes it touched plus the bla
 changed, and Claude merges on that without waiting for the pull request's CI. The full build runs on
 `irc-integration` after each merge and a failure is fixed forward, so work that starts from the branch checks the
 known-red list above first. Heavy runs, such as the full delta-harness and the full Iceberg Spark suites, run after
-merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge.
+merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
+now requires, after the red build (`21-findings-continued.md`).
 
 ## Waiting on Mike
 

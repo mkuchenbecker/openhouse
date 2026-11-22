@@ -2,9 +2,9 @@
 
 Continues `16-decisions-continued.md`.
 
-Bottom line: four more decisions (D22 to D25), made after the IRC table write routes landed and the capabilities
-design was written. Two are acceptances of behavior as built, one adopts a design, and one is a temporary refusal.
-D24 sets aside the one-way doors for Mike. Each has its reason, the evidence it rests on, and how to reverse it.
+Bottom line: six more decisions (D22 to D27). Four were made after the IRC table write routes landed and the
+capabilities design was written: two accept behavior as built, one adopts a design, and one is a temporary refusal.
+D24 sets aside the one-way doors for Mike. D26 and D27 came after the red build and the view routes. Each has its reason, the evidence it rests on, and how to reverse it.
 None is agreed by Mike unless the entry cites a statement.
 
 Dates are all 2026-11-22. Claude wrote every entry.
@@ -65,3 +65,25 @@ Dates are all 2026-11-22. Claude wrote every entry.
 - Why: a visible refusal is better than a success that did nothing.
 - References: `28-capabilities-over-irc-design.md`, "The finding"; work item V5-0 in `04-work.md`.
 - Reverse by: V5-1 replaces the refusal with the translation.
+
+## D26. Additions to the testing policy after the red build
+
+- Date: 2026-11-22.
+- Decision: D18 stands, with these additions to every brief.
+  - A change to `services/tables` main code includes `:tables-test-fixtures:tables-test-fixtures_2.12:test` (the
+    Iceberg 1.2 fixture) and compiling the service under `-PicebergFork`.
+  - A change to client or Spark extension code includes the Spark 3.1 itest tasks as well as the Spark 3.5 ones.
+  - No IRC Spring bean references Iceberg types that the 1.2 line lacks. `IcebergRestBeanSignaturesTest` guards it.
+- Why: the policy trades merge-time coverage for speed, and these are the cheap checks that cover the build
+  variants a change can break. Skipping them left the default build red from 14f23870 until cc76d485.
+- References: `21-findings-continued.md`; pull requests 96, 97 and 98.
+- Reverse by: removing the lines from the brief template. The red build would then be possible again.
+
+## D27. View rename over IRC answers 406
+
+- Date: 2026-11-22.
+- Decision: renaming a view over IRC answers 406, because the native view API has no rename. View routes register
+  only where the Iceberg view API exists, so the Iceberg 1.2 line answers 406 for them.
+- Why: there is no native path to build on, and 406 is the response the spec lists for this route.
+- References: `31-v4-irc-views-result.md`, "What does not work, and why".
+- Reverse by: adding a native view rename, then serving the IRC route.

@@ -139,3 +139,5 @@ The first version of the faithful stand-in fixed only one of the two source copi
 
 - A fresh git worktree costs about one minute, not a cold build, because worktrees share the Gradle caches (measured: `:services:tables:test` 7m58s fresh against 7m01s warm).
 - A pull request whose branch carries commits that the target has as merge commits can be reported by GitHub as conflicting although git merges it cleanly; GitHub then starts no CI run. Merging the target into the branch fixes it (seen on pull requests 84 and 87).
+
+Later rounds are in `21-findings-continued.md`.

@@ -58,9 +58,8 @@ A non-create commit is a replace when its updates contain `SetCurrentSchema`, `S
 the 1.5.2 and 1.12 sources): `replaceTransaction` adds any of the three updates the replacement lacks,
 `UpdateRequirements.forReplaceTable` never asserts the three ids, and `forUpdateTable` always does.
 
-- What could fool it: only a hand-made request that sets all three without asserting them. It then gets the
-  replace rules, as a native replace does. A replace that sent the assertions would be judged as an update. No
-  Iceberg client does that.
+- What could fool it: only a hand-made request that sets all three without asserting them, which gets the replace
+  rules. A replace that sent the assertions would be judged as an update. No Iceberg client does that.
 - Concurrency: a replace asserts only the table UUID, so a commit that landed between the client's load and its
   replace is replaced over. That is Iceberg's own replace semantics (D22).
 
@@ -96,45 +95,55 @@ snapshot. The native staged create writes a metadata file and no row, and never 
    OpenHouse UUID, which names the directory, is kept.
 2. A staged create leaves nothing and has no `metadata-location`. The native one leaves a file.
 3. A commit with no updates writes nothing and returns the stored table. The native snapshots PUT writes a version.
-4. Drop ignores `purgeRequested`, because the native drop always deletes the data files, so
-   `RESTCatalog.dropTable` with purge false deletes data too (D22).
+4. Drop ignores `purgeRequested`: the native drop always deletes the data files (D22).
 5. The response metadata is reloaded after the commit, so a commit landing in between shows in it.
 6. Failures at the IRC layer (failed requirement, parse error, refused location, UUID or spec) are not in the
    table audit. Policies cannot be set, and the table type is always PRIMARY.
 7. Create-commit field ids are re-freshened by the native create. They equal the client's for flat schemas;
-   nested schemas evolved inside a create transaction could be renumbered (not tested). Schema evolution messages
-   embed the candidate's schema JSON, with ids from Iceberg's builder.
+   nested schemas evolved inside a create transaction could be renumbered (not tested).
 
 ## Choices where the brief left room
 
 - Create entry: reuse, not extraction. IRC creates go through `TablesApiHandler.createTable`. The only native
-  change is that `putTable` takes its UUID through a supplier. New entries are `createTable(body, creator, UUID)`,
+  change is that `putTable` takes its UUID through a supplier. New entries: `createTable(body, creator, UUID)`,
   `stageCreateTable` and `OpenHouseInternalRepository.stageCreate`.
 - The commit base comes from `TableCommitService.loadBase`, with no read checks, so a legacy-locked table answers
   the native 400 and not 403.
-- A replace, or any snapshot or ref change, is `SNAPSHOTS_UPDATE`; everything else is `TABLE_UPDATE`, as the
-  native client chooses its route. An inexpressible partition spec is 400 on create.
-- A multi-level namespace gives 404 for commit, drop and a rename source, and 400 for create and a rename target.
+- A replace, or any snapshot or ref change, is `SNAPSHOTS_UPDATE`; everything else is `TABLE_UPDATE`, as natively.
+- A multi-level namespace gives 404 for commit, drop and rename source, and 400 for create and rename target.
 - The config route sends `io-impl=HadoopFileIO` and `rest-metrics-reporting-enabled=false` as defaults, not
-  overrides. Without the first, a Spark merge-on-read DELETE failed in `ResolvingFileIO` (file-replication-factor
-  not supported). Without the second, the itest log held 25 "Failed to report metrics" warnings, and now 0.
-- Table audit: advices record IRC commits (UPDATE, COMMIT, REPLACE_COMMIT), the create-completing commit
-  (CREATE) and the staged create (STAGED_CREATE).
-- Service audit of failed IRC requests was reported, not built (follow-up V3c). The failure pointcut in
-  `services/common` covers only the native exception handlers, casts the body to the native `ErrorResponseBody`,
-  and labels `/iceberg/...` as UNRECOGNIZED. Fixing it means changing common code or duplicating its event builder.
+  overrides. Without the first, a Spark merge-on-read DELETE failed in `ResolvingFileIO`. Without the second, the
+  itest log held 25 "Failed to report metrics" warnings, and now 0.
+- Table audit: advices record IRC commits, the create-completing commit (CREATE) and the staged create.
+- Service audit of failed IRC requests was reported, not built (follow-up V3c): the failure pointcut in
+  `services/common` covers only the native handlers and labels `/iceberg/...` as UNRECOGNIZED.
 
 ## Counts (ran, one full invocation each)
-
 `:services:tables:test`: 1373 tests, 0 failed (1329 before, read, at 7f7c5638). Spark 3.5 `catalogTest`: 238 tests,
 0 failed, 1 skipped (219 before, read).
 
 The service suite gained `IrcWriteRoutesTest` 38, `IrcWriteRoutesAuthTest` 3, golden +2 and pull request 92's +1.
-The Spark suite gained 10 and 3 tests. Opt-in `compileJava` and `compileTestJava` pass, and `spotlessCheck` passes
-on both modules. Existing V2 tests were updated, not removed.
+The Spark suite gained 10 and 3 tests. Opt-in compilation and `spotlessCheck` pass.
 
 ## Not run
 
 Spark 3.5 `statementTest` and `test`; a 1.12 `RESTCatalog` against these routes; the real house table store
-(MySQL) mode; the delta-harness; CI on pull request 94. Read only: the two spec revisions for these routes (1.12
-adds an `Idempotency-Key` header, not honoured) and the `ErrorHandlers` and `UpdateRequirements` sources.
+(MySQL) mode; the delta-harness; CI on pull request 94; the Iceberg 1.2 fixture and the other default-build
+modules (see the follow-ups). Read only: the two spec revisions (1.12 adds an unhonoured `Idempotency-Key`).
+
+## Follow-ups after merge
+
+Two claims in this file's first version were wrong, and each was closed by a later pull request.
+
+- Pull request 96 (merged as 0010df15): "every native rule holds" was false. IRC commits and replaces skipped the
+  native update validator. RTAS with replication or WAP, case-insensitive duplicate columns, and five clustering
+  columns (which answered 500) were accepted or mishandled, and so was a retention policy without its time
+  partitioning. The policy key `updated.openhouse.policy` was stored as a stray property with no policy applied.
+  Now the validator runs, and the key is refused with a 400 until item V5-1 (D25). Raw `policies` and a non-primary
+  `openhouse.tableType` on create are refused too. The tables-service suite ran 1390 tests, 0 failed.
+- Pull request 98 (merged as cc76d485): the write handler broke every Spring context on the Iceberg 1.2 fixture
+  (`ClassNotFoundException: org.apache.iceberg.UpdateRequirement`, a class that exists only from Iceberg 1.4). That
+  made the full default build red in `:libs:datalayout:test`, `:apps:openhouse-spark-apps_2.12:test` and
+  `:tables-test-fixtures:tables-test-fixtures_2.12:test`. The write routes are now registered only where that class
+  exists, so the 1.2 line answers 406 for them. `IcebergRestBeanSignaturesTest` and
+  `IcebergRestRoutesBoundaryTest` guard it. What testing missed is in `21-findings-continued.md`.

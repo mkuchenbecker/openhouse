@@ -18,4 +18,5 @@ From `14-native-defaults-design.md`, adopted in D11. Tests come first for every 
 | W8 | oh | A migration translates stored defaults to `initial-default`, upgrades to v3 and removes the opt-in in one commit. One-way per table, Mike's say (D12). | W6, W1 | On test tables, ORC answers are the same before and after and Parquet answers change as stated. |
 | W9 | ib | Spark SQL statements for setting defaults. Not built now (D11). | none | Not applicable. |
 | W11 | ib | Later, only if needed: a Spark 4.2 ORC opt-in for default filling. | W1 | A Spark 4.2 ORC default-fill test. |
-| W12 | oh | The Spark maintenance apps do not declare the column-defaults capability on the Iceberg 1.12 line. | W3 | On the opt-in build the apps' client sends no such capability. |
+| W12 | oh | **Done 2026-11-22 (pull request 97).** The Spark maintenance apps do not declare the column-defaults capability on the Iceberg 1.12 line. | W3 | On the opt-in build the apps' client sends no such capability. |
+| W13 | oh | A scheduler image built on the Iceberg 1.12 line does not declare the column-defaults capability. The scheduler's uber jar lacks `IcebergLine`, so W12's detection does not run there (`32-optin-green-ci-result.md`). | W12 | The scheduler's packaged jar detects the line or is configured for it. |
