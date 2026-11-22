@@ -4,6 +4,7 @@ import static com.linkedin.openhouse.tables.model.TableModelConstants.HEALTH_SCH
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor.DummySecurityJWT;
@@ -12,6 +13,8 @@ import java.util.HashMap;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -27,9 +30,10 @@ import org.springframework.test.context.ContextConfiguration;
 
 /**
  * An unmodified Iceberg {@link RESTCatalog}, over HTTP, setting {@code updated.openhouse.policy}
- * with {@code updateProperties}, as OpenHouse's Spark policy statements do: refused with Iceberg's
- * {@link BadRequestException} and the message that names the key (see {@link
- * IrcWritePolicyKeyTest}), and nothing stored.
+ * with {@code updateProperties}, as OpenHouse's Spark policy statements do: the policy is applied
+ * as the OpenHouse client applies it and the key is not stored (see {@link IrcPolicyPatchTest}); a
+ * patch a native policy rule refuses is Iceberg's {@link BadRequestException} with the native
+ * message, and nothing is stored. (Before V5-1 every such update was refused.)
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
@@ -53,7 +57,8 @@ class IrcRestCatalogPolicyKeyTest {
         (RESTCatalog)
             CatalogUtil.loadCatalog(
                 RESTCatalog.class.getName(), "openhouse", properties, new Configuration());
-    rest.createTable(ID, IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL));
+    Schema schema = IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL);
+    rest.createTable(ID, schema, PartitionSpec.builderFor(schema).hour("timestampCol").build());
   }
 
   @AfterEach
@@ -65,8 +70,29 @@ class IrcRestCatalogPolicyKeyTest {
     }
   }
 
+  /**
+   * The server's capability, as a client reads it: {@code RESTCatalog.properties()} is the client's
+   * configuration merged with the config response (defaults under it, overrides over it; {@code
+   * RESTSessionCatalog.initialize} on Iceberg 1.5.2 and 1.12 alike).
+   */
   @Test
-  void updatePropertiesWithThePolicyKeyIsRefused() {
+  void theCatalogPropertiesNameThePolicyCapability() {
+    assertEquals("policies", rest.properties().get("openhouse.capabilities"));
+  }
+
+  @Test
+  void updatePropertiesWithThePolicyKeyAppliesThePolicy() {
+    Table table = rest.loadTable(ID);
+    table.updateProperties().set(IrcWritePolicyKeyTest.KEY, IrcWritePolicyKeyTest.PATCH).commit();
+    Table reloaded = rest.loadTable(ID);
+    assertFalse(reloaded.properties().containsKey(IrcWritePolicyKeyTest.KEY));
+    String policies = reloaded.properties().get("policies");
+    assertTrue(policies.contains("\"count\": 3"), policies);
+    assertTrue(policies.contains("\"granularity\": \"HOUR\""), policies);
+  }
+
+  @Test
+  void aPatchANativeRuleRefusesIsABadRequestAndStoresNothing() {
     Table table = rest.loadTable(ID);
     Map<String, String> before = new HashMap<>(table.properties());
     BadRequestException refused =
@@ -75,11 +101,11 @@ class IrcRestCatalogPolicyKeyTest {
             () ->
                 table
                     .updateProperties()
-                    .set(IrcWritePolicyKeyTest.KEY, IrcWritePolicyKeyTest.PATCH)
+                    .set(
+                        IrcWritePolicyKeyTest.KEY,
+                        "{\"retention\":{\"count\":30,\"granularity\":\"DAY\"}}")
                     .commit());
-    IrcWritePolicyKeyTest.assertPolicyKeyRefusal(refused.getMessage());
-    Table reloaded = rest.loadTable(ID);
-    assertFalse(reloaded.properties().containsKey(IrcWritePolicyKeyTest.KEY));
-    assertEquals(before, new HashMap<>(reloaded.properties()));
+    assertTrue(refused.getMessage().contains("retention"), refused.getMessage());
+    assertEquals(before, new HashMap<>(rest.loadTable(ID).properties()));
   }
 }

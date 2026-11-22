@@ -88,6 +88,15 @@ public class OpenHouseRestAdapter implements RESTClient {
           REST_METRICS_REPORTING_ENABLED,
           "false");
 
+  /**
+   * The config response's override: the server capabilities, as the tables service's IRC config
+   * advertises them ({@code IcebergRestApiHandler.config()}), so that every REST-shaped path reads
+   * the same capability. {@code policies}: a policy patch ({@code updated.openhouse.policy}) is
+   * applied; here the backing OpenHouse catalog's table operations apply it, as they always have.
+   */
+  static final Map<String, String> CONFIG_OVERRIDES =
+      ImmutableMap.of("openhouse.capabilities", "policies");
+
   enum Method {
     GET,
     HEAD,
@@ -328,8 +337,8 @@ public class OpenHouseRestAdapter implements RESTClient {
   }
 
   /**
-   * The config response: {@link #CONFIG_DEFAULTS}, plus on the v3 line ({@link IcebergLine}) the
-   * {@link #advertisedEndpoints()}.
+   * The config response: {@link #CONFIG_DEFAULTS}, {@link #CONFIG_OVERRIDES}, plus on the v3 line
+   * ({@link IcebergLine}) the {@link #advertisedEndpoints()}.
    *
    * <p>Iceberg 1.12's {@code RESTSessionCatalog} calls only advertised endpoints and, when a server
    * advertises none, assumes a fixed default set that has no view routes (and a transaction commit
@@ -338,7 +347,8 @@ public class OpenHouseRestAdapter implements RESTClient {
    * unchanged.
    */
   private static ConfigResponse configResponse() {
-    ConfigResponse.Builder builder = ConfigResponse.builder().withDefaults(CONFIG_DEFAULTS);
+    ConfigResponse.Builder builder =
+        ConfigResponse.builder().withDefaults(CONFIG_DEFAULTS).withOverrides(CONFIG_OVERRIDES);
     if (IcebergLine.current() == IcebergLine.V3) {
       V3Endpoints.advertise(builder, advertisedEndpoints());
     }

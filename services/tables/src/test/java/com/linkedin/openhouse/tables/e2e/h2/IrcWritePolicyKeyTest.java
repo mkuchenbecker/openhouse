@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.Catalog;
@@ -39,10 +40,11 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  *
  * <p>OpenHouse's Spark policy statements ({@code ALTER TABLE ... SET POLICY}, column tags) set this
  * property; the OpenHouse Java client strips it and merges it into the request's policies. A plain
- * Iceberg client sends it as an ordinary property. Until IRC translates it into a policy change
- * (V5-1), an IRC create or commit that sets or removes it is refused with 400 and a message naming
- * the key, and nothing is stored, rather than storing it as a stray property and reporting a
- * success that applied no policy. The native API's handling of the key is unchanged.
+ * Iceberg client sends it as an ordinary property. The IRC create, staged create, staged-create
+ * completion and commit routes now do what the client does (V5-1): the patch is merged onto the
+ * stored policies and applied, and the key itself is never stored. (Until V5-1 these requests were
+ * refused with 400; {@link IrcPolicyPatchTest} holds the equivalence with the client's native
+ * requests.) The native API's handling of the key is unchanged.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -72,13 +74,6 @@ public class IrcWritePolicyKeyTest {
     created.clear();
   }
 
-  /** The refusal every IRC route gives for the key. */
-  static void assertPolicyKeyRefusal(String message) {
-    assertTrue(message.contains(KEY), message);
-    assertTrue(message.contains("Iceberg REST"), message);
-    assertTrue(message.contains("policies cannot be set"), message);
-  }
-
   private static CreateUpdateTableRequestBody nativeBody(String db) {
     return newTable(db, "t").toBuilder().policies(null).build();
   }
@@ -87,17 +82,6 @@ public class IrcWritePolicyKeyTest {
     created.add(new String[] {body.getDatabaseId(), body.getTableId()});
     post(mvc, body).andExpect(status().isCreated());
     return json(get(mvc, body.getDatabaseId(), body.getTableId()));
-  }
-
-  private String stored(String db) throws Exception {
-    return StoredMetadata.normalized(catalog, db, "t");
-  }
-
-  private void expectRefusedUnchanged(String db, UpdateTableRequest request) throws Exception {
-    String before = stored(db);
-    MvcResult result = IrcWrite.commit(mvc, db, "t", request);
-    assertPolicyKeyRefusal(assertIrcError(result, 400, "BadRequestException").message());
-    assertEquals(before, stored(db));
   }
 
   private static CreateTableRequest.Builder create(boolean staged, Map<String, String> props) {
@@ -109,36 +93,54 @@ public class IrcWritePolicyKeyTest {
   // ---------------------------------------------------------------- commit
 
   @Test
-  void aCommitThatSetsThePolicyKeyIsRefusedAndStoresNothing() throws Exception {
+  void aCommitThatSetsThePolicyKeyAppliesItAndStoresNoKey() throws Exception {
     createNative(nativeBody("irc_pk_set"));
     TableMetadata base = IrcWrite.load(mvc, "irc_pk_set", "t");
-    expectRefusedUnchanged(
-        "irc_pk_set",
-        IrcWrite.simple(
-            base,
-            TableMetadata.buildFrom(base)
-                .setProperties(Collections.singletonMap(KEY, PATCH))
-                .build()
-                .changes()));
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_pk_set",
+                "t",
+                IrcWrite.simple(
+                    base,
+                    TableMetadata.buildFrom(base)
+                        .setProperties(Collections.singletonMap(KEY, PATCH))
+                        .build()
+                        .changes())));
+    assertFalse(after.properties().containsKey(KEY));
     assertFalse(IrcWrite.load(mvc, "irc_pk_set", "t").properties().containsKey(KEY));
+    assertAppliedRetention(json(get(mvc, "irc_pk_set", "t")));
+  }
+
+  /** The patch {@link #PATCH} as the native API reports it once applied. */
+  private static void assertAppliedRetention(String getJson) {
+    assertEquals(Integer.valueOf(3), read(getJson, "$.policies.retention.count"));
+    assertEquals("HOUR", str(getJson, "$.policies.retention.granularity"));
   }
 
   @Test
-  void aCommitThatSetsThePolicyKeyWithOtherPropertiesIsRefusedWhole() throws Exception {
+  void aCommitThatSetsThePolicyKeyWithOtherPropertiesAppliesBoth() throws Exception {
     createNative(nativeBody("irc_pk_mixed"));
     TableMetadata base = IrcWrite.load(mvc, "irc_pk_mixed", "t");
     Map<String, String> props = new HashMap<>();
     props.put(KEY, PATCH);
     props.put("user.k", "v");
-    expectRefusedUnchanged(
-        "irc_pk_mixed",
-        IrcWrite.simple(
-            base, TableMetadata.buildFrom(base).setProperties(props).build().changes()));
-    assertFalse(IrcWrite.load(mvc, "irc_pk_mixed", "t").properties().containsKey("user.k"));
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_pk_mixed",
+            "t",
+            IrcWrite.simple(
+                base, TableMetadata.buildFrom(base).setProperties(props).build().changes())));
+    TableMetadata after = IrcWrite.load(mvc, "irc_pk_mixed", "t");
+    assertEquals("v", after.properties().get("user.k"));
+    assertFalse(after.properties().containsKey(KEY));
+    assertAppliedRetention(json(get(mvc, "irc_pk_mixed", "t")));
   }
 
   @Test
-  void aCommitThatRemovesThePolicyKeyIsRefused() throws Exception {
+  void aCommitThatRemovesAStoredPolicyKeyRemovesItAndAppliesNothing() throws Exception {
     // A table that already holds the key as a property (the native API stores it when sent raw).
     CreateUpdateTableRequestBody body = nativeBody("irc_pk_rm");
     Map<String, String> props = new HashMap<>(body.getTableProperties());
@@ -146,43 +148,67 @@ public class IrcWritePolicyKeyTest {
     createNative(body.toBuilder().tableProperties(props).build());
     TableMetadata base = IrcWrite.load(mvc, "irc_pk_rm", "t");
     assertEquals(PATCH, base.properties().get(KEY));
-    expectRefusedUnchanged(
-        "irc_pk_rm",
-        IrcWrite.simple(
-            base,
-            TableMetadata.buildFrom(base)
-                .removeProperties(Collections.singleton(KEY))
-                .build()
-                .changes()));
+    String policiesBefore = base.properties().get("policies");
+    // As the OpenHouse client: the key is read from the commit's properties, which no longer hold
+    // it, so no patch applies, and the properties sent no longer hold it either.
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_pk_rm",
+            "t",
+            IrcWrite.simple(
+                base,
+                TableMetadata.buildFrom(base)
+                    .removeProperties(Collections.singleton(KEY))
+                    .build()
+                    .changes())));
+    TableMetadata after = IrcWrite.load(mvc, "irc_pk_rm", "t");
+    assertFalse(after.properties().containsKey(KEY));
+    assertEquals(policiesBefore, after.properties().get("policies"));
   }
 
   // ---------------------------------------------------------------- create
 
-  @Test
-  void aCreateThatSetsThePolicyKeyIsRefusedAndCreatesNothing() throws Exception {
-    created.add(new String[] {"irc_pk_create", "t"});
-    MvcResult result =
-        IrcWrite.create(
-            mvc, "irc_pk_create", create(false, Collections.singletonMap(KEY, PATCH)).build());
-    assertPolicyKeyRefusal(assertIrcError(result, 400, "BadRequestException").message());
-    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_create", "t")));
+  /** The hour partitioning {@link #PATCH}'s retention needs. */
+  private static CreateTableRequest.Builder createPartitioned(
+      boolean staged, Map<String, String> props) {
+    return create(staged, props)
+        .withPartitionSpec(PartitionSpec.builderFor(SCHEMA).hour("timestampCol").build());
   }
 
   @Test
-  void aStagedCreateThatSetsThePolicyKeyIsRefused() throws Exception {
-    MvcResult result =
-        IrcWrite.create(
-            mvc, "irc_pk_stage", create(true, Collections.singletonMap(KEY, PATCH)).build());
-    assertPolicyKeyRefusal(assertIrcError(result, 400, "BadRequestException").message());
+  void aCreateThatSetsThePolicyKeyCreatesTheTableWithThePolicy() throws Exception {
+    created.add(new String[] {"irc_pk_create", "t"});
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_pk_create",
+                createPartitioned(false, Collections.singletonMap(KEY, PATCH)).build()));
+    assertFalse(after.properties().containsKey(KEY));
+    assertAppliedRetention(json(get(mvc, "irc_pk_create", "t")));
+  }
+
+  @Test
+  void aStagedCreateThatSetsThePolicyKeyCarriesItAndCreatesNothing() throws Exception {
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_pk_stage",
+                createPartitioned(true, Collections.singletonMap(KEY, PATCH)).build()));
+    // The key rides back to the completion, which applies it; the staged create writes nothing.
+    assertEquals(PATCH, staged.properties().get(KEY));
     assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_stage", "t")));
   }
 
   @Test
-  void aStagedCreateCompletionThatSetsThePolicyKeyIsRefusedAndCreatesNothing() throws Exception {
+  void aStagedCreateCompletionThatSetsThePolicyKeyCreatesTheTableWithThePolicy() throws Exception {
     created.add(new String[] {"irc_pk_sc", "t"});
     TableMetadata staged =
         IrcWrite.parsed(
-            IrcWrite.create(mvc, "irc_pk_sc", create(true, Collections.emptyMap()).build()));
+            IrcWrite.create(
+                mvc, "irc_pk_sc", createPartitioned(true, Collections.emptyMap()).build()));
     UpdateTableRequest completion =
         IrcWrite.createCommit(
             staged,
@@ -190,9 +216,9 @@ public class IrcWritePolicyKeyTest {
                 .setProperties(Collections.singletonMap(KEY, PATCH))
                 .build()
                 .changes());
-    MvcResult result = IrcWrite.commit(mvc, "irc_pk_sc", "t", completion);
-    assertPolicyKeyRefusal(assertIrcError(result, 400, "BadRequestException").message());
-    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_pk_sc", "t")));
+    IrcWrite.parsed(IrcWrite.commit(mvc, "irc_pk_sc", "t", completion));
+    assertFalse(IrcWrite.load(mvc, "irc_pk_sc", "t").properties().containsKey(KEY));
+    assertAppliedRetention(json(get(mvc, "irc_pk_sc", "t")));
   }
 
   // ---------------------------------------------------------------- the other rewritten keys

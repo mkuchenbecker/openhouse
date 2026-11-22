@@ -5,6 +5,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
+import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
@@ -12,6 +13,7 @@ import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeStripProtection;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
+import java.util.function.Supplier;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +38,8 @@ public class TableCommitService {
 
   @Autowired PartitionSpecMapper partitionSpecMapper;
 
+  @Autowired PoliciesSpecMapper policiesSpecMapper;
+
   /**
    * Commits {@code candidate} on top of the stored table {@code base}, running every rule the
    * native route of {@code context.getKind()} runs, and persisting through the same guards.
@@ -45,8 +49,11 @@ public class TableCommitService {
    *     it ({@code tableLocation}); a different stored location is a conflict
    * @param base the stored table, as {@link TablesService#loadTable} returns it
    * @param candidate the complete metadata the caller wants stored
-   * @param context the principal, the kind, and the structured policies to store ({@code null}
-   *     keeps the stored ones)
+   * @param context the principal, the kind, the native request validation to run first, and the
+   *     structured policies as a native request would carry them ({@code null} keeps the stored
+   *     ones), which are mapped as the native table PUT maps its request's policies (default
+   *     retention patterns, replication schedules) where that PUT maps them, after the lock and
+   *     privilege checks
    * @return the stored table, and {@code false}
    */
   public Pair<TableDto, Boolean> commit(
@@ -55,21 +62,25 @@ public class TableCommitService {
       TableDtoWithMetadata base,
       TableMetadata candidate,
       CommitContext context) {
+    if (context.getValidation() != null) {
+      context.getValidation().run();
+    }
     TableDto stored = base.getTableDto();
-    Policies policies =
-        context.getRequestedPolicies() != null
-            ? context.getRequestedPolicies()
-            : stored.getPolicies();
+    Policies requested = context.getRequestedPolicies();
     TableDto view =
         CandidateViews.toView(
             stored,
             base.getMetadata(),
             baseVersion,
             candidate,
-            policies,
+            requested != null ? requested : stored.getPolicies(),
             partitionSpecMapper,
             context.isReplace());
-    return commit(new TableCommit(identifier, baseVersion, stored, () -> view, context));
+    Supplier<TableDto> candidateView =
+        requested == null
+            ? () -> view
+            : () -> view.toBuilder().policies(policiesSpecMapper.mapPolicies(requested)).build();
+    return commit(new TableCommit(identifier, baseVersion, stored, candidateView, context));
   }
 
   /**

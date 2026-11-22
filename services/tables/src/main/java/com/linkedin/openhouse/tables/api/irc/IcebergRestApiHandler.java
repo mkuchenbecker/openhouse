@@ -62,7 +62,8 @@ public class IcebergRestApiHandler {
   static final String SNAPSHOTS_REFS = "refs";
 
   /**
-   * Defaults a client applies under its own configuration; no overrides.
+   * Defaults a client applies under its own configuration, and the server's capabilities as an
+   * override.
    *
    * <ul>
    *   <li>{@code rest-metrics-reporting-enabled=false}: the metrics route is not served yet, and a
@@ -70,14 +71,28 @@ public class IcebergRestApiHandler {
    *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
    *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
    *       them with write properties ResolvingFileIO rejects.
+   *   <li>{@value #CAPABILITIES}: the OpenHouse features these routes serve, comma-separated:
+   *       {@value #SERVED_CAPABILITIES}. {@code policies}: a policy patch ({@code
+   *       updated.openhouse.policy}, as OpenHouse's policy statements write it) in a create or
+   *       commit is applied as the OpenHouse client applies it. An override, so that the client's
+   *       merged catalog properties ({@code RESTCatalog.properties()}) say what this server serves
+   *       whatever the client was configured with. Not an {@code endpoints} entry: those name the
+   *       spec's routes.
    * </ul>
    */
   public ConfigResponse config() {
     return ConfigResponse.builder()
         .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
         .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
+        .withOverride(CAPABILITIES, SERVED_CAPABILITIES)
         .build();
   }
+
+  /** The config key that names the OpenHouse features a server serves (server capabilities). */
+  public static final String CAPABILITIES = "openhouse.capabilities";
+
+  /** The server capabilities these routes serve. Each name is added by the item that serves it. */
+  static final String SERVED_CAPABILITIES = "policies";
 
   /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
   static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
