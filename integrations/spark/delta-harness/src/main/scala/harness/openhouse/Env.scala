@@ -65,19 +65,28 @@ class HtsBootApp
  */
 class HtsStubSuppressor
     extends org.springframework.context.ApplicationContextInitializer[org.springframework.context.ConfigurableApplicationContext] {
-  import org.springframework.beans.factory.config.ConfigurableListableBeanFactory
-  import org.springframework.beans.factory.support.{BeanDefinitionRegistry, BeanDefinitionRegistryPostProcessor}
+  import org.springframework.beans.factory.support.{BeanDefinitionRegistry, BeanDefinitionRegistryPostProcessor, RootBeanDefinition}
 
+  // A programmatically added BDRPP runs BEFORE the repository scanners have registered anything, so this
+  // one only registers a second, bean-defined remover; Spring runs bean-defined BDRPPs afterwards, in
+  // order, re-iterating until none are new — by then the stub's definition exists and can be removed.
   override def initialize(ctx: org.springframework.context.ConfigurableApplicationContext): Unit =
     if (System.getProperty("openhouse.htsStub.enabled") == "false")
-      ctx.addBeanFactoryPostProcessor(new BeanDefinitionRegistryPostProcessor with org.springframework.core.Ordered {
-        override def getOrder: Int = org.springframework.core.Ordered.LOWEST_PRECEDENCE
+      ctx.addBeanFactoryPostProcessor(new BeanDefinitionRegistryPostProcessor {
         override def postProcessBeanDefinitionRegistry(r: BeanDefinitionRegistry): Unit =
-          r.getBeanDefinitionNames.filter(_.equalsIgnoreCase("houseTablesH2Repository")).foreach { n =>
-            r.removeBeanDefinition(n); println(s">> real-HTS: removed in-memory stub bean '$n'")
-          }
-        override def postProcessBeanFactory(f: ConfigurableListableBeanFactory): Unit = ()
+          r.registerBeanDefinition("harnessHtsStubRemover", new RootBeanDefinition(classOf[HtsStubRemover]))
+        override def postProcessBeanFactory(f: org.springframework.beans.factory.config.ConfigurableListableBeanFactory): Unit = ()
       })
+}
+
+class HtsStubRemover extends org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor
+    with org.springframework.core.Ordered {
+  override def getOrder: Int = org.springframework.core.Ordered.LOWEST_PRECEDENCE
+  override def postProcessBeanDefinitionRegistry(r: org.springframework.beans.factory.support.BeanDefinitionRegistry): Unit =
+    r.getBeanDefinitionNames.filter(_.equalsIgnoreCase("houseTablesH2Repository")).foreach { n =>
+      r.removeBeanDefinition(n); println(s">> real-HTS: removed in-memory stub bean '$n'")
+    }
+  override def postProcessBeanFactory(f: org.springframework.beans.factory.config.ConfigurableListableBeanFactory): Unit = ()
 }
 
 /** Boots the embedded real House Table Service (H2, MySQL-mode) as its own Spring context. */
