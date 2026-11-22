@@ -14,6 +14,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `06-smoke-suite.md` | Proposed Spark SQL smoke scenarios | Claude |
 | `08-findings.md` | What the first round of work found | Observation by delegated agents |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
+| `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
 
 Suggested reading order for review: `03-inferred.md`, then `04-work.md`. A judgement rejected in the
 first changes the second.
