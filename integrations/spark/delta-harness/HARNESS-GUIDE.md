@@ -56,11 +56,12 @@ contains all of the arguments. The match is a substring rather than an exact tok
 the embedded-server and Spark startup dominate while the assertions themselves take milliseconds. You
 should iterate on a slice and run the whole matrix only as a final gate.
 
-Two environment variables change what is exercised.
+Three environment variables change what is exercised.
 
 | Variable | What it does |
 |---|---|
 | `HARNESS_REAL_HTS=1` | This boots the real House Table Service as a second in-JVM Spring context and runs the drop-then-undrop blocks (`undrop:*`, `undropAdmin.*`, and the `undropInteract` three-way compositions) against it. When the variable is unset, the harness uses an in-memory stub and skips those blocks, which is why the real-HTS run has more cases than the default run. |
+| `HARNESS_CATALOG_PATH=rest-shim` | This selects the catalog path. The default, `legacy`, builds the `openhouse` catalog with `OpenHouseCatalog`; `rest-shim` builds it with `OpenHouseRestCatalog` (Iceberg's `RESTCatalog` over the in-process REST-shaped adapter), changing only that catalog's `catalog-impl`, as `RestShimPathSparkSqlSmokeTest` does. `default_iceberg` stays on the legacy class. The system property `-Dharness.catalogPath=...` (via `HARNESS_JVM_ARGS`) overrides the variable. The first output line names the path in use. |
 | `ICEBERG_RUNTIME_JAR=<path>` | This is branch-testing mode. It swaps the shaded Iceberg runtime jar on the classpath for a locally built fork-branch-HEAD jar, so the whole suite runs against un-released fork bytecode. The swap is reversible, and it hard-fails when the jar it is asked to replace is not found, so a typo cannot silently leave the release jar in place. |
 
 `HARNESS_PARALLELISM=N` overrides the worker count, which otherwise defaults to the CPU count; a value of
