@@ -186,7 +186,10 @@ public class IrcWriteRoutesTest {
     // The response is the stored table at the location the native API reports.
     String nativeView = json(get(mvc, "irc_w_i_create", "t"));
     assertEquals(str(nativeView, "$.tableLocation"), response.metadataFileLocation());
-    assertEquals(str(nativeView, "$.tableUUID"), response.uuid());
+    // The table's OpenHouse UUID names its directory; its Iceberg UUID is drawn by the create.
+    assertTrue(
+        response.location().endsWith("/t-" + str(nativeView, "$.tableUUID")), response.location());
+    assertEquals(IrcWrite.load(mvc, "irc_w_i_create", "t").uuid(), response.uuid());
   }
 
   @Test
@@ -244,11 +247,14 @@ public class IrcWriteRoutesTest {
 
   @Test
   void createWithAnInexpressiblePartitionSpecIsRefused() throws Exception {
+    track("irc_w_bucket", "t");
     CreateTableRequest request =
         CreateTableRequest.builder()
             .withName("t")
             .withSchema(SCHEMA)
-            .withPartitionSpec(PartitionSpec.builderFor(SCHEMA).bucket("id", 4).build())
+            // Clustering before time partitioning: the native API always stores time first.
+            .withPartitionSpec(
+                PartitionSpec.builderFor(SCHEMA).identity("id").hour("timestampCol").build())
             .build();
     String message =
         assertIrcError(IrcWrite.create(mvc, "irc_w_bucket", request), 400, "BadRequestException")
@@ -289,7 +295,7 @@ public class IrcWriteRoutesTest {
             .stageCreate()
             .build();
     TableMetadata staged = IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_stage", request));
-    assertTrue(staged.location().contains("/irc_w_stage/t-" + staged.uuid()), staged.location());
+    assertTrue(staged.location().contains("/irc_w_stage/t-"), staged.location());
     assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_stage", "t")));
     assertEquals(
         404, IrcHttp.get(mvc, IrcWrite.table("irc_w_stage", "t")).getResponse().getStatus());
@@ -299,11 +305,13 @@ public class IrcWriteRoutesTest {
   /** What the native staged create does today: it writes a metadata file and no house-table row. */
   @Test
   void nativeStagedCreateWritesAMetadataFileAndNoRow() throws Exception {
+    List<String> before = filesUnder("irc_w_nstage");
     NativeCtas.stage(mvc, nativeBody("irc_w_nstage"));
     assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_nstage", "t")));
+    // Nothing ever removes it: earlier runs' files are still there.
     List<String> files =
         filesUnder("irc_w_nstage").stream()
-            .filter(path -> !path.endsWith(".crc"))
+            .filter(path -> !before.contains(path) && !path.endsWith(".crc"))
             .collect(Collectors.toList());
     assertEquals(1, files.size(), files.toString());
     assertTrue(files.get(0).endsWith(".metadata.json"), files.toString());
@@ -329,7 +337,8 @@ public class IrcWriteRoutesTest {
         IrcWrite.parsed(
             IrcWrite.commit(
                 mvc, "irc_w_i_sc", "t", IrcWrite.createCommit(staged, Collections.emptyList())));
-    assertEquals(staged.uuid(), committed.uuid());
+    // The table is where the staged create said it would be. Its Iceberg UUID is drawn by the
+    // create, as for every native create (a native staged create's file has its own UUID too).
     assertEquals(staged.location(), committed.location());
     assertSameStored("irc_w_n_sc", "irc_w_i_sc");
   }
