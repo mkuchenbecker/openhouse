@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.linkedin.openhouse.housetables.client.model.ToggleStatus;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tables.exception.ViewExceptionHandler;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
@@ -607,11 +608,16 @@ public abstract class SparkSqlSmokeTest extends OpenHouseSparkITest {
     spark.sql("CREATE TABLE " + t + " (id bigint)");
 
     assertTrue(rows(spark, "SHOW DATABASES IN openhouse").contains(DB));
+    // Unsupported on both Iceberg lines, with a different message (decision D14b): Iceberg 1.12's
+    // SparkCatalog checks existence with catalog.namespaceExists (apache/iceberg#14507), where
+    // 1.5.2 left Spark's default, which describes the namespace.
     assertFailure(
         spark,
         "CREATE NAMESPACE openhouse.smoke_t1_new_ns",
         "java.lang.UnsupportedOperationException",
-        "Describing database is not supported");
+        IcebergLine.current() == IcebergLine.LEGACY
+            ? "Describing database is not supported"
+            : "Checking if database exists is not supported");
     assertEquals(0, rows(spark, "SHOW DATABASES IN openhouse LIKE 'smoke_t1_new_ns'").size());
   }
 
