@@ -46,7 +46,7 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| C1 | oh | A config value runs the plugin as `RESTCatalog` over the legacy client. Default unchanged. | T1, T3 | T1 and T3 pass on both paths. Differences listed. |
+| C1 | oh | A config value runs the plugin as `RESTCatalog` over the legacy client. Default unchanged. **Done 2026-11-22** on the Spark 3.5 line (pull request 84); differences listed in `09-seam-result.md`. | T1, T3 | T1 and T3 pass on both paths. Differences listed. |
 | C2 | oh | Client features are capabilities. SQL extensions find features by capability on every path. | C1 | Existing extension tests and T1 pass on both paths. |
 
 ## Service
@@ -101,12 +101,12 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| T5 | oh | The house table test stand-in checks versions and deletes like the real store. | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
+| T5 | oh | The house table test stand-in checks versions and deletes like the real store. **Done 2026-11-22** (pull request 83). | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
 | T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
 
 ## State
 
-Done: P1, P2, I1, I2, T1, T3, T4. In progress, delegated: I3 (delete-file replication chain), T5, and a
-design note for C1 (`07-seam-design.md`). Not started: T2, T6, I7. The four test and notes pull requests
-are open as drafts against `irc-integration` and are not merged.
+Done: P1, P2, I1, I2, T1, T3, T4, T5, C1. In progress, delegated: I3 (7 of 13 patches ported; budgeted
+rewrite chain running). Not started: T2, T6, I7, C2 and all service items. Six draft pull requests are
+open against `irc-integration` on the openhouse fork and are not merged.

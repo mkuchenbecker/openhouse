@@ -13,6 +13,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `04-work.md` | The list of work and dependencies | Claude |
 | `06-smoke-suite.md` | Proposed Spark SQL smoke scenarios | Claude |
 | `08-findings.md` | What the first round of work found | Observation by delegated agents |
+| `09-seam-result.md` | What the plugin seam does and where the two paths still differ | Observation by a delegated agent |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
 
