@@ -80,73 +80,80 @@ public class ColumnDefaultsCapabilityByIcebergLineTest extends OpenHouseSparkITe
    */
   @Test
   public void tableRequiringColumnDefaultsByIcebergLine() throws Exception {
-    SparkSession spark = getSparkSession();
-    SparkSession declaring = declaringSession(spark);
-    String fqtn = "openhouse." + DB + ".bridged";
-    declaring.sql("DROP TABLE IF EXISTS " + fqtn);
-    declaring.sql(
-        "CREATE TABLE "
-            + fqtn
-            + " (id bigint, name string) USING iceberg TBLPROPERTIES ('"
-            + CAPABILITY_PROP
-            + "'='true')");
-    declaring.sql("INSERT INTO " + fqtn + " VALUES (1, 'a')");
+    // Closed at the end, as the other suites do: a session left open makes later suites that
+    // set static Spark configurations (DeleteFileReplicationTestSpark) reuse it.
+    try (SparkSession spark = getSparkSession()) {
+      SparkSession declaring = declaringSession(spark);
+      String fqtn = "openhouse." + DB + ".bridged";
+      declaring.sql("DROP TABLE IF EXISTS " + fqtn);
+      declaring.sql(
+          "CREATE TABLE "
+              + fqtn
+              + " (id bigint, name string) USING iceberg TBLPROPERTIES ('"
+              + CAPABILITY_PROP
+              + "'='true')");
+      declaring.sql("INSERT INTO " + fqtn + " VALUES (1, 'a')");
 
-    if (legacyLine()) {
-      assertEquals(Collections.singletonList("1,a"), rows(spark, "SELECT * FROM " + fqtn));
-      spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b')");
-      spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int");
-      assertEquals(
-          Arrays.asList("1,a,null", "2,b,null"),
-          rows(spark, "SELECT * FROM " + fqtn + " ORDER BY id"));
-    } else {
-      String table = DB + ".bridged";
-      assertCapabilityMissing(table, () -> spark.sql("SELECT * FROM " + fqtn).collectAsList());
-      assertCapabilityMissing(table, () -> spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b')"));
-      assertCapabilityMissing(
-          table, () -> spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int"));
-      // Nothing reached the table: a declaring client still sees one row and two columns.
-      assertEquals(Collections.singletonList("1,a"), rows(declaring, "SELECT * FROM " + fqtn));
+      if (legacyLine()) {
+        assertEquals(Collections.singletonList("1,a"), rows(spark, "SELECT * FROM " + fqtn));
+        spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b')");
+        spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int");
+        assertEquals(
+            Arrays.asList("1,a,null", "2,b,null"),
+            rows(spark, "SELECT * FROM " + fqtn + " ORDER BY id"));
+      } else {
+        String table = DB + ".bridged";
+        assertCapabilityMissing(table, () -> spark.sql("SELECT * FROM " + fqtn).collectAsList());
+        assertCapabilityMissing(table, () -> spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b')"));
+        assertCapabilityMissing(
+            table, () -> spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int"));
+        // Nothing reached the table: a declaring client still sees one row and two columns.
+        assertEquals(Collections.singletonList("1,a"), rows(declaring, "SELECT * FROM " + fqtn));
+      }
+      declaring.sql("DROP TABLE " + fqtn);
     }
-    declaring.sql("DROP TABLE " + fqtn);
   }
 
   /** Creating a table that requires the capability: allowed on the legacy line, 422 on v3. */
   @Test
   public void createTableRequiringColumnDefaultsByIcebergLine() throws Exception {
-    SparkSession spark = getSparkSession();
-    String fqtn = "openhouse." + DB + ".bridged_create";
-    declaringSession(spark).sql("DROP TABLE IF EXISTS " + fqtn);
-    String create =
-        "CREATE TABLE "
-            + fqtn
-            + " (id bigint) USING iceberg TBLPROPERTIES ('"
-            + CAPABILITY_PROP
-            + "'='true')";
-    if (legacyLine()) {
-      spark.sql(create);
-      assertEquals("true", property(spark, fqtn, CAPABILITY_PROP));
-      spark.sql("DROP TABLE " + fqtn);
-    } else {
-      assertCapabilityMissing(DB + ".bridged_create", () -> spark.sql(create));
-      // The plain Java catalog requires nothing; an existing bridged table would be a 422 here.
-      assertFalse(getOpenHouseCatalog(spark).tableExists(TableIdentifier.of(DB, "bridged_create")));
+    try (SparkSession spark = getSparkSession()) {
+      String fqtn = "openhouse." + DB + ".bridged_create";
+      declaringSession(spark).sql("DROP TABLE IF EXISTS " + fqtn);
+      String create =
+          "CREATE TABLE "
+              + fqtn
+              + " (id bigint) USING iceberg TBLPROPERTIES ('"
+              + CAPABILITY_PROP
+              + "'='true')";
+      if (legacyLine()) {
+        spark.sql(create);
+        assertEquals("true", property(spark, fqtn, CAPABILITY_PROP));
+        spark.sql("DROP TABLE " + fqtn);
+      } else {
+        assertCapabilityMissing(DB + ".bridged_create", () -> spark.sql(create));
+        // The plain Java catalog requires nothing; an existing bridged table would be a 422 here.
+        assertFalse(
+            getOpenHouseCatalog(spark).tableExists(TableIdentifier.of(DB, "bridged_create")));
+      }
     }
   }
 
   /** A table that requires nothing is read, written and evolved on both lines. */
   @Test
   public void plainTableWorksOnBothLines() throws Exception {
-    SparkSession spark = getSparkSession();
-    String fqtn = "openhouse." + DB + ".plain";
-    spark.sql("DROP TABLE IF EXISTS " + fqtn);
-    spark.sql("CREATE TABLE " + fqtn + " (id bigint, name string) USING iceberg");
-    spark.sql("INSERT INTO " + fqtn + " VALUES (1, 'a')");
-    spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int");
-    spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b', 3)");
-    assertEquals(
-        Arrays.asList("1,a,null", "2,b,3"), rows(spark, "SELECT * FROM " + fqtn + " ORDER BY id"));
-    spark.sql("DROP TABLE " + fqtn);
+    try (SparkSession spark = getSparkSession()) {
+      String fqtn = "openhouse." + DB + ".plain";
+      spark.sql("DROP TABLE IF EXISTS " + fqtn);
+      spark.sql("CREATE TABLE " + fqtn + " (id bigint, name string) USING iceberg");
+      spark.sql("INSERT INTO " + fqtn + " VALUES (1, 'a')");
+      spark.sql("ALTER TABLE " + fqtn + " ADD COLUMN extra int");
+      spark.sql("INSERT INTO " + fqtn + " VALUES (2, 'b', 3)");
+      assertEquals(
+          Arrays.asList("1,a,null", "2,b,3"),
+          rows(spark, "SELECT * FROM " + fqtn + " ORDER BY id"));
+      spark.sql("DROP TABLE " + fqtn);
+    }
   }
 
   /** A session whose {@code openhouse} catalog declares {@code column-defaults} explicitly. */
