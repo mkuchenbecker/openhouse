@@ -21,9 +21,12 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `13-decisions.md` | Decisions Claude made on two-way doors, each with reason, references and how to reverse it | Claude, not agreed unless it cites a statement |
 | `14-native-defaults-design.md` | Design for native column defaults on the new Iceberg line, with work items W1 to W11 | Observation by a delegated agent, adopted with changes in D11 |
 | `15-optin-build-result.md` | Result of building OpenHouse's Iceberg 1.5 variant against the fork's 1.12 line behind an opt-in switch | Observation by a delegated agent |
-| `16-decisions-continued.md` | Decisions D13 to D17, continuing `13-decisions.md` | Claude, not agreed unless it cites a statement |
+| `16-decisions-continued.md` | Decisions D13 to D21, continuing `13-decisions.md` | Claude, not agreed unless it cites a statement |
 | `19-v2-irc-read-result.md` | Result of the IRC read routes (V2): routes, test counts, ten differences from the OpenHouse client, and what write routes will need | Observation by a delegated agent |
 | `20-iteration-friction.md` | Diagnosis of slow test loops: memory, sleeping tests and uncached CI, with ranked changes | Observation by a delegated agent |
+| `23-v1-commit-core-result.md` | Result of V1: the commit core, the candidate entry point, what bypasses it, test counts and what the IRC write routes can rely on | Observation by a delegated agent |
+| `24-commit-rule-inventory.md` | Every write that reaches stored table metadata and every rule on the way, with the ten rules that cannot be stated over a metadata pair | Observation by a delegated agent |
+| `25-optin-green-result.md` | Result of making the opt-in Iceberg 1.12 build green: test table, the two remaining failures, line detection and Spark SQL differences | Observation by a delegated agent |
 | `17-delegation.md` | Which kind of agent takes which work item | Claude |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |

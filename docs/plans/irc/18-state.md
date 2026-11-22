@@ -20,6 +20,9 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 86 | T2b, harness through the seam | b5b8ed87 |
 | 87 | I6a to I6c, opt-in Iceberg 1.12 build | fdc7f426 |
 | 88 | V2, IRC read routes | 4517643b |
+| 90 | Post-merge CI workflow `post-merge-build.yml` (D18) | b78743fe |
+| 91 | W3, W4, I6g, I6h: the opt-in Iceberg 1.12 build passes every listed suite except two seam view cases (`25-optin-green-result.md`) | b732cc7b |
+| 89 | V1, the commit core (`23-v1-commit-core-result.md`) | 94877d49 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -34,32 +37,39 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
-P1, P2, I1 to I5, I8, I6a to I6c, T1 to T5, T2b, C1, V2, W1, W2, and the X0 design. The meaning of each
+P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, W1 to W4, and the X0 design. The meaning of each
 item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V1, on branch `irc/v1-candidate-commit`: the commit path takes a base and a complete candidate metadata.
-  It starts with an inventory of the rules and changes no behavior.
-- W3, W4, I6g, I6h and a first run of the seam's suites on Iceberg 1.12, on branch `irc/i6-optin-green`.
+- V3 (IRC write routes), on branch `irc/v3-irc-write-routes`. Its rules are in D20.
+- N3a (Spark 4.2 reading over IRC), on branch `irc/n3-spark42-irc-read`.
 
 ## Next
 
-- V3 (IRC write routes) needs V1.
-- C2 (capability model).
-- V4, V6 and V7.
-- I6f, the full regression on the opt-in build.
-- V9, the service on Iceberg 1.12, needs I6f.
+C2, C5, W12, V4, V6, V7, I6f, I10, then V9.
+
+## Known red on `irc-integration`
+
+None known. Last full build that finished: run 45055600595 on b78743fe, passed. Builds for later merges are in
+progress.
+
+## How work is tested
+
+Under D18, before a merge an agent runs the test classes it touched plus the black-box suite of the module it
+changed, and Claude merges on that without waiting for the pull request's CI. The full build runs on
+`irc-integration` after each merge and a failure is fixed forward, so work that starts from the branch checks the
+known-red list above first. Heavy runs, such as the full delta-harness and the full Iceberg Spark suites, run after
+merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge.
 
 ## Waiting on Mike
 
-Nothing blocks work. Three things are his to decide and none is started:
+Nothing blocks work. Two things are his to decide and neither is started:
 
-- more memory, or a second container, for builds;
-- a CI cache for pull requests into `irc-integration`;
+- worker sessions on separate machines, because a bigger container is not available (D21);
 - shortening the retry backoff in ten slow LinkedIn tests.
 
-One-way doors (D12) stay with him. The diagnosis behind the first three is in `20-iteration-friction.md`.
+One-way doors (D12) stay with him. The diagnosis behind both is in `20-iteration-friction.md`.
 
 ## How to audit
 

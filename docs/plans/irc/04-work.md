@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 63 items in two repos. Each names what it needs and how it is proven. There is no order
+Bottom line: 67 items in two repos. Each names what it needs and how it is proven. There is no order
 beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -47,8 +47,8 @@ native REST.
 | I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
 | I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9 lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
 | I6f | oh | **Not started.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
-| I6g | oh | Under the opt-in switch the Iceberg 1.2 / Spark 3.1 projects are excluded from the build (D15). | I6a | The opt-in build resolves and compiles every remaining project, and the default build is unchanged. |
-| I6h | oh | Tests whose expected result differs by Iceberg line state both expectations (D14): the RTAS partition-column case and the `CREATE NAMESPACE` message. | I6a | Those two tests pass on both builds. |
+| I6g | oh | **Done 2026-11-22 (pull request 91).** Under the opt-in switch the Iceberg 1.2 / Spark 3.1 projects are excluded from the build (D15). | I6a | The opt-in build resolves and compiles every remaining project, and the default build is unchanged. |
+| I6h | oh | **Done 2026-11-22 (pull request 91).** Tests whose expected result differs by Iceberg line state both expectations (D14): the RTAS partition-column case and the `CREATE NAMESPACE` message. | I6a | Those two tests pass on both builds. |
 
 ## Client seam
 
@@ -61,7 +61,7 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| V1 | oh | The commit path accepts a complete candidate metadata. Rules and persistence run without native decoding. No behavior change. | T1, T4 | T1, T4 and the existing suite unchanged. |
+| V1 | oh | **Done 2026-11-22 (pull request 89).** The commit path accepts a complete candidate metadata. Rules and persistence run without native decoding. No behavior change. Result in `23-v1-commit-core-result.md`. | T1, T4 | T1, T4 and the existing suite unchanged. |
 | V2 | oh | IRC config, namespaces, table list, load, exists. **Done 2026-11-22 (pull request 88).** Result in `19-v2-irc-read-result.md`. | T4 | `RESTCatalog` reads tables that the legacy path wrote. |
 | V3 | oh | IRC table create, staged create, commit, drop, rename, with every existing rule holding. | V1, V2 | T4's scenarios through IRC leave the same stored state. Rule violations are rejected. |
 | V4 | oh | IRC views. | V2 | View scenarios through IRC match the native API. |
@@ -104,8 +104,8 @@ From `14-native-defaults-design.md`, adopted in D11. Tests come first for every 
 | --- | --- | --- | --- | --- |
 | W1 | ib | **Done 2026-11-22 (iceberg pull request 11).** An ORC reader that does not opt in to default filling, or reads a name-mapped file, throws Apache's `ORC cannot read default value` for an absent field with a non-null `initial-default`. | none | A generic ORC read of a v3 table expects the throw. The ORC and Spark 3.5 ORC default suites still pass. |
 | W2 | ib | **Done 2026-11-22 (iceberg pull request 11).** A Spark 3.5 test pins native-default behavior: Parquet, Avro and ORC fills, row and vectorized; the DEFAULT keyword gives NULL; DDL is refused; v2 is refused; no downgrade. | none | Green on the fork. |
-| W3 | oh | The new-line client neither overlays OpenHouse defaults nor declares `column-defaults`. The legacy build is unchanged. | I6a | On the opt-in build the catalog declares nothing and a stamped config does not reach `table.schema()`. The legacy build still passes. |
-| W4 | oh | The three `OpenHouseTableOperationsTest` fixtures are ported to v3 on the opt-in build. | I6a | The three tests pass on the opt-in build and still pass on legacy. |
+| W3 | oh | **Done 2026-11-22 (pull request 91).** The new-line client neither overlays OpenHouse defaults nor declares `column-defaults`. The legacy build is unchanged. | I6a | On the opt-in build the catalog declares nothing and a stamped config does not reach `table.schema()`. The legacy build still passes. |
+| W4 | oh | **Done 2026-11-22 (pull request 91).** The three `OpenHouseTableOperationsTest` fixtures are ported to v3 on the opt-in build. | I6a | The three tests pass on the opt-in build and still pass on legacy. |
 | W6 | oh | On the 1.12 service at v3, defaults persist unchanged and no read-bridge config is sent. An `initial-default` of an existing field never changes, only a new field may carry one, and `column-defaults` opt-in is refused on v3. A non-null `write-default` below v3 is refused with `COLUMN_DEFAULT_REQUIRES_V3`, and an ordinary commit cannot change the format version (the rules of former W5 and W10). | V9, X1 | A v3 table with an API-added default round-trips byte-equal. Each refusal has a test. |
 | W7 | oh | Spark 3.5 on OpenHouse reads old Parquet files with a v3 default, then ORC and nested defaults. | W3, W6 | The ported ITests pass on the opt-in build. |
 | W8 | oh | A migration translates stored defaults to `initial-default`, upgrades to v3 and removes the opt-in in one commit. One-way per table, Mike's say (D12). | W6, W1 | On test tables, ORC answers are the same before and after and Parquet answers change as stated. |
@@ -125,6 +125,10 @@ From `14-native-defaults-design.md`, adopted in D11. Tests come first for every 
 | C3 | oh | A gated RTAS on the REST-shaped path writes no data file before the server rejects it. | C1 | No orphan file after a rejected RTAS, on both paths. |
 | C4 | oh | Property and policy commits from a stale handle fail on the REST-shaped path as they do on the legacy path. | C1 | `rawCommitWithStaleBaseFails` passes on both paths for property-only commits. |
 | T7 | oh | Storage performance tiering replaces the replication-factor property. | nothing | Not designed (S45). |
+| C5 | oh | The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
+| W12 | oh | The Spark maintenance apps do not declare the column-defaults capability on the Iceberg 1.12 line. | W3 | On the opt-in build the apps' client sends no such capability. |
+| I10 | oh | A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
+| N3a | oh | Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.
 
