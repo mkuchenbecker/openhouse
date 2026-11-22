@@ -121,3 +121,5 @@ Dates are all 2026-11-22. Claude wrote every entry.
   limit.
 - References: S49; `20-iteration-friction.md`; `18-state.md`, "Waiting on Mike".
 - Reverse by: Mike asking for worker sessions.
+
+Continued in `22-decisions-continued-2.md` (D22 to D25).

@@ -77,7 +77,7 @@ line is `LEGACY`. 1.12 builds the metadata, so the line is `V3`.
 8. W4. `tableWithSchema` builds format v3 on V3 and v2 on `LEGACY`. The assertions are unchanged.
 9. I6h (D14). RTAS on V3 now asserts success with only the `data` column, unpartitioned, 3 rows. The s19 and s24
    namespace messages are per line. The agent extended D14b to s24 (`DROP NAMESPACE`): same cause, same exception
-   class. This extension is Claude's to confirm and is not agreed by Mike.
+   class. Claude accepted this extension as part of D14. It was not put to Mike.
 10. Docs: `docs/development/iceberg-fork.md`.
 
 ## Spark SQL differences between the builds (observed)

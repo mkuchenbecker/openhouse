@@ -4,6 +4,17 @@ Bottom line: all work is on two integration branches in Mike's forks. Nothing is
 main or into LinkedIn's repositories. This is the single place for current state; other files record
 design, evidence and decisions. Dated 2026-11-22.
 
+## What works today
+
+- The native API and Spark 3.5 with the OpenHouse catalog are unchanged.
+- An unmodified Iceberg `RESTCatalog`, and Spark 3.5 through it, can read and write OpenHouse tables under
+  `/iceberg` with the native rules (`27-v3-irc-write-result.md`).
+- Spark 4.2 on the fork's Iceberg 1.12 can read OpenHouse tables over IRC under the opt-in build
+  (`26-n3a-spark42-read-result.md`).
+- Not yet over IRC: views (in progress), policies, grants, unlock, metrics, register, multi-table commits, scan
+  planning and credentials.
+- Format v3 tables are not yet supported by the service.
+
 ## Integration branches
 
 `irc-integration` in mkuchenbecker/openhouse is LinkedIn main (bb8929e1) plus these pull requests. Each is a
@@ -23,6 +34,9 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 90 | Post-merge CI workflow `post-merge-build.yml` (D18) | b78743fe |
 | 91 | W3, W4, I6g, I6h: the opt-in Iceberg 1.12 build passes every listed suite except two seam view cases (`25-optin-green-result.md`) | b732cc7b |
 | 89 | V1, the commit core (`23-v1-commit-core-result.md`) | 94877d49 |
+| 92 | N3a: Spark 4.2 on Iceberg 1.12 reads OpenHouse over IRC, opt-in build only (`26-n3a-spark42-read-result.md`) | 8b9bfe83 |
+| 93 | The post-merge build no longer cancels a running build | f60e32dd |
+| 94 | V3: the IRC table write routes (`27-v3-irc-write-result.md`) | 14f23870 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -37,22 +51,26 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
-P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, W1 to W4, and the X0 design. The meaning of each
+P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, N3a, W1 to W4, and the X0 design. The meaning of each
 item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V3 (IRC write routes), on branch `irc/v3-irc-write-routes`. Its rules are in D20.
-- N3a (Spark 4.2 reading over IRC), on branch `irc/n3-spark42-irc-read`.
+- V4 (IRC view routes), on branch `irc/v4-irc-view-routes`.
+- C5 with W12 and I10, on branch `irc/c5-optin-ci`.
+- V5-0 and V5-gap, with the interim refusal of policy keys (D25), on branch `irc/v3-irc-write-gaps`.
 
 ## Next
 
-C2, C5, W12, V4, V6, V7, I6f, I10, then V9.
+V5-1, V5-2, V5-3, C2-1, C2-2, C2-3, N3b, N3-x1, N3-x2, V6, V7, I6f, then V9 and the v3 items. The capabilities
+items come from `28-capabilities-over-irc-design.md` (D23) and are listed in `04-work.md`.
 
 ## Known red on `irc-integration`
 
-None known. Last full build that finished: run 45055600595 on b78743fe, passed. Builds for later merges are in
-progress.
+None known on the default build. Last completed post-merge build: run 45062814318 on 94877d49, passed (27
+minutes; the Gradle cache was restored and saved about 8 minutes). Later merges are building. Under the opt-in
+build two view cases on the in-process REST-shaped path fail until C5 lands, and the Spark 4.2 write test pins a
+406 that pull request 94 made obsolete. Both are being fixed on `irc/c5-optin-ci`.
 
 ## How work is tested
 
@@ -64,16 +82,13 @@ merges when memory is free. An item whose claim is "no behavior change" runs the
 
 ## Waiting on Mike
 
-Nothing blocks work. Two things are his to decide and neither is started:
-
-- worker sessions on separate machines, because a bigger container is not available (D21);
-- shortening the retry backoff in ten slow LinkedIn tests.
-
-One-way doors (D12) stay with him. The diagnosis behind both is in `20-iteration-friction.md`.
+Nothing blocks work. His to decide: worker sessions on separate machines, because a bigger container is not
+available (D21), and the one-way doors in D12 and D24. The diagnosis behind the first is in
+`20-iteration-friction.md`.
 
 ## How to audit
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
-- Decisions are in `13-decisions.md` and `16-decisions-continued.md`.
+- Decisions are in `13-decisions.md`, `16-decisions-continued.md` and `22-decisions-continued-2.md`.
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

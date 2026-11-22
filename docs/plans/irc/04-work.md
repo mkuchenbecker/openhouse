@@ -1,8 +1,8 @@
 # Work and dependencies
 
-Bottom line: 67 items in two repos. Each names what it needs and how it is proven. There is no order
-beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
-state. All of it is Claude's judgement, built on `03-inferred.md`.
+Bottom line: 79 items in two repos, counted across this file and `30-work-defaults.md`. Each names what it
+needs and how it is proven. There is no order beyond the "Needs" column: an item can land whenever its needs are
+in, and landing it leaves a valid state. All of it is Claude's judgement, built on `03-inferred.md`.
 
 Reading the tables: `oh` is the openhouse fork, `ib` is the iceberg fork. `J`, `Q` refer to
 `03-inferred.md`. "Paths" means the catalog paths selectable by config: legacy, REST-shaped over legacy,
@@ -55,7 +55,9 @@ native REST.
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | C1 | oh | A config value runs the plugin as `RESTCatalog` over the legacy client. Default unchanged. **Done 2026-11-22** on the Spark 3.5 line (pull request 84); differences listed in `09-seam-result.md`. | T1, T3 | T1 and T3 pass on both paths. Differences listed. |
-| C2 | oh | Client features are capabilities. SQL extensions find features by capability on every path. | C1 | Existing extension tests and T1 pass on both paths. |
+| C2-1 | oh | The `openhouse-catalog-capabilities` module (names, interfaces, `UnlockReason`, `Privileges`, `Principal`). The Java runtime's catalogs implement it through adapters. Old `javaclient.api` types are kept. | none | Unit tests. Spark 3.5 `statementTest` and `catalogTest` unchanged. |
+| C2-2 | oh | The resolver in the 3.5 extensions replaces `IcebergCatalogMapper` at all 5 call sites. Policy execs check `policies`. `HasIcebergCatalog` is used where present. | C1, C2-1 | Resolver unit tests (legacy, shim and fake-`RESTCatalog` properties). Smoke tests s16, s17 and s27 green on legacy and rest-shim. |
+| C2-3 | oh | `OpenHouseRestCapabilityClient` (`HTTPClient`, `AuthManager`, `ResourcePaths`), used by the resolver. | C2-2, V5-3 | Spark 3.5 itest: GRANT, REVOKE, SHOW GRANTS and UNLOCK on `type=rest`. |
 
 ## Service
 
@@ -63,9 +65,15 @@ native REST.
 | --- | --- | --- | --- | --- |
 | V1 | oh | **Done 2026-11-22 (pull request 89).** The commit path accepts a complete candidate metadata. Rules and persistence run without native decoding. No behavior change. Result in `23-v1-commit-core-result.md`. | T1, T4 | T1, T4 and the existing suite unchanged. |
 | V2 | oh | IRC config, namespaces, table list, load, exists. **Done 2026-11-22 (pull request 88).** Result in `19-v2-irc-read-result.md`. | T4 | `RESTCatalog` reads tables that the legacy path wrote. |
-| V3 | oh | IRC table create, staged create, commit, drop, rename, with every existing rule holding. | V1, V2 | T4's scenarios through IRC leave the same stored state. Rule violations are rejected. |
-| V4 | oh | IRC views. | V2 | View scenarios through IRC match the native API. |
-| V5 | oh | OpenHouse capabilities are served and advertised over IRC. | V2, C2 | Grant, unlock, policy and column-default scenarios pass through IRC. |
+| V3 | oh | **Done 2026-11-22 (pull request 94).** IRC table create, staged create, commit, drop, rename, with every existing rule holding. Result in `27-v3-irc-write-result.md`. | V1, V2 | T4's scenarios through IRC leave the same stored state. Rule violations are rejected. |
+| V4 | oh | IRC views. In progress on `irc/v4-irc-view-routes`. | V2 | View scenarios through IRC match the native API. |
+| V5-0 | oh | **In progress on `irc/v3-irc-write-gaps`.** Red pins: an IRC commit with `updated.openhouse.policy` stores the stray key; a policy statement on `type=rest` "succeeds"; GRANT and UNLOCK say unsupported. The interim refusal of D25 lands with it. | V3 | An `IrcWriteRoutesTest` case, plus a Spark 3.5 `IcebergRestSparkSqlTest` case. |
+| V5-gap | oh | **In progress on `irc/v3-irc-write-gaps`.** The RTAS-versus-replication check and other `validateUpdateTable` checks are pinned on IRC updates, then fixed if missing. | V3 | A red MockMvc test. |
+| V5-1 | oh | Server-side policy patch translation on commit, create and staged completion, with validators. The wire shape is a one-way door at release (D24). | V5-0 | An IRC patch and a native PUT with client-merged policies give a byte-equal `policies` property. Every rule is refused with the native status and message. Audit event. |
+| V5-2 | oh | Config advertises `openhouse.capabilities=policies`, and the adapter's config says the same. One-way door at release (D24). | V5-1 | Config test. V5-0's policy pins flip to green. |
+| V5-3 | oh | ACL and lock routes under `/iceberg`, advertising `grants,unlock`. One-way door at release (D24). | V5-2 | MockMvc equivalence with the native routes: status, message, authorization calls, audit and lock state after. |
+| V3b | oh | The IRC config route's FileIO default follows the cluster's storage configuration. | V3 | A cluster configured for a non-Hadoop storage advertises the matching FileIO. |
+| V3c | oh | Failed IRC requests appear in the service audit. | V3 | A refused IRC request produces the same audit event class as a refused native one. |
 | V6 | oh | IRC metrics report. | V2 | A report arrives where today's reports go. |
 | V7 | oh | IRC register table. | V3 | A registered table loads and commits. |
 | V8 | oh | Multi-table commit. Investigate first (J24). | V3 | Two tables commit together or neither does, under injected failure. |
@@ -79,9 +87,13 @@ native REST.
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| N1 | oh | The same config value selects native REST over HTTP on Spark 3.5. | C2, V3, V4, V5 | T1 identical on all three paths. Differences priced. |
+| N1 | oh | The same config value selects native REST over HTTP on Spark 3.5. | C2-3, V3, V4, V5-3 | T1 identical on all three paths. Differences priced. |
 | N2 | oh | A Spark 3.5 runtime built on the new Iceberg line. | I4, I6, N1 | T1 and T2 pass on it. |
-| N3 | oh | A Spark 4.2 runtime, IRC only, with capabilities and SQL extensions. | I5, I6, V3, V4, V5 | T1 ported to Spark 4.2 passes. |
+| N1-c | oh | `SparkSqlSmokeTest` gains a third path, `rest-http` (`SparkCatalog type=rest`). Policy, grant and unlock cases pass. Differences are listed. | C2-3 | s16, s17 and s27 plus a test per SET POLICY form, on all three paths. |
+| N3 | oh | A Spark 4.2 runtime, IRC only, with capabilities and SQL extensions. | I5, I6, V3, V4, V5-1, V5-2, V5-3 | T1 ported to Spark 4.2 passes. |
+| N3-x1 | oh | A Spark 4.2 and Scala 2.13 extensions module: ANTLR 4.13.1, the new parser methods, the resolver, `SQLConf.get`. It depends only on C2-1. | C2-2 | Ported parser and statement unit tests. |
+| N3-x2 | oh | A Spark 4.2 itest: every OpenHouse statement over IRC, with no OpenHouse catalog class on the classpath. | N3-x1, V5-3 | A 4.2 itest beside the read itest, asserting stored state through the OpenHouse Java client. |
+| N3b | oh | Spark 4.2 on Iceberg 1.12 writes OpenHouse tables over IRC. | V3, N3a, C5 | The Spark SQL write statements pass in the Spark 4.2 module under the opt-in build. |
 
 ## v3 functions
 
@@ -99,18 +111,7 @@ Each exists on the native path only (J3).
 
 ## Column defaults on the new line
 
-From `14-native-defaults-design.md`, adopted in D11. Tests come first for every row.
-| ID | Repo | Leaves true | Needs | Proven by |
-| --- | --- | --- | --- | --- |
-| W1 | ib | **Done 2026-11-22 (iceberg pull request 11).** An ORC reader that does not opt in to default filling, or reads a name-mapped file, throws Apache's `ORC cannot read default value` for an absent field with a non-null `initial-default`. | none | A generic ORC read of a v3 table expects the throw. The ORC and Spark 3.5 ORC default suites still pass. |
-| W2 | ib | **Done 2026-11-22 (iceberg pull request 11).** A Spark 3.5 test pins native-default behavior: Parquet, Avro and ORC fills, row and vectorized; the DEFAULT keyword gives NULL; DDL is refused; v2 is refused; no downgrade. | none | Green on the fork. |
-| W3 | oh | **Done 2026-11-22 (pull request 91).** The new-line client neither overlays OpenHouse defaults nor declares `column-defaults`. The legacy build is unchanged. | I6a | On the opt-in build the catalog declares nothing and a stamped config does not reach `table.schema()`. The legacy build still passes. |
-| W4 | oh | **Done 2026-11-22 (pull request 91).** The three `OpenHouseTableOperationsTest` fixtures are ported to v3 on the opt-in build. | I6a | The three tests pass on the opt-in build and still pass on legacy. |
-| W6 | oh | On the 1.12 service at v3, defaults persist unchanged and no read-bridge config is sent. An `initial-default` of an existing field never changes, only a new field may carry one, and `column-defaults` opt-in is refused on v3. A non-null `write-default` below v3 is refused with `COLUMN_DEFAULT_REQUIRES_V3`, and an ordinary commit cannot change the format version (the rules of former W5 and W10). | V9, X1 | A v3 table with an API-added default round-trips byte-equal. Each refusal has a test. |
-| W7 | oh | Spark 3.5 on OpenHouse reads old Parquet files with a v3 default, then ORC and nested defaults. | W3, W6 | The ported ITests pass on the opt-in build. |
-| W8 | oh | A migration translates stored defaults to `initial-default`, upgrades to v3 and removes the opt-in in one commit. One-way per table, Mike's say (D12). | W6, W1 | On test tables, ORC answers are the same before and after and Parquet answers change as stated. |
-| W9 | ib | Spark SQL statements for setting defaults. Not built now (D11). | none | Not applicable. |
-| W11 | ib | Later, only if needed: a Spark 4.2 ORC opt-in for default filling. | W1 | A Spark 4.2 ORC default-fill test. |
+Rows W1 to W12 are in `30-work-defaults.md`. They are part of the total in the bottom line.
 
 ## Added since the list was written
 
@@ -125,10 +126,9 @@ From `14-native-defaults-design.md`, adopted in D11. Tests come first for every 
 | C3 | oh | A gated RTAS on the REST-shaped path writes no data file before the server rejects it. | C1 | No orphan file after a rejected RTAS, on both paths. |
 | C4 | oh | Property and policy commits from a stale handle fail on the REST-shaped path as they do on the legacy path. | C1 | `rawCommitWithStaleBaseFails` passes on both paths for property-only commits. |
 | T7 | oh | Storage performance tiering replaces the replication-factor property. | nothing | Not designed (S45). |
-| C5 | oh | The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
-| W12 | oh | The Spark maintenance apps do not declare the column-defaults capability on the Iceberg 1.12 line. | W3 | On the opt-in build the apps' client sends no such capability. |
-| I10 | oh | A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
-| N3a | oh | Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
+| C5 | oh | **In progress on `irc/c5-optin-ci`.** The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
+| I10 | oh | **In progress on `irc/c5-optin-ci`.** A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
+| N3a | oh | **Done 2026-11-22 (pull request 92).** Result in `26-n3a-spark42-read-result.md`. Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.
 
