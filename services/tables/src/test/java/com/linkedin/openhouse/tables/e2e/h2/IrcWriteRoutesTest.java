@@ -923,16 +923,18 @@ public class IrcWriteRoutesTest {
   void replaceIsRefusedWhileWapIsEnabled() throws Exception {
     rtasTable("irc_w_rtas_wap");
     TableMetadata base0 = IrcWrite.load(mvc, "irc_w_rtas_wap", "t");
+    // Enabling WAP on an RTAS table needs the compatibility opt-out, as natively (the native
+    // update validation refuses RTAS and WAP together otherwise).
+    Map<String, String> wap = new HashMap<>();
+    wap.put(CatalogConstants.WAP_ENABLED_TABLE_PROP, "true");
+    wap.put(CatalogConstants.FEATURE_COMPATIBILITY_VALIDATION_DISABLED_TABLE_PROP, "true");
     IrcWrite.parsed(
         IrcWrite.commit(
             mvc,
             "irc_w_rtas_wap",
             "t",
             base0,
-            TableMetadata.buildFrom(base0)
-                .setProperties(
-                    Collections.singletonMap(CatalogConstants.WAP_ENABLED_TABLE_PROP, "true"))
-                .build()));
+            TableMetadata.buildFrom(base0).setProperties(wap).build()));
     TableMetadata base = IrcWrite.load(mvc, "irc_w_rtas_wap", "t");
     TableMetadata replacement =
         IrcWrite.replacement(base, replacementSchema(base), base.spec(), Collections.emptyMap());
