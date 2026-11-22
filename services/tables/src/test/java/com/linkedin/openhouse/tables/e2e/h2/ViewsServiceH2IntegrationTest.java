@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.e2e.h2;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -141,6 +142,7 @@ public class ViewsServiceH2IntegrationTest {
             .tableId(seededKey.getTableId())
             .tableUUID("seed-view-uuid")
             .tableLocation("file:/warehouse/" + viewsOnlyDatabase + "/seed_view/metadata.json")
+            .tableVersion(INITIAL_TABLE_VERSION)
             .storageType("local")
             .build());
     try {
