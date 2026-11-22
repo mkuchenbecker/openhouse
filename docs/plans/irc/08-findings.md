@@ -128,3 +128,9 @@ I8 is validated on the combined branch (tip f180ae589). Full suites were not re-
 ## Fourth round (harness through the REST-shaped path)
 
 The first version of the faithful stand-in fixed only one of the two source copies; the copy used by Spark integration tests and the harness still accepted two commits on one base version. Found by running the harness through the REST-shaped path.
+
+## Fifth round (hooks and Spark SQL defaults)
+
+- The repository's pre-commit hook stashes with `git stash --keep-index` before running `spotlessCheck`. That removes the merge state, so `git commit` cannot complete a merge commit. Merge commits on the branches for pull requests 84 and 86 were built with `git commit-tree` after running `spotlessCheck` by hand. The pre-push hook ran normally.
+- Both hooks print `[[: not found`, so they do not fail the commit or push when `spotlessCheck` fails.
+- Spark SQL cannot set a column default on Iceberg 1.12 with Spark 3.5 or 4.2: all three statements are refused. On LinkedIn's 1.5.2 line `ALTER TABLE ADD COLUMN ... DEFAULT` silently drops the clause (read, not run). See `14-native-defaults-design.md`.

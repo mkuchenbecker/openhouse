@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 52 items in two repos. Each names what it needs and how it is proven. There is no order
+Bottom line: 61 items in two repos. Each names what it needs and how it is proven. There is no order
 beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
 
@@ -90,10 +90,25 @@ Each exists on the native path only (J3).
 | X1 | oh | Tables can be created at v3 or upgraded from v2, gated per table. The service returns v3 metadata exactly as committed. | V9, V3 | Round-trip test. v2 tables untouched. |
 | X2 | oh | Deletion vectors written and read through Spark SQL. | X1, N2 or N3 | Delete, update and merge scenarios on a v3 table. |
 | X3 | oh | Row lineage maintained across writes and compaction. | X1, N2 or N3 | Row ids stable across a rewrite. |
-| X4 | oh | Native default values on v3 tables. The v2 read bridge is untouched. | X1, N2 or N3 | Add a defaulted column, read old files. |
+| X4 | oh | Native default values on v3 tables. The v2 read bridge is untouched. See W7. | X1, N2 or N3 | Add a defaulted column, read old files. |
 | X5 | oh | New v3 types pass schema validation and column policies. | X1 | Create and evolve with each type. |
 | X6 | oh | Maintenance jobs run on the new line and are correct for X2 to X5. | V9, I4, X2 | Each job on a v3 table loses no live data. |
 | X7 | oh | Replication of v3 tables. Investigate first (J24). | X1 | Defined by the investigation. |
+
+## Column defaults on the new line
+
+From `14-native-defaults-design.md`, adopted in D11. Tests come first for every row.
+| ID | Repo | Leaves true | Needs | Proven by |
+| --- | --- | --- | --- | --- |
+| W1 | ib | An ORC reader that does not opt in to default filling, or reads a name-mapped file, throws Apache's `ORC cannot read default value` for an absent field with a non-null `initial-default`. | none | A generic ORC read of a v3 table expects the throw. The ORC and Spark 3.5 ORC default suites still pass. |
+| W2 | ib | A Spark 3.5 test pins native-default behavior: Parquet, Avro and ORC fills, row and vectorized; the DEFAULT keyword gives NULL; DDL is refused; v2 is refused; no downgrade. | none | Green on the fork. |
+| W3 | oh | The new-line client neither overlays OpenHouse defaults nor declares `column-defaults`. The legacy build is unchanged. | I6a | On the opt-in build the catalog declares nothing and a stamped config does not reach `table.schema()`. The legacy build still passes. |
+| W4 | oh | The three `OpenHouseTableOperationsTest` fixtures are ported to v3 on the opt-in build. | I6a | The three tests pass on the opt-in build and still pass on legacy. |
+| W6 | oh | On the 1.12 service at v3, defaults persist unchanged and no read-bridge config is sent. An `initial-default` of an existing field never changes, only a new field may carry one, and `column-defaults` opt-in is refused on v3. A non-null `write-default` below v3 is refused with `COLUMN_DEFAULT_REQUIRES_V3`, and an ordinary commit cannot change the format version (the rules of former W5 and W10). | V9, X1 | A v3 table with an API-added default round-trips byte-equal. Each refusal has a test. |
+| W7 | oh | Spark 3.5 on OpenHouse reads old Parquet files with a v3 default, then ORC and nested defaults. | W3, W6 | The ported ITests pass on the opt-in build. |
+| W8 | oh | A migration translates stored defaults to `initial-default`, upgrades to v3 and removes the opt-in in one commit. One-way per table, Mike's say (D12). | W6, W1 | On test tables, ORC answers are the same before and after and Parquet answers change as stated. |
+| W9 | ib | Spark SQL statements for setting defaults. Not built now (D11). | none | Not applicable. |
+| W11 | ib | Later, only if needed: a Spark 4.2 ORC opt-in for default filling. | W1 | A Spark 4.2 ORC default-fill test. |
 
 ## Who does the work
 
@@ -111,7 +126,7 @@ Claude orchestrates and reviews every item before it is called done. Delegation 
 | T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
 | I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | **Done 2026-11-22** (branch `irc/reapply-all` tip f180ae589, draft pull request 8 in mkuchenbecker/iceberg). The 8 test failures and 4 checkstyle failures are fixed on their source branches and merged forward. Verified by the touched classes plus compile and style on the combined branch; full suites not re-run after the fixes. |
-| X0 | ib, oh | The new Iceberg line has a defined, tested behavior for existing v2 tables that carry OpenHouse column defaults, with native Iceberg defaults as the target (S47, D5). | I3 | Defined by the design in progress. |
+| X0 | ib, oh | The new Iceberg line has a defined, tested behavior for existing v2 tables that carry OpenHouse column defaults, with native Iceberg defaults as the target (S47, D5). Design done (`14-native-defaults-design.md`, D11); the work is W1 to W8. | I3 | Defined by the design in progress. |
 | I9 | ib | Recorded and deliberately unaddressed (S45, D4). | a decision | A merge-on-read delete succeeds on a non-Hadoop file IO. |
 | C3 | oh | A gated RTAS on the REST-shaped path writes no data file before the server rejects it. | C1 | No orphan file after a rejected RTAS, on both paths. |
 | C4 | oh | Property and policy commits from a stale handle fail on the REST-shaped path as they do on the legacy path. | C1 | `rawCommitWithStaleBaseFails` passes on both paths for property-only commits. |
@@ -121,15 +136,15 @@ The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on
 
 ## State
 
-Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. Decided: I6e (D3). Recorded and deliberately
-unaddressed: I9 (D4).
+Done: P1, P2, I1, I2, I3, I4, I8, T1, T2, T2b, T3, T4, T5, C1. Decided: I6e (D3). Left unaddressed: I9 (D4).
+Merged into `irc-integration` (mkuchenbecker/openhouse): pull requests 80 (T1, merge commit 37b89f0b), 81
+(T3, d5c34e74), 82 (T4, 85614361) and 85 (T2, 8bda0f6b). Merged into `openhouse-1.12.0`
+(mkuchenbecker/iceberg): pull requests 3 to 8 (merge commits d1bc71955, cf9dda5d0, ec85656d7, ad3935012,
+4856ced1e, b35e56908). That branch now contains the validated tip f180ae589.
 
-In progress: I5 (Spark patches applied to the Spark 4.2 modules, branch `irc/spark42-patches`); I6a, I6b
-and I6c (branch `irc/i6-iceberg-1.12-optin`); the X0 design; and merges of the green pull requests into
-`irc-integration` and of the Iceberg patch pull requests into `openhouse-1.12.0` (D6). Merges are in
-progress and are controlled by Claude on branches.
+Waiting only for their CI runs to finish before merging: pull requests 83 (T5), 84 (C1) and 86 (T2b). The
+branches for 84 and 86 are up to date with `irc-integration` (heads 955f762c and 6eed38e7).
 
-Nothing is waiting on Mike. Decisions on two-way doors are in `13-decisions.md`.
-
-Next when a build slot frees: C2, V1, V2. Not started after those: T6, T7, C3, C4, I7, I6d, I6f and the
-remaining service items.
+In progress: I5, and I6a to I6c. Next when a build slot frees: W1 and W2, C2, V1, V2. Not started after
+those: T6, T7, C3, C4, I7, I6d, I6f, W3 onward and the remaining service items. Nothing is waiting on
+Mike. Decisions on two-way doors are in `13-decisions.md`.

@@ -11,9 +11,8 @@ inference", that part is judgement and not something Mike said.
 - Date: 2026-11-22.
 - Decision: the catalog path is selected by `catalog-impl`. The in-process REST-shaped adapter rethrows
   original exceptions and handles replace itself. The seam as built in pull request 84 is adopted.
-- Why: zero existing production files change, so today's path cannot regress. Both the smoke suite and
-  the contract suite pass on both paths. The full delta-harness gives equal counts on both paths in both
-  modes.
+- Why: no existing production file changes, so today's path cannot regress. The smoke and contract suites
+  pass on both paths, and the full delta-harness gives equal counts on both paths in both modes.
 - References: `07-seam-design.md` sections 1 and 3; `09-seam-result.md`; `11-harness-via-seam.md`;
   openhouse pull requests 84 and 86.
 - Reverse by: deleting the three added classes.
@@ -26,8 +25,7 @@ inference", that part is judgement and not something Mike said.
   data file before the server rejects it) and C4 (property and policy commits from a stale handle skip the
   base-version check on the REST-shaped path). The snapshot-history difference (a concurrent INSERT's
   snapshot is kept when an RTAS follows it) is accepted as what any REST catalog does.
-- Why: none changes rows returned by Spark SQL. Fixing them is cheaper once the native REST path exists to
-  compare against.
+- Why: none changes rows returned by Spark SQL. Fixing them is cheaper once native REST exists to compare.
 - References: `09-seam-result.md`, table "Differences that remain between the two paths"; `11-harness-via-seam.md`.
 - Reverse by: reopening the row as a blocker.
 
@@ -37,7 +35,7 @@ inference", that part is judgement and not something Mike said.
 - Decision: the Iceberg 1.2 / Spark 3.1 line gets no work on the new Iceberg line. It is removed from the
   integration branch's build when the service moves to Iceberg 1.12 and Java 17 (item V9). This is
   Claude's reading of S44.
-- Why: the shared single-copy server modules cannot serve both lines once they need Java 17.
+- Why: the shared server modules cannot serve both lines once they need Java 17.
 - References: S44; `12-openhouse-on-1.12-scout.md`; item I6e in `04-work.md`.
 - Reverse by: giving that line pinned copies of the shared modules.
 
@@ -75,7 +73,7 @@ inference", that part is judgement and not something Mike said.
   every commit body states why the change exists. Existing commits are not rewritten, because their ids
   are cited across these notes; the merge commit carries their reasons. Nothing is merged into either
   fork's protected main or into LinkedIn's repositories.
-- Why: S46 asks for auditability of each commit's why, and S38 and S39 fix branches on the forks as the place for work.
+- Why: S46 asks for an auditable why per commit, and S38 and S39 make fork branches the place for work.
 - References: S38, S39, S46; the "State" section of `04-work.md`.
 - Reverse by: stopping merges and leaving the pull requests open for review.
 
@@ -84,8 +82,7 @@ inference", that part is judgement and not something Mike said.
 - Date: 2026-11-22.
 - Decision: the openhouse build gets the fork's Iceberg by building a pinned commit from source into a
   build-local Maven directory. No binaries are published anywhere.
-- Why: JitPack and GitHub Packages are refused by the proxy in this environment, and a source pin is
-  auditable.
+- Why: the proxy refuses JitPack and GitHub Packages here, and a source pin is auditable.
 - References: `12-openhouse-on-1.12-scout.md`, "Hosting options for the fork's artifacts"; items I6a and I6d in `04-work.md`.
 - Reverse by: pointing the switch at a hosted repository (item I6d).
 
@@ -94,9 +91,9 @@ inference", that part is judgement and not something Mike said.
 - Date: 2026-11-22.
 - Decision: LinkedIn's Iceberg line is the behavior reference when reapplying patches. Apache 1.12 is only
   the base. Where an Apache test contradicts a reapplied LinkedIn behavior, the test is aligned in a
-  separate commit labelled "Not a LinkedIn patch". D5 is the one stated exception.
+  separate commit whose message body is labelled "Not a LinkedIn patch". D5 is the one stated exception.
 - Why: S9 and S10 make Spark SQL behavior the expensive thing to change.
-- References: S9, S10, S36; `05-iceberg-patch-ledger.md`; iceberg commits 60465ee59, 5cce4931f, 1bf3db827.
+- References: S9, S10, S36; `05-iceberg-patch-ledger.md`; iceberg commits 5cce4931f, 7e23bad11 and 1bf3db827, each labelled "Not a LinkedIn patch" in its message body.
 - Reverse by: dropping the alignment commits and letting Apache's behavior stand.
 
 ## D9. LinkedIn defects found by the new tests are pinned, not fixed
@@ -120,3 +117,33 @@ inference", that part is judgement and not something Mike said.
 - Why: S41 and S43.
 - References: S41, S43; J18 in `03-inferred.md`; "Rules for every item" in `04-work.md`.
 - Reverse by: restoring the old rule in `04-work.md`.
+
+## D11. The native-defaults design is adopted
+
+- Date: 2026-11-22.
+- Decision: the design in `14-native-defaults-design.md` is adopted, with these choices by Claude:
+  - (a) On the new Iceberg line the client neither overlays OpenHouse defaults nor declares the
+    `column-defaults` capability. A v2 table that requires it is refused with the existing 422, not read
+    differently by old and new clients.
+  - (b) Defaults can be set on v3 tables only. Nothing upgrades a table's format version implicitly.
+  - (c) ORC readers that do not opt in to default filling fail as Apache does, not return NULL. This
+    departs from LinkedIn's line and falls under D5.
+  - (d) Spark SQL statements for setting defaults (item W9) are not built now. No Spark SQL statement sets
+    a default on LinkedIn's line either, so nothing is lost. Tests set native defaults through the Iceberg API.
+  - (e) The two server rules that matter only once the service holds v3 tables (refuse a non-null
+    `write-default` below v3, W5; refuse format-version changes in ordinary commits, W10) are folded into
+    items W6 and X1, not built against the 1.5.2 service.
+- Why: S47. A table that reads differently depending on the client is not a valid state. Silent NULLs hide data loss.
+- References: `14-native-defaults-design.md`, decisions 3a to 3f, and the experiment output it names.
+- Reverse by: restoring the overlay and the capability on the new-line client.
+
+## D12. One-way doors from the defaults design stay with Mike
+
+- Date: 2026-11-22.
+- Decision: three things are one-way doors and stay with Mike (D10). They are upgrading any non-test table
+  to format v3, translating a table's stored OpenHouse defaults into native `initial-default` values, and
+  writing native defaults into a non-test table at all. No work item does any of them on a non-test table
+  without his say.
+- Why: none can be undone. Iceberg cannot downgrade v3, and legacy clients cannot load v3.
+- References: `14-native-defaults-design.md`, "One-way doors"; item W8 in `04-work.md`.
+- Reverse by: not applicable; each door is approved per table.
