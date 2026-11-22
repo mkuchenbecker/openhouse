@@ -1,6 +1,5 @@
 package com.linkedin.openhouse.tables.api.irc;
 
-import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.springframework.core.Ordered;

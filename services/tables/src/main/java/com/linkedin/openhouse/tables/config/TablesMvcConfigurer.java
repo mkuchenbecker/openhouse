@@ -3,7 +3,7 @@ package com.linkedin.openhouse.tables.config;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.configs.ClusterPropertiesUtil;
 import com.linkedin.openhouse.tables.api.irc.IcebergRestAuthenticationInterceptor;
-import com.linkedin.openhouse.tables.controller.IcebergRestCatalogController;
+import com.linkedin.openhouse.tables.api.irc.IcebergRestCatalogController;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;

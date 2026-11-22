@@ -1,10 +1,7 @@
-package com.linkedin.openhouse.tables.controller;
+package com.linkedin.openhouse.tables.api.irc;
 
 import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
 
-import com.linkedin.openhouse.tables.api.irc.IcebergRestApiHandler;
-import com.linkedin.openhouse.tables.api.irc.IcebergRestJson;
-import com.linkedin.openhouse.tables.api.irc.IcebergRestRouteException;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
