@@ -94,7 +94,6 @@ changes that list.
 - J25. The mechanism for S35 is JitPack building the fork's release branch, with the openhouse build
   mapping the Iceberg coordinates to it. For local work, a composite build against a checkout of the
   fork. Publishing under LinkedIn's Maven group is not possible from the fork (F21).
-- J26. The function of S13 and S34 is that all work starts from a base identical to LinkedIn, with none
-  of the fork's own history under it (S37). A branch at LinkedIn main serves that function. All work
-  lands on `irc-integration` (F2b). The fork's main is left alone, and whether it is ever reset no longer
-  matters to this work.
+- J26. Settled by Mike (S38, S39): work lands on a branch in the mkuchenbecker forks, and main is not
+  part of this. The branches are `irc-integration` on the openhouse fork (F2b) and `openhouse-1.12.0` on
+  the Iceberg fork. Choosing those two names was Claude's call.

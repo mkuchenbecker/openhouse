@@ -76,3 +76,5 @@ transcription error and should be fixed here.
 - S36. The clean Iceberg base is Apache 1.12.
 - S37. After the reset of main was refused by a repository rule: Claude is mistaking form for function
   and getting blocked far too early. It is not blocked.
+- S38. Use a branch. Main was never a requirement.
+- S39. The mkuchenbecker forks are a requirement.
