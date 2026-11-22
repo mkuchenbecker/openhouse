@@ -7,6 +7,7 @@ import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.util.List;
 import java.util.Optional;
+import org.apache.iceberg.TableMetadata;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.repository.PagingAndSortingRepository;
@@ -34,6 +35,16 @@ public interface OpenHouseInternalRepository
    * table metadata the {@link TableDto} was converted from.
    */
   Optional<TableDtoWithMetadata> findWithMetadataById(TableDtoPrimaryKey tableDtoPrimaryKey);
+
+  /**
+   * What creating {@code tableDto} would store, computed without writing anything: the create
+   * checks (initial version, table count limit), the server-computed properties, the allocated
+   * location and the sort order, as the create path computes them, and the table's Iceberg metadata
+   * built from them. Used for a staged create that must leave nothing behind.
+   */
+  default TableMetadata stageCreate(TableDto tableDto) {
+    throw new UnsupportedOperationException("stageCreate is not supported by this repository");
+  }
 
   List<TableDtoPrimaryKey> findAllIds();
 

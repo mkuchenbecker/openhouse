@@ -136,15 +136,26 @@ public class IrcReadRoutesTest {
 
   // ---------------------------------------------------------------- config
 
+  /**
+   * Two defaults, no overrides. Clients do not post metrics reports: the metrics route answers 406
+   * until it is served, and RESTCatalog posts a report after every scan and commit and logs each
+   * refusal with a stack trace (seen in the V3 write itests). Clients use HadoopFileIO, the
+   * existing OpenHouse client's FileIO: with RESTCatalog's default (ResolvingFileIO) a Spark
+   * merge-on-read delete fails, since this Iceberg line opens delete files with write properties
+   * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate).
+   */
   @Test
-  void configHasEmptyDefaultsAndOverrides() throws Exception {
+  void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {
     MvcResult result = IrcHttp.get(mvc, "/v1/config");
     assertEquals(200, result.getResponse().getStatus(), body(result));
     String json = body(result);
-    assertEquals(Collections.emptyMap(), JsonPath.read(json, "$.defaults"));
+    Map<String, String> expected = new java.util.HashMap<>();
+    expected.put("rest-metrics-reporting-enabled", "false");
+    expected.put("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
+    assertEquals(expected, JsonPath.read(json, "$.defaults"));
     assertEquals(Collections.emptyMap(), JsonPath.read(json, "$.overrides"));
     ConfigResponse config = IrcClientParsers.parse(json, ConfigResponse.class);
-    assertTrue(config.defaults().isEmpty());
+    assertEquals(expected, config.defaults());
     assertTrue(config.overrides().isEmpty());
   }
 
@@ -154,7 +165,12 @@ public class IrcReadRoutesTest {
         IrcHttp.perform(
             mvc, IrcHttp.request(HttpMethod.GET, "/v1/config").param("warehouse", "anything"));
     assertEquals(200, result.getResponse().getStatus(), body(result));
-    assertTrue(IrcClientParsers.parse(body(result), ConfigResponse.class).defaults().isEmpty());
+    // The same defaults as without a warehouse
+    // (configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo).
+    assertEquals(
+        IrcClientParsers.parse(body(IrcHttp.get(mvc, "/v1/config")), ConfigResponse.class)
+            .defaults(),
+        IrcClientParsers.parse(body(result), ConfigResponse.class).defaults());
   }
 
   // ---------------------------------------------------------------- namespaces
@@ -542,12 +558,8 @@ public class IrcReadRoutesTest {
       {HttpMethod.POST, "/v1/namespaces"},
       {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t"},
-      {HttpMethod.DELETE, "/v1/namespaces/irc_x/tables/t"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/metrics"},
-      {HttpMethod.POST, "/v1/tables/rename"},
       {HttpMethod.POST, "/v1/transactions/commit"},
       {HttpMethod.GET, "/v1/namespaces/irc_x/views"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/views"},

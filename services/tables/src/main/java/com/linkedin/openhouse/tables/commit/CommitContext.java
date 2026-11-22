@@ -36,4 +36,12 @@ public class CommitContext {
    * the stored table, in which case nothing is written. {@code null} for commits that have none.
    */
   BooleanSupplier unchanged;
+
+  /**
+   * The commit replaces the table (a replace, or RTAS, commit): the native replace rules apply
+   * instead of the update rules. Native snapshots PUTs say so with {@code replaceCommit}; the
+   * candidate entry point ({@code TableCommitService}) takes it from here. Only with {@link
+   * CommitKind#SNAPSHOTS_UPDATE}.
+   */
+  boolean replace;
 }

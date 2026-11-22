@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -60,10 +61,28 @@ public class IcebergRestApiHandler {
 
   static final String SNAPSHOTS_REFS = "refs";
 
-  /** Empty defaults and overrides: the client's own configuration stands. */
+  /**
+   * Defaults a client applies under its own configuration; no overrides.
+   *
+   * <ul>
+   *   <li>{@code rest-metrics-reporting-enabled=false}: the metrics route is not served yet, and a
+   *       client that reports would post after every scan and commit and log each refusal.
+   *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
+   *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
+   *       them with write properties ResolvingFileIO rejects.
+   * </ul>
+   */
   public ConfigResponse config() {
-    return ConfigResponse.builder().build();
+    return ConfigResponse.builder()
+        .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
+        .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
+        .build();
   }
+
+  /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
+  static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
+
+  static final String HADOOP_FILE_IO = "org.apache.iceberg.hadoop.HadoopFileIO";
 
   /**
    * Top-level namespaces, or the namespaces under {@code parent}: none, since databases have one
