@@ -1,9 +1,16 @@
 package com.linkedin.openhouse.javaclient;
 
+import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
+import com.linkedin.openhouse.javaclient.api.SupportsUnlock;
+import com.linkedin.openhouse.javaclient.api.UnlockTableTarget;
+import com.linkedin.openhouse.tables.client.model.CreateUpdateLockRequestBody.ReasonEnum;
 import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.rest.RESTClient;
@@ -19,8 +26,15 @@ import org.apache.iceberg.rest.RESTClient;
  * header.*} reach it exactly as they reach today's catalog). {@code RESTSessionCatalog} asks for a
  * client twice (once for the config call, then with the merged properties); both calls get the same
  * adapter.
+ *
+ * <p>OpenHouse-only features: grants ({@link SupportsGrantRevoke}) and unlock ({@link
+ * SupportsUnlock}) have no REST route; they delegate to the backing catalog, so the OpenHouse Spark
+ * SQL extensions, which look for these interfaces on the catalog {@code catalog-impl} built, keep
+ * working, and the calls carry the same headers (including {@code X-OpenHouse-Client-Capabilities})
+ * as today.
  */
-public class OpenHouseRestCatalog extends RESTCatalog {
+public class OpenHouseRestCatalog extends RESTCatalog
+    implements SupportsGrantRevoke, SupportsUnlock {
 
   private final AtomicReference<OpenHouseRestAdapter> adapter;
   private Object conf;
@@ -72,6 +86,35 @@ public class OpenHouseRestCatalog extends RESTCatalog {
   /** The backing catalog (today's OpenHouse catalog), available after {@link #initialize}. */
   protected OpenHouseCatalog backing() {
     return backing;
+  }
+
+  // ------------------------------------------------------------------ OpenHouse-only features
+
+  @Override
+  public void updateTableAclPolicies(
+      TableIdentifier tableIdentifier, boolean isGrant, String privilege, String principal) {
+    backing.updateTableAclPolicies(tableIdentifier, isGrant, privilege, principal);
+  }
+
+  @Override
+  public List<AclPolicyDto> getTableAclPolicies(TableIdentifier tableIdentifier) {
+    return backing.getTableAclPolicies(tableIdentifier);
+  }
+
+  @Override
+  public void updateDatabaseAclPolicies(
+      Namespace namespace, boolean isGrant, String privilege, String principal) {
+    backing.updateDatabaseAclPolicies(namespace, isGrant, privilege, principal);
+  }
+
+  @Override
+  public List<AclPolicyDto> getDatabaseAclPolicies(Namespace namespace) {
+    return backing.getDatabaseAclPolicies(namespace);
+  }
+
+  @Override
+  public void unlockTable(UnlockTableTarget target, ReasonEnum reason) {
+    backing.unlockTable(target, reason);
   }
 
   @Override
