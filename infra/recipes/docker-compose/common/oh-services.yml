@@ -22,6 +22,9 @@ services:
     build:
       context: ../../../..
       dockerfile: jobs-scheduler.Dockerfile
+      # Passed only when set where docker compose runs (../iceberg-fork.env sets it).
+      args:
+        - OH_SPARK_APPS_NAME
   openhouse-optimizer:
     build:
       context: ../../../..
