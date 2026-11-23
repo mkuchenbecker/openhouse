@@ -60,3 +60,27 @@ allprojects {
     }
   }
 }
+
+// Nothing of this build may be published to a remote repository. Its Iceberg is built from a pinned
+// source commit into a directory on this machine and hosted nowhere (decision D7; hosting it is
+// work item I6d), so every published POM would name com.linkedin.iceberg:*:<fork version>, which no
+// consumer can resolve. The check runs when the task graph is ready, before any task executes, for
+// every way a publish can be started (`publish`, a single publish task, CI). Publishing to a file
+// repository, `publishToMavenLocal` included, stays possible: it leaves the machine no more than
+// the fork itself does.
+gradle.taskGraph.whenReady { graph ->
+  def remotePublishes = graph.allTasks.findAll {
+    it instanceof PublishToMavenRepository && it.repository.url.scheme != 'file'
+  }
+  if (!remotePublishes.isEmpty()) {
+    def targets = remotePublishes.collect { it.repository.url.toString() }.unique().join(', ')
+    throw new GradleException(
+        "Refusing to publish to ${targets}: this build's Iceberg is ${forkGroup}:*:${forkVersion}, "
+            + "built from a pinned fork commit and hosted in no repository (decisions D7 and I6d), "
+            + "so the published POMs would name artifacts nobody can resolve. Either publish from "
+            + "the reference line (-PicebergLinkedIn, LinkedIn's Iceberg 1.5.2 releases), or publish "
+            + "the fork's Iceberg artifacts first and point the build at them, which is a decision "
+            + "for the repository owner. First of ${remotePublishes.size()} such tasks: "
+            + "${remotePublishes.first().path}.")
+  }
+}

@@ -89,6 +89,18 @@ deleted (decision D3). The sources they shared with the 1.5 projects are those p
 The delta-harness runs on the default build; `HARNESS_ICEBERG_LINKEDIN=1` runs it on the reference
 line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
 
+## Publishing
+
+The default build refuses to publish to a remote Maven repository. Its Iceberg is hosted nowhere
+(decision D7), so the POMs would name `com.linkedin.iceberg:*:<baseVersion>-ohfork.<commit>`, which
+no consumer can resolve. `./gradlew publish`, or any single task that publishes to a repository
+that is not a `file:` URL, stops when the task graph is ready, before any task runs, with a message
+that says so (`gradle/iceberg-fork.gradle`). The ways forward are to publish from the reference
+line (`./gradlew -PicebergLinkedIn publish`), or to host the fork's Iceberg artifacts first, which
+is the repository owner's decision (work item I6d). `publishToMavenLocal` is not affected.
+`build-tag-publish.yml` runs `./gradlew publish` only on `linkedin/openhouse`'s `main`; there it
+would now stop at this check.
+
 ## Docker images
 
 `./gradlew -PicebergFork shadowJar` builds every uber jar, and `./gradlew -PicebergFork
