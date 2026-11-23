@@ -9,23 +9,26 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.Arrays;
 import java.util.List;
 import javax.servlet.http.HttpServletRequest;
+import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The read routes of the Iceberg REST Catalog (IRC) protocol, served under {@value #BASE_PATH} in
- * the same service as the native API (a client sets {@code uri=<server>/iceberg}). Bodies are
- * written by {@link IcebergRestJson} and failures by the IRC-scoped exception handler, so the
- * native routes' JSON and error bodies are untouched. Hidden from the service's generated OpenAPI
- * spec, from which the native clients are generated.
+ * The read routes of the Iceberg REST Catalog (IRC) protocol, and its metrics report route, served
+ * under {@value #BASE_PATH} in the same service as the native API (a client sets {@code
+ * uri=<server>/iceberg}). Bodies are written by {@link IcebergRestJson} and failures by the
+ * IRC-scoped exception handler, so the native routes' JSON and error bodies are untouched. Hidden
+ * from the service's generated OpenAPI spec, from which the native clients are generated.
  *
  * <p>The write routes (create, staged create, commit, drop, rename) are {@link
  * IcebergRestWriteController}'s, registered only where their Iceberg API exists; where it does not
@@ -111,6 +114,28 @@ public class IcebergRestCatalogController {
     return IcebergRestJson.noContent();
   }
 
+  /**
+   * Takes the metrics report a client posts after a scan or a commit. Secured like the load route;
+   * the parameter names are the ones the authorization interceptor reads. Mapped here, with the
+   * reads, and not with the writes: its request class exists on every Iceberg line this server runs
+   * on.
+   */
+  @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC report metrics: NO_CONTENT"))
+  @PostMapping(V1 + "/namespaces/{namespace}/tables/{table}/metrics")
+  @Secured(value = Privileges.Privilege.GET_TABLE_METADATA)
+  public ResponseEntity<byte[]> reportMetrics(
+      @PathVariable("namespace") String databaseId,
+      @PathVariable("table") String tableId,
+      @RequestBody(required = false) byte[] body) {
+    String database = IcebergRestApiHandler.tableDatabaseId(databaseId, tableId);
+    handler.reportMetrics(
+        database,
+        tableId,
+        IcebergRestJson.read(body, ReportMetricsRequest.class),
+        extractAuthenticatedUserPrincipal());
+    return IcebergRestJson.noContent();
+  }
+
   /** Routes of the IRC specification this server does not serve (yet), as METHOD and pattern. */
   private static final List<String[]> UNSERVED_SPEC_ROUTES =
       Arrays.asList(
@@ -126,7 +151,6 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/register"},
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
-          new String[] {"POST", "/v1/namespaces/*/tables/*/metrics"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/plan"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/plan/*"},
           new String[] {"DELETE", "/v1/namespaces/*/tables/*/plan/*"},

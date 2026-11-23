@@ -1,25 +1,38 @@
 package com.linkedin.openhouse.tables.api.irc;
 
 import com.linkedin.openhouse.capabilities.CapabilityNames;
+import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
+import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
+import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.DatabasesService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
+import org.apache.iceberg.metrics.CommitReport;
+import org.apache.iceberg.metrics.CommitReportParser;
+import org.apache.iceberg.metrics.MetricsReport;
+import org.apache.iceberg.metrics.ScanReport;
+import org.apache.iceberg.metrics.ScanReportParser;
+import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
@@ -44,8 +57,11 @@ import org.springframework.stereotype.Component;
  *       the same order (lock, privilege, lock access, client capability), from one load of the
  *       table. The response carries the stored metadata unchanged, the metadata location the native
  *       API reports, and the per-table config the native API gives the same client.
+ *   <li>A metrics report is counted and logged ({@link #reportMetrics}); the native API has no
+ *       route for one.
  * </ul>
  */
+@Slf4j
 @Component
 public class IcebergRestApiHandler {
 
@@ -59,6 +75,12 @@ public class IcebergRestApiHandler {
 
   @Autowired private IcebergRestServedRoutes servedRoutes;
 
+  @Autowired private OpenHouseInternalRepository openHouseInternalRepository;
+
+  @Autowired private AuthorizationUtils authorizationUtils;
+
+  @Autowired private MeterRegistry meterRegistry;
+
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
 
@@ -69,8 +91,6 @@ public class IcebergRestApiHandler {
    * override.
    *
    * <ul>
-   *   <li>{@code rest-metrics-reporting-enabled=false}: the metrics route is not served yet, and a
-   *       client that reports would post after every scan and commit and log each refusal.
    *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
    *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
    *       them with write properties ResolvingFileIO rejects.
@@ -83,10 +103,13 @@ public class IcebergRestApiHandler {
    *       this server serves whatever the client was configured with. Not {@link #endpoints()}
    *       entries: those name the spec's routes.
    * </ul>
+   *
+   * Metrics reporting is left to the client: {@code rest-metrics-reporting-enabled=false}, which
+   * was sent while the metrics route answered 406, is not sent now that {@link #reportMetrics}
+   * serves it.
    */
   public ConfigResponse config() {
     return ConfigResponse.builder()
-        .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
         .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
         .withOverride(CAPABILITIES, String.join(",", servedRoutes.capabilities()))
         .build();
@@ -103,9 +126,6 @@ public class IcebergRestApiHandler {
 
   /** The config key that names the OpenHouse features a server serves (server capabilities). */
   public static final String CAPABILITIES = CapabilityNames.ADVERTISED_PROPERTY;
-
-  /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
-  static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
 
   static final String HADOOP_FILE_IO = "org.apache.iceberg.hadoop.HadoopFileIO";
 
@@ -177,6 +197,60 @@ public class IcebergRestApiHandler {
         loaded.getMetadata(),
         readBridgeConfigResolver.resolve(tableDto),
         refsOnly);
+  }
+
+  /** The counter of metrics reports received, tagged {@value #REPORT_TYPE_TAG}. */
+  static final String METRICS_REPORT_COUNTER = "irc_metrics_report";
+
+  /** The report's type, as Iceberg names it in lower case: {@code scan_report}, ... */
+  static final String REPORT_TYPE_TAG = "report_type";
+
+  /**
+   * Takes a metrics report a client posts after a scan or a commit of {@code databaseId.tableId}.
+   *
+   * <p>On the native path a report never reaches the service: the OpenHouse catalog hands it to the
+   * client's own reporter ({@code metrics-reporter-impl}), which logs it, and the service keeps no
+   * store for one. So a report is recorded where the service records everything else about its
+   * requests: a counter by report type in the meter registry, and the report itself in the log at
+   * debug level.
+   *
+   * <p>Authorized as a read of the table, with the read privilege, on the table's house-table row
+   * alone, as the native drop is: a report arrives after every scan and every commit, and loading
+   * the table's metadata for each would double the loads a client causes. The lock and capability
+   * checks of a load, which need that metadata, are not run: a report reads nothing, and a client
+   * those checks turn away never loads the table it would report on.
+   *
+   * @throws NoSuchUserTableException if there is no such table
+   */
+  public void reportMetrics(
+      String databaseId, String tableId, ReportMetricsRequest request, String actingPrincipal) {
+    tablesApiValidator.validateGetTable(databaseId, tableId);
+    TableDto table =
+        openHouseInternalRepository
+            .findTableRefById(
+                TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
+            .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+    authorizationUtils.checkTablePrivilege(table, actingPrincipal, Privileges.GET_TABLE_METADATA);
+    String type = String.valueOf(request.reportType()).toLowerCase(Locale.ROOT);
+    meterRegistry.counter(METRICS_REPORT_COUNTER, REPORT_TYPE_TAG, type).increment();
+    if (log.isDebugEnabled()) {
+      log.debug(
+          "IRC metrics report for {}.{} from {}: {}",
+          databaseId,
+          tableId,
+          actingPrincipal,
+          describe(request.report()));
+    }
+  }
+
+  private static String describe(MetricsReport report) {
+    if (report instanceof ScanReport) {
+      return ScanReportParser.toJson((ScanReport) report);
+    }
+    if (report instanceof CommitReport) {
+      return CommitReportParser.toJson((CommitReport) report);
+    }
+    return String.valueOf(report);
   }
 
   /**
