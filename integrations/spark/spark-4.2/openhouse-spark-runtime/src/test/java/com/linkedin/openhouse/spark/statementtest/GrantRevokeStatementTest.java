@@ -443,7 +443,7 @@ public class GrantRevokeStatementTest {
   }
 
   @AfterAll
-  public void tearDownSpark() {
+  public void tearDownSpark() throws Exception {
     spark.close();
   }
 

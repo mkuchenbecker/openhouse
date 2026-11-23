@@ -144,7 +144,9 @@ public class SetColumnPolicyTagStatementTest {
   @Test
   public void testPolicyIdentifierWithLeadingDigits() {
     Dataset<Row> df = spark.sql("ALTER TABLE openhouse.0_.0_ MODIFY COLUMN 0_ SET TAG = (PII)");
-    assert isPlanValid(df, "openhouse", "0_.0_", "0_", tagPII);
+    // Spark 4 quotes an identifier part that starts with a digit when it prints an Identifier, so
+    // the exec's line in EXPLAIN shows `0_`.`0_` where Spark 3.5 shows 0_.0_.
+    assert isPlanValid(df, "openhouse", "`0_`.`0_`", "0_", tagPII);
   }
 
   @Test
@@ -213,7 +215,7 @@ public class SetColumnPolicyTagStatementTest {
   }
 
   @AfterAll
-  public void tearDownSpark() {
+  public void tearDownSpark() throws Exception {
     spark.close();
   }
 

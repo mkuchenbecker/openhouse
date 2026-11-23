@@ -103,7 +103,7 @@ public class PolicyPatchLiteralsTest {
   }
 
   @AfterAll
-  void stop() {
+  void stop() throws Exception {
     spark.close();
   }
 

@@ -226,12 +226,11 @@ public class SetTableReplicationPolicyStatementTest {
   }
 
   @AfterAll
-  public void tearDownSpark() {
+  public void tearDownSpark() throws Exception {
     spark.close();
   }
 
-  private boolean isPlanValid(Dataset<Row> dataframe, String replicationConfigJson)
-      throws Exception {
+  private boolean isPlanValid(Dataset<Row> dataframe, String replicationConfigJson) {
     String queryStr = dataframe.queryExecution().explainString(ExplainMode.fromString("simple"));
     JsonArray jsonArray = new Gson().fromJson(replicationConfigJson, JsonArray.class);
     boolean isValid = false;
@@ -247,8 +246,7 @@ public class SetTableReplicationPolicyStatementTest {
     return isValid;
   }
 
-  private boolean isUnSetPlanValid(Dataset<Row> dataframe, String replicationConfigJson)
-      throws Exception {
+  private boolean isUnSetPlanValid(Dataset<Row> dataframe, String replicationConfigJson) {
     String queryStr = dataframe.queryExecution().explainString(ExplainMode.fromString("simple"));
     JsonObject json = new Gson().fromJson(replicationConfigJson, JsonObject.class);
     return queryStr.contains("REPLICATION") && json.has("replication");

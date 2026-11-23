@@ -56,7 +56,9 @@ public class SetTablePolicyStatementTest {
         spark.sql(
             "ALTER TABLE openhouse.0_.0_ SET policy (RETENTION = 30d"
                 + " ON COLUMN ts WHERE pattern = 'yyyy')");
-    assert isPlanValid(ds, "0_.0_", "30", "DAY", Optional.of("ts"), Optional.of("'yyyy'"));
+    // Spark 4 quotes an identifier part that starts with a digit when it prints an Identifier, so
+    // the exec's line in EXPLAIN shows `0_`.`0_` where Spark 3.5 shows 0_.0_.
+    assert isPlanValid(ds, "`0_`.`0_`", "30", "DAY", Optional.of("ts"), Optional.of("'yyyy'"));
   }
 
   @Test
@@ -147,7 +149,7 @@ public class SetTablePolicyStatementTest {
   }
 
   @AfterAll
-  public void tearDownSpark() {
+  public void tearDownSpark() throws Exception {
     spark.close();
   }
 

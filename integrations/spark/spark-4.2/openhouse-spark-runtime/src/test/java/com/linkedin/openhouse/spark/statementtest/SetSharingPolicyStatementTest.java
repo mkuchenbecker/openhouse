@@ -60,7 +60,9 @@ public class SetSharingPolicyStatementTest {
   @Test
   public void testPolicyIdentifierWithLeadingDigits() {
     Dataset<Row> df = spark.sql("ALTER TABLE openhouse.0_.0_ SET policy (SHARING=TRUE)");
-    assert isPlanValid(df, "openhouse", "0_.0_", "TRUE");
+    // Spark 4 quotes an identifier part that starts with a digit when it prints an Identifier, so
+    // the exec's line in EXPLAIN shows `0_`.`0_` where Spark 3.5 shows 0_.0_.
+    assert isPlanValid(df, "openhouse", "`0_`.`0_`", "TRUE");
   }
 
   @Test
@@ -131,7 +133,7 @@ public class SetSharingPolicyStatementTest {
   }
 
   @AfterAll
-  public void tearDownSpark() {
+  public void tearDownSpark() throws Exception {
     spark.close();
   }
 

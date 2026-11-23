@@ -47,7 +47,7 @@ class OpenHouseCapabilitiesTest {
   }
 
   @AfterAll
-  void stopSpark() {
+  void stopSpark() throws Exception {
     spark.close();
   }
 
