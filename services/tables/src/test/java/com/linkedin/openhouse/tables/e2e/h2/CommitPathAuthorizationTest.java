@@ -303,6 +303,54 @@ public class CommitPathAuthorizationTest {
     assertTrue(json(get(mvc, "auth_primary", "t")).contains("user.primary"));
   }
 
+  /**
+   * PINNED DEFECT of the native API (work item N5; see {@link
+   * NativeCreateDirectoryReusePinnedDefectTest}, which shows what the drop of the second table then
+   * destroys). This asserts what the native API does today, which is wrong.
+   *
+   * <p>Who can put a second table in a live table's directory: anyone who may create tables in the
+   * database. The create that names the renamed table's UUID is asked for {@code CREATE_TABLE} on
+   * the database and for nothing on the table whose directory it takes; here every decision on a
+   * table is a denial, and the create still answers 201 in that directory.
+   */
+  @Test
+  void pinnedDefectCreateInARenamedTablesDirectoryNeedsOnlyTheCreatePrivilegeOnTheDatabase()
+      throws Exception {
+    String db = "auth_reuse";
+    String first = create(db, "a");
+    rename(mvc, db, "a", db, "b").andExpect(status().isNoContent());
+    created.add(new String[] {db, "b"});
+    String firstLocation = str(json(get(mvc, db, "b")), "$.tableLocation");
+    String firstDirectory = firstLocation.substring(0, firstLocation.lastIndexOf('/'));
+    assertTrue(firstDirectory.endsWith("/" + db + "/a-" + str(first, "$.tableUUID")));
+
+    org.mockito.Mockito.clearInvocations(authorizationHandler);
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(TableDto.class), any(Privileges.class)))
+        .thenReturn(false);
+    Map<String, String> props = new HashMap<>(newTable(db, "a").getTableProperties());
+    props.put("openhouse.tableUUID", str(first, "$.tableUUID"));
+    props.put("openhouse.databaseId", db);
+    props.put("openhouse.tableId", "a");
+    props.put("openhouse.tableLocation", firstLocation.replaceFirst("^file:", ""));
+    String second =
+        json(
+            post(mvc, newTable(db, "a").toBuilder().tableProperties(props).build())
+                .andExpect(status().isCreated()));
+
+    assertEquals(str(first, "$.tableUUID"), str(second, "$.tableUUID"));
+    String secondLocation = str(second, "$.tableLocation");
+    assertEquals(firstDirectory, secondLocation.substring(0, secondLocation.lastIndexOf('/')));
+    org.mockito.Mockito.verify(authorizationHandler)
+        .checkAccessDecision(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                (DatabaseDto database) -> database != null && db.equals(database.getDatabaseId())),
+            eq(Privileges.CREATE_TABLE));
+    org.mockito.Mockito.verify(authorizationHandler, org.mockito.Mockito.never())
+        .checkAccessDecision(any(), any(TableDto.class), any(Privileges.class));
+  }
+
   /** The deletion timestamp the soft-deleted listing reports for the table. */
   private long deletedAtMsOf(String db, String table) throws Exception {
     assertEquals(1, softDeletedListingCount(db, table));
