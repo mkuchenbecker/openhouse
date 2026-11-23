@@ -138,7 +138,8 @@ The images are built from the default build only. Under `-PicebergLinkedIn`, `do
   Docker image, without its `integration-test` and `coverage` modules, and copies `/opt/spark`
   from Apache's Docker image of the same release (`apache/spark:3.5.2-...`). It needs Docker Hub,
   GitHub and Maven Central only, and on a GitHub runner the images of the `oh-hadoop-spark` recipe
-  build in about 6 minutes, of which Livy's build is three and a half.
+  build in a little over 6 minutes, of which Livy's build is three and a half to four and a half.
+  Nothing is kept between runs, so every build there is a cold one.
   `OH_SPARK_BUILDER=default docker compose ... build` uses the dockerfile's older builder stage,
   which installs some 200 Ubuntu packages and downloads Spark and Maven from
   `archive.apache.org`; on GitHub's runners that host served 46 kB/s (two and a half hours for one
@@ -146,7 +147,7 @@ The images are built from the default build only. Under `-PicebergLinkedIn`, `do
 - Livy's own build would download one more Spark release (228 MB) from `archive.apache.org`, in
   its `thriftserver` and `integration-test` modules, for tests that are skipped. Both builder
   stages pass `-Ddownload.plugin.skip=true`, the skip property of the `download-maven-plugin`
-  version Livy's pom pins (1.3.0; later versions of the plugin call it `download.skip`).
+  (1.3.0 in Livy's pom); the build's log then says `maven-download-plugin:wget skipped`.
 - What the image is known to do, from the Dataloader workflow's runs ("CI" below): the pinned Livy,
   compiled against Spark 3.1.1, runs SQL sessions on Spark 3.5.2 and Java 17 (Livy warns that it
   has not been verified with Spark 3.5); Spark's Hadoop 3.3.4 client reads and writes the recipe's
@@ -252,7 +253,8 @@ back from HDFS. It runs:
   no pull request the paths above select;
 - by hand (`workflow_dispatch`) on any branch.
 
-A run takes about 16 minutes, and about 22 when it has to publish the fork first.
+A run takes about 15 minutes on a pull request, which reads the fork and the Gradle cache
+`irc-integration` saved, and about 22 by hand on a branch that has neither.
 
 The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
 script, so the fork is built (about 6 minutes on a runner) only when either changes:

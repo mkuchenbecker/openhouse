@@ -6,8 +6,9 @@ name: Dataloader Tests
 # (docs/development/iceberg-fork.md, "Docker images" and "CI").
 #
 # Both run on a pull request into main or irc-integration that touches the dataloader or what the
-# recipe and its images are made from, after each merge to irc-integration (every change to the
-# jars the Spark image carries reaches the image only there), and by hand on any branch.
+# recipe and its images are made from, after each merge to irc-integration (a change to the Spark
+# runtime or the apps, whose jars the Spark image carries, is on no pull request these paths
+# select), and by hand on any branch.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -59,8 +60,8 @@ jobs:
   integration-test:
     name: Dataloader Integration Tests
     runs-on: ubuntu-latest
-    # A run takes about 22 minutes when the fork has to be published first and about 6 less when
-    # it comes from the cache. The limit is for a step that stalls.
+    # A run takes about 15 minutes on a pull request, which reads the fork and the Gradle cache
+    # irc-integration saved, and about 22 without them. The limit is for a step that stalls.
     timeout-minutes: 60
     permissions:
       contents: read

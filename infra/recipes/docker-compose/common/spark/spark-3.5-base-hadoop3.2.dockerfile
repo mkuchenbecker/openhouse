@@ -11,8 +11,8 @@
 # Livy's own build would download one more Spark release (spark-3.1.1-bin-hadoop2.7.tgz, 228 MB)
 # from archive.apache.org, in its thriftserver and integration-test modules, for tests that
 # -DskipTests skips. -Ddownload.plugin.skip=true keeps both stages from doing it: the property
-# of the skip parameter of download-maven-plugin 1.3.0, the version Livy's pom pins (later
-# versions of the plugin call it download.skip).
+# of the skip parameter of download-maven-plugin (1.3.0 in Livy's pom). The log then says
+# "maven-download-plugin:wget skipped".
 ARG OH_SPARK_BUILDER=dockerhub
 
 FROM eclipse-temurin:11-jdk-jammy as builder
