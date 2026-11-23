@@ -6,6 +6,9 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.api.handler.IcebergSnapshotsApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
@@ -38,6 +41,8 @@ import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -51,8 +56,9 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>A create is spelled as the native create request ({@link IcebergCreates}) and sent through
- *       the native create handler (validation, create rules, audit). The server owns the location:
- *       a request that names one is refused.
+ *       the native create handler (validation, create rules, audit). The server owns the location
+ *       (D30): a location the request names is ignored, and the table is created, and returned,
+ *       where the server puts it, as for a request that names none.
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
  *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
@@ -61,12 +67,19 @@ import org.springframework.stereotype.Component;
  *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
  *       stored table's version as base, so a commit that landed in between is refused by the core's
  *       guards. A replace commit (see {@link IcebergRestRequirements#isReplace}) is handed over as
- *       a replace.
+ *       a replace; a set-location among its changes, which is how a client's replace that names a
+ *       location arrives, is ignored (D30). An ordinary commit that changes the location is
+ *       refused.
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
  *       when it does.
- *   <li>Drop and rename are the native drop and rename.
+ *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
+ *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
+ *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
+ *       supported) with the native message. A rename House Tables refuses because the target's key
+ *       is taken (a view of that name), which the native route answers 500, is 409 {@code
+ *       AlreadyExistsException}.
  *   <li>A policy patch ({@value PolicyPatch#KEY} in the properties of a create, a staged create's
  *       completion or a commit, as OpenHouse's policy statements write it) is what the OpenHouse
  *       Java client makes of it before it sends the native request: the key is taken out of the
@@ -89,6 +102,9 @@ public class IcebergRestWriteHandler {
   /** The stored policies, as a property; the OpenHouse client parses it into request policies. */
   private static final String POLICIES_KEY = "policies";
 
+  /** The format version a create asks for, as a property (Iceberg's {@code format-version}). */
+  private static final String FORMAT_VERSION_KEY = "format-version";
+
   /** The table type, as a property; the OpenHouse client reads it into the request's type. */
   private static final String TABLE_TYPE_KEY = "openhouse.tableType";
 
@@ -109,6 +125,10 @@ public class IcebergRestWriteHandler {
   @Autowired private StorageSelector storageSelector;
 
   @Autowired private ClusterProperties clusterProperties;
+
+  @Autowired private IcebergRestApiHandler readHandler;
+
+  @Autowired private HouseTableRepository houseTableRepository;
 
   // ---------------------------------------------------------------- create
 
@@ -159,15 +179,11 @@ public class IcebergRestWriteHandler {
   private CreateUpdateTableRequestBody createBody(
       TableIdentifier identifier, CreateTableRequest request) {
     request.validate();
-    if (request.location() != null) {
-      throw new RequestValidationFailureException(
-          String.format(
-              "Create of table %s names a location (%s): OpenHouse assigns the location of a "
-                  + "table; leave location unset",
-              identifier, request.location()));
-    }
+    // request.location() is not read: the server owns the location (D30), and the native create
+    // allocates it as for a request that names none.
     if (request.properties() != null) {
       refuseRewrittenCreateProperties(identifier, request.properties());
+      refuseOtherFormatVersion(identifier, request.properties());
     }
     return IcebergCreates.toCreateBody(
         identifier,
@@ -196,8 +212,18 @@ public class IcebergRestWriteHandler {
       return new IcebergRestLoadedTable(
           base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
     }
+    boolean replace = IcebergRestRequirements.isReplace(request);
+    // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
+    // replacement at the requested location); the server owns the location (D30), so a replace
+    // keeps the table's. An ordinary commit's set-location stays, and the commit refuses it.
+    List<MetadataUpdate> updates =
+        replace
+            ? request.updates().stream()
+                .filter(update -> !(update instanceof MetadataUpdate.SetLocation))
+                .collect(Collectors.toList())
+            : request.updates();
     TableMetadata.Builder builder = TableMetadata.buildFrom(baseMetadata);
-    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, request.updates());
+    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
       return new IcebergRestLoadedTable(
@@ -208,7 +234,6 @@ public class IcebergRestWriteHandler {
         patch
             .map(p -> PolicyPatch.apply(base.getTableDto().getPolicies(), p, identifier.toString()))
             .orElse(null);
-    boolean replace = IcebergRestRequirements.isReplace(request);
     CommitKind kind =
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
@@ -416,7 +441,14 @@ public class IcebergRestWriteHandler {
     tablesApiHandler.deleteTable(databaseId, tableId, actingPrincipal);
   }
 
-  /** The native rename, with its rules (same database, not a case-only change, target absent). */
+  /**
+   * The native rename, with its rules (same database, not a case-only change, target absent). A
+   * rename across databases, which the native rename refuses with 400 before it looks at the
+   * target, is answered as the spec lists for renameTable: 404 {@code NoSuchNamespaceException}
+   * when the target namespace does not exist, and otherwise 406, the spec's "the server does not
+   * support this operation", with the native refusal's message. The ids are checked first, as
+   * natively.
+   */
   public void renameTable(RenameTableRequest request, String actingPrincipal) {
     request.validate();
     // The source is a table (none exists in a multi-level namespace: 404), the destination's
@@ -424,12 +456,47 @@ public class IcebergRestWriteHandler {
     String fromDatabaseId =
         IcebergRestApiHandler.tableDatabaseId(namespace(request.source()), request.source().name());
     String toDatabaseId = IcebergRestApiHandler.databaseId(namespace(request.destination()));
-    tablesApiHandler.renameTable(
-        fromDatabaseId,
-        request.source().name(),
-        toDatabaseId,
-        request.destination().name(),
-        actingPrincipal);
+    if (!fromDatabaseId.equalsIgnoreCase(toDatabaseId)) {
+      tablesApiValidator.validateGetTable(fromDatabaseId, request.source().name());
+      tablesApiValidator.validateGetTable(toDatabaseId, request.destination().name());
+      readHandler.requireNamespace(toDatabaseId);
+      try {
+        tablesApiValidator.validateRenameTable(
+            fromDatabaseId, request.source().name(), toDatabaseId, request.destination().name());
+      } catch (RequestValidationFailureException e) {
+        throw new IcebergRestRouteException(e.getMessage(), true);
+      }
+    }
+    try {
+      tablesApiHandler.renameTable(
+          fromDatabaseId,
+          request.source().name(),
+          toDatabaseId,
+          request.destination().name(),
+          actingPrincipal);
+    } catch (CommitFailedException e) {
+      if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
+        throw e;
+      }
+      // House Tables refused the rename: tables and views share its key, and the target's is
+      // taken. The native rename checks only for a table there, so this is a view (or a table
+      // created meanwhile). The native API answers the unmapped commit failure 500; the spec's
+      // answer is 409 AlreadyExists.
+      boolean view =
+          houseTableRepository
+              .findViewById(
+                  HouseTablePrimaryKey.builder()
+                      .databaseId(toDatabaseId)
+                      .tableId(request.destination().name())
+                      .build())
+              .isPresent();
+      throw new AlreadyExistsException(
+          e,
+          "Cannot rename %s to %s. %s already exists",
+          request.source(),
+          request.destination(),
+          view ? "View" : "Table");
+    }
   }
 
   private static String namespace(TableIdentifier identifier) {
@@ -464,6 +531,25 @@ public class IcebergRestWriteHandler {
               "Create of table %s sets the table property %s to %s: the table type cannot be set "
                   + "through the Iceberg REST routes; they create %s tables",
               identifier, TABLE_TYPE_KEY, tableType, TableType.PRIMARY_TABLE.name()));
+    }
+  }
+
+  /**
+   * Refuses a create or staged create whose {@code format-version} property asks for a version the
+   * cluster does not create, as the commit that completes a staged create refuses one (the server
+   * owns the format version: D19, D20). The native create overwrites the property with the
+   * cluster's version, which here would answer, or stage, other metadata than was asked for.
+   */
+  private void refuseOtherFormatVersion(
+      TableIdentifier identifier, Map<String, String> properties) {
+    String asked = properties.get(FORMAT_VERSION_KEY);
+    int clusterVersion = clusterProperties.getClusterIcebergFormatVersion();
+    if (asked != null && !asked.trim().equals(Integer.toString(clusterVersion))) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s to %s: OpenHouse creates tables "
+                  + "with format version %d",
+              identifier, FORMAT_VERSION_KEY, asked, clusterVersion));
     }
   }
 

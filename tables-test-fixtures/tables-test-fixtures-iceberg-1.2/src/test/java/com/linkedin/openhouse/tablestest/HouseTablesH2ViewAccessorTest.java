@@ -267,6 +267,27 @@ public class HouseTablesH2ViewAccessorTest {
         "a view delete must leave sibling views byte-for-byte unchanged");
   }
 
+  /**
+   * Tables and views share the store's key (house tables' {@code user_table_row} has the primary
+   * key {@code (database_id, table_id)} whatever the entity type), so renaming a table onto a key a
+   * view holds violates it: the real store answers 409, which its client raises as {@code
+   * HouseTableConcurrentUpdateException}, and both rows stay as they were. Before, this stand-in
+   * overwrote the view with the renamed table.
+   */
+  @Test
+  public void renameOntoAKeyAViewHoldsIsRefusedAndChangesNeitherRow() {
+    Assertions.assertThrows(
+        com.linkedin.openhouse.internal.catalog.repository.exception
+            .HouseTableConcurrentUpdateException.class,
+        () -> repository.rename(DB, "table_a", DB, "view_a", "/loc/renamed.metadata.json"));
+    Assertions.assertEquals(
+        "/loc/table_a/00001-a.metadata.json",
+        repository.findById(key("table_a")).get().getTableLocation());
+    HouseTable view = repository.findViewById(key("view_a")).get();
+    Assertions.assertEquals("/loc/view_a/00001-a.metadata.json", view.getTableLocation());
+    Assertions.assertEquals("VIEW", view.getEntityType());
+  }
+
   @Test
   public void typedDeleteDeclinesTableAndLegacyRows() {
     HouseTable tableBefore = repository.findEntityById(key("table_a")).get().toBuilder().build();

@@ -16,6 +16,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -82,6 +83,7 @@ public class IrcWriteRoutesTest {
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
   @Autowired AuditHandler<TableAuditEvent> tableAuditHandler;
+  @Autowired ClusterProperties clusterProperties;
 
   private final List<String[]> created = new ArrayList<>();
 
@@ -278,20 +280,42 @@ public class IrcWriteRoutesTest {
     assertEquals(before, stored("irc_w_exists"));
   }
 
-  @Test
-  void createThatNamesALocationIsRefusedAndNamesTheField() throws Exception {
-    CreateTableRequest request =
+  /**
+   * {@link #ircCreate} naming {@code location}, as {@code RESTCatalog} sends {@code withLocation}.
+   */
+  private static CreateTableRequest ircCreateAt(String table, String location, boolean staged) {
+    CreateTableRequest plain = ircCreate(table);
+    CreateTableRequest.Builder builder =
         CreateTableRequest.builder()
-            .withName("t")
-            .withSchema(SCHEMA)
-            .withLocation("/tmp/elsewhere")
-            .build();
-    String message =
-        assertIrcError(IrcWrite.create(mvc, "irc_w_loc", request), 400, "BadRequestException")
-            .message();
-    assertTrue(message.contains("location"), message);
-    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_loc", "t")));
-    assertTrue(filesUnder("irc_w_loc").isEmpty());
+            .withName(table)
+            .withSchema(plain.schema())
+            .withPartitionSpec(plain.spec())
+            .setProperties(plain.properties())
+            .withLocation(location);
+    return staged ? builder.stageCreate().build() : builder.build();
+  }
+
+  /**
+   * The server owns table locations (D30): a create that names a location is created where the
+   * server puts the table, exactly as the same create without one, and the response says where.
+   * Nothing is written at the requested location. Before, such a create was refused with 400.
+   */
+  @Test
+  void createThatNamesALocationIsCreatedAtTheServersLocation() throws Exception {
+    track("irc_w_loc_a", "t");
+    IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_loc_a", ircCreate("t")));
+    track("irc_w_loc_b", "t");
+    TableMetadata response =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc, "irc_w_loc_b", ircCreateAt("t", "/tmp/irc_w_loc_elsewhere/t", false)));
+    String nativeView = json(get(mvc, "irc_w_loc_b", "t"));
+    assertTrue(
+        response.location().endsWith("/irc_w_loc_b/t-" + str(nativeView, "$.tableUUID")),
+        response.location());
+    assertEquals(response.location(), IrcWrite.load(mvc, "irc_w_loc_b", "t").location());
+    assertSameStored("irc_w_loc_a", "irc_w_loc_b");
+    assertTrue(filesUnder("irc_w_loc_elsewhere").isEmpty());
   }
 
   @Test
@@ -329,6 +353,53 @@ public class IrcWriteRoutesTest {
                 .setProperties(props)
                 .build()));
     assertSameStored("irc_w_n_resv", "irc_w_i_resv");
+  }
+
+  /**
+   * The server owns the format version (D19, D20): a create or a staged create whose {@code
+   * format-version} property asks for another version than the cluster's is refused with 400 naming
+   * the property and the version the server uses, as the commit that completes a staged create
+   * already refuses a mismatch. Before, the staged create silently answered metadata of the
+   * cluster's version, which its completion then stored. The cluster's own version is accepted.
+   * (The native create overwrites the property with the cluster's version; that is unchanged.)
+   */
+  @Test
+  void createOrStagedCreateAskingForAnotherFormatVersionIsRefusedAndNamesIt() throws Exception {
+    int clusterVersion = clusterProperties.getClusterIcebergFormatVersion();
+    track("irc_w_fmt", "t");
+    for (boolean staged : new boolean[] {false, true}) {
+      for (String asked : new String[] {"1", "3", "x"}) {
+        CreateTableRequest.Builder builder =
+            CreateTableRequest.builder()
+                .withName("t")
+                .withSchema(SCHEMA)
+                .setProperties(with(nativeBody("x").getTableProperties(), "format-version", asked));
+        CreateTableRequest request = staged ? builder.stageCreate().build() : builder.build();
+        String message =
+            assertIrcError(IrcWrite.create(mvc, "irc_w_fmt", request), 400, "BadRequestException")
+                .message();
+        assertTrue(message.contains("format-version"), message);
+        assertTrue(message.contains("format version " + clusterVersion), message);
+        assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_fmt", "t")));
+        assertTrue(filesUnder("irc_w_fmt").isEmpty(), filesUnder("irc_w_fmt").toString());
+      }
+    }
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_fmt",
+                CreateTableRequest.builder()
+                    .withName("t")
+                    .withSchema(SCHEMA)
+                    .setProperties(
+                        with(
+                            nativeBody("x").getTableProperties(),
+                            "format-version",
+                            Integer.toString(clusterVersion)))
+                    .stageCreate()
+                    .build()));
+    assertEquals(clusterVersion, staged.formatVersion());
   }
 
   // ---------------------------------------------------------------- staged create
@@ -390,6 +461,29 @@ public class IrcWriteRoutesTest {
     // create, as for every native create (a native staged create's file has its own UUID too).
     assertEquals(staged.location(), committed.location());
     assertSameStored("irc_w_n_sc", "irc_w_i_sc");
+  }
+
+  /**
+   * A staged create that names a location (D30) is staged at the server's location, which its
+   * completion then sets, as {@code RESTCatalog} sends the staged location back: the table is what
+   * the native create stores, and nothing is written at the requested location.
+   */
+  @Test
+  void stagedCreateThatNamesALocationIsStagedAndCreatedAtTheServersLocation() throws Exception {
+    createNative(nativeBody("irc_w_n_sloc"));
+    track("irc_w_i_sloc", "t");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc, "irc_w_i_sloc", ircCreateAt("t", "/tmp/irc_w_sloc_elsewhere/t", true)));
+    assertTrue(staged.location().contains("/irc_w_i_sloc/t-"), staged.location());
+    TableMetadata committed =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc, "irc_w_i_sloc", "t", IrcWrite.createCommit(staged, Collections.emptyList())));
+    assertEquals(staged.location(), committed.location());
+    assertSameStored("irc_w_n_sloc", "irc_w_i_sloc");
+    assertTrue(filesUnder("irc_w_sloc_elsewhere").isEmpty());
   }
 
   @Test
@@ -940,6 +1034,51 @@ public class IrcWriteRoutesTest {
     assertSameStored("irc_w_n_rtas", "irc_w_i_rtas");
   }
 
+  /**
+   * A replace that names a location (D30; {@code RESTSessionCatalog.replaceTransaction} then sends
+   * a set-location among the replace's changes) keeps the table where it is: it stores what the
+   * same replace without a location stores. An ordinary commit that sets the location is still
+   * refused ({@link #locationUuidAndFormatVersionChangesAreRefusedAndNamed}).
+   */
+  @Test
+  void replaceThatNamesALocationKeepsTheTablesLocation() throws Exception {
+    rtasTable("irc_w_rloc_a");
+    rtasTable("irc_w_rloc_b");
+    TableMetadata baseA = IrcWrite.load(mvc, "irc_w_rloc_a", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_rloc_a",
+            "t",
+            IrcWrite.replace(
+                baseA,
+                IrcWrite.replacement(
+                    baseA, replacementSchema(baseA), baseA.spec(), Collections.emptyMap()),
+                Collections.emptyList())));
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rloc_b", "t");
+    TableMetadata replacement =
+        base.buildReplacement(
+            replacementSchema(base),
+            base.spec(),
+            SortOrder.unsorted(),
+            "/tmp/irc_w_rloc_elsewhere/t",
+            Collections.emptyMap());
+    assertTrue(
+        replacement.changes().stream().anyMatch(MetadataUpdate.SetLocation.class::isInstance));
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_rloc_b",
+                "t",
+                IrcWrite.replace(base, replacement, Collections.emptyList())));
+    assertEquals(base.location(), after.location());
+    assertEquals(base.location(), IrcWrite.load(mvc, "irc_w_rloc_b", "t").location());
+    assertSameStored("irc_w_rloc_a", "irc_w_rloc_b");
+    assertTrue(filesUnder("irc_w_rloc_elsewhere").isEmpty());
+  }
+
   @Test
   void replaceIsRefusedWithTheNativeMessageWhenRtasIsNotEnabled() throws Exception {
     String v0 = createNative(nativeBody("irc_w_rtas_off"));
@@ -1092,7 +1231,7 @@ public class IrcWriteRoutesTest {
                 409,
                 "AlreadyExistsException")
             .message());
-    // Case-only rename and a rename across databases: the native 400.
+    // Case-only rename: the native 400.
     String nativeCase =
         message(
             rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "T").andExpect(status().isBadRequest()));
@@ -1106,25 +1245,57 @@ public class IrcWriteRoutesTest {
                 400,
                 "BadRequestException")
             .message());
-    String nativeAcross =
-        message(
-            rename(mvc, "irc_w_ren2", "t", "irc_w_other", "t").andExpect(status().isBadRequest()));
-    assertEquals(
-        nativeAcross,
-        assertIrcError(
-                IrcWrite.rename(
-                    mvc,
-                    TableIdentifier.of("irc_w_ren2", "t"),
-                    TableIdentifier.of("irc_w_other", "t")),
-                400,
-                "BadRequestException")
-            .message());
     // Missing source: 404.
     assertIrcError(
         IrcWrite.rename(
             mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
         404,
         "NoSuchTableException");
+  }
+
+  /**
+   * A rename across databases, which the native rename refuses with 400 whether or not the target
+   * database exists, answers what the spec lists for renameTable: 404 {@code
+   * NoSuchNamespaceException} when the target namespace does not exist, and otherwise 406, the
+   * spec's "the server does not support this operation", with the native message. Nothing changes.
+   */
+  @Test
+  void renameAcrossDatabasesIs404ForAMissingTargetNamespaceAnd406Otherwise() throws Exception {
+    createNative(nativeBody("irc_w_renx"));
+    createNative(nativeBody("irc_w_renx_to"));
+    String before = stored("irc_w_renx");
+    // The native rename: 400 in both cases, unchanged.
+    message(
+        rename(mvc, "irc_w_renx", "t", "irc_w_renx_none", "u").andExpect(status().isBadRequest()));
+    String nativeAcross =
+        message(
+            rename(mvc, "irc_w_renx", "t", "irc_w_renx_to", "u")
+                .andExpect(status().isBadRequest()));
+    assertTrue(nativeAcross.contains("across databases"), nativeAcross);
+
+    assertEquals(
+        "Namespace does not exist: irc_w_renx_none",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_renx", "t"),
+                    TableIdentifier.of("irc_w_renx_none", "u")),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertEquals(
+        nativeAcross,
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_renx", "t"),
+                    TableIdentifier.of("irc_w_renx_to", "u")),
+                406,
+                "UnsupportedOperationException")
+            .message());
+    assertEquals(before, stored("irc_w_renx"));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_renx_to", "u")));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_renx_none", "u")));
   }
 
   // ---------------------------------------------------------------- table audit

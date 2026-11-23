@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.e2e.h2;
 import static com.linkedin.openhouse.tables.e2e.h2.IrcHttp.assertIrcError;
 import static com.linkedin.openhouse.tables.e2e.h2.NativeViewHttp.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.atLeastOnce;
@@ -20,6 +21,7 @@ import com.linkedin.openhouse.tables.audit.model.OperationStatus;
 import com.linkedin.openhouse.tables.audit.model.ViewAuditEvent;
 import com.linkedin.openhouse.tables.audit.model.ViewOperationType;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -360,19 +362,30 @@ public class IrcViewRoutesTest {
             .message());
   }
 
+  /**
+   * The server owns view locations (D30): a create that names a location is created where the
+   * server puts the view, exactly as the same create without one, and the response says where.
+   * Nothing is written at the requested location. Before, such a create was refused with 400.
+   */
   @Test
-  void createThatNamesALocationIsRefusedAndNamesTheField() throws Exception {
-    database("irc_v_cloc");
+  void createThatNamesALocationIsCreatedAtTheServersLocation() throws Exception {
+    database("irc_v_cloc_a");
+    database("irc_v_cloc_b");
+    createIrc("irc_v_cloc_a", "v");
+    views.add(new String[] {"irc_v_cloc_b", "v"});
     CreateViewRequest request =
         ImmutableCreateViewRequest.builder()
-            .from(ircCreate("irc_v_cloc", "v"))
-            .location("/tmp/elsewhere")
+            .from(ircCreate("irc_v_cloc_b", "v"))
+            .location("/tmp/irc_v_cloc_elsewhere/v")
             .build();
-    String message =
-        assertIrcError(IrcViewWrite.create(mvc, "irc_v_cloc", request), 400, "BadRequestException")
-            .message();
-    assertTrue(message.contains("location"), message);
-    assertEquals(404, code(get(mvc, "irc_v_cloc", "v")));
+    LoadViewResponse response =
+        IrcViewWrite.parsed(IrcViewWrite.create(mvc, "irc_v_cloc_b", request));
+    assertTrue(
+        response.metadata().location().contains("/irc_v_cloc_b/"), response.metadata().location());
+    assertEquals(
+        response.metadata().location(), IrcViewWrite.load(mvc, "irc_v_cloc_b", "v").location());
+    assertSameStored("irc_v_cloc_a", "irc_v_cloc_b");
+    assertFalse(new File("/tmp/irc_v_cloc_elsewhere").exists());
   }
 
   @Test
@@ -523,6 +536,50 @@ public class IrcViewRoutesTest {
     assertEquals(pointer(mvc, "irc_v_i_repl", "v"), response.metadataLocation());
     assertEquals(2, response.metadata().currentVersionId());
     expectAudited("irc_v_i_repl", ViewOperationType.REPLACE, OperationStatus.SUCCESS);
+  }
+
+  /**
+   * A replace that names a location (D30; {@code RESTViewBuilder.replace} then sends a set-location
+   * with the new version) keeps the view where it is: it stores what the same replace without a
+   * location stores. A commit that only sets the location is still refused ({@link
+   * #aCommitThatSetsTheLocationIsRefusedAndNamesTheField}).
+   */
+  @Test
+  void replaceThatNamesALocationKeepsTheViewsLocation() throws Exception {
+    database("irc_v_rloc_a");
+    database("irc_v_rloc_b");
+    createNative("irc_v_rloc_a", "v");
+    createNative("irc_v_rloc_b", "v");
+    String newSql = "SELECT id, name, 1 AS extra FROM ";
+    ViewMetadata baseA = IrcViewWrite.load(mvc, "irc_v_rloc_a", "v");
+    IrcViewWrite.parsed(
+        IrcViewWrite.commit(
+            mvc,
+            "irc_v_rloc_a",
+            "v",
+            IrcViewWrite.commitRequest(
+                baseA,
+                IrcViewWrite.replacement(
+                    baseA, SCHEMA_EXTRA, newSql + "irc_v_rloc_a.t", Collections.emptyMap()))));
+
+    ViewMetadata base = IrcViewWrite.load(mvc, "irc_v_rloc_b", "v");
+    ViewMetadata replacement =
+        IrcViewWrite.replacement(
+            base,
+            SCHEMA_EXTRA,
+            newSql + "irc_v_rloc_b.t",
+            Collections.emptyMap(),
+            "/tmp/irc_v_rloc_elsewhere/v");
+    assertTrue(
+        replacement.changes().stream().anyMatch(MetadataUpdate.SetLocation.class::isInstance));
+    LoadViewResponse response =
+        IrcViewWrite.parsed(
+            IrcViewWrite.commit(
+                mvc, "irc_v_rloc_b", "v", IrcViewWrite.commitRequest(base, replacement)));
+    assertEquals(base.location(), response.metadata().location());
+    assertEquals(2, response.metadata().currentVersionId());
+    assertSameStored("irc_v_rloc_a", "irc_v_rloc_b");
+    assertFalse(new File("/tmp/irc_v_rloc_elsewhere").exists());
   }
 
   @Test
@@ -910,10 +967,53 @@ public class IrcViewRoutesTest {
                 .build()),
         409,
         "AlreadyExistsException");
-    // A table renamed onto a view's name is refused by House Tables' key (a 409 from the real
-    // service); this fixture's in-memory House Tables does not model that, so it is not exercised.
+    // A table renamed onto a view's name: renameOfATableOntoAViewsNameIsRefused.
     assertEquals(before, stored("irc_v_kinds", "v"));
     assertEquals(200, CommitPathHttp.status(CommitPathHttp.get(mvc, "irc_v_kinds", "t")));
+  }
+
+  /**
+   * A table renamed onto a view's name. Tables and views share House Tables' key, so the real store
+   * refuses the rename (409, which its client raises as {@code
+   * HouseTableConcurrentUpdateException}; the stand-in models that), after the native rename, which
+   * looks up only tables, has written the renamed metadata. The internal catalog turns the refusal
+   * into Iceberg's CommitFailedException, which the commit retries and the native API does not map:
+   * the native route answers 500, pinned here as it is. The IRC route answers the spec's 409 {@code
+   * AlreadyExistsException}, worded as Iceberg's catalogs word it. Neither the view nor the table
+   * changes.
+   */
+  @Test
+  void renameOfATableOntoAViewsNameIsRefused() throws Exception {
+    database("irc_v_rent");
+    createNative("irc_v_rent", "v");
+    String view = stored("irc_v_rent", "v");
+    String tableUuid =
+        CommitPathHttp.str(
+            CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID");
+
+    org.springframework.test.web.servlet.ResultActions nativeRename =
+        CommitPathHttp.rename(mvc, "irc_v_rent", "t", "irc_v_rent", "v");
+    assertEquals(500, CommitPathHttp.status(nativeRename), CommitPathHttp.json(nativeRename));
+    assertTrue(
+        CommitPathHttp.message(nativeRename)
+            .startsWith("org.apache.iceberg.exceptions.CommitFailedException"),
+        CommitPathHttp.message(nativeRename));
+
+    assertEquals(
+        "Cannot rename irc_v_rent.t to irc_v_rent.v. View already exists",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_v_rent", "t"),
+                    TableIdentifier.of("irc_v_rent", "v")),
+                409,
+                "AlreadyExistsException")
+            .message());
+    assertEquals(view, stored("irc_v_rent", "v"));
+    assertEquals(
+        tableUuid,
+        CommitPathHttp.str(
+            CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID"));
   }
 
   @Test
