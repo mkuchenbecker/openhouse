@@ -2,7 +2,7 @@
 
 Continues `08-findings.md`, which is near its length limit.
 
-Bottom line: the eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5). Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
+Bottom line: the eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5), now confirmed by running it and closed over IRC. Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
 and two wrong claims through in the seventh round. Each was cheap to catch. Briefs now require the cheap checks
 (D26). All items are observations from delegated agents and from reading CI.
 
@@ -65,14 +65,18 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
 
 ## Eleventh round (V6 and V7, 2026-11-23)
 
-- Data loss, not run, read from code: a create that names an existing table directory accepts the directory of a
-  live table that was renamed away. Dropping the new table would then purge the renamed table's files. Two entry
-  points: the native create with `openhouse.tableUUID` (LinkedIn's existing behavior), and the IRC completion of a
-  staged create (our code). Register refuses this case and has a test (`46-v6-v7-metrics-register-result.md`).
-- Work items: V16 refuses it in the IRC staged-create completion, proven by a test that fails first. N5 pins the
-  native half with a test, per D9, and records the fix as a change that needs a decision, because it changes native
-  behavior.
-- Test, small: four register refusals exist in code without a test (T13).
+- Data loss, first read from code, then run (2026-11-23, pull request 116, `48-v16-directory-reuse-result.md`): a
+  create that carries the UUID of a live table that was renamed away becomes a second table in that table's
+  directory. Dropping it answers 204 and deletes the first table's files, and every read of the first answers 500.
+  Run on both APIs. IRC had three entry points, not two (a completion naming the directory, a completion whose
+  snapshot's manifest list lies there, a create carrying `openhouse.tableUUID`); all are closed. Natively there
+  are four, they need only the create privilege on the database, and they are unchanged and pinned by five tests.
+  The fix is put to Mike (D35). Register refused this case from the start.
+- Work items: V16 (done), N5 (pinned; fix put to Mike) and T13 (done: four tests, no code change).
+- Open, small: an IRC create can still set `openhouse.isTableReplicated` (note on I9); each completion naming a
+  location lists the database's house-table rows (V17).
+- A note in `46-v6-v7-metrics-register-result.md` says `openhouse.replicaTableLocationId` names a directory; the
+  pull request 116 agent read that the base checker filters it out first, so it does not in this build.
 - Test, possibly T8: `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log
   before its last line was written. Pull request 112 made the test wait for that line. T8 stays open until a CI
   failure names its test.

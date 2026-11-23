@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 33 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 112, merge
-commit 8876a7f2) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 35 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 116, merge
+commit 0a3bf529) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -43,6 +43,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 110 | V9c: 193 shared files moved into the newer projects under `src/shared` (`44-v9abc-flip-prep-result.md`) | 7e8941ab |
 | 111 | C6, T9: every pull request runs the default build and the opt-in build; the kit's warehouse leaves the checkout path (`44-v9abc-flip-prep-result.md`) | 6cc7b092 |
 | 112 | V6, V7: the IRC metrics report and register table routes (`46-v6-v7-metrics-register-result.md`) | 8876a7f295aaca02b49baa3e306fe44774ccc1f9 |
+| 113 | V9d: the uber jars, Docker prerequisites, scheduler image and Spark image build and start under the 1.12 switch (`47-v9d-deployables-result.md`) | b1dfe9b06156ba365631d30e748f8279a40c0bd5 |
+| 116 | V16, N5, T13: an IRC create can no longer take a live table's directory; the native defect pinned; four register refusals tested (`48-v16-directory-reuse-result.md`) | 0a3bf5292fd861405d416b26227d1f504d2a1288 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

@@ -2,7 +2,7 @@
 
 Continues `22-decisions-continued-2.md`.
 
-Bottom line: five more decisions (D30 to D34), all dated 2026-11-23. D34 adopts the choices made in pull request 112
+Bottom line: seven more decisions (D30 to D36), all dated 2026-11-23. D35 is a question put to Mike (the native directory-reuse fix) and D36 extends D30 to `openhouse.tableUUID`. D34 adopts the choices made in pull request 112
 (metrics report and register table). D30 reverses part of D20 for creates after
 Apache's compatibility kit showed the cost. D31 accepts two differences of Iceberg 1.12 and names one that is not
 accepted. D32 is a question put to Mike, because it defines the goal; work proceeds on the first reading until he
@@ -92,3 +92,32 @@ entry cites a statement. Claude wrote every entry.
 - Why: see the reasons above; the evidence is in `46-v6-v7-metrics-register-result.md`.
 - References: pull request 112, merge commit `8876a7f295aaca02b49baa3e306fe44774ccc1f9`; D19, D24; D30.
 - Reverse by: deleting one default line turns reporting on. Register's rules are loosened in their own item.
+
+## D35. Whether to fix the native directory-reuse defect is put to Mike
+
+- Date: 2026-11-23. Question asked 2026-11-23. Not decided. Not blocking. It changes native behavior, so it is a
+  door only Mike opens.
+- Question: should the native create refuse a UUID that a live or soft-deleted row of the same database already
+  carries? Today four native requests answer 201 and create a second table in a renamed table's directory;
+  dropping the second deletes the first's files, and every read of the first answers 500 (`48-v16-directory-reuse-result.md`).
+- Proposed smallest fix: `TableUUIDGenerator` refuses such a UUID with the existing 400. About 20 lines and one
+  injected repository.
+- Effects: (a) the four requests go from 201 to 400. (b) Every create that names a UUID or carries data (every
+  CTAS, every replica create) makes one more House Tables listing, because House Tables has no lookup by UUID.
+  (c) Re-creating a replica under its old name while a renamed table with that UUID exists is refused. Nothing
+  else changes. The larger alternative is making drop refuse to purge a directory another row points into.
+- Until he answers: the defect is pinned by five tests (D9) and the IRC half is closed (D36).
+- References: pull request 116; `21-findings-continued.md`, eleventh round.
+- Reverse by: not applicable until decided; if made, remove the check.
+
+## D36. On IRC, `openhouse.tableUUID` in a create's properties is ignored
+
+- Date: 2026-11-23. The orchestrator's decision, a two-way door. Extends D30.
+- Decision: an IRC create and staged create ignore `openhouse.tableUUID` in their properties, as they ignore a
+  requested location. The table is created in a directory of its own under a new UUID.
+- Accepted IRC-only differences: such a create with incomplete companion properties used to get the native 400
+  and is now created under a new UUID; a denied principal whose completion also breaks a native validation rule
+  now gets 403 where it got that rule's 400.
+- Why: the property was one of three IRC ways to put a second table in a live table's directory.
+- References: pull request 116 (merge commit `0a3bf5292fd861405d416b26227d1f504d2a1288`); D30; D35.
+- Reverse by: passing the property on to the native create again, which reopens the defect of D35.
