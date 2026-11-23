@@ -216,7 +216,50 @@ tasks.register('CopyGitHooksTask', Copy) {
 //       :integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar (uber JAR)
 //       :apps:openhouse-spark-apps_2.12:shadowJar (uber JAR)
 //       :scripts:java:tools:dummytokens:jar
+//
+// Under -PicebergFork the Iceberg 1.2 / Spark 3.1 projects are not in the build, so the images
+// are built from the Spark 3.5 jars instead (docs/development/iceberg-fork.md, "Docker images"):
+//   jobs-scheduler.Dockerfile      -> :apps:openhouse-spark-apps-1.5_2.12:shadowJar (uber JAR)
+//   spark-3.5-base-hadoop3.2.dockerfile ->
+//       :integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar (uber JAR)
+//       :apps:openhouse-spark-apps-1.5_2.12:shadowJar (uber JAR)
+//       stageIcebergSparkRuntime (the fork's iceberg-spark-runtime, which no public repository has)
+//       :scripts:java:tools:dummytokens:jar
+// The docker* tasks below then pass infra/recipes/docker-compose/iceberg-fork.env to docker
+// compose, which selects those jars, that Spark image and Java 17 in it.
 // =============================================================================
+
+// The Spark apps uber JAR the jobs-scheduler and Spark images are built from.
+def dockerSparkAppsName = icebergFork ? 'openhouse-spark-apps-1.5_2.12' : 'openhouse-spark-apps_2.12'
+
+if (icebergFork) {
+  configurations {
+    icebergSparkRuntimeForImage
+  }
+
+  dependencies {
+    icebergSparkRuntimeForImage("com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:${iceberg_1_5_version}") {
+      transitive = false
+    }
+  }
+
+  // A Docker build reads only its context (this directory), not the Gradle user home.
+  tasks.register('stageIcebergSparkRuntime', Sync) {
+    description = "Copies the fork's iceberg-spark-runtime into build/ for the Spark image"
+    group = 'docker'
+    from configurations.icebergSparkRuntimeForImage
+    into "${rootProject.buildDir}/iceberg-spark-runtime"
+  }
+}
+
+// docker compose with the variables that select the images of this build.
+def dockerCompose = { String... args ->
+  def command = ['docker', 'compose']
+  if (icebergFork) {
+    command += ['--env-file', "${rootDir}/infra/recipes/docker-compose/iceberg-fork.env".toString()]
+  }
+  command + args.toList()
+}
 
 tasks.register('dockerPrereqs') {
   description = 'Builds all JAR files required by Docker images'
@@ -231,11 +274,15 @@ tasks.register('dockerPrereqs') {
   dependsOn ':apps:optimizer:schedulerapp:bootJar'
 
   // Spark runtime uber JARs (shadowJar)
-  dependsOn ':integrations:spark:spark-3.1:openhouse-spark-runtime_2.12:shadowJar'
+  if (icebergFork) {
+    dependsOn 'stageIcebergSparkRuntime'
+  } else {
+    dependsOn ':integrations:spark:spark-3.1:openhouse-spark-runtime_2.12:shadowJar'
+  }
   dependsOn ':integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar'
 
   // Spark apps uber JAR (shadowJar)
-  dependsOn ':apps:openhouse-spark-apps_2.12:shadowJar'
+  dependsOn ":apps:${dockerSparkAppsName}:shadowJar"
 
   // Utility JAR
   dependsOn ':scripts:java:tools:dummytokens:jar'
@@ -255,9 +302,13 @@ tasks.register('dockerPrereqs') {
     println '  build/optimizer/libs/optimizer.jar'
     println '  build/analyzerapp/libs/analyzerapp.jar'
     println '  build/schedulerapp/libs/schedulerapp.jar'
-    println '  build/openhouse-spark-runtime_2.12/libs/openhouse-spark-runtime_2.12-uber.jar'
+    if (icebergFork) {
+      println '  build/iceberg-spark-runtime/iceberg-spark-runtime-3.5_2.12-*.jar'
+    } else {
+      println '  build/openhouse-spark-runtime_2.12/libs/openhouse-spark-runtime_2.12-uber.jar'
+    }
     println '  build/openhouse-spark-3.5-runtime_2.12/libs/openhouse-spark-3.5-runtime_2.12-uber.jar'
-    println '  build/openhouse-spark-apps_2.12/libs/openhouse-spark-apps_2.12-uber.jar'
+    println "  build/${dockerSparkAppsName}/libs/${dockerSparkAppsName}-uber.jar"
     println '  build/dummytokens/libs/dummytokens*.jar'
     println '  build/otel/opentelemetry-javaagent.jar'
     println ''
@@ -276,7 +327,7 @@ tasks.register('dockerBuild', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine 'docker', 'compose', 'build'
+  commandLine dockerCompose('build')
 
   doFirst {
     if (!file(recipeDir).exists()) {
@@ -304,7 +355,7 @@ tasks.register('dockerUp', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine 'docker', 'compose', 'up', '-d'
+  commandLine dockerCompose('up', '-d')
 
   doFirst {
     println ''
@@ -340,7 +391,7 @@ tasks.register('dockerDown', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine 'docker', 'compose', 'down'
+  commandLine dockerCompose('down')
 
   doFirst {
     if (!file(recipeDir).exists()) {
