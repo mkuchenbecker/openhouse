@@ -70,8 +70,9 @@ public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibility
   }
 
   /**
-   * {@code rck.supports-variant=false}; the kit's default. The service still runs on Iceberg's
-   * format v2 line for its tables, where the variant type (format v3) does not exist.
+   * {@code rck.supports-variant=false}; the kit's default. The kit's service creates format v3
+   * tables when asked (its cluster switch is on), but refuses a variant column on them until the
+   * format v3 types are supported (work item X5).
    */
   @Override
   protected boolean supportsVariant() {

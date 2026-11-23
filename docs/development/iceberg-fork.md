@@ -368,7 +368,8 @@ scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's test
 
 The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory
 H2, local storage, the dummy token interceptor, an authorization handler that allows everything,
-views enabled for the namespaces the kit uses). A JUnit session listener in the test JVM starts it
+views enabled for the namespaces the kit uses, and the cluster switch for format v3 tables,
+`cluster.iceberg.format-v3.enabled`, on, so the kit's format v3 creates are honoured). A JUnit session listener in the test JVM starts it
 and points the kit at `<service>/iceberg` (`rck.local=false`, `uri`, `token`). Its log and access
 log are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`. Its warehouse is
 not: as for the Spark 4.2 test services, it is a new directory (`ohrck-*`) under the system's

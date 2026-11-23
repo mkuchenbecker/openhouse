@@ -49,9 +49,9 @@ OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithSlash() | SKIPPED | a
 OpenHouseRestCompatibilityKitCatalogTests.testTableNameWithSlash() | SKIPPED | a | supportsNamesWithSlashes=false (kit's own answer): ids are letters, digits and underscores
 
 # (a) VARIANT: 3 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() | SKIPPED | a | supportsVariant=false (kit default): the service's tables are format v2; variant is v3
-OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the service's tables are format v2; variant is v3
-OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the service's tables are format v2; variant is v3
+OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
+OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
+OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
 
 # (b) CREATEHIST: 1 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransactionMultipleSchemas() | FAILED | b | a create stores the create transaction's final schema, spec and order as the table's first (ids 0); the kit expects the transaction's history (schema id 1)
@@ -78,11 +78,9 @@ OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersion() | FAILED | b 
 # (b) DROPPURGE: 1 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | b | the kit drops the table without purge and registers its old metadata file; OpenHouse's drop always removes the table's files with it, so register finds no file there (400)
 
-# (b) FMT: 4 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
-OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
-OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[1] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
-OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
+# (b) FMT: 2 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | b | the server owns the format version: a create or staged create asking for format-version 1 is refused 400 (tables are v2, or v3 when asked for where the cluster enables it, as the kit's service does)
+OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[1] | FAILED | b | the server owns the format version: a create or staged create asking for format-version 1 is refused 400 (tables are v2, or v3 when asked for where the cluster enables it, as the kit's service does)
 
 # (b) IDS: 3 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testListNonExistingNamespace() | FAILED | b | a namespace id with a hyphen is not an OpenHouse id: 400 BadRequest, the kit expects 404
