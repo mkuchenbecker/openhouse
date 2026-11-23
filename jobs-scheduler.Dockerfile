@@ -3,7 +3,10 @@ FROM openjdk:23-ea-11-slim
 ARG USER=openhouse
 ARG USER_ID=1000
 ARG GROUP_ID=1000
-ENV APP_NAME=openhouse-spark-apps_2.12
+# The Spark apps uber jar the scheduler runs from: build/<name>/libs/<name>-uber.jar. A build with
+# -PicebergFork has only the Spark 3.5 apps: --build-arg OH_SPARK_APPS_NAME=openhouse-spark-apps-1.5_2.12
+ARG OH_SPARK_APPS_NAME=openhouse-spark-apps_2.12
+ENV APP_NAME=$OH_SPARK_APPS_NAME
 ENV USER_HOME=/home/$USER
 
 # Create an openhouse user as there's no reason to run as root user

@@ -40,6 +40,8 @@ services:
       - prometheus
       - jaeger
     environment:
+      # Set only when it is set where docker compose runs (../iceberg-fork.env); else /var/config/jobs.yaml.
+      - OPENHOUSE_JOBS_CONFIG_PATH
       - OTEL_SERVICE_NAME=openhouse-jobs
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
       - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
