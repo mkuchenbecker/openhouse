@@ -19,7 +19,6 @@ public class CreateTablePartitionedTestSpark3_5 {
     String tbName = "tbpartitionedclustered";
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
-    mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
 
     GetTableResponseBody getTableResponseBody =
         mockGetTableResponseBody(
@@ -51,7 +50,6 @@ public class CreateTablePartitionedTestSpark3_5 {
   @Test
   public void testCreateTimePartitionAndTransformClusteredTable() {
     String tbName = "tbpartitionedtransformclustered";
-    mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
 
@@ -86,7 +84,6 @@ public class CreateTablePartitionedTestSpark3_5 {
   public void testCreateTimePartitionedTableSuccessful() {
     for (String transform : ImmutableList.of("days", "months", "hours", "years")) {
       String tbName = "tbpartitioned" + transform;
-      mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
       mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
       mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
 
@@ -126,7 +123,6 @@ public class CreateTablePartitionedTestSpark3_5 {
             "identity(name)", "name", "identity(count)", "count", "truncate(10, timeLong)")) {
       String tbName =
           "tbclustered_" + transform.replace('(', '_').replace(')', '_').replace(", ", "_");
-      mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
       mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
       mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
 

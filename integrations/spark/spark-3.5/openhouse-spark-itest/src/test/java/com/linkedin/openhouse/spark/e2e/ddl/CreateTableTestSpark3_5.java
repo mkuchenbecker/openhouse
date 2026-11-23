@@ -20,7 +20,6 @@ public class CreateTableTestSpark3_5 {
   public void testCreateTable() {
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
     mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
-    mockTableService.enqueue(mockResponse(404, mockGetAllTableResponseBody())); // doRefresh()
 
     GetTableResponseBody getTableResponseBody =
         mockGetTableResponseBody(
