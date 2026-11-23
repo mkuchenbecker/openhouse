@@ -261,6 +261,117 @@ public class IrcWriteRoutesAuthTest {
     assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, DB, "t2").metadataFileLocation());
   }
 
+  private static org.apache.iceberg.rest.requests.UpdateTableRequest setProperty(
+      TableMetadata base) {
+    return IrcWrite.simple(
+        base,
+        Collections.singletonList(
+            new MetadataUpdate.SetProperties(Collections.singletonMap("user.k", "v"))));
+  }
+
+  /**
+   * A transaction of one table (the multi-table commit route) is authorized as the ordinary commit
+   * of that table, table by table: the principal is refused on the table it may not write, with the
+   * ordinary commit's refusal (the native one), and commits the table it may.
+   */
+  @Test
+  void aTransactionIsAuthorizedAsTheOrdinaryCommitOfItsTable() throws Exception {
+    create("tx1");
+    create("tx2");
+    TableMetadata allowed = IrcWrite.load(mvc, DB, "tx1");
+    TableMetadata denied = IrcWrite.load(mvc, DB, "tx2");
+    String getJson = json(get(mvc, DB, "tx2"));
+    when(authorizationHandler.checkAccessDecision(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                (TableDto table) -> table != null && "tx2".equals(table.getTableId())),
+            any(Privileges.class)))
+        .thenReturn(false);
+    String nativeMessage =
+        message(
+            put(mvc, bodyFromGet(getJson).toBuilder().sortOrder(null).build())
+                .andExpect(status().isForbidden()));
+    String ordinary =
+        assertIrcError(
+                IrcWrite.commit(mvc, DB, "tx2", setProperty(denied)), 403, "ForbiddenException")
+            .message();
+    assertEquals(nativeMessage, ordinary);
+    org.mockito.Mockito.clearInvocations(authorizationHandler);
+    assertEquals(
+        ordinary,
+        assertIrcError(
+                IrcWrite.transaction(mvc, IrcWrite.change(DB, "tx2", setProperty(denied))),
+                403,
+                "ForbiddenException")
+            .message());
+    // The decision asked for is the ordinary commit's: the write privilege on that table.
+    org.mockito.Mockito.verify(authorizationHandler)
+        .checkAccessDecision(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                (TableDto table) -> table != null && "tx2".equals(table.getTableId())),
+            org.mockito.ArgumentMatchers.eq(Privileges.UPDATE_TABLE_METADATA));
+    assertEquals(
+        204,
+        IrcWrite.transaction(mvc, IrcWrite.change(DB, "tx1", setProperty(allowed)))
+            .getResponse()
+            .getStatus());
+    stubDecision(true);
+    assertEquals(
+        denied.metadataFileLocation(), IrcWrite.load(mvc, DB, "tx2").metadataFileLocation());
+    assertEquals("v", IrcWrite.load(mvc, DB, "tx1").properties().get("user.k"));
+  }
+
+  /**
+   * A transaction of several tables is refused for what it is (400), before any table is read and
+   * before any authorization decision is asked for: the refusal is the same for a principal who may
+   * write none of the tables, and for tables that do not exist, so it tells nothing about them.
+   */
+  @Test
+  void aTransactionOfSeveralTablesIsRefusedBeforeAnyAuthorizationDecision() throws Exception {
+    create("tx3");
+    create("tx4");
+    TableMetadata first = IrcWrite.load(mvc, DB, "tx3");
+    TableMetadata second = IrcWrite.load(mvc, DB, "tx4");
+    String allowedMessage =
+        assertIrcError(
+                IrcWrite.transaction(
+                    mvc,
+                    IrcWrite.change(DB, "tx3", setProperty(first)),
+                    IrcWrite.change(DB, "tx4", setProperty(second))),
+                400,
+                "BadRequestException")
+            .message();
+    stubDecision(false);
+    org.mockito.Mockito.clearInvocations(authorizationHandler);
+    assertEquals(
+        allowedMessage,
+        assertIrcError(
+                IrcWrite.transaction(
+                    mvc,
+                    IrcWrite.change(DB, "tx3", setProperty(first)),
+                    IrcWrite.change(DB, "tx4", setProperty(second))),
+                400,
+                "BadRequestException")
+            .message());
+    assertIrcError(
+        IrcWrite.transaction(
+            mvc,
+            IrcWrite.change(DB, "tx_missing_a", setProperty(first)),
+            IrcWrite.change(DB, "tx_missing_b", setProperty(second))),
+        400,
+        "BadRequestException");
+    org.mockito.Mockito.verify(authorizationHandler, org.mockito.Mockito.never())
+        .checkAccessDecision(any(), any(TableDto.class), any(Privileges.class));
+    org.mockito.Mockito.verify(authorizationHandler, org.mockito.Mockito.never())
+        .checkAccessDecision(any(), any(DatabaseDto.class), any(Privileges.class));
+    stubDecision(true);
+    assertEquals(
+        first.metadataFileLocation(), IrcWrite.load(mvc, DB, "tx3").metadataFileLocation());
+    assertEquals(
+        second.metadataFileLocation(), IrcWrite.load(mvc, DB, "tx4").metadataFileLocation());
+  }
+
   @Test
   void aDeniedDropAndRenameAre403AsNatively() throws Exception {
     create("t3");

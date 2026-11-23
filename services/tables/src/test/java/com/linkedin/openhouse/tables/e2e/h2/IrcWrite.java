@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.e2e.h2;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
@@ -19,6 +20,7 @@ import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.rest.IrcClientParsers;
+import org.apache.iceberg.rest.requests.CommitTransactionRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -74,6 +76,30 @@ final class IrcWrite {
 
   static UpdateTableRequest simple(TableMetadata base, List<MetadataUpdate> changes) {
     return new UpdateTableRequest(UpdateRequirements.forUpdateTable(base, changes), changes);
+  }
+
+  /** The multi-table commit route ({@code RESTCatalog.commitTransaction}). */
+  static final String TRANSACTION = "/v1/transactions/commit";
+
+  /** {@code request} as a transaction's change to {@code db.table}: the same, with the name. */
+  static UpdateTableRequest change(String db, String table, UpdateTableRequest request) {
+    return UpdateTableRequest.create(
+        TableIdentifier.of(db, table), request.requirements(), request.updates());
+  }
+
+  /** A transaction of {@code changes}, as {@code RESTSessionCatalog.commitTransaction} sends it. */
+  static MvcResult transaction(MockMvc mvc, UpdateTableRequest... changes) throws Exception {
+    return IrcHttp.perform(
+        mvc, post(TRANSACTION, new CommitTransactionRequest(Arrays.asList(changes))));
+  }
+
+  /** A transaction route request with {@code json} as its body, for bodies no client builds. */
+  static MvcResult transaction(MockMvc mvc, String json) throws Exception {
+    return IrcHttp.perform(
+        mvc,
+        IrcHttp.request(HttpMethod.POST, TRANSACTION)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(json));
   }
 
   static MvcResult drop(MockMvc mvc, String db, String table) throws Exception {
