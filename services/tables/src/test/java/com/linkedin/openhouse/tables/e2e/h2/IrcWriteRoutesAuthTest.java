@@ -135,6 +135,54 @@ public class IrcWriteRoutesAuthTest {
     assertEquals(404, CommitPathHttp.status(get(mvc, DB, "t9")));
   }
 
+  /**
+   * The commit that completes a staged create is authorized as a create in that database before the
+   * house-table rows are looked at for the directory it names (as register is): a principal who may
+   * not create tables there gets the native create's refusal, which does not say whose directory
+   * that is.
+   */
+  @Test
+  void aDeniedCompletionNamingALiveTablesDirectoryIs403AndDoesNotSayWhoseItIs() throws Exception {
+    create("t5");
+    assertEquals(
+        204,
+        IrcWrite.rename(mvc, TableIdentifier.of(DB, "t5"), TableIdentifier.of(DB, "t6"))
+            .getResponse()
+            .getStatus());
+    created.add("t6");
+    String directory = IrcWrite.load(mvc, DB, "t6").location();
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                DB,
+                CreateTableRequest.builder()
+                    .withName("t5")
+                    .withSchema(IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL))
+                    .stageCreate()
+                    .build()));
+    org.apache.iceberg.rest.requests.UpdateTableRequest completion =
+        IrcWrite.createCommit(
+            TableMetadata.buildFrom(staged).discardChanges().setLocation(directory).build(),
+            Collections.emptyList());
+    // Allowed to create, the principal is told whose directory it is.
+    assertEquals(
+        "Cannot create table " + DB + ".t5: that directory belongs to " + DB + ".t6",
+        assertIrcError(IrcWrite.commit(mvc, DB, "t5", completion), 400, "BadRequestException")
+            .message());
+
+    stubDecision(false);
+    String nativeMessage = message(post(mvc, newTable(DB, "t5")).andExpect(status().isForbidden()));
+    String message =
+        assertIrcError(IrcWrite.commit(mvc, DB, "t5", completion), 403, "ForbiddenException")
+            .message();
+    assertEquals(nativeMessage, message);
+    assertTrue(!message.contains("t6"), message);
+    stubDecision(true);
+    assertEquals(404, CommitPathHttp.status(get(mvc, DB, "t5")));
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "t6")));
+  }
+
   private org.springframework.test.web.servlet.MvcResult register(String name, String location)
       throws Exception {
     return IrcHttp.perform(
