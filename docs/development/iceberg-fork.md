@@ -71,10 +71,51 @@ left-out project. `services:tables` tests
 use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
 share, is built on the Spark 3.5 / fork line. There it skips the root dependency forces and keeps
 the thin `iceberg-orc`/`iceberg-parquet` jars off its test classpath, as the Spark 3.5 apps do.
-Tasks that need a left-out project, such as `dockerPrereqs`, do not work under the switch.
+The deployables are built from the projects that are in the build: see "Docker images" below.
 
 The delta-harness runs on this build with `HARNESS_ICEBERG_FORK=1`
 (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
+
+## Docker images
+
+`./gradlew -PicebergFork shadowJar` builds every uber jar, and `./gradlew -PicebergFork
+dockerPrereqs` the jars the images need, from the projects that are in this build: the Spark 3.5
+apps uber jar where the default build takes the Iceberg 1.2 / Spark 3.1 one, and no Spark 3.1
+runtime. It also copies the fork's `iceberg-spark-runtime-3.5_2.12` to `build/iceberg-spark-runtime/`
+(`stageIcebergSparkRuntime`), because a Docker build reads only the checkout and no repository
+serves that jar.
+
+[`infra/recipes/docker-compose/iceberg-fork.env`](../../infra/recipes/docker-compose/iceberg-fork.env)
+holds the docker compose variables that select the images of this build. `./gradlew -PicebergFork
+dockerBuild`, `dockerUp` and `dockerDown` pass it; by hand:
+
+```bash
+./gradlew -PicebergFork dockerPrereqs
+docker compose --env-file infra/recipes/docker-compose/iceberg-fork.env \
+    -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
+```
+
+Without the file, and without the switch, every recipe and image is built as before. With it:
+
+- The service images (tables, housetables, jobs, optimizer) need nothing: their Dockerfiles copy
+  `build/<service>/libs`, whichever build filled it, and their base images
+  (`openjdk:23-ea-11-slim`, `eclipse-temurin:17-jre-jammy`) run Java 17 class files.
+- `jobs-scheduler.Dockerfile` takes `OH_SPARK_APPS_NAME=openhouse-spark-apps-1.5_2.12` as a build
+  argument. The Spark 3.5 apps jar carries `log4j2.properties` under the switch (the Iceberg 1.2
+  line's apps jar always has): without it the scheduler logs errors only.
+- The Spark services (`OH_SPARK_DOCKERFILE`) are built from `spark-3.5-base-hadoop3.2.dockerfile`
+  with `OH_SPARK_BASE=iceberg-fork`: Spark 3.5.2, a Java 17 runtime for every JVM in the image (the
+  jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the Spark 3.5
+  apps jar. The OpenHouse jars keep the names they have in the Spark 3.1 image
+  (`/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar`,
+  `/opt/spark/openhouse-spark-apps_2.12-latest-all.jar`), so `jobs.yaml`, `livy_cli.py` and the
+  dataloader integration tests name the same paths on both.
+- The jobs service reads `jobs-iceberg-fork.yaml` (`OPENHOUSE_JOBS_CONFIG_PATH`): `jobs.yaml` without
+  `spark.jars.packages`, which has Spark download Apache's `iceberg-spark-runtime-3.1_2.12:1.2.0`.
+  Keep the two files equal otherwise.
+- A client that opens Spark sessions on that image must not ask for that download either: set
+  `OH_SPARK_JARS_PACKAGES` to the empty string for the dataloader's `make integration-tests` and for
+  `scripts/python/livy_cli.py`.
 
 ## Behavior that differs by Iceberg line
 
