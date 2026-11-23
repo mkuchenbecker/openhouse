@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Builds the Iceberg commit pinned in iceberg-fork.properties and publishes the modules OpenHouse's
-# Iceberg 1.5 variant consumes into <ICEBERG_FORK_HOME>/<version>, for the opt-in -PicebergFork build,
-# plus the Spark 4.2 / Scala 2.13 runtime the Spark 4.2 IRC read test runs on (a second Iceberg
-# build: one Iceberg build has one Scala version), and the REST compatibility kit (iceberg-open-api's
-# test and test-fixtures jars) the REST compatibility kit test runs against the service.
+# Iceberg 1.5 variant consumes (iceberg-aws for the service's S3 storage among them) into
+# <ICEBERG_FORK_HOME>/<version>, for the opt-in -PicebergFork build, plus the Spark 4.2 / Scala 2.13
+# runtime the Spark 4.2 IRC read test runs on (a second Iceberg build: one Iceberg build has one
+# Scala version), and the REST compatibility kit (iceberg-open-api's test and test-fixtures jars)
+# the REST compatibility kit test runs against the service.
 # Nothing is published remotely and ~/.m2 is not touched. Re-running is a no-op once the pinned
 # version is published; FORCE=1 republishes. See docs/development/iceberg-fork.md.
 #
@@ -87,8 +88,11 @@ publish() {
   touch "$done_marker"
 }
 
+# iceberg-aws: the service's S3FileIO and AwsClientFactories, so that no 1.2-era Iceberg jar sits
+# next to the fork's core (its iceberg-build.properties would also name the wrong version).
 publish "$marker" 3.5 2.12 iceberg-bom iceberg-api iceberg-bundled-guava iceberg-common \
-  iceberg-core iceberg-data iceberg-parquet iceberg-orc iceberg-spark:iceberg-spark-runtime-3.5_2.12
+  iceberg-core iceberg-data iceberg-parquet iceberg-orc iceberg-aws \
+  iceberg-spark:iceberg-spark-runtime-3.5_2.12
 # Only the shaded runtime: the Spark 4.2 test puts nothing else of Iceberg on its classpath.
 publish "$spark42_marker" 4.2 2.13 iceberg-spark:iceberg-spark-runtime-4.2_2.13
 # The kit's tests (RESTCompatibilityKit*Tests) and its RCKUtils; its base classes (CatalogTests,
