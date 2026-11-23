@@ -7,13 +7,12 @@ ext {
   icebergVersion = rootProject.ext.iceberg_1_5_version
 }
 
+// src/shared/test holds the tests the iceberg-1.2 itest compiles and runs as well: that project
+// names the directory. src/test holds the tests only this project runs.
 sourceSets {
   test {
     java {
-      // Under -PicebergFork the iceberg-1.2 project is not in the build (settings.gradle).
-      srcDirs += rootProject.hasProperty('icebergFork')
-          ? [rootProject.file('integrations/java/iceberg-1.2/openhouse-java-itest/src/test/java')]
-          : project(':integrations:java:iceberg-1.2:openhouse-java-itest').sourceSets.test.java.srcDirs
+      srcDirs += 'src/shared/test/java'
     }
   }
 }
