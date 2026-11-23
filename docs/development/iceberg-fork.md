@@ -106,7 +106,12 @@ Without the file, and without the switch, every recipe and image is built as bef
 - The Spark services (`OH_SPARK_DOCKERFILE`) are built from `spark-3.5-base-hadoop3.2.dockerfile`
   with `OH_SPARK_BASE=iceberg-fork`: Spark 3.5.2, a Java 17 runtime for every JVM in the image (the
   jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the Spark 3.5
-  apps jar. The OpenHouse jars keep the names they have in the Spark 3.1 image
+  apps jar. Two more arguments keep the build off `archive.apache.org`, which is rate-limited (a
+  GitHub runner got 46 kB/s: two and a half hours for the Spark tarball): `OH_SPARK_DIST=image`
+  takes `/opt/spark` from Apache's Docker image of the same release (`apache/spark:3.5.2-...`)
+  instead of the tarball, and `OH_LIVY_MAVEN_ARGS=-pl assembly -am` builds Livy's distribution
+  without Livy's integration-test module, which downloads another Spark release from there. Without
+  them the dockerfile downloads the tarball and builds all of Livy, as before. The OpenHouse jars keep the names they have in the Spark 3.1 image
   (`/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar`,
   `/opt/spark/openhouse-spark-apps_2.12-latest-all.jar`), so `jobs.yaml`, `livy_cli.py` and the
   dataloader integration tests name the same paths on both.
@@ -176,6 +181,35 @@ The job runs `publish-local.sh`, then `-PicebergFork assemble testClasses`, then
 Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
 the Spark 4.2 itest (`test`, `extensionsTest`), and last, in a step of its own that runs even when a
 suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`).
+
+After the suites and the kit, whatever their outcome (but not after a failed compile), the job checks
+the deployables of the build ("Docker images" above):
+
+- `-PicebergFork shadowJar dockerPrereqs`.
+- The jobs-scheduler image, built through docker compose with `iceberg-fork.env` from the Spark 3.5
+  apps jar. The scheduler is started in it without arguments and must log its first line at INFO,
+  which needs the image's Java to run the jar and the jar to carry its `log4j2.properties`.
+- The `oh-only` recipe with `iceberg-fork.env`, then `scripts/python/integration_test.py` against it,
+  as the default build does for its own containers. The tables container's jar must hold the fork's
+  `iceberg-core` and no other. The containers are stopped in every case, and their logs are printed
+  when one of these steps failed.
+
+The Spark image and the `oh-hadoop-spark` recipe are checked by the Dataloader job,
+`dataloader-tests.yml`, which takes an input, `iceberg-fork`. With it the job restores the fork,
+runs `-PicebergFork shadowJar dockerPrereqs`, starts the recipe with `iceberg-fork.env` (which builds
+the Spark 3.5 / Java 17 image, Livy included) and runs the dataloader's integration tests with
+`OH_SPARK_JARS_PACKAGES` empty. Without the input it is the default build's job, unchanged: pull
+requests into `main` that touch `integrations/python/dataloader/**`.
+`dataloader-tests-iceberg-fork.yml` calls it with the input:
+
+- on a pull request into `irc-integration` or `main` that touches the dataloader, as on the default
+  build, or a file that defines the recipe and its images on this line
+  (`infra/recipes/docker-compose/common/**`, `oh-hadoop-spark/**`, `iceberg-fork.env`, the root
+  `*.Dockerfile`s, these two workflows, the action below). Other pull requests do not run it;
+- by hand (`workflow_dispatch`), on any branch.
+
+The steps that restore or publish the fork are one composite action, `.github/actions/iceberg-fork`,
+used by both jobs.
 
 The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
 script, so the fork is built (60 to 75 minutes on a runner) only when either changes:

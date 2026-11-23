@@ -93,6 +93,17 @@ jobs:
           docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml ps
           exit 1
 
+      # For the record of each run: the Java, Spark, Iceberg runtime and Livy the image holds.
+      - name: Print what the Spark image of the -PicebergFork build holds
+        if: ${{ inputs.iceberg-fork }}
+        run: |
+          docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml exec -T spark-livy sh -c '
+            java -version 2>&1
+            /opt/spark/bin/spark-submit --version 2>&1 | head -n 12
+            echo "== /opt/spark"; ls /opt/spark
+            echo "== Iceberg and OpenHouse jars"; ls -l /opt/spark/jars/ | grep -i iceberg; ls -l /opt/spark/*.jar
+            echo "== /opt/livy"; ls /opt/livy; ls /opt/livy/jars | wc -l; ls /opt/livy/repl_2.12-jars'
+
       # Under -PicebergFork the Spark image carries the fork's Iceberg runtime, so the tests ask
       # Spark for no package (OH_SPARK_JARS_PACKAGES set and empty); otherwise it stays unset.
       - name: Run Data Loader Integration Tests
