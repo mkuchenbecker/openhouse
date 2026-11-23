@@ -3,6 +3,7 @@ package com.linkedin.openhouse.catalog.e2e;
 import static org.assertj.core.api.Assertions.*;
 
 import com.linkedin.openhouse.common.stats.model.IcebergTableStats;
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.jobs.spark.Operations;
 import com.linkedin.openhouse.jobs.util.SimpleRecord;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
@@ -130,10 +131,15 @@ public class SparkMoRFunctionalTest extends OpenHouseSparkITest {
 
     Table table = ops.getTable(tableName);
 
-    // state of table prior to any compaction
+    // state of table prior to any compaction. Each DELETE writes one position delete file. On
+    // LinkedIn's 1.5.2 line all three stay live. On the 1.12 line Spark's merge-on-read DELETE
+    // defaults to file-scoped deletes and replaces the earlier delete file of the same data file
+    // with one that holds all its deleted positions (SparkWriteConf.deleteGranularity,
+    // SparkPositionDeltaWrite), so one is live.
     IcebergTableStats stats = ops.collectTableStats(tableName);
     assertThat(stats.getNumPositionDeleteFiles()).isEqualTo(3L);
-    assertThat(stats.getNumCurrentSnapshotPositionDeleteFiles()).isEqualTo(3L);
+    assertThat(stats.getNumCurrentSnapshotPositionDeleteFiles())
+        .isEqualTo(IcebergLine.current() == IcebergLine.LEGACY ? 3L : 1L);
 
     // first run of compaction
     RewriteDataFiles.Result result = rewriteFunc.apply(ops, table);

@@ -90,6 +90,12 @@ allprojects {
       ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest',
       ':apps:openhouse-spark-apps-1.5_2.12'
   ]
+  // Under -PicebergFork libs:datalayout is built on Spark 3.5 (libs/datalayout/build.gradle), whose
+  // Scala Jackson module needs databind 2.15, so it resolves like its only consumer there, the Spark
+  // 3.5 apps above. The default build keeps the forces for it.
+  if (icebergFork) {
+    excludedProjects += ':libs:datalayout'
+  }
 
   if (!excludedProjects.contains(it.path)) {
     configurations.all {
