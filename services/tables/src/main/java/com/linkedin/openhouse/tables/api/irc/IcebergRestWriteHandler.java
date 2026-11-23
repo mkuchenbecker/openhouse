@@ -69,8 +69,10 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>A create is spelled as the native create request ({@link IcebergCreates}) and sent through
  *       the native create handler (validation, create rules, audit). The server owns the location
- *       (D30): a location the request names is ignored, and the table is created, and returned,
- *       where the server puts it, as for a request that names none.
+ *       (D30): a location the request names is ignored, and so is a table UUID its properties name
+ *       ({@value #TABLE_UUID_KEY}, which the native create would read the table's directory from),
+ *       and the table is created, and returned, where the server puts it, as for a request that
+ *       names neither.
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
  *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
@@ -85,7 +87,9 @@ import org.springframework.stereotype.Component;
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
- *       when it does.
+ *       when it does. The directory it names must be one the server allocates to that table, must
+ *       hold its snapshots, and must not be one a table uses ({@link #refuseADirectoryInUse}): the
+ *       server stores nothing for a staged create, so the location is the client's word.
  *   <li>A registration is a native create read from the metadata file the request names, in the
  *       directory the file lies in, which must be one the server allocated to that table and no
  *       table uses ({@link #registerTable}).
@@ -122,6 +126,17 @@ public class IcebergRestWriteHandler {
 
   /** The table type, as a property; the OpenHouse client reads it into the request's type. */
   private static final String TABLE_TYPE_KEY = "openhouse.tableType";
+
+  /**
+   * The reserved property the native create reads a new table's OpenHouse UUID from, which names
+   * the table's directory ({@code <table>-<uuid>}).
+   */
+  private static final String TABLE_UUID_KEY = CatalogConstants.OPENHOUSE_UUID_KEY;
+
+  /** The two writes that put a table in a directory the request names, as the refusals say them. */
+  private static final String CREATE = "create";
+
+  private static final String REGISTER = "register";
 
   @Autowired private TablesApiValidator tablesApiValidator;
 
@@ -202,9 +217,19 @@ public class IcebergRestWriteHandler {
     request.validate();
     // request.location() is not read: the server owns the location (D30), and the native create
     // allocates it as for a request that names none.
-    if (request.properties() != null) {
-      refuseRewrittenCreateProperties(identifier, request.properties());
-      refuseOtherFormatVersion(identifier, request.properties());
+    Map<String, String> properties = request.properties();
+    if (properties != null) {
+      refuseRewrittenCreateProperties(identifier, properties);
+      refuseOtherFormatVersion(identifier, properties);
+      if (properties.containsKey(TABLE_UUID_KEY)) {
+        // Nor is a table UUID: the native create takes a new table's UUID, and with it its
+        // directory, from this property, and asks only that a file exists there (not even that
+        // for a replicated table's create). A table that was renamed keeps the directory of its
+        // old name, so a create of the old name with that UUID would be a second table in a
+        // live table's directory, whose drop deletes the directory.
+        properties = new HashMap<>(properties);
+        properties.remove(TABLE_UUID_KEY);
+      }
     }
     return IcebergCreates.toCreateBody(
         identifier,
@@ -212,7 +237,7 @@ public class IcebergRestWriteHandler {
         request.schema(),
         request.spec(),
         request.writeOrder(),
-        request.properties(),
+        properties,
         partitionSpecMapper);
   }
 
@@ -337,6 +362,15 @@ public class IcebergRestWriteHandler {
    * native create drops them; the location must be one the server allocates, and its table UUID is
    * the created table's OpenHouse UUID, so data the client wrote under the staged location is where
    * the table is.
+   *
+   * <p>The server keeps nothing of a staged create, so the location is whatever the client sends,
+   * and the client need not have staged anything. Two checks keep the create out of a directory
+   * that is another table's, as register is kept out of one: every snapshot's manifest list must
+   * lie in the directory the completion names (the native create-with-data puts the table where its
+   * first snapshot's manifest list is, whatever location is named), and no house-table row, live or
+   * soft-deleted, may use that directory ({@link #refuseADirectoryInUse}; a table renamed away
+   * keeps the directory of its old name). The rows are looked at only for a principal who may
+   * create tables in the database, who is refused first otherwise, as natively.
    */
   private IcebergRestLoadedTable commitCreate(
       TableIdentifier identifier, UpdateTableRequest request, String actingPrincipal) {
@@ -364,6 +398,14 @@ public class IcebergRestWriteHandler {
             candidate.location(),
             creatableProperties(candidate.properties(), ids),
             actingPrincipal);
+    if (candidate.location() != null) {
+      Storage storage = storageSelector.selectStorage(databaseId, tableId);
+      String directory = withoutEndpoint(storage, candidate.location());
+      requireSnapshotsIn(CREATE, identifier, storage, directory, candidate);
+      authorizationUtils.checkDatabasePrivilege(
+          databaseId, actingPrincipal, Privileges.CREATE_TABLE);
+      refuseADirectoryInUse(CREATE, identifier, storage, directory, tableUUID);
+    }
     return create(
         identifier, candidate, candidate.location(), tableUUID, policies, actingPrincipal);
   }
@@ -568,7 +610,7 @@ public class IcebergRestWriteHandler {
         storage.allocateTableLocation(
             databaseId, tableId, tableUUID.toString(), actingPrincipal, new HashMap<>());
     String directory = withoutEndpoint(storage, location);
-    refuseADirectoryInUse(identifier, storage, directory, tableUUID);
+    refuseADirectoryInUse(REGISTER, identifier, storage, directory, tableUUID);
 
     TableMetadata metadata = readRegistered(identifier, storage, metadataLocation);
     if (!directory.equals(withoutEndpoint(storage, metadata.location()))) {
@@ -646,14 +688,28 @@ public class IcebergRestWriteHandler {
         : location;
   }
 
-  /** Refuses a directory a house-table row, live or soft-deleted, points into or names by UUID. */
+  /**
+   * Refuses, for a register or the commit that completes a staged create ({@code operation}), a
+   * directory a house-table row, live or soft-deleted, points into or names by UUID. A table's drop
+   * deletes its directory, so a second table there would take the first one's files with it when it
+   * is dropped; and a directory is not free because no table has its name: a table renamed away
+   * keeps the directory of its old name, and a soft-deleted table can be restored into its own.
+   */
   private void refuseADirectoryInUse(
-      TableIdentifier identifier, Storage storage, String directory, UUID tableUUID) {
+      String operation,
+      TableIdentifier identifier,
+      Storage storage,
+      String directory,
+      UUID tableUUID) {
     String databaseId = identifier.namespace().toString();
     for (HouseTable row : houseTableRepository.findAllByDatabaseId(databaseId)) {
       if (uses(row, storage, directory, tableUUID)) {
-        throw refusedRegistration(
-            identifier, "that directory belongs to %s.%s", row.getDatabaseId(), row.getTableId());
+        throw refused(
+            operation,
+            identifier,
+            "that directory belongs to %s.%s",
+            row.getDatabaseId(),
+            row.getTableId());
       }
     }
     for (int page = 0; ; page++) {
@@ -664,7 +720,8 @@ public class IcebergRestWriteHandler {
               .getContent();
       for (HouseTable row : rows) {
         if (uses(row, storage, directory, tableUUID)) {
-          throw refusedRegistration(
+          throw refused(
+              operation,
               identifier,
               "that directory belongs to the soft-deleted table %s.%s, which can be restored",
               row.getDatabaseId(),
@@ -746,12 +803,28 @@ public class IcebergRestWriteHandler {
           tableType,
           TableType.PRIMARY_TABLE.name());
     }
+    requireSnapshotsIn(REGISTER, identifier, storage, directory, metadata);
+  }
+
+  /**
+   * Refuses, for a register or the commit that completes a staged create ({@code operation}),
+   * metadata with a snapshot whose manifest list does not lie in {@code directory}, the table's
+   * own: such a snapshot attaches another table's data, and the native create-with-data takes the
+   * table's UUID, and so its directory, from where its first snapshot's manifest list is.
+   */
+  private static void requireSnapshotsIn(
+      String operation,
+      TableIdentifier identifier,
+      Storage storage,
+      String directory,
+      TableMetadata metadata) {
     for (Snapshot snapshot : metadata.snapshots()) {
       String manifestList = snapshot.manifestListLocation();
       if (manifestList == null
           || !withoutEndpoint(storage, manifestList).startsWith(directory + "/")
           || manifestList.contains("/../")) {
-        throw refusedRegistration(
+        throw refused(
+            operation,
             identifier,
             "the manifest list of snapshot %d does not lie in the table's directory",
             snapshot.snapshotId());
@@ -761,8 +834,15 @@ public class IcebergRestWriteHandler {
 
   private static RequestValidationFailureException refusedRegistration(
       TableIdentifier identifier, String reason, Object... args) {
+    return refused(REGISTER, identifier, reason, args);
+  }
+
+  /** The refusal of a register or of a staged create's completion, in one wording for both. */
+  private static RequestValidationFailureException refused(
+      String operation, TableIdentifier identifier, String reason, Object... args) {
     return new RequestValidationFailureException(
-        String.format("Cannot register table %s: %s", identifier, String.format(reason, args)));
+        String.format(
+            "Cannot %s table %s: %s", operation, identifier, String.format(reason, args)));
   }
 
   // ---------------------------------------------------------------- drop and rename
