@@ -7,6 +7,15 @@ ext {
   icebergVersion = rootProject.ext.iceberg_1_2_version
 }
 
+// The tests are shared with the iceberg-1.5 itest and live there (src/shared/test).
+sourceSets {
+  test {
+    java {
+      srcDirs += rootProject.file('integrations/java/iceberg-1.5/openhouse-java-itest/src/shared/test/java')
+    }
+  }
+}
+
 dependencies {
   testImplementation(project(path: ':integrations:java:iceberg-1.2:openhouse-java-runtime', configuration: 'shadow'))
 

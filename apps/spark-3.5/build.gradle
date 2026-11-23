@@ -64,26 +64,17 @@ dependencies {
     }
 }
 
-// because we depend on project(':apps:openhouse-spark-apps_2.12').sourceSets
-// Under -PicebergFork that project is not in the build (settings.gradle), so its directories are
-// named directly.
-def icebergFork = rootProject.hasProperty('icebergFork')
-if (!icebergFork) {
-    evaluationDependsOn(':apps:openhouse-spark-apps_2.12')
-}
+// src/shared holds the sources the Iceberg 1.2 / Spark 3.1 apps (apps/spark) compile as well: that
+// project names these directories. src/main and src/test hold what only this project compiles.
 sourceSets {
     main {
         java {
-            srcDirs = ['src/main/java', icebergFork
-                ? [rootProject.file('apps/spark/src/main/java')]
-                : project(':apps:openhouse-spark-apps_2.12').sourceSets.main.java.srcDirs]
+            srcDirs += 'src/shared/main/java'
         }
     }
     test {
         java {
-            srcDirs = ['src/test/java', icebergFork
-                ? [rootProject.file('apps/spark/src/test/java')]
-                : project(':apps:openhouse-spark-apps_2.12').sourceSets.test.java.srcDirs]
+            srcDirs += 'src/shared/test/java'
         }
     }
 }
