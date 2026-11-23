@@ -432,14 +432,13 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
 
   @Test
   void refusedWrites() {
-    Throwable location =
-        thrown(
-            () -> rest.buildTable(id("refused"), SCHEMA).withLocation("/tmp/elsewhere").create());
-    Assertions.assertTrue(location instanceof BadRequestException, location.toString());
-    Assertions.assertTrue(location.getMessage().contains("location"), location.getMessage());
-    Assertions.assertFalse(openhouse.tableExists(id("refused")));
+    // The server owns the location (D30): a location the create names is ignored, and the table
+    // is created where the server puts it.
+    Table table = rest.buildTable(id("refused"), SCHEMA).withLocation("/tmp/elsewhere").create();
+    Assertions.assertTrue(openhouse.tableExists(id("refused")));
+    Assertions.assertEquals(openhouse.loadTable(id("refused")).location(), table.location());
+    Assertions.assertFalse(table.location().contains("/tmp/elsewhere"), table.location());
 
-    Table table = rest.createTable(id("refused"), SCHEMA);
     Throwable exists = thrown(() -> rest.createTable(id("refused"), SCHEMA));
     Assertions.assertTrue(exists instanceof AlreadyExistsException, exists.toString());
 

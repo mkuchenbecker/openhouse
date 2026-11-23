@@ -34,7 +34,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Primary} annotation, this repository will be the default injection.
  *
  * <p>Faithful to the real store (HouseTableRepositoryImpl calling UserTablesServiceImpl in the
- * house tables service) in two respects:
+ * house tables service) in three respects:
  *
  * <ol>
  *   <li>Save is a compare-and-swap on the metadata location. The incoming {@code tableVersion} is
@@ -43,6 +43,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *       real store, which the client surfaces as {@link HouseTableConcurrentUpdateException} and
  *       the commit path turns into a CommitFailedException (HTTP 409). Any occupant of the key
  *       counts, whatever its entity type. Rename and restore carry no version check there either.
+ *   <li>Rename: tables and views share the key, so a rename onto a key any entity holds is refused
+ *       with {@link HouseTableConcurrentUpdateException}, as the real store's 409 is, and changes
+ *       nothing.
  *   <li>Delete: {@code deleteById(key, purge)}. Purge (what a tables-service DELETE sends) is a
  *       hard delete. Not purge is a soft delete: the row moves to the soft-deleted store, stamped
  *       with {@code deletedAtMs} = now and {@code purgeAfterMs} = now + 7 days, which are set by
@@ -239,6 +242,23 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
       String metadataLocation) {
     HouseTablePrimaryKey fromKey =
         HouseTablePrimaryKey.builder().databaseId(fromDatabaseId).tableId(fromTableId).build();
+    HouseTablePrimaryKey toKey =
+        HouseTablePrimaryKey.builder().databaseId(toDatabaseId).tableId(toTableId).build();
+    // Tables and views share the key, as in the real store, whose rename updates the row's primary
+    // key: an occupied destination of either type is a key violation there (409), which its client
+    // raises as HouseTableConcurrentUpdateException, and neither row changes.
+    if (this.findEntityById(toKey)
+        .filter(
+            occupant ->
+                !(occupant.getDatabaseId().equalsIgnoreCase(fromDatabaseId)
+                    && occupant.getTableId().equalsIgnoreCase(fromTableId)))
+        .isPresent()) {
+      throw new HouseTableConcurrentUpdateException(
+          String.format(
+              "Cannot rename %s.%s to %s.%s: the key is held by another entity",
+              fromDatabaseId, fromTableId, toDatabaseId, toTableId),
+          null);
+    }
     this.findById(fromKey)
         .ifPresent(
             houseTable -> {
