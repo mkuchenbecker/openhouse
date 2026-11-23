@@ -54,6 +54,9 @@ include ':client:secureclient'
 
 includeUnlessForkExcluded ':integrations:java:iceberg-1.2:openhouse-java-runtime'
 includeUnlessForkExcluded ':integrations:java:iceberg-1.2:openhouse-java-itest'
+// OpenHouse features as capabilities (D23): plain Java, no Iceberg-line or Scala suffix, shared by
+// every Spark extensions line.
+include ':integrations:java:openhouse-catalog-capabilities'
 include ':integrations:java:iceberg-1.5:openhouse-java-runtime'
 include ':integrations:java:iceberg-1.5:openhouse-java-itest'
 includeUnlessForkExcluded ':integrations:spark:spark-3.1:openhouse-spark-runtime'

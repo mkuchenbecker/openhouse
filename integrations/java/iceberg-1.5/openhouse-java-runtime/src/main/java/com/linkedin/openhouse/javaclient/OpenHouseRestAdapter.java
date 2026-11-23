@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.javaclient;
 
+import com.linkedin.openhouse.capabilities.CapabilityNames;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -93,9 +94,11 @@ public class OpenHouseRestAdapter implements RESTClient {
    * advertises them ({@code IcebergRestApiHandler.config()}), so that every REST-shaped path reads
    * the same capability. {@code policies}: a policy patch ({@code updated.openhouse.policy}) is
    * applied; here the backing OpenHouse catalog's table operations apply it, as they always have.
+   * The names are the capabilities module's compile-time constants, so this module needs it only to
+   * compile.
    */
   static final Map<String, String> CONFIG_OVERRIDES =
-      ImmutableMap.of("openhouse.capabilities", "policies");
+      ImmutableMap.of(CapabilityNames.ADVERTISED_PROPERTY, CapabilityNames.POLICIES);
 
   enum Method {
     GET,

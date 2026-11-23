@@ -61,6 +61,9 @@ sourceSets {
 dependencies {
   compileOnly project(':client:secureclient')
   compileOnly project(':client:tableclient')
+  // Only compile-time constants (capability names) are used; javac inlines them, so the module
+  // is not needed at run time and no consumer's classpath changes.
+  compileOnly project(':integrations:java:openhouse-catalog-capabilities')
   compileOnly("com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion)
   compileOnly ("org.springframework.boot:spring-boot-starter-webflux:" + springVersion)
 

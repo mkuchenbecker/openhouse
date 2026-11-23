@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.spark.sql.execution.datasources.v2
 
+import com.linkedin.openhouse.capabilities.OpenHouseTableProperties
+import com.linkedin.openhouse.spark.capabilities.OpenHouseCapabilities
 import org.apache.iceberg.spark.source.SparkTable
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
@@ -16,10 +18,12 @@ case class SetColumnPolicyTagExec(
 
   override protected def run(): Seq[InternalRow] = {
     catalog.loadTable(ident) match {
-      case iceberg: SparkTable if iceberg.table().properties().containsKey("openhouse.tableId") =>
-        val key = "updated.openhouse.policy"
+      case iceberg: SparkTable if iceberg.table().properties().containsKey(OpenHouseTableProperties.TABLE_ID) =>
+        val key = OpenHouseTableProperties.POLICY_PATCH
         val value = s"""{"columnTags":{"${colName}": {"tags": [${policyTags.mkString(", ")}]}}}"""
 
+        // On an Iceberg REST server that does not advertise policies, fail instead of storing the patch.
+        OpenHouseCapabilities.requirePolicies(catalog)
         iceberg.table().updateProperties()
           .set(key, value)
           .commit()
