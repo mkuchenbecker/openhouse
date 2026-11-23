@@ -48,6 +48,7 @@ public class IcebergRestWriteController {
    * the create privilege.
    */
   @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC create table: OK"))
+  @IcebergRestCapability(IcebergRestCapability.POLICIES)
   @PostMapping(V1 + "/namespaces/{namespace}/tables")
   public ResponseEntity<byte[]> createTable(
       @PathVariable("namespace") String namespace, @RequestBody(required = false) byte[] body) {
@@ -62,6 +63,7 @@ public class IcebergRestWriteController {
 
   /** Commits requirements and updates to a table, completing a staged create when asked to. */
   @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC commit table: OK"))
+  @IcebergRestCapability(IcebergRestCapability.POLICIES)
   @PostMapping(V1 + "/namespaces/{namespace}/tables/{table}")
   public ResponseEntity<byte[]> commitTable(
       @PathVariable("namespace") String namespace,

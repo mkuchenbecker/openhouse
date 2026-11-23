@@ -66,6 +66,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "200",
           description = "IRC OpenHouse table ACL policies GET: OK"))
+  @IcebergRestCapability(IcebergRestCapability.GRANTS)
   @GetMapping(value = TABLE_ACL, produces = JSON)
   public ResponseEntity<GetAclPoliciesResponseBody> getTableAclPolicies(
       @PathVariable("namespace") String namespace, @PathVariable("table") String tableId) {
@@ -81,6 +82,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "204",
           description = "IRC OpenHouse table ACL policies update: NO_CONTENT"))
+  @IcebergRestCapability(IcebergRestCapability.GRANTS)
   @PostMapping(value = TABLE_ACL, produces = JSON)
   public ResponseEntity<Void> updateTableAclPolicies(
       @PathVariable("namespace") String namespace,
@@ -99,6 +101,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "200",
           description = "IRC OpenHouse database ACL policies GET: OK"))
+  @IcebergRestCapability(IcebergRestCapability.GRANTS)
   @GetMapping(value = DATABASE_ACL, produces = JSON)
   public ResponseEntity<GetAclPoliciesResponseBody> getDatabaseAclPolicies(
       @PathVariable("namespace") String namespace) {
@@ -112,6 +115,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "204",
           description = "IRC OpenHouse database ACL policies update: NO_CONTENT"))
+  @IcebergRestCapability(IcebergRestCapability.GRANTS)
   @PostMapping(value = DATABASE_ACL, produces = JSON)
   public ResponseEntity<Void> updateDatabaseAclPolicies(
       @PathVariable("namespace") String namespace, @RequestBody UpdateAclPoliciesRequestBody body) {
@@ -127,6 +131,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "204",
           description = "IRC OpenHouse unlock: NO_CONTENT"))
+  @IcebergRestCapability(IcebergRestCapability.UNLOCK)
   @DeleteMapping(value = LOCK, produces = JSON)
   public ResponseEntity<Void> deleteLock(
       @PathVariable("namespace") String namespace, @PathVariable("table") String tableId) {
@@ -145,6 +150,7 @@ public class IcebergRestOpenHouseController {
       @io.swagger.v3.oas.annotations.responses.ApiResponse(
           responseCode = "204",
           description = "IRC OpenHouse unlock by reason: NO_CONTENT"))
+  @IcebergRestCapability(IcebergRestCapability.UNLOCK)
   @DeleteMapping(value = LOCK + "/{reason}", produces = JSON)
   public ResponseEntity<Void> deleteLockByReason(
       @PathVariable("namespace") String namespace,
