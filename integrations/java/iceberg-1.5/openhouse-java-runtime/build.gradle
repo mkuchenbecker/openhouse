@@ -25,35 +25,22 @@ ext {
   hadoopVersion = '2.10.0'
 }
 
-// Inherit shared sources from the iceberg-1.2 module's src/main/java, but NOT its
-// src/iceberg-version-specific/java (whose classes bind to version-specific Iceberg base classes,
-// e.g. a view-capable OpenHouseCatalog that extends BaseMetastoreViewCatalog). This module supplies
-// its own copies of those classes under its own src/iceberg-version-specific/java.
-// This module ALSO has its own src/main/java (a Gradle-default source root) for single-copy,
-// iceberg-1.5-only classes that have no iceberg-1.2 counterpart, e.g. OpenHouseViewOperations
-// (binds to the 1.5-only Iceberg view API).
-// Under -PicebergFork the iceberg-1.2 project is not in the build (settings.gradle), so the same
-// directories are named directly.
-def iceberg12Runtime = 'integrations/java/iceberg-1.2/openhouse-java-runtime'
+// Three source roots:
+// - src/shared/main (java and resources): the sources the iceberg-1.2 module compiles as well. That
+//   module names these directories.
+// - src/iceberg-version-specific/java: classes that bind to version-specific Iceberg base classes,
+//   e.g. a view-capable OpenHouseCatalog that extends BaseMetastoreViewCatalog. The iceberg-1.2
+//   module keeps its own copies of those classes under its own src/iceberg-version-specific/java.
+// - src/main/java (the Gradle-default root): single-copy, iceberg-1.5-only classes that have no
+//   iceberg-1.2 counterpart, e.g. OpenHouseViewOperations (binds to the 1.5-only Iceberg view API).
 sourceSets {
   main {
     java {
-      if (rootProject.hasProperty('icebergFork')) {
-        srcDirs += rootProject.file("${iceberg12Runtime}/src/main/java")
-      } else {
-        def base = project(':integrations:java:iceberg-1.2:openhouse-java-runtime')
-        srcDirs += base.sourceSets.main.java.srcDirs.findAll {
-          !it.absolutePath.endsWith('src/iceberg-version-specific/java')
-        }
-      }
+      srcDirs += 'src/shared/main/java'
       srcDirs += 'src/iceberg-version-specific/java'
     }
     resources {
-      if (rootProject.hasProperty('icebergFork')) {
-        srcDirs += rootProject.file("${iceberg12Runtime}/src/main/resources")
-      } else {
-        srcDirs += project(':integrations:java:iceberg-1.2:openhouse-java-runtime').sourceSets.main.resources.srcDirs
-      }
+      srcDirs += 'src/shared/main/resources'
     }
   }
 }

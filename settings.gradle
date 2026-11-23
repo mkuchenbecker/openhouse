@@ -25,8 +25,9 @@ pluginManagement {
 // -PicebergFork (docs/development/iceberg-fork.md) builds the Iceberg 1.5 variant against the fork's
 // Iceberg 1.12 line. Under it the Iceberg 1.2 / Spark 3.1 projects below are left out of the build
 // (decision D15): the single-copy server modules compile against 1.12 there, so those projects could
-// only be a hybrid of 1.2 and 1.12 artifacts. The 1.5 projects that reuse their source directories
-// name the directories instead. Without the property every project is included exactly as before.
+// only be a hybrid of 1.2 and 1.12 artifacts. The sources they share with the 1.5 projects live in
+// the 1.5 projects (src/shared), so no included project reads a directory of a left-out one.
+// Without the property every project is included exactly as before.
 def icebergFork = providers.gradleProperty('icebergFork').present
 def iceberg12LineProjects = [
     ':apps:spark',

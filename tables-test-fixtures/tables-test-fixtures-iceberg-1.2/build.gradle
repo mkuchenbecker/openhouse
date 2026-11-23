@@ -10,6 +10,25 @@ ext {
   sparkVersion = '3.1.1'
 }
 
+// The fixtures' sources, resources and tests are shared with the iceberg-1.5 fixtures and live
+// there (src/shared).
+def sharedSources = rootProject.file('tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared')
+sourceSets {
+  main {
+    java {
+      srcDirs += new File(sharedSources, 'main/java')
+    }
+    resources {
+      srcDirs += new File(sharedSources, 'main/resources')
+    }
+  }
+  test {
+    java {
+      srcDirs += new File(sharedSources, 'test/java')
+    }
+  }
+}
+
 dependencies {
   compileOnly('org.apache.spark:spark-sql_2.12:' + sparkVersion) {
     // These classes are available from `client-codegen-convention.gradle`

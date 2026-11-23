@@ -7,14 +7,18 @@ ext {
   sparkVersion = '3.5.2'
 }
 
+// src/shared/test holds the tests the Spark 3.1 itest compiles and runs as well: that project names
+// the directory. src/test holds the tests only this project compiles.
 sourceSets {
   test {
     java {
-      // Under -PicebergFork the spark-3.1 project is not in the build (settings.gradle).
-      srcDirs = ['src/test/java', rootProject.hasProperty('icebergFork')
-          ? [rootProject.file('integrations/spark/spark-3.1/openhouse-spark-itest/src/test/java')]
-          : project(':integrations:spark:spark-3.1:openhouse-spark-itest').sourceSets.test.java.srcDirs]
-      exclude '**/PartitionTest.java', '**/AlterTable*.java', '**/CreateTable*.java', '**/DescribeTableTest.java', '**/DropTableTest.java', '**/ShowTablesTest.java', '**/InsertIntoTableTest.java'
+      srcDirs += 'src/shared/test/java'
+      // What is left of the list that kept the Spark 3.1-only tests out while this project took the
+      // Spark 3.1 itest's whole directory; those tests stayed in that project. These two patterns
+      // also match this project's own AlterTable*Spark3_5 and CreateTable*Spark3_5 classes (five
+      // files), which are therefore not compiled or run, as before the move. Kept so that the set
+      // of tests does not change with the move.
+      exclude '**/AlterTable*.java', '**/CreateTable*.java'
     }
   }
 }

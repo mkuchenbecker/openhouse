@@ -31,10 +31,15 @@ dependencies {
   testImplementation "io.netty:netty-resolver-dns-native-macos:4.1.70.Final:osx-x86_64"
 }
 
+// The tests shared with the Spark 3.5 itest live there (src/shared/test). src/test/java here holds
+// the tests only this project runs.
 // Adding testing resources from :services:tables module
 // this is to avoid duplicating schema.json files used for evolution tests.
 sourceSets {
   test {
+    java {
+      srcDirs += rootProject.file('integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/test/java')
+    }
     resources {
       srcDirs += [
           project(':services:tables').sourceSets.test.resources

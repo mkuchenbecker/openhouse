@@ -91,7 +91,7 @@ docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml up -d 
 
 # Run integration tests
 make -C integrations/python/dataloader sync
-make -C integrations/python/dataloader integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/resources/dummy.token
+make -C integrations/python/dataloader integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
 
 # Stop docker
 docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml down
