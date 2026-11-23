@@ -72,6 +72,18 @@ public final class CatalogCapabilities {
   }
 
   /**
+   * Whether the catalog is Iceberg's own {@code RESTCatalog} on an OpenHouse server: the path is
+   * {@link Path#ICEBERG_REST} and the server advertises at least one OpenHouse capability ({@link
+   * #advertised} is not empty). Its tables are OpenHouse tables, but nothing in the engine does
+   * what the OpenHouse catalog class did there, so the extensions do it for such a catalog and for
+   * no other. A catalog on {@link Path#OPENHOUSE_CATALOG} is an OpenHouse catalog class, with its
+   * own behavior.
+   */
+  public boolean isOpenHouseRest() {
+    return path == Path.ICEBERG_REST && !advertised.isEmpty();
+  }
+
+  /**
    * The names the catalog's server advertises; empty except on {@link Path#ICEBERG_REST}. A name
    * here is not necessarily usable: see {@link #offers}.
    */
