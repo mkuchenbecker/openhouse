@@ -88,16 +88,16 @@ is not detectable and it declares the capability as before, with a warning.
 `build/iceberg-fork/repo` is cached, keyed on the pinned commit and the script), then
 `-PicebergFork assemble testClasses`, then the opt-in suites: `:services:tables:test`,
 `:iceberg:openhouse:internalcatalog:test`, `:iceberg:openhouse:htscatalog:test`, the 1.5 Java itest,
-the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`) and the Spark 4.2 itest. It does not
-block or wait for the default build job.
+the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
+the Spark 4.2 itest (`test`, `extensionsTest`). It does not block or wait for the default build job.
 
 ## Spark 4.2 over the IRC read routes
 
 `:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` exists only under the switch
 (`settings.gradle`). Its tests run Spark 4.2 (the pin file's `spark42Version`) with the fork's
 `iceberg-spark-runtime-4.2_2.13`, Iceberg's own `SparkCatalog` and `RESTCatalog`
-(`type=rest`, `uri=<service>/iceberg`, `token=<bearer>`) and nothing of OpenHouse on the classpath,
-against the tables service's IRC routes:
+(`type=rest`, `uri=<service>/iceberg`, `token=<bearer>`) and no OpenHouse catalog or client class on
+the classpath, against the tables service's IRC routes:
 
 ```bash
 ./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
@@ -115,3 +115,28 @@ directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`.
 The service serves the IRC write routes; `SparkIrcWriteTest` pins that `CREATE TABLE` and `INSERT`
 succeed from Spark 4.2 and the rows read back, on tables it creates and drops.
 
+## OpenHouse SQL extensions on Spark 4.2
+
+`:integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13` (only under the switch) is the
+Spark 3.5 runtime's SQL extensions ported to Spark 4.2 / Scala 2.13: the same statements (SET and
+UNSET POLICY, MODIFY COLUMN ... SET TAG, GRANT, REVOKE, SHOW GRANTS, UNLOCK), configured the same
+way next to Iceberg's:
+
+```
+spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions
+```
+
+It has no OpenHouse catalog class and does not depend on the OpenHouse Java client, the generated
+client or Spring: it finds OpenHouse features through `:integrations:java:openhouse-catalog-capabilities`
+and Iceberg's own `SparkCatalog` and `RESTCatalog`. Its `uber` jar holds its classes and the
+capabilities module's; Spark and `iceberg-spark-runtime-4.2_2.13` are the engine's own.
+
+```bash
+./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13:test
+./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest
+```
+
+Over a plain `RESTCatalog` the policy statements work (the server advertises `policies` and applies
+the patch); GRANT, REVOKE, SHOW GRANTS and UNLOCK fail with the "does not support" messages they give
+on Spark 3.5 over `RESTCatalog`, until a REST capability client exists. `extensionsTest` runs in its
+own JVM and service JVM, because Spark fixes a session's extensions when the session is built.
