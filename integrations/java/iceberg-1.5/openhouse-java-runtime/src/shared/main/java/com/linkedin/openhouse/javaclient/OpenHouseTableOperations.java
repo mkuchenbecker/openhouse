@@ -38,6 +38,7 @@ import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
+import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
@@ -124,6 +125,9 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
   private static final String OPENHOUSE_IS_TABLE_REPLICATED_KEY = "openhouse.isTableReplicated";
   private static final String POLICIES_KEY = "policies";
   static final String INITIAL_TABLE_VERSION = "INITIAL_VERSION";
+
+  /** The first Iceberg format version a commit has to ask the service for by name. */
+  private static final int FORMAT_V3 = 3;
 
   @Override
   public void doRefresh() {
@@ -247,8 +251,24 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
       return !base.schema().sameSchema(metadata.schema())
           || !base.properties().equals(metadata.properties())
           || !base.spec().equals(metadata.spec())
-          || !base.sortOrder().equals(metadata.sortOrder());
+          || !base.sortOrder().equals(metadata.sortOrder())
+          || asksForFormatV3(base, metadata);
     }
+  }
+
+  /**
+   * Whether this commit asks the service for Iceberg format version 3 or higher: the metadata it
+   * commits is at such a version and the table is not there yet (a create, {@code base} null,
+   * included). That is what {@code TBLPROPERTIES ('format-version'='3')} leaves here, on a create
+   * and on an {@code ALTER TABLE}: Iceberg applies the reserved property to the metadata's format
+   * version and keeps it out of the properties, so the properties alone do not carry it.
+   *
+   * <p>Versions up to 2 are never asked for: the service creates tables at its cluster's version
+   * whatever a request says, and a request for them stays as it has always been sent.
+   */
+  static boolean asksForFormatV3(TableMetadata base, TableMetadata metadata) {
+    return metadata.formatVersion() >= FORMAT_V3
+        && (base == null || base.formatVersion() < metadata.formatVersion());
   }
 
   /**
@@ -292,6 +312,13 @@ public class OpenHouseTableOperations extends BaseMetastoreTableOperations {
         metadata.properties().entrySet().stream()
             .filter(entry -> !UPDATED_OPENHOUSE_POLICY_KEY.equals(entry.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+    if (asksForFormatV3(base, metadata)) {
+      // The service reads the format version a write asks for from this property, and refuses it
+      // where the cluster does not allow format v3.
+      createUpdateTableRequestBody
+          .getTableProperties()
+          .put(TableProperties.FORMAT_VERSION, Integer.toString(metadata.formatVersion()));
+    }
     createUpdateTableRequestBody.setSortOrder(SortOrderParser.toJson(metadata.sortOrder()));
     // set tableType from incoming metadata to createUpdateTableRequestBody
     if (metadata.properties() != null
