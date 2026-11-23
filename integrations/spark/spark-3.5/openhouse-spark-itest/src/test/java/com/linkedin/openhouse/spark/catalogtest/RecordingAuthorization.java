@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Primary;
  * hands it, lists them back in grant order, and denies every privilege to {@link #STRANGER} only.
  */
 final class RecordingAuthorization implements AuthorizationHandler {
-  static final String STRANGER = "gu_stranger";
+  static final String STRANGER = "irc_stranger";
 
   /** Resource to {@code principal|role} to the stored policy, in grant order. */
   private final Map<String, Map<String, AclPolicy>> store = new TreeMap<>();

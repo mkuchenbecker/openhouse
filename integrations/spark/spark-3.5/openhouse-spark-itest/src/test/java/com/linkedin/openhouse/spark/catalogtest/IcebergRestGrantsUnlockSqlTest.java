@@ -317,14 +317,14 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
 
   @Test
   void aDeniedPrincipalIsForbidden() {
-    String table = "Operation on table {db}.shared failed as user gu_stranger is unauthorized";
+    String table = "Operation on table {db}.shared failed as user irc_stranger is unauthorized";
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + table,
         both("GRANT SELECT ON TABLE {cat}.{db}.shared TO gu_reader", true, table));
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + table,
         both("REVOKE SELECT ON TABLE {cat}.{db}.shared FROM gu_reader", true, table));
-    String database = "Operation on database [{db}] failed as user [gu_stranger] is unauthorized";
+    String database = "Operation on database [{db}] failed as user [irc_stranger] is unauthorized";
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + database,
         both("GRANT CREATE TABLE ON DATABASE {cat}.{db} TO gu_reader", true, database));
@@ -414,7 +414,7 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   @Test
   void unlockByADeniedPrincipalIsForbiddenAndKeepsTheLock() {
     String message =
-        "Operation on table {db}.denied_lock failed as user gu_stranger is unauthorized to act on"
+        "Operation on table {db}.denied_lock failed as user irc_stranger is unauthorized to act on"
             + " Locked table";
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + message,
