@@ -2,7 +2,7 @@
 
 Continues `08-findings.md`, which is near its length limit.
 
-Bottom line: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
+Bottom line: the eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5). Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
 and two wrong claims through in the seventh round. Each was cheap to catch. Briefs now require the cheap checks
 (D26). All items are observations from delegated agents and from reading CI.
 
@@ -62,3 +62,18 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
 - Build, no work item: two generated OpenAPI client classes in `:client:hts` (`PageJob` and `PageUserTable`) and
   `META-INF/spring-configuration-metadata.json` of `services:tables` differ between two builds of the same sources,
   so the build is not reproducible bit for bit. The cause was not determined (`44-v9abc-flip-prep-result.md`).
+
+## Eleventh round (V6 and V7, 2026-11-23)
+
+- Data loss, not run, read from code: a create that names an existing table directory accepts the directory of a
+  live table that was renamed away. Dropping the new table would then purge the renamed table's files. Two entry
+  points: the native create with `openhouse.tableUUID` (LinkedIn's existing behavior), and the IRC completion of a
+  staged create (our code). Register refuses this case and has a test (`46-v6-v7-metrics-register-result.md`).
+- Work items: V16 refuses it in the IRC staged-create completion, proven by a test that fails first. N5 pins the
+  native half with a test, per D9, and records the fix as a change that needs a decision, because it changes native
+  behavior.
+- Test, small: four register refusals exist in code without a test (T13).
+- Test, possibly T8: `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log
+  before its last line was written. Pull request 112 made the test wait for that line. T8 stays open until a CI
+  failure names its test.
+- Environment: the shared disk filled twice during runs; reruns passed (`20-iteration-friction.md`).

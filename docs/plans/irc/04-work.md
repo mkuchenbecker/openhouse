@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 99 items in two repos, counted across this file, `30-work-defaults.md` and
+Bottom line: 102 items in two repos, counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
@@ -75,8 +75,8 @@ native REST.
 | V5-3 | oh | **Done 2026-11-22 (pull request 102).** Result in `36-v5-3-grants-unlock-endpoints-result.md`. ACL and lock routes under `/iceberg`, advertising `grants,unlock`. One-way door at release (D24). | V5-2 | MockMvc equivalence with the native routes: status, message, authorization calls, audit and lock state after. |
 | V3b | oh | The IRC config route's FileIO default follows the cluster's storage configuration. | V3 | A cluster configured for a non-Hadoop storage advertises the matching FileIO. |
 | V3c | oh | Failed IRC requests appear in the service audit. | V3 | A refused IRC request produces the same audit event class as a refused native one. |
-| V6 | oh | **Running (2026-11-23, branch `irc/v6-v7-metrics-register`, with V7).** IRC metrics report. | V2 | A report arrives where today's reports go. |
-| V7 | oh | **Running with V6.** IRC register table. | V3 | A registered table loads and commits. |
+| V6 | oh | **Done 2026-11-23 (pull request 112).** Result in `46-v6-v7-metrics-register-result.md`. IRC metrics report: counted and logged, not stored (D34). | V2 | A report arrives where today's reports go. |
+| V7 | oh | **Done 2026-11-23 (pull request 112).** Result in `46-v6-v7-metrics-register-result.md`. IRC register table: a native create read from the file (D34). | V3 | A registered table loads and commits. |
 | V8 | oh | Multi-table commit. Investigate first (J24). | V3 | Two tables commit together or neither does, under injected failure. |
 | V9 | oh | Replaced by V9a to V9e, which make the 1.12 line the default build. The order is in `40-i6f-full-regression-result.md`. Other rows that need V9 need V9e. | none | See V9a to V9e. |
 | V10a | oh | **Done 2026-11-22 (pull request 102).** The service's IRC config route advertises exactly the endpoints it serves, including view support, so Iceberg 1.12 clients use HEAD existence checks and views and do not assume routes that are not served. | V4 | A 1.12 `RESTCatalog` creates and loads a view and uses HEAD for existence against the service. |
@@ -115,7 +115,7 @@ Rows W1 to W13 are in `30-work-defaults.md`. They are part of the total in the b
 | V14 | oh | A create transaction through IRC keeps its schema, partition spec and sort order history, not only the final ones with id 0 (kit group CREATEHIST). Found by V13b. | V13b | The kit test `testCompleteCreateTransactionMultipleSchemas` passes and leaves the expected-outcomes list. |
 | C6 | oh | **Done 2026-11-23 (pull request 111).** Result in `44-v9abc-flip-prep-result.md`. The opt-in Iceberg job runs on pull requests as well as post-merge, through one reusable workflow called from `post-merge-build.yml` and `pr-validations.yml` (D33). | V9a | A pull request shows both jobs, and a deliberately broken suite under the switch turns the pull request red. |
 | V15 | oh | A create whose metadata location will not fit House Tables' 255 characters is refused before anything is written, on both Iceberg lines. Found by pull request 108. | none | A test: such a create is refused with a message naming the limit, and leaves no metadata file. |
-| T8 | oh | The unexplained Spark 4.2 itest `test` failure (run 45099517406) is explained and fixed. Do it when it recurs; the job now prints failed tests. A local one-off failure of `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` (empty access log, passed on two reruns) may be the same thing. | none | The failing test is named and passes repeatedly. |
+| T8 | oh | The unexplained Spark 4.2 itest `test` failure (run 45099517406) is explained and fixed. Do it when it recurs; the job now prints failed tests. A local one-off failure of `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` (empty access log, passed on two reruns) may be the same thing. Pull request 112 made that test wait for its last access-log line; T8 stays open until a CI failure names its test. | none | The failing test is named and passes repeatedly. |
 | T9 | oh | **Done 2026-11-23 (pull request 111).** The compatibility kit's service keeps its warehouse in the short temporary directory the Spark 4.2 services use. | none | The kit's longest location no longer depends on the checkout path, and its outcomes list is unchanged. |
 | V9a | oh | **Done 2026-11-23 (pull request 109).** The fork's published artifacts survive `clean` and the opt-in build passes `clean build`. | I6a | `./gradlew -PicebergFork clean build` passes. |
 | V9b | oh | **Done 2026-11-23 (pull request 109).** `iceberg-aws` comes from the fork's line under the switch. | I6a | No LinkedIn 1.2 Iceberg artifact is on any classpath under the switch. |
@@ -126,6 +126,9 @@ Rows W1 to W13 are in `30-work-defaults.md`. They are part of the total in the b
 | T11 | oh | The 1.12 line's newer AWS SDK and `iceberg-aws` are tested against real S3, not only mocks: `S3FileIO` reads and writes, STS, KMS and the new default HTTP client. Needs an environment with S3. | V9b | A read, a write and a delete against real S3 on the opt-in build. |
 | C7 | oh | The publish script's lock works without `flock`, which macOS lacks. Small. | V9a | The script publishes on macOS, and concurrent runs still serialize on Linux. |
 | C8 | oh | `integrations/python/dataloader/CLAUDE.md` lines 36 and 49 name the new `dummy.token` path. Small; do with V9e. | V9c | A grep for the old path finds nothing. |
+| V16 | oh | The IRC staged-create completion refuses a directory that a live or soft-deleted row uses, so a drop of the new table cannot purge a renamed table's files. Next item to start. Found by V7 (`21-findings-continued.md`). | V3, V7 | A test that fails first: complete a staged create naming a renamed-away table's directory, see it refused with nothing changed. |
+| N5 | oh | The native create with `openhouse.tableUUID` accepts the directory of a live table that was renamed away. Per D9, pin it with a test that shows the behavior, and record the fix as a change that needs a decision, because it changes native behavior. | none | A pinning test shows the behavior. The fix is written up as a decision for Mike, not made. |
+| T13 | oh | Tests for the four register refusals that have none: a partition-spec history, field ids a create would renumber, statistics files, a replica table type. Small. | V7 | Four tests, each failing first if its refusal is removed. |
 | T12 | oh | `:integrations:java:openhouse-rest-compat-kit:test` no longer fails with "No tests found" (the kit's own task is `restCompatKitTest`; `test` is not in CI's list). Small. | none | `./gradlew -PicebergFork build` has no failing kit task. |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.

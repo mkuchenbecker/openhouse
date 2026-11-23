@@ -2,7 +2,8 @@
 
 Continues `22-decisions-continued-2.md`.
 
-Bottom line: four more decisions (D30 to D33), all dated 2026-11-23. D30 reverses part of D20 for creates after
+Bottom line: five more decisions (D30 to D34), all dated 2026-11-23. D34 adopts the choices made in pull request 112
+(metrics report and register table). D30 reverses part of D20 for creates after
 Apache's compatibility kit showed the cost. D31 accepts two differences of Iceberg 1.12 and names one that is not
 accepted. D32 is a question put to Mike, because it defines the goal; work proceeds on the first reading until he
 answers. D33 tightens the testing rule after the opt-in build was found red in CI. Each has its reason, the evidence it rests on, and how to reverse it. None is agreed by Mike unless the
@@ -68,3 +69,26 @@ entry cites a statement. Claude wrote every entry.
   so wall-clock time does not grow.
 - References: `43-optin-ci-red-result.md`; D18 and D26.
 - Reverse by: removing the second call of the workflow, and going back to local runs under the switch.
+
+## D34. The choices made in pull request 112 are adopted
+
+- Date: 2026-11-23. The orchestrator's decision, a two-way door except for the last point.
+- Decision:
+  - Metrics: a report is counted and logged, never stored, which matches today, because natively a report never
+    reaches the service. Authorization is the read privilege on the house-table row only. A report for a missing
+    table is 404, as the specification lists.
+  - The config route still sends `rest-metrics-reporting-enabled=false`, so clients report only if they opt in. With
+    it on, each report costs a house-table lookup and an authorization decision, reports were 22 of 189 requests in
+    a Spark 4.2 run, and clients log warnings for reports that race a create or a drop.
+  - Register is a native create read from the metadata file, never a pointer to the caller's file. It is allowed only
+    for a file directly in the directory the server allocates for that name, database and table UUID, and only when no
+    live or soft-deleted row uses that directory. Metadata a create cannot store exactly is refused (same principle
+    as D19). A taken name is 409 whatever the overwrite flag says. Not kept: the Iceberg table UUID, metadata log,
+    snapshot log.
+  - The kit's drop-then-register test cannot pass, because OpenHouse's drop deletes the table's files. That is an
+    OpenHouse rule, kit group DROPPURGE.
+  - One-way door, waiting on Mike at release and not blocking: the register and metrics route semantics become a
+    public contract at release, like the items in D24.
+- Why: see the reasons above; the evidence is in `46-v6-v7-metrics-register-result.md`.
+- References: pull request 112, merge commit `8876a7f295aaca02b49baa3e306fe44774ccc1f9`; D19, D24; D30.
+- Reverse by: deleting one default line turns reporting on. Register's rules are loosened in their own item.

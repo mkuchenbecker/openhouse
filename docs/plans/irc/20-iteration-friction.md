@@ -77,3 +77,9 @@ Need a repository or environment change:
 - How much of the CI Gradle step is tests, compile and download (step-level timing only).
 - First measurement: one `:services:tables:test` run on the repo-default daemon settings with `--profile`,
   sampling the daemon with `jstat -gc` every 30 s.
+
+## Addendum, 2026-11-23: disk and memory
+
+On 2026-11-23 the shared machine hit "No space left on device" twice and one out-of-memory kill. 22 GB of stale
+worktree build output was deleted. The fork is now published once under the Gradle user home instead of 400 MB per
+worktree.

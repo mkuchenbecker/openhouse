@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 32 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 111, merge
-commit 6cc7b092) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 33 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 112, merge
+commit 8876a7f2) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -42,6 +42,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 109 | V9a, V9b: the fork is published under the Gradle user home and survives `clean`; every Iceberg jar is the fork's under the switch, `iceberg-aws` included; the pin is `a88f556c` (`44-v9abc-flip-prep-result.md`) | 6bc6fb05 |
 | 110 | V9c: 193 shared files moved into the newer projects under `src/shared` (`44-v9abc-flip-prep-result.md`) | 7e8941ab |
 | 111 | C6, T9: every pull request runs the default build and the opt-in build; the kit's warehouse leaves the checkout path (`44-v9abc-flip-prep-result.md`) | 6cc7b092 |
+| 112 | V6, V7: the IRC metrics report and register table routes (`46-v6-v7-metrics-register-result.md`) | 8876a7f295aaca02b49baa3e306fe44774ccc1f9 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
