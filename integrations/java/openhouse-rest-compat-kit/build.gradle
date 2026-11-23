@@ -19,7 +19,7 @@ plugins {
 }
 
 def icebergVersion = rootProject.ext.iceberg_1_5_version
-def forkRepo = rootProject.file("${rootProject.buildDir}/iceberg-fork/repo")
+def forkRepo = rootProject.ext.icebergForkRepo
 if (!new File(forkRepo, ".published-${icebergVersion}-open-api").exists()) {
   throw new GradleException(
       "-PicebergFork: iceberg-open-api:${icebergVersion} (the REST compatibility kit) is not "

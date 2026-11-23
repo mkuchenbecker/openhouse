@@ -53,19 +53,25 @@ jobs:
 
       # The published fork depends only on the pinned commit and on what the script publishes, so
       # the cache key is the commit plus the script's hash: the fork is rebuilt only when either
-      # changes. On a hit the script finds its markers and does nothing.
+      # changes. On a hit the script finds its markers and does nothing. The script publishes into
+      # ~/.gradle/iceberg-fork/<version> (outside build/, so a clean keeps it); the version is
+      # <baseVersion>-ohfork.<first 12 characters of the commit>, as in gradle/iceberg-fork.gradle.
       - name: Read the pinned Iceberg commit
         id: pin
-        run: echo "commit=$(sed -n 's/^commit=//p' scripts/iceberg-fork/iceberg-fork.properties)" >> "$GITHUB_OUTPUT"
+        run: |
+          commit="$(sed -n 's/^commit=//p' scripts/iceberg-fork/iceberg-fork.properties)"
+          base="$(sed -n 's/^baseVersion=//p' scripts/iceberg-fork/iceberg-fork.properties)"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$base-ohfork.${commit:0:12}" >> "$GITHUB_OUTPUT"
 
       - name: Restore the published Iceberg fork
         id: fork-cache
         uses: actions/cache/restore@v5
         with:
-          path: build/iceberg-fork/repo
-          key: iceberg-fork-repo-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('scripts/iceberg-fork/publish-local.sh') }}
+          path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
+          key: iceberg-fork-home-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('scripts/iceberg-fork/publish-local.sh') }}
 
-      - name: Publish the Iceberg fork to build/iceberg-fork/repo
+      - name: Publish the Iceberg fork to ~/.gradle/iceberg-fork
         run: scripts/iceberg-fork/publish-local.sh
 
       # Saved right after publishing, so a red test run below still keeps the fork for the next run.
@@ -73,7 +79,7 @@ jobs:
         if: steps.fork-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: build/iceberg-fork/repo
+          path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
           key: ${{ steps.fork-cache.outputs.cache-primary-key }}
 
       - name: Compile everything under -PicebergFork
