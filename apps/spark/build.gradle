@@ -53,13 +53,16 @@ dependencies {
     }
 }
 
-// The job sources and their tests are shared with the Spark 3.5 apps and live there
-// (apps/spark-3.5/src/shared). src/main and src/test here hold what only this project compiles.
+// The job sources, their tests and log4j2.properties are shared with the Spark 3.5 apps and live
+// there (apps/spark-3.5/src/shared). src/main and src/test here hold what only this project compiles.
 def sharedSources = rootProject.file('apps/spark-3.5/src/shared')
 sourceSets {
     main {
         java {
             srcDirs += new File(sharedSources, 'main/java')
+        }
+        resources {
+            srcDirs += new File(sharedSources, 'main/resources')
         }
     }
     test {
