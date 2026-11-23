@@ -55,6 +55,9 @@ dependencies {
   antlr "org.antlr:antlr4:4.7.1"
 
   compileOnly(project(path: ':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime', configuration: 'shadow'))
+  // The capability names, interfaces and value types (D23). Like the Java client it is packed into
+  // the uber jar only, so the thin jar's consumers and the published POM do not change.
+  compileOnly(project(':integrations:java:openhouse-catalog-capabilities'))
   compileOnly("org.apache.spark:spark-hive_2.12:${sparkVersion}") {
     exclude group: 'org.apache.avro', module: 'avro'
     exclude group: 'org.apache.arrow'
@@ -74,8 +77,12 @@ dependencies {
     // These classes are available from `client-codegen-convention.gradle`
   }
   testImplementation(project(path: ':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime', configuration: 'shadow'))
+  testImplementation(project(':integrations:java:openhouse-catalog-capabilities'))
 
   fatJarPackagedDependencies(project(path: ':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime', configuration: 'shadow')) {
+    transitive = false
+  }
+  fatJarPackagedDependencies(project(':integrations:java:openhouse-catalog-capabilities')) {
     transitive = false
   }
   implementation("com.linkedin.iceberg:iceberg-spark-runtime-3.5_2.12:" + icebergVersion)
@@ -94,3 +101,12 @@ shadowJar {
 }
 
 jar.enabled=true
+
+// The unit tests start a local SparkSession; on Java 9+ Spark needs these, as in the itest.
+test {
+  if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
+    jvmArgs \
+        '--add-opens=java.base/java.nio=ALL-UNNAMED',
+        '--add-exports=java.base/sun.nio.ch=ALL-UNNAMED'
+  }
+}

@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark.sql.execution.datasources.v2
 
+import com.linkedin.openhouse.spark.capabilities.JavaClientCapabilities
 import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.{GrantRevokeStatement, ResolvedUnlockTable, SetColumnPolicyTag, SetHistoryPolicy, SetReplicationPolicy, SetRetentionPolicy, SetSharingPolicy, ShowGrantsStatement, UnSetReplicationPolicy}
 import org.apache.iceberg.spark.{Spark3Util, SparkCatalog, SparkSessionCatalog}
 import org.apache.spark.sql.{SparkSession, Strategy}
@@ -32,8 +33,13 @@ case class OpenhouseDataSourceV2Strategy(spark: SparkSession) extends Strategy w
     case r @ ShowGrantsStatement(resourceType, CatalogAndIdentifierExtractor(catalog, ident)) =>
       ShowGrantsStatementExec(r.output, resourceType, catalog, ident) :: Nil
 
+    // The analyzed plan carries the Java client's target and reason; the exec takes the capability
+    // types, and the target keeps the very object analysis validated.
     case ResolvedUnlockTable(catalog, target, reason) =>
-      UnlockTableExec(catalog, target, reason) :: Nil
+      UnlockTableExec(
+        catalog,
+        JavaClientCapabilities.toUnlockTableTarget(target),
+        JavaClientCapabilities.toUnlockReason(reason)) :: Nil
 
     case _ => Nil
   }

@@ -1,0 +1,27 @@
+// OpenHouse features as named capabilities (decision D23): the names, one interface per feature the
+// Spark SQL extensions call, and the small value types those interfaces take. Plain Java with no
+// Spring, no generated client and no Spark or Scala dependency, so one jar serves every engine line
+// (the Spark 3.5 / Scala 2.12 extensions now, a Spark 4.2 / Scala 2.13 port later). Iceberg's API is
+// compileOnly: the interfaces name its TableIdentifier and Namespace, which every engine line already
+// carries in its own Iceberg runtime. Not published on its own (its API is a one-way door, D24); the
+// Spark runtime packs it into its uber jar.
+plugins {
+  id 'java-library'
+  id 'checkstyle'
+}
+
+// Same target as openhouse.java-minimal-conventions (Java 8, or 17 under -PicebergFork), without
+// that convention's mapstruct and servlet-api dependencies.
+def javaTarget = rootProject.hasProperty('icebergFork') ? JavaVersion.VERSION_17 : JavaVersion.VERSION_1_8
+sourceCompatibility = javaTarget
+targetCompatibility = javaTarget
+
+checkstyle {
+  configFile = rootProject.file('gradle/checkstyle/checkstyle.xml')
+  configDirectory = rootProject.file('gradle/checkstyle')
+}
+
+dependencies {
+  compileOnly "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
+  testImplementation "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
+}

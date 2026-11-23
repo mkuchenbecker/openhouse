@@ -1,9 +1,9 @@
 package com.linkedin.openhouse.spark.sql.catalyst.analysis
 
-import com.linkedin.openhouse.javaclient.api.{SupportsUnlock, UnlockTableTarget}
+import com.linkedin.openhouse.javaclient.api.UnlockTableTarget
 import com.linkedin.openhouse.javaclient.exception.UnlockValidationException
+import com.linkedin.openhouse.spark.capabilities.OpenHouseCapabilities
 import com.linkedin.openhouse.spark.sql.catalyst.plans.logical.{ResolvedUnlockTable, UnlockTable}
-import com.linkedin.openhouse.spark.sql.execution.datasources.v2.mapper.IcebergCatalogMapper
 import org.apache.iceberg.spark.Spark3Util
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -22,7 +22,7 @@ case class ResolveUnlockTable(spark: SparkSession) extends Rule[LogicalPlan] {
       }
       val resolved = Spark3Util.catalogAndIdentifier(spark, tableName.asJava)
       resolved.catalog match {
-        case catalog: TableCatalog if IcebergCatalogMapper.toIcebergCatalog(catalog).isInstanceOf[SupportsUnlock] =>
+        case catalog: TableCatalog if OpenHouseCapabilities.resolve(catalog).unlock().isPresent =>
           val target = try {
             UnlockTableTarget.of(resolved.identifier.namespace(), resolved.identifier.name())
           } catch {

@@ -1,0 +1,112 @@
+package com.linkedin.openhouse.spark.capabilities;
+
+import com.linkedin.openhouse.capabilities.CapabilityNames;
+import com.linkedin.openhouse.capabilities.GrantsCapability;
+import com.linkedin.openhouse.capabilities.UnlockCapability;
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * What one Spark catalog offers, as {@link OpenHouseCapabilities#resolve} found it: which path the
+ * catalog is on, the capabilities its server advertises (on the Iceberg REST path), and a handle
+ * for each capability that needs one.
+ */
+public final class CatalogCapabilities {
+
+  /** How the capabilities were found. */
+  public enum Path {
+    /** Not an Iceberg catalog: no OpenHouse statement applies. */
+    NOT_ICEBERG,
+    /**
+     * An OpenHouse catalog class (the legacy {@code OpenHouseCatalog}, the in-process {@code
+     * OpenHouseRestCatalog}, or a catalog implementing the capability interfaces): each capability
+     * is offered through the interface the catalog implements; policies are translated by the
+     * catalog.
+     */
+    OPENHOUSE_CATALOG,
+    /**
+     * Iceberg's own {@code RESTCatalog}: the capabilities are the names the server advertises in
+     * {@value CapabilityNames#ADVERTISED_PROPERTY}.
+     */
+    ICEBERG_REST,
+    /**
+     * Any other Iceberg catalog: no grants or unlock; policy statements are left to their own check
+     * of the table, as before capabilities existed.
+     */
+    OTHER_ICEBERG
+  }
+
+  private final Path path;
+  private final Set<String> advertised;
+  private final Set<String> offered;
+  private final Optional<GrantsCapability> grants;
+  private final Optional<UnlockCapability> unlock;
+
+  CatalogCapabilities(
+      Path path,
+      Set<String> advertised,
+      boolean policies,
+      Optional<GrantsCapability> grants,
+      Optional<UnlockCapability> unlock) {
+    this.path = path;
+    this.advertised = advertised;
+    this.grants = grants;
+    this.unlock = unlock;
+    Set<String> names = new LinkedHashSet<>();
+    if (policies) {
+      names.add(CapabilityNames.POLICIES);
+    }
+    if (grants.isPresent()) {
+      names.add(CapabilityNames.GRANTS);
+    }
+    if (unlock.isPresent()) {
+      names.add(CapabilityNames.UNLOCK);
+    }
+    this.offered = Collections.unmodifiableSet(names);
+  }
+
+  public Path path() {
+    return path;
+  }
+
+  /**
+   * The names the catalog's server advertises; empty except on {@link Path#ICEBERG_REST}. A name
+   * here is not necessarily usable: see {@link #offers}.
+   */
+  public Set<String> advertised() {
+    return advertised;
+  }
+
+  /** The capabilities a statement can use on this catalog. */
+  public Set<String> offered() {
+    return offered;
+  }
+
+  /** Whether a statement can use capability {@code name} on this catalog. */
+  public boolean offers(String name) {
+    return offered.contains(name);
+  }
+
+  /** The handle for {@link CapabilityNames#GRANTS}, if offered. */
+  public Optional<GrantsCapability> grants() {
+    return grants;
+  }
+
+  /** The handle for {@link CapabilityNames#UNLOCK}, if offered. */
+  public Optional<UnlockCapability> unlock() {
+    return unlock;
+  }
+
+  @Override
+  public String toString() {
+    return "CatalogCapabilities("
+        + path
+        + ", offered="
+        + offered
+        + ", advertised="
+        + advertised
+        + ")";
+  }
+}
