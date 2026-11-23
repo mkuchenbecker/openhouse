@@ -967,10 +967,53 @@ public class IrcViewRoutesTest {
                 .build()),
         409,
         "AlreadyExistsException");
-    // A table renamed onto a view's name is refused by House Tables' key (a 409 from the real
-    // service); this fixture's in-memory House Tables does not model that, so it is not exercised.
+    // A table renamed onto a view's name: renameOfATableOntoAViewsNameIsRefused.
     assertEquals(before, stored("irc_v_kinds", "v"));
     assertEquals(200, CommitPathHttp.status(CommitPathHttp.get(mvc, "irc_v_kinds", "t")));
+  }
+
+  /**
+   * A table renamed onto a view's name. Tables and views share House Tables' key, so the real store
+   * refuses the rename (409, which its client raises as {@code
+   * HouseTableConcurrentUpdateException}; the stand-in models that), after the native rename, which
+   * looks up only tables, has written the renamed metadata. The internal catalog turns the refusal
+   * into Iceberg's CommitFailedException, which the commit retries and the native API does not map:
+   * the native route answers 500, pinned here as it is. The IRC route answers the spec's 409 {@code
+   * AlreadyExistsException}, worded as Iceberg's catalogs word it. Neither the view nor the table
+   * changes.
+   */
+  @Test
+  void renameOfATableOntoAViewsNameIsRefused() throws Exception {
+    database("irc_v_rent");
+    createNative("irc_v_rent", "v");
+    String view = stored("irc_v_rent", "v");
+    String tableUuid =
+        CommitPathHttp.str(
+            CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID");
+
+    org.springframework.test.web.servlet.ResultActions nativeRename =
+        CommitPathHttp.rename(mvc, "irc_v_rent", "t", "irc_v_rent", "v");
+    assertEquals(500, CommitPathHttp.status(nativeRename), CommitPathHttp.json(nativeRename));
+    assertTrue(
+        CommitPathHttp.message(nativeRename)
+            .startsWith("org.apache.iceberg.exceptions.CommitFailedException"),
+        CommitPathHttp.message(nativeRename));
+
+    assertEquals(
+        "Cannot rename irc_v_rent.t to irc_v_rent.v. View already exists",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_v_rent", "t"),
+                    TableIdentifier.of("irc_v_rent", "v")),
+                409,
+                "AlreadyExistsException")
+            .message());
+    assertEquals(view, stored("irc_v_rent", "v"));
+    assertEquals(
+        tableUuid,
+        CommitPathHttp.str(
+            CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID"));
   }
 
   @Test
