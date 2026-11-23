@@ -1,5 +1,14 @@
 name: Gradle Build and Run Tests
 
+# The default build: Iceberg 1.12 from the pinned fork commit (docs/development/iceberg-fork.md).
+# Publishes the fork on the runner (or restores it from the cache), runs the whole
+# `./gradlew clean build` (every suite, the Spark 4.2 modules and Apache Iceberg's REST
+# compatibility kit among them), then builds the deployables and runs the integration tests
+# against the oh-only containers. It publishes nothing outside the runner.
+#
+# One definition, called on each pull request (pr-validations.yml), after each merge
+# (post-merge-build.yml) and before a release (build-tag-publish.yml). The reference build on
+# LinkedIn's Iceberg 1.5.2 is iceberg-linkedin-build.yml.
 on:
   workflow_call: # Allow to be run by other workflows
     inputs:
@@ -12,6 +21,8 @@ on:
         default: false
 
 jobs:
+  # The job id is part of the Gradle cache's key (gradle/actions/setup-gradle): keep it, so that a
+  # pull request restores the Gradle cache this job wrote on irc-integration.
   build-and-run-tests:
     name: Build and Run Tests
     runs-on: ubuntu-latest
@@ -41,25 +52,148 @@ jobs:
           # Same as the action's own default (read-only off the default branch) unless the caller opts in.
           cache-read-only: ${{ !inputs.gradle-cache-write && github.ref_name != github.event.repository.default_branch }}
 
-      - name: Build with Gradle
-        run: ./gradlew clean build
+      # Restores the published fork from the cache, or builds it and saves it. Every Gradle command
+      # of the default build needs it. The action is shared with the Dataloader job
+      # (dataloader-tests.yml), so both use one cache entry.
+      - name: Restore or publish the Iceberg fork
+        uses: ./.github/actions/iceberg-fork
 
-      - name: Start Docker Containers
+      # Its own step, so that the Docker steps below can tell a failed compile, after which there
+      # is nothing to build images from, from a failed test.
+      - name: Compile everything
+        id: compile
+        run: ./gradlew clean assemble testClasses
+
+      # Everything `./gradlew build` runs: every project's tests, the Spark 3.5 itest's catalogTest
+      # and statementTest, the Spark 4.2 itest's extensionsTest and smokeTest, Apache Iceberg's REST
+      # compatibility kit (restCompatKitTest, which passes when the kit tests that do not pass are
+      # exactly those listed in integrations/java/openhouse-rest-compat-kit/expected-outcomes.txt),
+      # checkstyle and spotbugs. With --continue, so that one red suite does not hide the others.
+      - name: Build with Gradle
+        id: suites
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        run: ./gradlew build --continue
+
+      # The deployables (docs/development/iceberg-fork.md, "Docker images"): the jars the images are
+      # built from, the jobs-scheduler image, and the oh-only recipe with the integration tests.
+      # After the build and whatever its tests' outcome, so that they report first and a red image
+      # never hides or blocks them; not after a failed compile, which leaves nothing to build
+      # images from. The Spark image and the oh-hadoop-spark recipe are the Dataloader job's
+      # (dataloader-tests.yml, by hand).
+      - name: Build the uber jars and the Docker prerequisites
+        id: docker-prereqs
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        run: ./gradlew shadowJar dockerPrereqs
+
+      # Built as the recipes build it, through docker compose. Then the image is
+      # started without arguments: the scheduler logs its first line at INFO and stops on the
+      # missing options, which shows the image's Java runs the jar's Java 17 classes and the jar
+      # carries its log4j2 configuration (without it only errors are logged). Its output is printed
+      # with a prefix, so that the expected exception is not annotated as an error of the run.
+      - name: Build the jobs-scheduler image from the Spark 3.5 apps jar and start the scheduler in it
+        if: ${{ !cancelled() && steps.docker-prereqs.outcome == 'success' }}
+        env:
+          COMPOSE: >-
+            docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml
+            --profile with_jobs_scheduler
+        run: |
+          $COMPOSE build openhouse-jobs-scheduler
+          image="$($COMPOSE config --images | grep -- '-openhouse-jobs-scheduler$')"
+          echo "Image: $image"
+          docker run --rm --entrypoint sh "$image" -c 'echo "APP_NAME=$APP_NAME"; ls -l "$APP_NAME.jar"; java -version' 2>&1 | tee scheduler-image.txt
+          grep -qx 'APP_NAME=openhouse-spark-apps-1.5_2.12' scheduler-image.txt
+          timeout 120 docker run --rm "$image" > scheduler-start.txt 2>&1 || true
+          sed 's/^/scheduler: /' scheduler-start.txt | head -n 12
+          grep -q 'INFO  JobsScheduler:[0-9]* - Starting scheduler' scheduler-start.txt
+
+      - name: Start the oh-only recipe
+        id: oh-only
+        if: ${{ !cancelled() && steps.docker-prereqs.outcome == 'success' }}
         run: docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml up -d --build
 
-      - name: Wait for Docker Containers to start
-        run: sleep 30
+      # Until both services answer HTTP (Spring opens the port when the application is ready).
+      - name: Wait for the tables and house tables services
+        id: oh-only-wait
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          for i in $(seq 1 60); do
+            tables="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/actuator/health || true)"
+            housetables="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/actuator/health || true)"
+            echo "Poll $i: tables=$tables housetables=$housetables"
+            if [ "$tables" = 200 ] && [ "$housetables" = 200 ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "The services did not answer within 300 s"
+          exit 1
 
       - name: Set up Python
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      - name: Install dependencies
-        run: pip install -r scripts/python/requirements.txt
+      - name: Run the integration tests against the oh-only containers
+        id: oh-only-tests
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          pip install -r scripts/python/requirements.txt
+          python scripts/python/integration_test.py ./tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
 
-      - name: Run Integration Tests
-        run: python scripts/python/integration_test.py ./tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
+      # The running tables service is the one this build made: its jar carries the fork's
+      # iceberg-core (version <baseVersion>-ohfork.<commit>) and no other.
+      - name: Check the Iceberg in the tables container
+        id: oh-only-iceberg
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml \
+            exec -T openhouse-tables sh -c 'java -version 2>&1; jar tf tables.jar' > tables-container.txt
+          head -n 3 tables-container.txt
+          grep 'iceberg-core-' tables-container.txt | tee tables-iceberg-core.txt
+          test "$(wc -l < tables-iceberg-core.txt)" = 1
+          grep -q 'iceberg-core-.*-ohfork\.' tables-iceberg-core.txt
 
-      - name: Stop Docker Containers
+      - name: Print the oh-only containers' state and logs
+        if: >-
+          ${{ !cancelled() && (steps.oh-only.outcome == 'failure' || steps.oh-only-wait.outcome == 'failure'
+          || steps.oh-only-tests.outcome == 'failure' || steps.oh-only-iceberg.outcome == 'failure') }}
+        run: |
+          compose="docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml"
+          $compose ps -a
+          for service in prometheus opa oauth openhouse-housetables openhouse-tables; do
+            echo "::group::$service (last 300 lines)"
+            $compose logs --no-color --tail 300 "$service" || true
+            echo "::endgroup::"
+          done
+
+      - name: Stop the oh-only containers
+        if: ${{ always() && steps.oh-only.outcome != 'skipped' }}
         run: docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml down
+
+      # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
+      # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
+      # task. These two steps come last so that the job's log ends with each failed test and the
+      # start of its failure (and the Spark 4.2 tests' own service processes' logs), and the full
+      # reports can be downloaded. The kit's failing tests are expected and it reports its own
+      # outcome, so its results are left out.
+      - name: Print the failed tests
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
+        run: >-
+          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'
+          build
+
+      - name: Upload the test reports
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: default-build-test-reports
+          path: |
+            build/*/reports/tests
+            build/*/test-results
+            build/openhouse-spark-4.2-itest/tmp/*/*/service.log
+            build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs
+          if-no-files-found: ignore
+          retention-days: 7

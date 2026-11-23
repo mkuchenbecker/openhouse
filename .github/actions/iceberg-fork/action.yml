@@ -1,9 +1,9 @@
 name: Restore or publish the Iceberg fork
 description: >-
   Puts the pinned Iceberg fork (scripts/iceberg-fork/iceberg-fork.properties) into
-  ~/.gradle/iceberg-fork/<version> for a -PicebergFork build: from the cache when it is there, else
+  ~/.gradle/iceberg-fork/<version> for the default build: from the cache when it is there, else
   by building it (scripts/iceberg-fork/publish-local.sh). Needs the checkout and a JDK 17. One
-  definition for every job that builds under the switch, so they share one cache entry.
+  definition for every job that runs the default build, so they share one cache entry.
 
 runs:
   using: composite
