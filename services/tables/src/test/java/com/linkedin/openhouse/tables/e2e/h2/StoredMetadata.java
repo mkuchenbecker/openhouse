@@ -112,7 +112,7 @@ final class StoredMetadata {
   /**
    * Snapshot summary keys that Iceberg 1.12's snapshot producer adds and 1.5.2's does not: the
    * manifest counts and the writer's version string, which also names the fork's pinned commit.
-   * Absent on the default build, so dropping them changes nothing there.
+   * Absent on the 1.5.2 line, so dropping them changes nothing there.
    */
   private static final List<String> CLIENT_LINE_SUMMARY_KEYS =
       Arrays.asList("manifests-created", "manifests-kept", "manifests-replaced", "iceberg-version");

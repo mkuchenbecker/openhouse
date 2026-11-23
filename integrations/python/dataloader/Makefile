@@ -55,7 +55,6 @@ integration-tests: $(ITEST_SITE)
 	docker build --platform linux/amd64 -t $(ITEST_IMAGE) -f tests/Dockerfile .
 	docker run --rm --platform linux/amd64 --network $(DOCKER_NETWORK) \
 		-e OH_TOKEN="$$(cat $(TOKEN_FILE))" \
-		-e OH_SPARK_JARS_PACKAGES \
 		$(ITEST_IMAGE) python3 tests/integration_tests.py
 
 clean:

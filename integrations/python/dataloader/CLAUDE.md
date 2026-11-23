@@ -33,7 +33,7 @@ docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.ym
 # From the dataloader directory:
 make format
 make verify
-make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/resources/dummy.token
+make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
 ```
 
 ## Integration Tests
@@ -46,7 +46,7 @@ Integration tests run inside a Docker container on the same network as the oh-ha
    ```
 2. Wait for all services to be healthy (especially Livy and namenode), then run:
    ```bash
-   make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/resources/dummy.token
+   make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
    ```
 
 ## Project Structure

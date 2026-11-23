@@ -1,10 +1,10 @@
 name: Post-Merge Build and Test
 
-# Runs the full build and tests after each merge to the integration branch, and writes the Gradle
-# cache there so pull requests targeting this branch can restore it. A second, independent job runs
-# the opt-in build against the pinned Iceberg fork (-PicebergFork) and its listed suites, and saves
-# the published fork for pull requests to restore. Neither publishes, tags, releases or deploys
-# anything.
+# Runs the full default build (Iceberg 1.12 from the pinned fork commit) and its tests after each
+# merge to the integration branch, and writes the Gradle cache and the published fork there so
+# pull requests targeting this branch can restore them. A second, independent job runs the
+# reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn). Neither publishes, tags,
+# releases or deploys anything.
 on:
   push:
     branches:
@@ -28,9 +28,9 @@ jobs:
     with:
       gradle-cache-write: true
 
-  # The opt-in build against the pinned Iceberg fork (-PicebergFork, docs/development/iceberg-fork.md),
-  # defined once in iceberg-fork-build.yml and also run on pull requests. A separate job with no
-  # `needs`, so it runs beside the build above on its own runner and never holds it up. It runs only
-  # the opt-in suites and publishes nothing.
-  iceberg-fork-build:
-    uses: ./.github/workflows/iceberg-fork-build.yml
+  # The reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn,
+  # docs/development/iceberg-fork.md), defined once in iceberg-linkedin-build.yml and also run on
+  # pull requests. A separate job with no `needs`, so it runs beside the build above on its own
+  # runner and never holds it up. It publishes nothing.
+  iceberg-linkedin-build:
+    uses: ./.github/workflows/iceberg-linkedin-build.yml

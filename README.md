@@ -57,10 +57,15 @@ For deploying OpenHouse to [Kubernetes](DEPLOY.md), you would need the following
 
 ### Building OpenHouse
 
-To build OpenHouse, you can use the following command:
+OpenHouse is built against Iceberg 1.12 from a pinned commit of the Iceberg fork, which is published
+on your machine once per pinned commit (a few minutes, then a no-op) before the first build:
 ```bash
+scripts/iceberg-fork/publish-local.sh
 ./gradlew build
 ```
+
+See [docs/development/iceberg-fork.md](docs/development/iceberg-fork.md) for what is pinned and for
+`-PicebergLinkedIn`, the reference build on LinkedIn's Iceberg 1.5.2 releases.
 
 ### Running OpenHouse with Docker Compose
 
@@ -89,8 +94,8 @@ OpenHouse is built with the following versions of the open-source projects:
 
 | Project | Version |
 | --- | --- |
-| [Apache Iceberg](https://iceberg.apache.org/releases/#120-release) | 1.2.0 |
-| [Apache Spark](https://spark.apache.org/releases/) | 3.1.2 |
+| [Apache Iceberg](https://iceberg.apache.org/releases/) | 1.12.0, from a pinned commit of the Iceberg fork ([details](docs/development/iceberg-fork.md)); LinkedIn's 1.5.2 releases as the reference line |
+| [Apache Spark](https://spark.apache.org/releases/) | 3.5.2 (4.2.0 for the Spark 4.2 modules) |
 | [Apache Livy](https://livy.apache.org/) | 0.7.0-incubating |
 | [Apache Hadoop Client](https://hadoop.apache.org/releases.html) | 2.10.0 |
 | [Springboot Framework](https://spring.io/projects/spring-boot) | 2.6.6 |

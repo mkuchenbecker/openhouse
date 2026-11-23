@@ -11,11 +11,10 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Test;
 
 /**
- * Cross-version parity suite for OpenHouse view support, run UNCHANGED in both the Spark 3.1
- * (Iceberg 1.2, table-only catalog) and Spark 3.5 (Iceberg 1.5, view-capable catalog) itest
- * modules. It physically lives in the spark-3.1 itest source tree; the spark-3.5 itest {@code
- * build.gradle} compiles the spark-3.1 test {@code srcDirs} into its own suite, so a single file
- * exercises both runtimes.
+ * Cross-version parity suite for OpenHouse view support. It ran UNCHANGED in both the Spark 3.1
+ * (Iceberg 1.2, table-only catalog) and Spark 3.5 (Iceberg 1.5, view-capable catalog) itest modules
+ * until the Spark 3.1 itest was deleted; it runs in the Spark 3.5 itest now, and what follows
+ * describes the parity it was written to prove.
  *
  * <p>Views are left DISABLED (the default). The goal is to prove that turning the Iceberg 1.5
  * catalog into an Iceberg {@code ViewCatalog} does not change any observable behavior versus the

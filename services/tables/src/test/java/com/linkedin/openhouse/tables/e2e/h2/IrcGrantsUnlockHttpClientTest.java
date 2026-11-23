@@ -52,9 +52,9 @@ import org.springframework.test.context.ContextConfiguration;
  * capability client is built on (it reuses the {@code RESTCatalog}'s URI and bearer token), over a
  * real port: what the client can send, what it parses from the native bodies, and how each refusal
  * surfaces as an exception with each of Iceberg's error handlers. On the service's Iceberg line:
- * 1.5.2, or 1.12 under the opt-in build, where the client needs an auth session to send anything
- * ({@link #AUTH_SESSION_SETTER}) and the default handler's message names the status and type
- * ({@link #unableToProcess}); the Spark 4.2 module repeats the client half on Iceberg 1.12.
+ * 1.12, where the client needs an auth session to send anything ({@link #AUTH_SESSION_SETTER}) and
+ * the default handler's message names the status and type ({@link #unableToProcess}), or 1.5.2
+ * under {@code -PicebergLinkedIn}; the Spark 4.2 module repeats the client half on Iceberg 1.12.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
@@ -150,7 +150,7 @@ class IrcGrantsUnlockHttpClientTest {
   }
 
   /**
-   * {@code HTTPClient.Builder.withAuthSession}, which Iceberg 1.12 (the opt-in build) has and
+   * {@code HTTPClient.Builder.withAuthSession}, which Iceberg 1.12 (the default build) has and
    * Iceberg 1.5.2 has not; null on 1.5.2. Iceberg 1.12's client refuses to send a request without
    * an {@code AuthSession} ("Invalid auth session: null"), so there the builder gets that type's
    * {@code EMPTY}, which sends the request as built: the bearer token is the header set in {@link

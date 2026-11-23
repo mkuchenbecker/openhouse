@@ -13,8 +13,8 @@ import org.apache.iceberg.rest.auth.AuthManagers;
 import org.apache.iceberg.rest.auth.AuthSession;
 
 /**
- * The capability client's HTTP client and authentication on the Iceberg 1.12 line (compiled under
- * {@code -PicebergFork}; {@code src/iceberg-1.5} holds the 1.5 one). It authenticates as {@code
+ * The capability client's HTTP client and authentication on the Iceberg 1.12 line (compiled by the
+ * default build; {@code src/iceberg-1.5} holds the 1.5 one). It authenticates as {@code
  * RESTSessionCatalog} 1.12 does: Iceberg's {@link HTTPClient} on the catalog {@code uri} with the
  * {@code header.*} values, and the catalog session of the {@link AuthManager} the properties select
  * ({@code rest.auth.type}; by default OAuth2 with the {@code token} or {@code credential}).

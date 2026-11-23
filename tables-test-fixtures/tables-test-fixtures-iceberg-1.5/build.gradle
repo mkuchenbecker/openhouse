@@ -10,8 +10,9 @@ ext {
   sparkVersion = '3.5.2'
 }
 
-// src/shared holds the sources, resources and tests the iceberg-1.2 fixtures compile as well: that
-// project names these directories. src/main and src/test are for what only this project compiles.
+// src/shared holds the sources, resources and tests the iceberg-1.2 fixtures compiled as well, until
+// that project was deleted. It is an ordinary second source root now and can be folded into
+// src/main and src/test.
 sourceSets {
   main {
     java {

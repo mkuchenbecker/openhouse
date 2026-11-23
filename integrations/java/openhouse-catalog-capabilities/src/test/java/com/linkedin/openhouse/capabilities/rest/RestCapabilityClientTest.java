@@ -26,8 +26,8 @@ import org.junit.jupiter.api.Test;
  * The REST capability client against a stub of the tables service's IRC base path: for each
  * statement, the method, path, headers and body it sends, what it reads back, and how each error
  * status reaches the caller. The same tests run on the Iceberg line the build compiles against
- * (1.5.2 by default, 1.12 under {@code -PicebergFork}), so they also show the two transports behave
- * alike.
+ * (1.12 by default, 1.5.2 under {@code -PicebergLinkedIn}), so they also show the two transports
+ * behave alike.
  */
 class RestCapabilityClientTest {
   private static final String TABLE_ACL =

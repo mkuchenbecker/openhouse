@@ -193,9 +193,9 @@ shadowJar {
     exclude("microsoft/**")
   }
 
-  // The shadow plugin's class reader (7.1.2) stops at Java 18 class files. Under -PicebergFork
+  // The shadow plugin's class reader (7.1.2) stops at Java 18 class files. On the Iceberg 1.12 line
   // jackson-core 2.22 and parquet-jackson 1.17 carry Java 21 variants of two classes in their
-  // multi-release directory; the default build's inputs have no such entry.
+  // multi-release directory; the reference line's inputs have no such entry.
   // https://github.com/GradleUp/shadow/issues/877#issuecomment-2472922043
   exclude 'META-INF/versions/21/'
 

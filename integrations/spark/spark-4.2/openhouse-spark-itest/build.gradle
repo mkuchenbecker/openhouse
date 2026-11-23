@@ -2,7 +2,8 @@
 // REST Catalog (IRC) routes of the tables service, with Iceberg's own SparkCatalog and RESTCatalog
 // and no OpenHouse catalog or client class in the Spark JVM; with the OpenHouse SQL extensions
 // (extensionsTest), the OpenHouse statements run the same way, and so does the Spark SQL smoke suite
-// (smokeTest). Only under -PicebergFork (settings.gradle); see docs/development/iceberg-fork.md.
+// (smokeTest). Not in the -PicebergLinkedIn reference build (settings.gradle), which has no
+// Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs:
 // - test: Spark 4.2, the fork's shaded iceberg-spark-runtime-4.2_2.13 and the OpenHouse SQL
@@ -25,7 +26,7 @@ def icebergVersion = rootProject.ext.iceberg_1_5_version
 def forkRepo = rootProject.ext.icebergForkRepo
 if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
   throw new GradleException(
-      "-PicebergFork: iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
           + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
 }
 
@@ -40,7 +41,7 @@ sourceSets {
   }
   // The Spark SQL smoke suite. src/shared/test holds its statements and baseline outcomes, which
   // need only spark.sql and JUnit, so that another Spark line's itest can name the directory and
-  // run the same list (as the Spark 3.1 itest names the Spark 3.5 itest's src/shared/test).
+  // run the same list (as the Spark 3.1 itest named the Spark 3.5 itest's src/shared/test).
   // src/smoke holds what runs them on Spark 4.2 over IRC. Its own source set, so that the other
   // tests' JVMs, which assert what is on their classpath, do not get these classes.
   smoke {

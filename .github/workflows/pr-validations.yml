@@ -6,6 +6,7 @@ on:
     types: [opened, synchronize, reopened, edited]
 
 jobs:
+  # The default build: Iceberg 1.12 from the pinned fork commit, every suite, the deployables.
   build-run-tests:
     # Of the edits, only a base-branch change reruns the build. The concurrency group is on the job,
     # so a skipped run doesn't cancel a running build.
@@ -15,13 +16,14 @@ jobs:
       cancel-in-progress: true
     uses: ./.github/workflows/build-run-tests.yml
 
-  # The opt-in build against the pinned Iceberg fork (-PicebergFork), the same job that runs after
-  # each merge to irc-integration: a change that breaks the build under the switch is red here,
-  # before it merges. No `needs`: it runs beside the build above. Its own concurrency group, so the
-  # two jobs never cancel each other; a newer push to the pull request cancels the older run.
-  iceberg-fork-build:
+  # The reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn), the same job that runs
+  # after each merge to irc-integration: a change that breaks the line the default build is
+  # measured against is red here, before it merges. No `needs`: it runs beside the build above.
+  # Its own concurrency group, so the two jobs never cancel each other; a newer push to the pull
+  # request cancels the older run.
+  iceberg-linkedin-build:
     if: github.event.action != 'edited' || github.event.changes.base
     concurrency:
-      group: ci-iceberg-fork-${{ github.event.pull_request.number || github.ref }}
+      group: ci-iceberg-linkedin-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    uses: ./.github/workflows/iceberg-fork-build.yml
+    uses: ./.github/workflows/iceberg-linkedin-build.yml

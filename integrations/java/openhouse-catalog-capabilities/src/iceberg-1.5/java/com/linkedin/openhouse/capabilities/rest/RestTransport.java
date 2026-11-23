@@ -14,8 +14,8 @@ import org.apache.iceberg.rest.auth.OAuth2Util;
 import org.apache.iceberg.rest.responses.OAuthTokenResponse;
 
 /**
- * The capability client's HTTP client and authentication on the Iceberg 1.5 line (compiled when the
- * build uses Iceberg 1.5.2; {@code src/iceberg-1.12} holds the 1.12 one). It authenticates as
+ * The capability client's HTTP client and authentication on the Iceberg 1.5 line (compiled under
+ * {@code -PicebergLinkedIn}; {@code src/iceberg-1.12} holds the 1.12 one). It authenticates as
  * {@code RESTSessionCatalog} 1.5.2 does at initialization: Iceberg's {@link HTTPClient} on the
  * catalog {@code uri} with the {@code header.*} values; an OAuth {@code credential}, when set, is
  * exchanged for a token at the catalog's token endpoint; otherwise the {@code token}, when set, is
