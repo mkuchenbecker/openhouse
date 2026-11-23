@@ -7,13 +7,18 @@ if (rootProject.hasProperty('icebergFork')) {
   // AwsClientFactories are of the same Iceberg line as core and no 1.2-era iceberg-build.properties
   // names the Iceberg version. It takes the AWS SDK compileOnly, so the SDK comes from here, at the
   // version it is compiled against. kms is needed because AwsClientFactories refers to its model;
-  // s3 brings apache5-client, the HTTP client iceberg-aws 1.12 uses by default.
+  // s3 brings apache5-client, the HTTP client iceberg-aws 1.12 uses by default. netty-nio-client
+  // (the SDK's async client, which OpenHouse never builds) is left out: at this SDK version it
+  // raises part of Netty to 4.1.138 under reactor-netty 1.0.27 and Netty 4.1.86's other modules,
+  // and the service's WebClient calls to the house table service then time out and hang
+  // (HouseTableRepositoryImplTest).
   def awsSdkVersion = rootProject.ext.icebergForkAwsSdkVersion
+  def noNettyClient = { exclude group: 'software.amazon.awssdk', module: 'netty-nio-client' }
   dependencies {
     api("com.linkedin.iceberg:iceberg-aws:${rootProject.ext.iceberg_1_5_version}")
-    api("software.amazon.awssdk:s3:${awsSdkVersion}")
-    api("software.amazon.awssdk:sts:${awsSdkVersion}")
-    api("software.amazon.awssdk:kms:${awsSdkVersion}")
+    api("software.amazon.awssdk:s3:${awsSdkVersion}", noNettyClient)
+    api("software.amazon.awssdk:sts:${awsSdkVersion}", noNettyClient)
+    api("software.amazon.awssdk:kms:${awsSdkVersion}", noNettyClient)
     api("software.amazon.awssdk:url-connection-client:${awsSdkVersion}")
   }
 } else {
