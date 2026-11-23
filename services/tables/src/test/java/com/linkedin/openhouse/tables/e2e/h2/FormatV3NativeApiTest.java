@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
@@ -43,6 +44,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
@@ -66,6 +68,7 @@ public class FormatV3NativeApiTest {
 
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
+  @Autowired ClusterProperties clusterProperties;
 
   private final List<String> created = new ArrayList<>();
 
@@ -405,6 +408,38 @@ public class FormatV3NativeApiTest {
     TableMetadata upgraded = metadata("fv3_replace_v2");
     assertEquals(3, upgraded.formatVersion());
     assertEquals(2, upgraded.snapshots().size());
+  }
+
+  /**
+   * Turning the switch off again stops new v3 tables, not the ones that exist: a v3 table still
+   * takes property changes, snapshots and a replace, and stays v3.
+   */
+  @Test
+  void aV3TableKeepsWorkingWhenTheSwitchIsTurnedOffAgain() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String db = "fv3_switched_off";
+    replaceable(asking(plain(db), "3"));
+    ok(putSnapshots(mvc, db, "t", append(db, "a")));
+    String v2 = make(plain("fv3_switched_off_v2"));
+    ReflectionTestUtils.setField(clusterProperties, "clusterIcebergFormatV3Enabled", false);
+    try {
+      ok(put(mvc, withProp(stored(db), "user.note", "x")));
+      ok(putSnapshots(mvc, db, "t", append(db, "b")));
+      ok(replace(db, null));
+      assertEquals(204, status(rename(mvc, db, "t", db, "renamed")));
+      assertEquals(204, status(rename(mvc, db, "renamed", db, "t")));
+      TableMetadata kept = metadata(db);
+      assertEquals(3, kept.formatVersion());
+      assertEquals(3, kept.snapshots().size());
+      assertEquals(3L, IcebergV3.nextRowId(kept));
+      // No new v3 table, by create or by upgrade.
+      created.add("fv3_switched_off_new");
+      refused(post(mvc, asking(plain("fv3_switched_off_new"), "3")), FormatVersionRule.REFUSED);
+      refused(put(mvc, asking(bodyFromGet(v2), "3")), FormatVersionRule.REFUSED);
+      assertEquals(2, metadata("fv3_switched_off_v2").formatVersion());
+    } finally {
+      ReflectionTestUtils.setField(clusterProperties, "clusterIcebergFormatV3Enabled", true);
+    }
   }
 
   // ---------------------------------------------------------------- refused on v3 for now
