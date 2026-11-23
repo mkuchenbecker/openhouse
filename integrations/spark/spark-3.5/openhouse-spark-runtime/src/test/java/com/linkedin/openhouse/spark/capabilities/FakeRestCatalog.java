@@ -34,6 +34,10 @@ public class FakeRestCatalog extends RESTCatalog {
               return config;
             }
           }
+          // Iceberg 1.12 asks the client for a copy bound to the auth session.
+          if (invocation.getMethod().getReturnType() == RESTClient.class) {
+            return invocation.getMock();
+          }
           if (invocation.getMethod().getReturnType() == void.class) {
             return null;
           }
