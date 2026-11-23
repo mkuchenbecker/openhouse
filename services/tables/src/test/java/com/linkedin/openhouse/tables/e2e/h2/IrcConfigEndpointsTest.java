@@ -136,7 +136,15 @@ public class IrcConfigEndpointsTest {
         mvc,
         IrcHttp.request(HttpMethod.valueOf(parts[0]), path)
             .contentType(MediaType.APPLICATION_JSON)
-            .content(parts[0].equals("POST") ? "{}" : ""));
+            .content(
+                !parts[0].equals("POST")
+                    ? ""
+                    : path.endsWith("/rename")
+                        // A valid rename, so that a route that parses its body before refusing
+                        // (view rename) answers its refusal.
+                        ? "{\"source\":{\"namespace\":[\"irc_cfg_none\"],\"name\":\"a\"},"
+                            + "\"destination\":{\"namespace\":[\"irc_cfg_none\"],\"name\":\"b\"}}"
+                        : "{}"));
   }
 
   /** Whether the server answered "not served": the 406, or the catch-all's 400 for no route. */
