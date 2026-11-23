@@ -1,6 +1,8 @@
 package com.linkedin.openhouse.tables.api.irc;
 
 import com.linkedin.openhouse.capabilities.CapabilityNames;
+import com.linkedin.openhouse.cluster.storage.StorageManager;
+import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.authorization.Privileges;
@@ -18,6 +20,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -81,6 +84,8 @@ public class IcebergRestApiHandler {
 
   @Autowired private MeterRegistry meterRegistry;
 
+  @Autowired private StorageManager storageManager;
+
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
 
@@ -98,9 +103,9 @@ public class IcebergRestApiHandler {
    *       counter; an Iceberg 1.5.2 client posts them inline, on the planning and commit path; and
    *       a create with data (CTAS) posts its commit report before the table exists, which is
    *       answered 404 and logged by the client as a warning with a stack trace.
-   *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
-   *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
-   *       them with write properties ResolvingFileIO rejects.
+   *   <li>{@code io-impl}: the FileIO for the cluster's default storage ({@link #clientFileIo}).
+   *       RESTCatalog's own default (ResolvingFileIO) cannot write delete files on this Iceberg
+   *       line, which opens them with write properties ResolvingFileIO rejects.
    *   <li>{@value #CAPABILITIES}: the OpenHouse features the routes registered here serve,
    *       comma-separated ({@link IcebergRestCapability}): {@code policies}, a policy patch ({@code
    *       updated.openhouse.policy}, as OpenHouse's policy statements write it) in a create or
@@ -112,11 +117,44 @@ public class IcebergRestApiHandler {
    * </ul>
    */
   public ConfigResponse config() {
-    return ConfigResponse.builder()
-        .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
-        .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
-        .withOverride(CAPABILITIES, String.join(",", servedRoutes.capabilities()))
-        .build();
+    ConfigResponse.Builder config =
+        ConfigResponse.builder().withDefault(REST_METRICS_REPORTING_ENABLED, "false");
+    clientFileIo(storageManager.getDefaultStorage().getType())
+        .ifPresent(fileIo -> config.withDefault(CatalogProperties.FILE_IO_IMPL, fileIo));
+    return config.withOverride(CAPABILITIES, String.join(",", servedRoutes.capabilities())).build();
+  }
+
+  /**
+   * The FileIO an unmodified Iceberg client should read and write a cluster's tables with, by the
+   * cluster's default storage type: the class this service itself uses for that storage ({@code
+   * FileIOConfig}), each of which is Iceberg's own and needs no OpenHouse class at the client.
+   *
+   * <ul>
+   *   <li>hdfs, local: {@code HadoopFileIO}, which is also what the OpenHouse Java client uses when
+   *       its catalog is given no {@code io-impl}.
+   *   <li>s3: {@code S3FileIO} (iceberg-aws).
+   *   <li>adls: {@code ADLSFileIO} (iceberg-azure), the class OpenHouse's set-up guide has an
+   *       engine configure for the OpenHouse catalog on ADLS.
+   * </ul>
+   *
+   * <p>Only the class is advertised. Where the store is and how to authenticate to it stay the
+   * client's own configuration, as on the native path: nothing from the cluster's storage
+   * parameters is sent. A storage type not listed here gets no {@code io-impl}, and the client
+   * keeps its own default, rather than a class that cannot read the cluster's tables. A table the
+   * storage selector places on another storage type than the default gets the default's class too.
+   */
+  static Optional<String> clientFileIo(StorageType.Type defaultStorageType) {
+    if (StorageType.HDFS.equals(defaultStorageType)
+        || StorageType.LOCAL.equals(defaultStorageType)) {
+      return Optional.of(HADOOP_FILE_IO);
+    }
+    if (StorageType.S3.equals(defaultStorageType)) {
+      return Optional.of(S3_FILE_IO);
+    }
+    if (StorageType.ADLS.equals(defaultStorageType)) {
+      return Optional.of(ADLS_FILE_IO);
+    }
+    return Optional.empty();
   }
 
   /**
@@ -135,6 +173,10 @@ public class IcebergRestApiHandler {
   static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
 
   static final String HADOOP_FILE_IO = "org.apache.iceberg.hadoop.HadoopFileIO";
+
+  static final String S3_FILE_IO = "org.apache.iceberg.aws.s3.S3FileIO";
+
+  static final String ADLS_FILE_IO = "org.apache.iceberg.azure.adlsv2.ADLSFileIO";
 
   /**
    * Top-level namespaces, or the namespaces under {@code parent}: none, since databases have one
