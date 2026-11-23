@@ -38,6 +38,7 @@ import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.TableTypeMapper;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionCommitPolicy;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
@@ -302,13 +303,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
    * downgrade. The version is the one {@link FormatVersionRule#versionOfReplace} gives: the table's
    * own, or 3 when the replace asks for it and v3 is enabled.
    *
-   * <p>Only where v3 is enabled can a table differ from the cluster's version, so only there is the
-   * stored table read for it; elsewhere the properties stay as the create computed them.
+   * <p>A table can be above the cluster's version only where Iceberg builds format v3, whether the
+   * cluster's switch is on now or was on when the table was made v3, so only there is the stored
+   * table read for it; elsewhere the properties stay as the create computed them.
    */
   private void keepFormatVersionOnReplace(
       TableIdentifier tableIdentifier, TableDto tableDto, Map<String, String> tableProps) {
-    if (!formatVersionRule().v3Enabled()) {
-      // The create's rule already refused a version above the cluster's.
+    if (!IcebergV3.supported()) {
       return;
     }
     int stored = InternalRepositoryUtils.formatVersion(catalog.loadTable(tableIdentifier));
