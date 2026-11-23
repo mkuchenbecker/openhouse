@@ -1182,7 +1182,7 @@ public class IrcWriteRoutesTest {
                 409,
                 "AlreadyExistsException")
             .message());
-    // Case-only rename and a rename across databases: the native 400.
+    // Case-only rename: the native 400.
     String nativeCase =
         message(
             rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "T").andExpect(status().isBadRequest()));
@@ -1196,25 +1196,57 @@ public class IrcWriteRoutesTest {
                 400,
                 "BadRequestException")
             .message());
-    String nativeAcross =
-        message(
-            rename(mvc, "irc_w_ren2", "t", "irc_w_other", "t").andExpect(status().isBadRequest()));
-    assertEquals(
-        nativeAcross,
-        assertIrcError(
-                IrcWrite.rename(
-                    mvc,
-                    TableIdentifier.of("irc_w_ren2", "t"),
-                    TableIdentifier.of("irc_w_other", "t")),
-                400,
-                "BadRequestException")
-            .message());
     // Missing source: 404.
     assertIrcError(
         IrcWrite.rename(
             mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
         404,
         "NoSuchTableException");
+  }
+
+  /**
+   * A rename across databases, which the native rename refuses with 400 whether or not the target
+   * database exists, answers what the spec lists for renameTable: 404 {@code
+   * NoSuchNamespaceException} when the target namespace does not exist, and otherwise 406, the
+   * spec's "the server does not support this operation", with the native message. Nothing changes.
+   */
+  @Test
+  void renameAcrossDatabasesIs404ForAMissingTargetNamespaceAnd406Otherwise() throws Exception {
+    createNative(nativeBody("irc_w_renx"));
+    createNative(nativeBody("irc_w_renx_to"));
+    String before = stored("irc_w_renx");
+    // The native rename: 400 in both cases, unchanged.
+    message(
+        rename(mvc, "irc_w_renx", "t", "irc_w_renx_none", "u").andExpect(status().isBadRequest()));
+    String nativeAcross =
+        message(
+            rename(mvc, "irc_w_renx", "t", "irc_w_renx_to", "u")
+                .andExpect(status().isBadRequest()));
+    assertTrue(nativeAcross.contains("across databases"), nativeAcross);
+
+    assertEquals(
+        "Namespace does not exist: irc_w_renx_none",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_renx", "t"),
+                    TableIdentifier.of("irc_w_renx_none", "u")),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertEquals(
+        nativeAcross,
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_renx", "t"),
+                    TableIdentifier.of("irc_w_renx_to", "u")),
+                406,
+                "UnsupportedOperationException")
+            .message());
+    assertEquals(before, stored("irc_w_renx"));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_renx_to", "u")));
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_renx_none", "u")));
   }
 
   // ---------------------------------------------------------------- table audit
