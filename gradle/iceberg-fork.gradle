@@ -30,6 +30,9 @@ ext.iceberg_1_5_version = forkVersion
 // Modules that check a marker of their own (Spark 4.2 runtime, REST compatibility kit) look here.
 ext.icebergForkRepo = forkRepo
 
+// The AWS SDK the fork's iceberg-aws needs (openhouse.iceberg-aws-conventions).
+ext.icebergForkAwsSdkVersion = pin.getProperty('awsSdkVersion')
+
 // Replace the root build's ORC/Avro forces (see build.gradle) with what the fork's Iceberg needs.
 ext.icebergForkForces = [
     "org.apache.avro:avro:${pin.getProperty('avroVersion')}",

@@ -2,9 +2,25 @@ ext {
   icebergAwsVersion = '1.2.0.6'
 }
 
-dependencies {
-  api('com.linkedin.iceberg:iceberg-aws:' + icebergAwsVersion)
-  api('software.amazon.awssdk:s3:2.20.18')
-  api('software.amazon.awssdk:sts:2.20.18')
-  api('software.amazon.awssdk:url-connection-client:2.20.18')
+if (rootProject.hasProperty('icebergFork')) {
+  // -PicebergFork: the fork's own iceberg-aws (gradle/iceberg-fork.gradle), so S3FileIO and
+  // AwsClientFactories are of the same Iceberg line as core and no 1.2-era iceberg-build.properties
+  // names the Iceberg version. It takes the AWS SDK compileOnly, so the SDK comes from here, at the
+  // version it is compiled against. kms is needed because AwsClientFactories refers to its model;
+  // s3 brings apache5-client, the HTTP client iceberg-aws 1.12 uses by default.
+  def awsSdkVersion = rootProject.ext.icebergForkAwsSdkVersion
+  dependencies {
+    api("com.linkedin.iceberg:iceberg-aws:${rootProject.ext.iceberg_1_5_version}")
+    api("software.amazon.awssdk:s3:${awsSdkVersion}")
+    api("software.amazon.awssdk:sts:${awsSdkVersion}")
+    api("software.amazon.awssdk:kms:${awsSdkVersion}")
+    api("software.amazon.awssdk:url-connection-client:${awsSdkVersion}")
+  }
+} else {
+  dependencies {
+    api('com.linkedin.iceberg:iceberg-aws:' + icebergAwsVersion)
+    api('software.amazon.awssdk:s3:2.20.18')
+    api('software.amazon.awssdk:sts:2.20.18')
+    api('software.amazon.awssdk:url-connection-client:2.20.18')
+  }
 }
