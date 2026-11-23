@@ -71,6 +71,15 @@ sourceSets {
         java {
             srcDirs += 'src/shared/main/java'
         }
+        // log4j2.properties: without it the scheduler (JobsScheduler, started from the uber jar in
+        // the jobs-scheduler image) logs errors only. The Iceberg 1.2 / Spark 3.1 apps jar has always
+        // carried it and this jar has not, so until that jar is gone it is packaged here only under
+        // -PicebergFork, where this is the apps jar the image runs.
+        if (rootProject.hasProperty('icebergFork')) {
+            resources {
+                srcDirs += 'src/shared/main/resources'
+            }
+        }
     }
     test {
         java {
