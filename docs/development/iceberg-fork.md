@@ -51,8 +51,12 @@ and `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`. The single-copy ser
 against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The 1.5
 projects that reuse their source directories name the directories instead, `services:tables` tests
 use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
-share, is built on the Spark 3.5 / fork line. Tasks that need a left-out project, such as
-`dockerPrereqs`, do not work under the switch.
+share, is built on the Spark 3.5 / fork line. There it skips the root dependency forces and keeps
+the thin `iceberg-orc`/`iceberg-parquet` jars off its test classpath, as the Spark 3.5 apps do.
+Tasks that need a left-out project, such as `dockerPrereqs`, do not work under the switch.
+
+The delta-harness runs on this build with `HARNESS_ICEBERG_FORK=1`
+(`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
 
 ## Behavior that differs by Iceberg line
 
@@ -71,6 +75,16 @@ same class.
 - `CREATE NAMESPACE` and `DROP NAMESPACE` are unsupported on both lines, with the message "Checking
   if database exists is not supported" on 1.12 instead of "Describing database is not supported"
   (decision D14b, apache/iceberg#14507).
+- After several merge-on-read `DELETE`s on one data file, 1.12 keeps one live position delete file
+  for it (Spark's delete granularity defaults to `file` and the earlier file is replaced), where
+  1.5.2 keeps one per `DELETE` (`SparkMoRFunctionalTest`).
+
+Measured on 1.12 by the delta-harness and not yet accepted by a decision: with
+`write.wap.enabled=true` and `spark.wap.branch` set, an explicit `TIMESTAMP AS OF` read fails with
+"Cannot override ref, already set snapshot id" instead of reading main's history (the scan gets both
+the time-travel snapshot and the WAP branch; `VERSION AS OF` takes the same path in the code); and
+`ALTER TABLE ... ADD COLUMN c int DEFAULT 5` is refused ("setting default values in Spark is
+currently unsupported") instead of being accepted with the default dropped.
 
 On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client calls only
 the endpoints a server advertises, and with none advertised assumes a default set without views. So
