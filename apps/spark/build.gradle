@@ -24,7 +24,12 @@ dependencies {
     }
 
     implementation "org.apache.logging.log4j:log4j-slf4j-impl:${log4jVersion}"
-    implementation project(':libs:datalayout')
+    // libs:datalayout is built on the Spark 3.5 / Iceberg 1.5 line; this project brings its own
+    // Spark 3.1 and Iceberg 1.2 runtime instead.
+    implementation(project(':libs:datalayout')) {
+        exclude group: 'org.apache.spark'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-spark-runtime-3.5_2.12'
+    }
     // Exclude log4j-slf4j2-impl: incompatible with the log4j-slf4j-impl (1.x) bridge this app ships.
     implementation(project(':libs:optimizer:binpack')) {
         exclude group: 'org.apache.logging.log4j', module: 'log4j-slf4j2-impl'

@@ -121,11 +121,7 @@ dependencies {
   testImplementation 'org.springframework.security:spring-security-test:5.7.3'
   testImplementation 'org.springframework:spring-context-support:5.3.18'
   testImplementation(testFixtures(project(':services:common')))
-  // Under -PicebergFork the iceberg-1.2 fixtures are not in the build (settings.gradle); the 1.5
-  // fixtures are built from the same sources.
-  testImplementation (project(rootProject.hasProperty('icebergFork')
-      ? ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12'
-      : ':tables-test-fixtures:tables-test-fixtures_2.12')) {
+  testImplementation (project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')) {
     exclude group: 'com.linkedin.iceberg'
   }
 }

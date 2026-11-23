@@ -4,27 +4,19 @@ plugins {
     id 'openhouse.maven-publish'
 }
 
+// Built on the line of its consumers that stay, the Spark 3.5 apps (apps/spark-3.5): Spark 3.5, the
+// Iceberg 1.5 variant's Iceberg and the Iceberg 1.5 fixtures, with and without -PicebergFork.
 ext {
-    icebergVersion = rootProject.ext.iceberg_1_2_version
-    sparkVersion = '3.1.1'
+    icebergVersion = rootProject.ext.iceberg_1_5_version
+    sparkVersion = '3.5.2'
     springVersion = '2.7.8'
     hadoopVersion = '2.10.0'
-    sparkVersionSuffix = "3.1"
-    openhouseSparkRuntimeModule = ":integrations:spark:spark-${sparkVersionSuffix}:openhouse-spark-runtime_2.12"
-    tablesTestFixturesModule = ":tables-test-fixtures:tables-test-fixtures_2.12"
+    sparkVersionSuffix = "3.5"
+    openhouseSparkRuntimeModule = ":integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12"
+    tablesTestFixturesModule = ":tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12"
 }
 
-// Under -PicebergFork the Iceberg 1.2 / Spark 3.1 projects are not in the build (settings.gradle,
-// decision D15). This library is shared with the Spark 3.5 apps (apps/spark-3.5), so there it is
-// built on their line instead: the fork's Iceberg, Spark 3.5 and the Iceberg 1.5 fixtures.
 if (rootProject.hasProperty('icebergFork')) {
-    ext {
-        icebergVersion = rootProject.ext.iceberg_1_5_version
-        sparkVersion = '3.5.2'
-        sparkVersionSuffix = "3.5"
-        openhouseSparkRuntimeModule = ":integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12"
-        tablesTestFixturesModule = ":tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12"
-    }
     // The 1.5 fixtures bring the thin iceberg-orc/iceberg-parquet jars the -PicebergFork build adds
     // (openhouse.iceberg-conventions-1.5.2). Next to the shaded iceberg-spark-runtime they break ORC
     // reads (shaded TypeDescription cannot be cast to org.apache.orc.TypeDescription), so they are
