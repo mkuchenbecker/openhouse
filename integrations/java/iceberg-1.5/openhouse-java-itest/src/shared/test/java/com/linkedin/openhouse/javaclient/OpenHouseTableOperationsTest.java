@@ -52,6 +52,7 @@ import org.apache.iceberg.types.Types;
 import org.apache.iceberg.types.Types.NestedField;
 import org.apache.iceberg.util.Tasks;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -906,6 +907,98 @@ public class OpenHouseTableOperationsTest {
 
     Assertions.assertEquals(
         "US", SchemaParser.fromJson(body.getSchema()).findField(1).initialDefault());
+  }
+
+  /**
+   * The format version a commit asks the service for (work item X1). Iceberg keeps the reserved
+   * {@code format-version} property out of a table's properties, so the client adds it to the
+   * request's properties exactly when the metadata it commits is format v3 and the table is not: a
+   * create at v3 and the upgrade of a v2 table. Every other request is sent as it always was.
+   */
+  @Test
+  public void
+      constructMetadataRequestBody_asksForFormatVersion3OnlyWhenTheCommitRaisesTheTableToIt() {
+    Assumptions.assumeTrue(IcebergLine.current() == IcebergLine.V3);
+    Schema schema = new Schema(NestedField.optional(1, "id", Types.StringType.get()));
+    TableMetadata v2 =
+        TableMetadata.newTableMetadata(
+            schema, PartitionSpec.unpartitioned(), "file:/tmp/fv-v2", Collections.emptyMap());
+    TableMetadata v3 =
+        TableMetadata.newTableMetadata(
+            schema,
+            PartitionSpec.unpartitioned(),
+            "file:/tmp/fv-v3",
+            Collections.singletonMap(TableProperties.FORMAT_VERSION, "3"));
+    OpenHouseTableOperations ops = refreshableOps(mock(TableApi.class));
+
+    // A create at the default version, and one that asks for 2: no format version is sent.
+    Assertions.assertFalse(
+        ops.constructMetadataRequestBody(null, v2)
+            .getTableProperties()
+            .containsKey(TableProperties.FORMAT_VERSION));
+    Assertions.assertFalse(
+        ops.constructMetadataRequestBody(
+                null,
+                TableMetadata.newTableMetadata(
+                    schema,
+                    PartitionSpec.unpartitioned(),
+                    "file:/tmp/fv-v2",
+                    Collections.singletonMap(TableProperties.FORMAT_VERSION, "2")))
+            .getTableProperties()
+            .containsKey(TableProperties.FORMAT_VERSION));
+    // A create at v3.
+    Assertions.assertEquals(
+        "3",
+        ops.constructMetadataRequestBody(null, v3)
+            .getTableProperties()
+            .get(TableProperties.FORMAT_VERSION));
+    // ALTER TABLE ... SET TBLPROPERTIES ('format-version'='3'): Iceberg upgrades the metadata and
+    // leaves the properties as they were, so the property is the only thing that says it.
+    Map<String, String> asked = new HashMap<>(v2.properties());
+    asked.put(TableProperties.FORMAT_VERSION, "3");
+    TableMetadata upgraded = v2.replaceProperties(asked);
+    Assertions.assertEquals(3, upgraded.formatVersion());
+    Assertions.assertEquals(v2.properties(), upgraded.properties());
+    Assertions.assertTrue(OpenHouseTableOperations.asksForFormatV3(v2, upgraded));
+    Assertions.assertEquals(
+        "3",
+        ops.constructMetadataRequestBody(v2, upgraded)
+            .getTableProperties()
+            .get(TableProperties.FORMAT_VERSION));
+    // A commit on a table that is already v3 does not send it again.
+    Map<String, String> changed = new HashMap<>(v3.properties());
+    changed.put("user.k", "v");
+    Assertions.assertFalse(
+        ops.constructMetadataRequestBody(v3, v3.replaceProperties(changed))
+            .getTableProperties()
+            .containsKey(TableProperties.FORMAT_VERSION));
+  }
+
+  /**
+   * An upgrade changes nothing else, so before the client asked for it by name its commit sent no
+   * request at all and the statement reported success. It is sent as a table update.
+   */
+  @Test
+  public void doCommit_sendsAnUpgradeToFormatVersion3AsATableUpdate() {
+    Assumptions.assumeTrue(IcebergLine.current() == IcebergLine.V3);
+    Schema schema = new Schema(NestedField.optional(1, "id", Types.StringType.get()));
+    Map<String, String> properties = new HashMap<>();
+    properties.put("openhouse.tableType", "PRIMARY_TABLE");
+    TableMetadata v2 =
+        TableMetadata.newTableMetadata(
+            schema, PartitionSpec.unpartitioned(), "file:/tmp/fv-upgrade", properties);
+    Map<String, String> asked = new HashMap<>(v2.properties());
+    asked.put(TableProperties.FORMAT_VERSION, "3");
+    TableApi tableApi = mock(TableApi.class);
+    when(tableApi.updateTableV1(anyString(), anyString(), any())).thenReturn(Mono.empty());
+
+    refreshableOps(tableApi).doCommit(v2, v2.replaceProperties(asked));
+
+    ArgumentCaptor<CreateUpdateTableRequestBody> sent =
+        ArgumentCaptor.forClass(CreateUpdateTableRequestBody.class);
+    verify(tableApi, times(1)).updateTableV1(eq("db"), eq("tbl"), sent.capture());
+    Assertions.assertEquals(
+        "3", sent.getValue().getTableProperties().get(TableProperties.FORMAT_VERSION));
   }
 
   /**
