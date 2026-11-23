@@ -112,6 +112,9 @@ dependencies {
   api 'org.springframework.security:spring-security-config:5.7.2'
   api 'org.springframework.boot:spring-boot-starter-webflux:2.7.8'
   implementation 'com.cronutils:cron-utils:9.2.0'
+  // The capability names the IRC config advertises (CapabilityNames): compile-time constants only,
+  // inlined by javac, so nothing of the module is on any runtime classpath.
+  compileOnly project(':integrations:java:openhouse-catalog-capabilities')
   testImplementation project(':client:tableclient')
   testImplementation 'org.openapitools:jackson-databind-nullable:0.2.1'
   testImplementation 'org.junit.jupiter:junit-jupiter-engine:' + junit_version

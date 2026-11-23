@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.api.irc;
 
+import com.linkedin.openhouse.capabilities.CapabilityNames;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -101,7 +102,7 @@ public class IcebergRestApiHandler {
   }
 
   /** The config key that names the OpenHouse features a server serves (server capabilities). */
-  public static final String CAPABILITIES = "openhouse.capabilities";
+  public static final String CAPABILITIES = CapabilityNames.ADVERTISED_PROPERTY;
 
   /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
   static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
