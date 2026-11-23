@@ -59,8 +59,8 @@ import org.springframework.context.annotation.Primary;
 /**
  * The tables service for the Spark 4.2 IRC read test, in its own JVM: the service exactly as the
  * Spark 3.5 tests embed it ({@link SpringH2TestApplication}, in-memory H2 house tables, local file
- * system storage under the work directory), with the dummy token interceptor and an authorization
- * handler that denies one principal.
+ * system storage in a {@link ServiceWarehouse}), with the dummy token interceptor and an
+ * authorization handler that denies one principal.
  *
  * <p>Once up, it seeds the tables through the existing OpenHouse Java client over the native API:
  * the client creates each table, data files are written with Iceberg's generic writers to the
@@ -69,8 +69,8 @@ import org.springframework.context.annotation.Primary;
  * What the Java client then shows for each table (name, properties, metadata tables) is written
  * next to the seed facts, so the Spark 4.2 test can compare the IRC view with the native one.
  *
- * <p>Last it writes {@code ready.json} (port, tokens, snapshot ids, the native view) and serves
- * until its standard input closes, which happens when the test JVM stops it or dies.
+ * <p>Last it writes {@code ready.json} (port, warehouse, tokens, snapshot ids, the native view) and
+ * serves until its standard input closes, which happens when the test JVM stops it or dies.
  *
  * <p>Usage: {@code IrcReadTestService <work directory>}.
  */
@@ -99,7 +99,8 @@ public final class IrcReadTestService {
 
   public static void main(String[] args) throws Exception {
     Path work = Paths.get(args[0]).toAbsolutePath();
-    Path warehouse = Files.createDirectories(work.resolve("warehouse"));
+    // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
+    Path warehouse = ServiceWarehouse.create();
     ConfigurableApplicationContext context =
         new SpringApplication(SpringH2TestApplication.class, DenyStrangerConfig.class)
             .run(
@@ -133,6 +134,7 @@ public final class IrcReadTestService {
 
     Map<String, Object> ready = new LinkedHashMap<>();
     ready.put("port", port);
+    ready.put("warehouse", warehouse.toString());
     Map<String, String> tokens = new LinkedHashMap<>();
     for (String principal : Arrays.asList(WRITER, READER, STRANGER)) {
       tokens.put(principal, new DummyTokenInterceptor.DummySecurityJWT(principal).buildNoopJWT());

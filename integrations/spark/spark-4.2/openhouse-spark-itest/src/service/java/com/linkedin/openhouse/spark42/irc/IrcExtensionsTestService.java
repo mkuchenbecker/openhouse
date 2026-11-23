@@ -92,7 +92,8 @@ public final class IrcExtensionsTestService {
 
   public static void main(String[] args) throws Exception {
     Path work = Paths.get(args[0]).toAbsolutePath();
-    Path warehouse = Files.createDirectories(work.resolve("warehouse"));
+    // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
+    Path warehouse = ServiceWarehouse.create();
     ConfigurableApplicationContext context =
         new SpringApplication(SpringH2TestApplication.class, RecordingAuthorization.Config.class)
             .run(
@@ -169,6 +170,7 @@ public final class IrcExtensionsTestService {
 
     Map<String, Object> ready = new LinkedHashMap<>();
     ready.put("port", port);
+    ready.put("warehouse", warehouse.toString());
     ready.put("controlPort", control.getAddress().getPort());
     ready.put("tokens", tokens);
     Path tmp = work.resolve("ready.json.tmp");
