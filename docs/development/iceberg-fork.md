@@ -119,22 +119,43 @@ is not detectable and it declares the capability as before, with a warning.
 
 ## CI
 
-`post-merge-build.yml` has a second job, `iceberg-fork-build`, that runs after each merge to
-`irc-integration` and by hand (`workflow_dispatch`): `publish-local.sh` (the published
-`~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the script), then
-`-PicebergFork assemble testClasses`, then the opt-in suites: `:services:tables:test`,
-`:iceberg:openhouse:internalcatalog:test`, `:iceberg:openhouse:htscatalog:test`, the 1.5 Java itest,
-the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
+The opt-in build is one reusable workflow, `iceberg-fork-build.yml`, with one job
+(`iceberg-fork-build`). Two workflows call it, each beside its default build job, which it neither
+blocks nor waits for:
+
+- `post-merge-build.yml`, after each merge to `irc-integration` and by hand (`workflow_dispatch`).
+  A running post-merge run is never cancelled.
+- `pr-validations.yml`, on every pull request (decision D33): a change that breaks the build under
+  the switch is red before it merges. A newer push to a pull request cancels the pull request's
+  older run.
+
+The job runs `publish-local.sh`, then `-PicebergFork assemble testClasses`, then the opt-in suites:
+`:services:tables:test`, `:iceberg:openhouse:internalcatalog:test`,
+`:iceberg:openhouse:htscatalog:test`, the capabilities module's tests, the 1.5 Java itest, the
+Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
 the Spark 4.2 itest (`test`, `extensionsTest`), and last, in a step of its own that runs even when a
-suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`). It does not block or
-wait for the default build job.
+suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`).
+
+The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
+script, so the fork is built (60 to 75 minutes on a runner) only when either changes:
+
+- Every run restores the cache. A pull request can read what its base branch saved, so it normally
+  gets the fork `irc-integration` published and builds nothing.
+- A run on a branch (after a merge, or by hand) saves the fork whenever it had to publish it.
+- A pull request saves only when it changes `iceberg-fork.properties` or `publish-local.sh`. Its
+  first run publishes the fork, and GitHub keeps the cache in the pull request's own scope: later
+  pushes to that pull request restore it, and no other pull request or branch can read it. After
+  the merge, the post-merge run publishes once more and saves for everyone.
+- A pull request that misses the cache without changing either file (the base's cache was evicted,
+  or the base's post-merge run has not saved yet) publishes the fork and saves nothing.
+
+The Gradle cache is written only on `irc-integration`; a pull request and a branch run by hand read
+it.
 
 When a suite fails, the job's last two steps print each failed test with the start of its failure
 (`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, plus the end of the Spark 4.2
 tests' service logs) and upload the test reports as the artifact `iceberg-fork-test-reports` (kept
 7 days). The failed tests are therefore at the end of the job's log, not only where they ran.
-Pull requests do not run this job: a change is first built under `-PicebergFork` after it merges,
-so run the suites it touches under the switch before merging.
 
 ## Spark 4.2 over the IRC read routes
 
@@ -210,8 +231,11 @@ scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's test
 The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory
 H2, local storage, the dummy token interceptor, an authorization handler that allows everything,
 views enabled for the namespaces the kit uses). A JUnit session listener in the test JVM starts it
-and points the kit at `<service>/iceberg` (`rck.local=false`, `uri`, `token`). Its log, access log
-and warehouse are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`.
+and points the kit at `<service>/iceberg` (`rck.local=false`, `uri`, `token`). Its log and access
+log are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`. Its warehouse is
+not: as for the Spark 4.2 test services, it is a new directory (`ohrck-*`) under the system's
+temporary directory (`ready.json` names it), removed when the service exits, so that a metadata
+location fits House Tables' 255 characters wherever the repository is checked out.
 
 The kit runs through two subclasses, `OpenHouseRestCompatibilityKitCatalogTests` and
 `OpenHouseRestCompatibilityKitViewCatalogTests`, that only answer the kit's capability flags with
