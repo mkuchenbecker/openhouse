@@ -118,6 +118,8 @@ public class SparkIrcEndpointsTest {
       Assertions.assertTrue(catalog.namespaceExists(Namespace.of(DB)));
       Assertions.assertFalse(catalog.namespaceExists(Namespace.of("irc42_head_probe")));
     }
+    // The last request's line is written after its response is sent (see awaitRequest).
+    awaitRequest("HEAD /iceberg/v1/namespaces/irc42_head_probe 404");
     Assertions.assertEquals(
         Collections.singletonList(
             "HEAD /iceberg/v1/namespaces/irc42/tables/head_probe_missing 404"),
