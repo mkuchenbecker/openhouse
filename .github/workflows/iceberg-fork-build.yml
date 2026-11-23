@@ -85,7 +85,8 @@ jobs:
       # Built as the recipes build it, through docker compose with the env file. Then the image is
       # started without arguments: the scheduler logs its first line at INFO and stops on the
       # missing options, which shows the image's Java runs the jar's Java 17 classes and the jar
-      # carries its log4j2 configuration (without it only errors are logged).
+      # carries its log4j2 configuration (without it only errors are logged). Its output is printed
+      # with a prefix, so that the expected exception is not annotated as an error of the run.
       - name: Build the jobs-scheduler image from the Spark 3.5 apps jar and start the scheduler in it
         if: ${{ !cancelled() && steps.docker-prereqs.outcome == 'success' }}
         env:
@@ -100,7 +101,7 @@ jobs:
           docker run --rm --entrypoint sh "$image" -c 'echo "APP_NAME=$APP_NAME"; ls -l "$APP_NAME.jar"; java -version' 2>&1 | tee scheduler-image.txt
           grep -qx 'APP_NAME=openhouse-spark-apps-1.5_2.12' scheduler-image.txt
           timeout 120 docker run --rm "$image" > scheduler-start.txt 2>&1 || true
-          head -n 40 scheduler-start.txt
+          sed 's/^/scheduler: /' scheduler-start.txt | head -n 12
           grep -q 'INFO  JobsScheduler:[0-9]* - Starting scheduler' scheduler-start.txt
 
       - name: Start the oh-only recipe from the -PicebergFork jars
