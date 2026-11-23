@@ -133,6 +133,32 @@ public class HouseTablesH2RepositoryTest {
     assertTrue(store.findById(key("race")).get().getTableLocation().startsWith("/m/winner-"));
   }
 
+  /**
+   * Tables and views share the store's key (house tables' {@code user_table_row} has the primary
+   * key {@code (database_id, table_id)} whatever the entity type), so renaming a table onto a key a
+   * view holds violates it: the real store answers 409, which its client raises as {@link
+   * HouseTableConcurrentUpdateException}, and both rows stay as they were. Before, this stand-in
+   * overwrote the view with the renamed table.
+   */
+  @Test
+  void renameOntoAKeyAViewHoldsIsRefusedAndChangesNeitherRow() {
+    store.save(row("ren_src", INITIAL_TABLE_VERSION, "/m/src.json"));
+    key("ren_src");
+    store.saveView(row("ren_view", INITIAL_TABLE_VERSION, "/m/view.json"));
+    try {
+      assertThrows(
+          HouseTableConcurrentUpdateException.class,
+          () -> store.rename(DB, "ren_src", DB, "ren_view", "/m/renamed.json"));
+      assertEquals("/m/src.json", store.findById(key("ren_src")).get().getTableLocation());
+      HouseTable view = store.findViewById(key("ren_view")).get();
+      assertEquals("/m/view.json", view.getTableLocation());
+      assertEquals("VIEW", view.getEntityType());
+    } finally {
+      store.deleteViewById(
+          HouseTablePrimaryKey.builder().databaseId(DB).tableId("ren_view").build());
+    }
+  }
+
   @Test
   void purgeDeleteIsHardAndNonPurgeDeleteMovesTheRowWithRealTimes() {
     store.save(row("hard", INITIAL_TABLE_VERSION, "/m/00000.json"));
