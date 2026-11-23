@@ -98,6 +98,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
 
   PreCommitCheckRunner preCommitCheckRunner;
 
+  /** What the cluster's House Tables row holds; the production store's widths unless set. */
+  HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
+
   /**
    * Backward-compatible constructor without a {@link PostCommitOperationRunner} or {@link
    * PreCommitCheckRunner}: post-commit operations are disabled and no pre-commit checks run (no
@@ -432,14 +435,14 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     // Handle all schema-related processing (client schema, evolved schema, intermediate schemas)
     metadata = processSchemas(base, metadata);
 
-    Map<String, String> properties = prepareCommit(base, metadata);
-
     int version = currentVersion() + 1;
-    CommitStatus commitStatus = CommitStatus.FAILURE;
-    Optional<TableMetadata> committedMetadata = Optional.empty();
-
     /* This method adds no fs scheme, and it persists in HTS that way. */
     final String newMetadataLocation = rootMetadataFileLocation(metadata, version);
+
+    Map<String, String> properties = prepareCommit(base, metadata, newMetadataLocation);
+
+    CommitStatus commitStatus = CommitStatus.FAILURE;
+    Optional<TableMetadata> committedMetadata = Optional.empty();
 
     HouseTable houseTable = HouseTable.builder().build();
     try {
@@ -671,14 +674,17 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
   /**
    * Checks a commit before anything is written, so a rejection reaches the caller as thrown, with
    * no commit status to recover: the stale-base check, then OpenHouse's table property rules, then
-   * the {@link PreCommitCheck}s. The checks run after the stale-base check, so a snapshot commit
+   * the {@link PreCommitCheck}s, then whether the House Tables row the commit would write fits
+   * ({@link HouseTableRowLimits}). The checks run after the stale-base check, so a snapshot commit
    * built on an older table version gets the retryable conflict instead, and see the properties the
    * commit leaves. A rejected commit still counts as a failed commit.
    *
+   * @param newMetadataLocation where the commit would write its metadata file
    * @return {@code metadata}'s properties, with the repository's temporary overrides restored and
    *     the table property rules applied, in a new map
    */
-  private Map<String, String> prepareCommit(TableMetadata base, TableMetadata metadata) {
+  private Map<String, String> prepareCommit(
+      TableMetadata base, TableMetadata metadata, String newMetadataLocation) {
     try {
       abortIfWriterBaseDivergedFromCatalog(base, metadata);
       Map<String, String> properties = new HashMap<>(metadata.properties());
@@ -687,11 +693,46 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       if (preCommitCheckRunner != null) {
         preCommitCheckRunner.checkAll(tableIdentifier, base, metadata, properties);
       }
+      rejectIfHouseTableRowWillNotFit(properties, newMetadataLocation);
       return properties;
     } catch (CommitFailedException | CommitRejectedException e) {
       metricsReporter.count(InternalCatalogMetricsConstant.COMMIT_FAILED_CTR);
       throw e;
     }
+  }
+
+  /**
+   * Rejects a commit whose House Tables row the store could not take: the row write comes after the
+   * metadata file's, so it would fail with the file already written. A staged create or replace
+   * writes no row, and is left alone.
+   *
+   * <p>The name is the one the commit leaves, which for a rename is the new one; the location grows
+   * with the metadata file's name, by three characters once the table compresses its metadata and
+   * by one from version 100000 on, so a commit can be the first that does not fit.
+   */
+  private void rejectIfHouseTableRowWillNotFit(
+      Map<String, String> properties, String newMetadataLocation) {
+    if (Boolean.parseBoolean(properties.get(CatalogConstants.IS_STAGE_CREATE_KEY))
+        || Boolean.parseBoolean(properties.get(CatalogConstants.IS_STAGE_REPLACE_KEY))) {
+      return;
+    }
+    String entity = "Table " + tableIdentifier;
+    String tableId = properties.get(CatalogConstants.OPENHOUSE_TABLEID_KEY);
+    if (tableId != null) {
+      HouseTableRowLimits.requireTableIdFits(entity, tableId);
+    }
+    houseTableRowLimits.requireMetadataLocationFits(entity, newMetadataLocation);
+  }
+
+  /**
+   * Rejects a create whose first metadata file's location the House Tables row could not hold, for
+   * a caller that prepares {@code metadata} without committing it (a staged create that writes
+   * nothing): the commit that completes it would be rejected for the same reason.
+   */
+  public static void rejectIfFirstMetadataLocationWillNotFit(
+      TableIdentifier tableIdentifier, TableMetadata metadata, HouseTableRowLimits limits) {
+    limits.requireMetadataLocationFits(
+        "Table " + tableIdentifier, rootMetadataFileLocation(metadata, 0));
   }
 
   /**

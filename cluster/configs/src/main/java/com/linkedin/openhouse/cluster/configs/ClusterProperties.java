@@ -67,6 +67,22 @@ public class ClusterProperties {
   @Value("${cluster.housetables.database.type:IN_MEMORY}")
   private String clusterHouseTablesDatabaseType;
 
+  /**
+   * The width of the House Tables column that holds a table's or view's current metadata location
+   * ({@code user_table_row.metadata_location}). The tables service refuses, before it writes
+   * anything, a write whose location would be longer.
+   *
+   * <p>The default, 255, is the column of the production store ({@code
+   * services/housetables/ddl/0000__baseline.sql}) and of every store built from those migrations.
+   * Set it to 512 only where the House Tables service created its own tables from its bootstrap
+   * {@code schema.sql}, which declares {@code VARCHAR(512)}; such a store took locations of up to
+   * 512 characters before this check existed. Never set it above the column's real width: the row
+   * write would then fail after the metadata file is written. A value that is not positive means
+   * the default.
+   */
+  @Value("${cluster.housetables.metadata-location-max-length:255}")
+  private int clusterHouseTablesMetadataLocationMaxLength;
+
   @Value("${cluster.housetables.database.url:jdbc:h2:mem:htsdb;MODE=MYSQL;DB_CLOSE_DELAY=-1}")
   private String clusterHouseTablesDatabaseUrl;
 

@@ -577,10 +577,13 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
    * Gets reduced size stacktrace. Abbreviated upto defaulted max width. Extracts partial stacktrace
    * by skipping in between contents. Returns empty or partial stacktrace if there is an exception.
    *
+   * <p>Static, and so outside the request-audit advice on this class's methods, for a handler of
+   * another error shape that audits its failures with the same stack trace.
+   *
    * @param exception
    * @return String
    */
-  private String getAbbreviatedStackTrace(Throwable exception) {
+  public static String getAbbreviatedStackTrace(Throwable exception) {
     String stackTrace = ExceptionUtils.getStackTrace(exception);
     if (StringUtils.isEmpty(stackTrace)) {
       return null;
@@ -632,7 +635,8 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
     return builder.toString();
   }
 
-  private String getExceptionCause(Throwable exception) {
+  /** The failure's cause as every error body of this handler words it. Static: see above. */
+  public static String getExceptionCause(Throwable exception) {
     return exception.getCause() != null ? exception.getCause().getMessage() : CAUSE_NOT_AVAILABLE;
   }
 }

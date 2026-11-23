@@ -181,6 +181,32 @@ database ID as sent by the caller:
 - `repo_table_count_limit_bypassed` (counter, `database`): creates and restores admitted at the limit
   by a bypass rule.
 
+#### Metadata location length limit
+
+The tables service refuses, with HTTP 400 and before it writes anything, a table or view write whose
+metadata location would not fit the HouseTables column that stores it (`user_table_row.metadata_location`).
+The location is the storage root, the database name, the table name, two UUIDs and the metadata file's
+name, so long names under a deep storage root reach the limit.
+
+`cluster.housetables.metadata-location-max-length` in the tables-service `cluster.yaml` states that
+column's width. The default is `255`, the width in `services/housetables/ddl/` (the production schema)
+and in every store built from those migrations; leave it there for such a store.
+
+Set it to `512` only when the HouseTables store's tables were created by that service's bootstrap
+`schema.sql` (it runs at start-up and creates the tables where they do not exist), which declares the
+column as `VARCHAR(512)`. On such a store a location of 256 to 512 characters was accepted before this limit
+existed and is refused by default now:
+
+```yaml
+cluster:
+  housetables:
+    metadata-location-max-length: 512
+```
+
+Never set it above the column's real width: the row write would then fail after the metadata file
+is written, and the caller would be told the commit's state is unknown. A value that is not positive
+means the default. Changing it requires restarting or redeploying the tables service.
+
 #### MySQL for HouseTables Service
 
 To use MySQL, update [cluster.yaml](infra/recipes/k8s/config/housetables/minikube/housetables.yaml). Sample

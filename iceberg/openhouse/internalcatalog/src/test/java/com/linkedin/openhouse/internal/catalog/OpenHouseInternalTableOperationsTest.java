@@ -226,6 +226,136 @@ public class OpenHouseInternalTableOperationsTest {
     verify(mockMetricsReporter).count(InternalCatalogMetricsConstant.COMMIT_FAILED_CTR);
   }
 
+  /**
+   * A table location under which the first metadata file's location, {@code
+   * <location>/00000-<uuid>.metadata.json}, is {@code length} characters long.
+   */
+  @SneakyThrows
+  private static String locationWhereFirstMetadataLocationIs(int length) {
+    String root = Files.createTempDirectory("oh-row-limit").toString();
+    int fileName = "/00000-.metadata.json".length() + UUID.randomUUID().toString().length();
+    return root
+        + "/"
+        + String.join("", Collections.nCopies(length - fileName - root.length() - 1, "x"));
+  }
+
+  private static TableMetadata tableAt(String location) {
+    return TableMetadata.newTableMetadata(
+        BASE_TABLE_METADATA.schema(),
+        PartitionSpec.unpartitioned(),
+        location,
+        ImmutableMap.of("format-version", "2"));
+  }
+
+  /**
+   * The House Tables row holds a metadata location of 255 characters: a commit that would store a
+   * longer one is rejected before the metadata file is written, and one of exactly 255 commits.
+   */
+  @Test
+  void testDoCommitRejectsAMetadataLocationThatWillNotFitBeforeWriting() {
+    TableMetadata fits = tableAt(locationWhereFirstMetadataLocationIs(255));
+    openHouseInternalTableOperations.doCommit(null, fits);
+    Mockito.verify(mockHouseTableMapper).toHouseTable(tblMetadataCaptor.capture(), Mockito.any());
+    Assertions.assertEquals(
+        255,
+        tblMetadataCaptor
+            .getValue()
+            .properties()
+            .get(getCanonicalFieldName("tableLocation"))
+            .length());
+    Mockito.verify(mockHouseTableRepository).save(mockHouseTable);
+    Mockito.clearInvocations(mockHouseTableRepository);
+
+    TableMetadata over = tableAt(locationWhereFirstMetadataLocationIs(256));
+    CommitRejectedException rejected =
+        Assertions.assertThrows(
+            CommitRejectedException.class,
+            () -> openHouseInternalTableOperationsWithMockMetrics.doCommit(null, over));
+    Assertions.assertEquals(
+        "Table test_db.test_table cannot be written: its metadata location would be 256"
+            + " characters long and House Tables holds at most 255"
+            + " (user_table_row.metadata_location). The location is made of the storage root, the"
+            + " database name, the name and UUID it was created with, and the metadata file's"
+            + " name.",
+        rejected.getMessage());
+    verifyNoInteractions(mockHouseTableRepository);
+    Assertions.assertFalse(new java.io.File(over.location()).exists());
+    verify(mockMetricsReporter).count(InternalCatalogMetricsConstant.COMMIT_FAILED_CTR);
+  }
+
+  /**
+   * The metadata file's name is one character longer from version 100000 on, so that commit can be
+   * the first whose location does not fit although every earlier one did.
+   */
+  @Test
+  void testDoCommitAtVersion100000CanBeTheFirstThatDoesNotFit() throws IOException {
+    String location = locationWhereFirstMetadataLocationIs(255);
+    java.nio.file.Path current =
+        java.nio.file.Paths.get(location, "99999-" + UUID.randomUUID() + ".metadata.json");
+    Files.createDirectories(current.getParent());
+    Files.write(current, TableMetadataParser.toJson(tableAt(location)).getBytes());
+    Assertions.assertEquals(255, current.toString().length());
+    when(mockHouseTable.getTableLocation()).thenReturn(current.toString());
+    when(mockHouseTableRepository.findById(any())).thenReturn(Optional.of(mockHouseTable));
+    TableMetadata base = openHouseInternalTableOperations.refresh();
+    Map<String, String> properties = new HashMap<>(base.properties());
+    properties.put("random", "value");
+
+    CommitRejectedException rejected =
+        Assertions.assertThrows(
+            CommitRejectedException.class,
+            () ->
+                openHouseInternalTableOperations.doCommit(
+                    base, base.replaceProperties(properties)));
+
+    Assertions.assertTrue(
+        rejected.getMessage().contains("would be 256 characters long"), rejected.getMessage());
+    Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    try (java.util.stream.Stream<java.nio.file.Path> files = Files.list(current.getParent())) {
+      Assertions.assertEquals(1, files.count());
+    }
+  }
+
+  /** A staged create writes its metadata file and no row, so the row's limits do not judge it. */
+  @Test
+  void testStagedCreateWritesNoRowAndIsNotJudgedByTheRowLimits() {
+    TableMetadata over = tableAt(locationWhereFirstMetadataLocationIs(256));
+    Map<String, String> properties = new HashMap<>(over.properties());
+    properties.put(CatalogConstants.IS_STAGE_CREATE_KEY, "true");
+
+    openHouseInternalTableOperations.doCommit(null, over.replaceProperties(properties));
+
+    Mockito.verify(mockHouseTableRepository, Mockito.never()).save(Mockito.any());
+    Assertions.assertEquals(
+        1,
+        new java.io.File(over.location())
+            .list((directory, file) -> file.matches("00000-.*\\.metadata\\.json"))
+            .length);
+  }
+
+  /** A rename writes the row under the new name, which the row must be able to hold. */
+  @Test
+  void testDoCommitRejectsANameThatWillNotFitBeforeWriting() {
+    TableMetadata table = tableAt(locationWhereFirstMetadataLocationIs(200));
+    Map<String, String> properties = new HashMap<>(table.properties());
+    properties.put(
+        CatalogConstants.OPENHOUSE_TABLEID_KEY, String.join("", Collections.nCopies(256, "n")));
+
+    CommitRejectedException rejected =
+        Assertions.assertThrows(
+            CommitRejectedException.class,
+            () ->
+                openHouseInternalTableOperations.doCommit(
+                    table, table.replaceProperties(properties)));
+
+    Assertions.assertEquals(
+        "Table test_db.test_table cannot be written under a name of 256 characters: House Tables"
+            + " holds at most 255 (user_table_row.table_id).",
+        rejected.getMessage());
+    verifyNoInteractions(mockHouseTableRepository);
+    Assertions.assertFalse(new java.io.File(table.location()).exists());
+  }
+
   enum CommitKind {
     SNAPSHOTS,
     REPLACE,
