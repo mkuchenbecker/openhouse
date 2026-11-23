@@ -2,7 +2,8 @@
 # Builds the Iceberg commit pinned in iceberg-fork.properties and publishes the modules OpenHouse's
 # Iceberg 1.5 variant consumes into build/iceberg-fork/repo, for the opt-in -PicebergFork build,
 # plus the Spark 4.2 / Scala 2.13 runtime the Spark 4.2 IRC read test runs on (a second Iceberg
-# build: one Iceberg build has one Scala version).
+# build: one Iceberg build has one Scala version), and the REST compatibility kit (iceberg-open-api's
+# test and test-fixtures jars) the REST compatibility kit test runs against the service.
 # Nothing is published remotely and ~/.m2 is not touched. Re-running is a no-op once the pinned
 # version is published; FORCE=1 republishes. See docs/development/iceberg-fork.md.
 #
@@ -25,8 +26,10 @@ repo="$work/repo"
 marker="$repo/.published-$version"
 # Separate marker, so a repo published before the Spark 4.2 runtime was added gains just that.
 spark42_marker="$repo/.published-$version-spark-4.2_2.13"
+# Likewise for the REST compatibility kit, added after both.
+rck_marker="$repo/.published-$version-open-api"
 
-if [[ -f "$marker" && -f "$spark42_marker" && "${FORCE:-0}" != 1 ]]; then
+if [[ -f "$marker" && -f "$spark42_marker" && -f "$rck_marker" && "${FORCE:-0}" != 1 ]]; then
   echo "Iceberg $group:$version already published in $repo (FORCE=1 to republish)"
   exit 0
 fi
@@ -67,4 +70,7 @@ publish "$marker" 3.5 2.12 iceberg-bom iceberg-api iceberg-bundled-guava iceberg
   iceberg-core iceberg-data iceberg-parquet iceberg-orc iceberg-spark:iceberg-spark-runtime-3.5_2.12
 # Only the shaded runtime: the Spark 4.2 test puts nothing else of Iceberg on its classpath.
 publish "$spark42_marker" 4.2 2.13 iceberg-spark:iceberg-spark-runtime-4.2_2.13
+# The kit's tests (RESTCompatibilityKit*Tests) and its RCKUtils; its base classes (CatalogTests,
+# ViewCatalogTests) are in iceberg-core's tests jar, published above.
+publish "$rck_marker" 3.5 2.12 iceberg-open-api
 echo "Published Iceberg $group:$version ($commit) to $repo"
