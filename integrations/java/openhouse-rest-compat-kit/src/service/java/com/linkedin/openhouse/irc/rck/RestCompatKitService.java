@@ -31,16 +31,16 @@ import org.springframework.context.annotation.Primary;
 /**
  * The tables service for Apache Iceberg's REST compatibility kit, in its own JVM: the service as
  * the Spark 3.5 tests embed it ({@link SpringH2TestApplication}: in-memory H2 house tables, local
- * file system storage under the work directory), with the dummy token interceptor and an
+ * file system storage in a {@link ServiceWarehouse}), with the dummy token interceptor and an
  * authorization handler that allows every principal everything.
  *
  * <p>Views are off by default per database, natively; the views feature gate is opened for every
  * namespace the kit's table and view suites use, as a {@code views} toggle rule does. Nothing is
  * seeded: the kit creates and drops what it needs.
  *
- * <p>It writes {@code ready.json} (port and token) and serves until its standard input closes,
- * which happens when the test JVM stops it or dies. Usage: {@code RestCompatKitService <work
- * directory>}.
+ * <p>It writes {@code ready.json} (port, warehouse and token) and serves until its standard input
+ * closes, which happens when the test JVM stops it or dies. Usage: {@code RestCompatKitService
+ * <work directory>}.
  */
 public final class RestCompatKitService {
 
@@ -59,7 +59,8 @@ public final class RestCompatKitService {
 
   public static void main(String[] args) throws Exception {
     Path work = Paths.get(args[0]).toAbsolutePath();
-    Path warehouse = Files.createDirectories(work.resolve("warehouse"));
+    // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
+    Path warehouse = ServiceWarehouse.create();
     ConfigurableApplicationContext context =
         new SpringApplication(SpringH2TestApplication.class, AllowAllConfig.class)
             .run(
@@ -93,6 +94,7 @@ public final class RestCompatKitService {
 
     Map<String, Object> ready = new LinkedHashMap<>();
     ready.put("port", port);
+    ready.put("warehouse", warehouse.toString());
     ready.put("token", new DummyTokenInterceptor.DummySecurityJWT(PRINCIPAL).buildNoopJWT());
     Path tmp = work.resolve("ready.json.tmp");
     new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT).writeValue(tmp.toFile(), ready);
