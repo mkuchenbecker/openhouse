@@ -3,6 +3,7 @@ package com.linkedin.openhouse.spark.capabilities;
 import com.linkedin.openhouse.capabilities.CapabilityNames;
 import com.linkedin.openhouse.capabilities.GrantsCapability;
 import com.linkedin.openhouse.capabilities.UnlockCapability;
+import com.linkedin.openhouse.capabilities.rest.RestCapabilityClient;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
@@ -26,8 +27,9 @@ import org.apache.spark.sql.connector.catalog.CatalogPlugin;
  *       Spark 4.2 extensions have no Java client and no OpenHouse catalog class.)
  *   <li>Iceberg's own {@code RESTCatalog}: the server's advertised names, read from the catalog's
  *       properties ({@value CapabilityNames#ADVERTISED_PROPERTY}). Policies need nothing beyond the
- *       name. Grants and unlock need a REST capability client, which does not exist yet, so they
- *       are not offered there whatever is advertised.
+ *       name. Grants and unlock are offered where advertised, through a {@link
+ *       RestCapabilityClient} built from the catalog's own name and merged properties, so it
+ *       reaches the same server with the same authentication.
  *   <li>Any other Iceberg catalog: no grants or unlock; policies are not refused here.
  * </ol>
  *
@@ -63,16 +65,22 @@ public final class OpenHouseCapabilities {
           CatalogCapabilities.Path.OPENHOUSE_CATALOG, Collections.emptySet(), true, grants, unlock);
     }
     if (iceberg instanceof RESTCatalog) {
+      RESTCatalog rest = (RESTCatalog) iceberg;
       Set<String> advertised =
-          CapabilityNames.parse(
-              ((RESTCatalog) iceberg).properties().get(CapabilityNames.ADVERTISED_PROPERTY));
-      // Grants and unlock over REST need the capability client (work item C2-3).
+          CapabilityNames.parse(rest.properties().get(CapabilityNames.ADVERTISED_PROPERTY));
+      // Grants and unlock over REST go through the capability client. It holds no connection or
+      // token between calls, so building one per resolution is cheap.
+      RestCapabilityClient client = new RestCapabilityClient(rest.name(), rest.properties());
+      Optional<GrantsCapability> restGrants =
+          advertised.contains(CapabilityNames.GRANTS) ? Optional.of(client) : Optional.empty();
+      Optional<UnlockCapability> restUnlock =
+          advertised.contains(CapabilityNames.UNLOCK) ? Optional.of(client) : Optional.empty();
       return new CatalogCapabilities(
           CatalogCapabilities.Path.ICEBERG_REST,
           advertised,
           advertised.contains(CapabilityNames.POLICIES),
-          Optional.empty(),
-          Optional.empty());
+          restGrants,
+          restUnlock);
     }
     return new CatalogCapabilities(
         CatalogCapabilities.Path.OTHER_ICEBERG,
