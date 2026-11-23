@@ -8,8 +8,8 @@ on:
     paths:
       - 'integrations/python/dataloader/**'
   # The same job on the jars and images of a -PicebergFork build (docs/development/iceberg-fork.md):
-  # dataloader-tests-iceberg-fork.yml and post-merge-build.yml call it with iceberg-fork: true.
-  # Without the input every step runs what it ran before.
+  # dataloader-tests-iceberg-fork.yml calls it with iceberg-fork: true. Without the input every
+  # step runs what it ran before.
   workflow_call:
     inputs:
       iceberg-fork:

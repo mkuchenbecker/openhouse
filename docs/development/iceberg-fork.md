@@ -203,13 +203,25 @@ runs `-PicebergFork shadowJar dockerPrereqs`, starts the recipe with `iceberg-fo
 the Spark 3.5 / Java 17 image, Livy included) and runs the dataloader's integration tests with
 `OH_SPARK_JARS_PACKAGES` empty. Without the input it is the default build's job, unchanged: pull
 requests into `main` that touch `integrations/python/dataloader/**`.
-`dataloader-tests-iceberg-fork.yml` calls it with the input:
+`dataloader-tests-iceberg-fork.yml` calls it with the input, by hand only (`workflow_dispatch`, on
+any branch): no pull request and no merge runs it until it has been green. The trigger that then
+corresponds to the default build's (pull requests that touch the dataloader), widened by the files
+that define the recipe and its images on this line, is:
 
-- on a pull request into `irc-integration` or `main` that touches the dataloader, as on the default
-  build, or a file that defines the recipe and its images on this line
-  (`infra/recipes/docker-compose/common/**`, `oh-hadoop-spark/**`, `iceberg-fork.env`, the root
-  `*.Dockerfile`s, these two workflows, the action below). Other pull requests do not run it;
-- by hand (`workflow_dispatch`), on any branch.
+```yaml
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, irc-integration]
+    paths:
+      - 'integrations/python/dataloader/**'
+      - 'infra/recipes/docker-compose/common/**'
+      - 'infra/recipes/docker-compose/oh-hadoop-spark/**'
+      - 'infra/recipes/docker-compose/iceberg-fork.env'
+      - '*.Dockerfile'
+      - '.github/workflows/dataloader-tests.yml'
+      - '.github/workflows/dataloader-tests-iceberg-fork.yml'
+      - '.github/actions/iceberg-fork/**'
+```
 
 The steps that restore or publish the fork are one composite action, `.github/actions/iceberg-fork`,
 used by both jobs.
