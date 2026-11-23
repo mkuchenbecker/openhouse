@@ -4,6 +4,10 @@
 // keeps it in its dependency cache (which `clean` does not delete, and which CI restores), reports
 // the URL and the HTTP status when the download fails, and can resolve it under --offline.
 // setUp only copies the cached jar to where client_codegen.sh expects it.
+//
+// Like the build's other dependencies, the jar is not compared with a checksum: the build has no
+// dependency verification metadata, and Gradle does not check a download against the .sha1 the
+// repository publishes.
 def sharedBinDir = "${rootProject.buildDir}/openapi-cli"
 def openApiCliVersion = "5.3.0"
 
