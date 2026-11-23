@@ -1,6 +1,10 @@
 # Which stage below the image starts from: "default", or "iceberg-fork" for jars built with
 # -PicebergFork (docs/development/iceberg-fork.md, "Docker images").
 ARG OH_SPARK_BASE=default
+# Where /opt/spark comes from: "archive", the release tarball from archive.apache.org, or "image",
+# the same release in Apache's Docker image (apache/spark on Docker Hub). archive.apache.org is
+# rate-limited (46 kB/s on a GitHub runner: 2.5 hours for this tarball), Docker Hub is not.
+ARG OH_SPARK_DIST=archive
 
 FROM eclipse-temurin:11-jdk-jammy as builder
 
@@ -23,13 +27,6 @@ SPARK_HOME=/opt/spark \
 MAVEN_VERSION=3.9.4 \
 PYTHONHASHSEED=1
 
-# install apache spark
-RUN curl --no-verbose -o apache-spark.tgz \
-    "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" \
-  && mkdir -p /opt/spark \
-  && tar -xf apache-spark.tgz -C /opt/spark --strip-components=1 \
-  && rm apache-spark.tgz
-
 # install maven to build apache livy
 RUN curl --no-verbose -o maven.tgz https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
   && mkdir -p /opt/maven \
@@ -38,6 +35,10 @@ RUN curl --no-verbose -o maven.tgz https://archive.apache.org/dist/maven/maven-3
 
 # build with patch and install apache livy
 ARG ARCHIVE_FILENAME="apache-livy-${LIVY_VERSION}-bin"
+# More arguments for the Maven build of Livy; none by default. "-pl assembly -am" builds the
+# distribution and only the modules it is made of: not Livy's integration-test module, which
+# downloads a Spark release from archive.apache.org although its tests are skipped.
+ARG OH_LIVY_MAVEN_ARGS=""
 COPY /infra/recipes/docker-compose/common/spark/livy_spark3_hadoop3.patch /
 RUN git clone https://github.com/apache/incubator-livy \
     && cd incubator-livy \
@@ -45,10 +46,24 @@ RUN git clone https://github.com/apache/incubator-livy \
     && git apply /livy_spark3_hadoop3.patch \
     && rm /livy_spark3_hadoop3.patch \
     && sed -i 's#apache-incubator-disclaimer-resource-bundle:1.2-SNAPSHOT#apache-incubator-disclaimer-resource-bundle:1.5#' pom.xml \
-    && /opt/maven/bin/mvn clean package -B -V -e -Pspark-3.0 -Pthriftserver -DskipTests -DskipITs -Dmaven.javadoc.skip=true \
+    && /opt/maven/bin/mvn clean package -B -V -e -Pspark-3.0 -Pthriftserver -DskipTests -DskipITs -Dmaven.javadoc.skip=true ${OH_LIVY_MAVEN_ARGS} \
     && unzip -qq ./assembly/target/${ARCHIVE_FILENAME}.zip -d /opt \
     && mv "/opt/${ARCHIVE_FILENAME}" "${LIVY_HOME}" \
     && rm -rf "/incubator-livy"
+
+# install apache spark: one stage for each OH_SPARK_DIST, and only the chosen one is built
+FROM builder AS spark-dist-archive
+RUN curl --no-verbose -o apache-spark.tgz \
+    "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" \
+  && mkdir -p /opt/spark \
+  && tar -xf apache-spark.tgz -C /opt/spark --strip-components=1 \
+  && rm apache-spark.tgz
+
+# Keep the release equal to SPARK_VERSION above. Its /opt/spark holds the tarball's jars, bin, sbin,
+# python, R, examples and data, and not its conf templates, yarn shuffle jar, licenses and README.
+FROM apache/spark:3.5.2-scala2.12-java17-python3-r-ubuntu AS spark-dist-image
+
+FROM spark-dist-${OH_SPARK_DIST} AS spark-dist
 
 
 FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8 AS spark-base-default
@@ -88,7 +103,7 @@ ENV LIVY_HOME=/opt/livy \
 SPARK_HOME=/opt/spark
 
 COPY --from=builder /opt/livy /opt/livy
-COPY --from=builder /opt/spark /opt/spark
+COPY --from=spark-dist /opt/spark /opt/spark
 
 WORKDIR $SPARK_HOME
 
