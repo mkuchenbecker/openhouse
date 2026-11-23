@@ -1,0 +1,114 @@
+// The OpenHouse Spark SQL extensions (grammar, parser, analysis rule, exec nodes, the extensions
+// entry point) for Spark 4.2 / Scala 2.13 on the fork's Iceberg 1.12 line, ported from
+// :integrations:spark:spark-3.5:openhouse-spark-runtime (N3-x1). Only under -PicebergFork
+// (settings.gradle); see docs/development/iceberg-fork.md.
+//
+// Unlike the 3.5 runtime it has no OpenHouse catalog class and no OpenHouse Java client: the
+// extensions find OpenHouse features through the capabilities module (D23) and Iceberg's own
+// SparkCatalog / RESTCatalog, so the engine needs no OpenHouse catalog. The uber jar holds this
+// module's classes and the capabilities module's, nothing else: Spark and Iceberg's Spark 4.2
+// runtime are the engine's own (compileOnly here).
+plugins {
+  id 'java-library'
+  id 'scala'
+  id 'com.github.johnrengelman.shadow' version '7.1.2'
+}
+
+def pin = new Properties()
+rootProject.file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
+
+ext {
+  icebergVersion = rootProject.ext.iceberg_1_5_version
+  sparkVersion = pin.getProperty('spark42Version')
+  // Spark 4.2 ships ANTLR 4.13.1 (spark-parent's antlr4.version); the serialized ATN format changed
+  // after 4.9, so the parser is generated with the same version the runtime reads it with. The 3.5
+  // runtime generates with 4.7.1.
+  antlrVersion = '4.13.1'
+  antlrPackageDirPrefix = "com/linkedin/openhouse/spark/sql/catalyst/parser/extensions/"
+  antlrMainDir = "${projectDir}/src/main/antlr/${antlrPackageDirPrefix}"
+  antlrMainGeneratedSrcDir = "${project.buildDir}/generated-src/antlr/main/"
+}
+
+def forkRepo = rootProject.file("${rootProject.buildDir}/iceberg-fork/repo")
+if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
+  throw new GradleException(
+      "-PicebergFork: iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
+}
+
+java {
+  sourceCompatibility = JavaVersion.VERSION_17
+  targetCompatibility = JavaVersion.VERSION_17
+}
+
+configurations {
+  // Compile and test against the versions Spark 4.2 and the shaded runtime declare: the root
+  // build's forces (Jackson 2.13.4 for the services, ORC/Avro/Caffeine for the 1.5 line) do not
+  // apply, as in the Spark 4.2 itest.
+  [compileClasspath, testCompileClasspath, testRuntimeClasspath].each {
+    it.resolutionStrategy.forcedModules = []
+  }
+  fatJarPackagedDependencies
+  antlr
+}
+
+// Set source for antlr generated directory; builtBy gives every reader of the main source set
+// (compileJava, compileScala, sourcesJar) the dependency on runAntlr.
+sourceSets {
+  main {
+    java {
+      srcDir files(antlrMainGeneratedSrcDir).builtBy('runAntlr')
+    }
+  }
+}
+
+// Task to generate java sources using Antlr tool
+task runAntlr(type: JavaExec) {
+  inputs.dir antlrMainDir
+  outputs.dir antlrMainGeneratedSrcDir
+
+  mainClass = "org.antlr.v4.Tool"
+  args = ["${antlrMainDir}/OpenhouseSqlExtensions.g4",
+          "-visitor",
+          "-o", "${antlrMainGeneratedSrcDir}/${antlrPackageDirPrefix}",
+          "-package", "com.linkedin.openhouse.spark.sql.catalyst.parser.extensions"]
+  maxHeapSize = "64m"
+  classpath = configurations.antlr
+}
+
+dependencies {
+  antlr "org.antlr:antlr4:${antlrVersion}"
+
+  // The engine's own: Spark 4.2 (with its Scala 2.13 library and ANTLR runtime) and the fork's
+  // shaded Iceberg Spark 4.2 runtime.
+  compileOnly "org.apache.spark:spark-sql_2.13:${sparkVersion}"
+  compileOnly "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
+  // The capability names, interfaces and value types (D23); packed into the uber jar.
+  compileOnly project(':integrations:java:openhouse-catalog-capabilities')
+  fatJarPackagedDependencies(project(':integrations:java:openhouse-catalog-capabilities')) {
+    transitive = false
+  }
+
+  testImplementation "org.apache.spark:spark-sql_2.13:${sparkVersion}"
+  testImplementation "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
+  testImplementation project(':integrations:java:openhouse-catalog-capabilities')
+}
+
+shadowJar {
+  configurations = [project.configurations.fatJarPackagedDependencies]
+  mergeServiceFiles()
+  archiveClassifier.set('uber')
+}
+
+// The unit tests start a local SparkSession; Spark 4.2 on Java 17 needs these (as the 4.2 itest).
+def extraJvmArgs = [
+    'java.io', 'java.lang.invoke', 'java.lang.reflect', 'java.lang', 'java.math', 'java.net',
+    'java.nio', 'java.text', 'java.time', 'java.util.concurrent.atomic', 'java.util.concurrent',
+    'java.util.regex', 'java.util', 'jdk.internal.ref', 'jdk.internal.reflect', 'sun.util.calendar',
+    'sun.nio.ch', 'sun.nio.cs', 'sun.security.action'
+].collect { "--add-opens=java.base/${it}=ALL-UNNAMED" } + ['--add-opens=java.sql/java.sql=ALL-UNNAMED']
+
+test {
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+}
