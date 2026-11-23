@@ -174,8 +174,8 @@ The job runs `publish-local.sh`, then `-PicebergFork assemble testClasses`, then
 `:services:tables:test`, `:iceberg:openhouse:internalcatalog:test`,
 `:iceberg:openhouse:htscatalog:test`, the capabilities module's tests, the 1.5 Java itest, the
 Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
-the Spark 4.2 itest (`test`, `extensionsTest`), and last, in a step of its own that runs even when a
-suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`).
+the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`), and last, in a step of its own that
+runs even when a suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`).
 
 The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
 script, so the fork is built (60 to 75 minutes on a runner) only when either changes:
@@ -256,6 +256,35 @@ and authentication, and gives the outcomes Spark 3.5 gives over `RESTCatalog`. T
 transport is the one per-line part: the module compiles `src/iceberg-1.5/java` by default and
 `src/iceberg-1.12/java` (Iceberg's `AuthManager`) under `-PicebergFork`. `extensionsTest` runs in its
 own JVM and service JVM, because Spark fixes a session's extensions when the session is built.
+
+## The Spark SQL smoke suite on Spark 4.2
+
+`smokeTest` runs the Spark SQL smoke suite (the statements of the Spark 3.5 itest's
+`SparkSqlSmokeTest`) on Spark 4.2 over IRC, with the OpenHouse SQL extensions and no OpenHouse
+catalog or client class, in its own JVM and service JVM:
+
+```bash
+./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:smokeTest
+```
+
+- The statements and their baseline outcomes (Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2)
+  are in `src/shared/test/java` (`SparkSqlSmokeScenarios`). It needs only `spark.sql` and JUnit. It
+  is a copy of the Spark 3.5 suite's scenarios for now: `SmokeScenariosCopyTest` compares the two
+  source files, and its comment names the change that leaves one list.
+- `Spark42IrcSparkSqlSmokeTest` (`src/smoke/java`) runs every statement and lists the statements
+  whose outcome is not the baseline's, each with the baseline, what Spark 4.2 does, and the kind of
+  difference. A statement that differs without being listed fails, and so does a listed one that
+  does not differ. To change what the platform does for a statement, change its entry.
+- The run writes `build/openhouse-spark-4.2-itest/reports/smoke/spark-4.2-irc-outcomes.tsv`: one
+  line per statement with the statement, the baseline, the outcome and the verdict.
+- `Spark42WithoutOpenHouseTest` runs the statements that differ because of Spark 4 on Iceberg's
+  Hadoop catalog, with nothing of OpenHouse.
+- `SparkIrcWriteStatementsTest` runs the write statements (INSERT INTO and OVERWRITE, MERGE, UPDATE,
+  DELETE, CTAS, RTAS, column and property changes, branch and write-audit-publish writes) and
+  asserts what the service stored, read through the OpenHouse Java client in the service JVM.
+- The service (`IrcSmokeTestService`, `tmp/smokeTest/smoke-service-*`) is the one the Spark 3.5
+  smoke suite embeds, with the service's own authorization handler, so that a difference comes from
+  the engine or the catalog path. It has one database with views enabled.
 
 ## Apache Iceberg's REST compatibility kit
 
