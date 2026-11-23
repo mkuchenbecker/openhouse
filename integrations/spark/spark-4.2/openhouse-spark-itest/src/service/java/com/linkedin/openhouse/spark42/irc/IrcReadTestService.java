@@ -3,11 +3,15 @@ package com.linkedin.openhouse.spark42.irc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.housetables.client.model.ToggleStatus;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.OpaAuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
+import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
+import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
 import com.linkedin.openhouse.tablestest.SpringH2TestApplication;
 import java.io.IOException;
 import java.io.InputStream;
@@ -73,6 +77,10 @@ import org.springframework.context.annotation.Primary;
 public final class IrcReadTestService {
 
   static final String DB = "irc42";
+
+  /** A database whose views feature gate is open (views are off by default, natively). */
+  static final String VIEWS_DB = "irc42_views";
+
   static final String WRITER = "irc_writer";
   static final String READER = "irc_reader";
   static final String STRANGER = "irc_stranger";
@@ -102,7 +110,25 @@ public final class IrcReadTestService {
                     + DummyTokenInterceptor.class.getName(),
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
-                "--cluster.storages.types.local.rootpath=" + warehouse);
+                "--cluster.storages.types.local.rootpath=" + warehouse,
+                // Every request, unbuffered, so a test can see which routes a client called.
+                "--server.tomcat.accesslog.enabled=true",
+                "--server.tomcat.accesslog.directory=" + work.resolve("access"),
+                "--server.tomcat.accesslog.prefix=access",
+                "--server.tomcat.accesslog.suffix=.log",
+                "--server.tomcat.accesslog.rotate=false",
+                "--server.tomcat.accesslog.buffered=false",
+                "--server.tomcat.accesslog.pattern=%m %U %s");
+    // Open the views feature gate for VIEWS_DB, as a `views` toggle rule does.
+    context
+        .getBean(ToggleStatusesRepository.class)
+        .save(
+            TableToggleStatus.builder()
+                .databaseId(VIEWS_DB)
+                .tableId(ViewsFeatureGate.GATE_PROBE_TABLE_ID)
+                .featureId("views")
+                .toggleStatusEnum(ToggleStatus.StatusEnum.ACTIVE)
+                .build());
     int port = ((WebServerApplicationContext) context).getWebServer().getPort();
 
     Map<String, Object> ready = new LinkedHashMap<>();

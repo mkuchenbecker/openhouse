@@ -448,11 +448,16 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
         "CLIENT_CAPABILITY_MISSING: d1_column_default.irc_capability requires the column-defaults"
             + " capability",
         restRefusal);
-    // Existence does not load the table, as on the existing client... but RESTCatalog 1.5.2 checks
-    // existence by loading, so it is refused too.
+    // Existence does not load the table on the existing client. RESTCatalog 1.5.2 checks existence
+    // by loading, so it is refused too; 1.12 sends HEAD (listed in the config's endpoints), which,
+    // like the existing client's existence route, does not load and is answered.
     Assertions.assertTrue(openhouse.tableExists(id));
-    assertThrown(
-        RESTException.class, "CLIENT_CAPABILITY_MISSING", thrown(() -> rest.tableExists(id)));
+    if (legacyLine) {
+      assertThrown(
+          RESTException.class, "CLIENT_CAPABILITY_MISSING", thrown(() -> rest.tableExists(id)));
+    } else {
+      Assertions.assertTrue(rest.tableExists(id));
+    }
 
     try (RESTCatalog declaring =
         restCatalog(
@@ -520,11 +525,16 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
           "Operation on table irc_read_auth.t1 failed as user irc_stranger is unauthorized",
           thrown(() -> asStranger.loadTable(id)));
       // RESTCatalog 1.5.2 checks existence by loading the table, so a principal that may not read
-      // it is refused; the existing client asks the existence route, which answers anyone.
-      assertThrown(
-          ForbiddenException.class,
-          "Operation on table irc_read_auth.t1 failed as user irc_stranger is unauthorized",
-          thrown(() -> asStranger.tableExists(id)));
+      // it is refused; the existing client asks the existence route, which answers anyone, and so
+      // does 1.12's HEAD (listed in the config's endpoints).
+      if (IcebergLine.current() == IcebergLine.LEGACY) {
+        assertThrown(
+            ForbiddenException.class,
+            "Operation on table irc_read_auth.t1 failed as user irc_stranger is unauthorized",
+            thrown(() -> asStranger.tableExists(id)));
+      } else {
+        Assertions.assertTrue(asStranger.tableExists(id));
+      }
       Map<String, String> strangerProperties = new HashMap<>(ownerProperties);
       strangerProperties.put("auth-token", token(STRANGER));
       Catalog nativeStranger =

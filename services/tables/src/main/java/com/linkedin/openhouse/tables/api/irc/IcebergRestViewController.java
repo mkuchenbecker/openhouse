@@ -110,6 +110,7 @@ public class IcebergRestViewController {
 
   /** Answers 406: the native view API has no rename. */
   @ApiResponses(@ApiResponse(responseCode = "406", description = "IRC rename view: unsupported"))
+  @IcebergRestRefusedRoute
   @PostMapping(V1 + "/views/rename")
   @Secured(value = Privileges.Privilege.AUTHENTICATED_VIEWS_OPS)
   public ResponseEntity<byte[]> renameView(@RequestBody(required = false) byte[] body) {

@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.api.irc;
 
+import com.linkedin.openhouse.capabilities.CapabilityNames;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.model.TableDto;
@@ -56,6 +57,8 @@ public class IcebergRestApiHandler {
 
   @Autowired private ReadBridgeConfigResolver readBridgeConfigResolver;
 
+  @Autowired private IcebergRestServedRoutes servedRoutes;
+
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
 
@@ -71,28 +74,35 @@ public class IcebergRestApiHandler {
    *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
    *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
    *       them with write properties ResolvingFileIO rejects.
-   *   <li>{@value #CAPABILITIES}: the OpenHouse features these routes serve, comma-separated:
-   *       {@value #SERVED_CAPABILITIES}. {@code policies}: a policy patch ({@code
+   *   <li>{@value #CAPABILITIES}: the OpenHouse features the routes registered here serve,
+   *       comma-separated ({@link IcebergRestCapability}): {@code policies}, a policy patch ({@code
    *       updated.openhouse.policy}, as OpenHouse's policy statements write it) in a create or
-   *       commit is applied as the OpenHouse client applies it. An override, so that the client's
-   *       merged catalog properties ({@code RESTCatalog.properties()}) say what this server serves
-   *       whatever the client was configured with. Not an {@code endpoints} entry: those name the
-   *       spec's routes.
+   *       commit is applied as the OpenHouse client applies it (with the write routes); {@code
+   *       grants} and {@code unlock}, the OpenHouse routes under the base path. An override, so
+   *       that the client's merged catalog properties ({@code RESTCatalog.properties()}) say what
+   *       this server serves whatever the client was configured with. Not {@link #endpoints()}
+   *       entries: those name the spec's routes.
    * </ul>
    */
   public ConfigResponse config() {
     return ConfigResponse.builder()
         .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
         .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
-        .withOverride(CAPABILITIES, SERVED_CAPABILITIES)
+        .withOverride(CAPABILITIES, String.join(",", servedRoutes.capabilities()))
         .build();
   }
 
-  /** The config key that names the OpenHouse features a server serves (server capabilities). */
-  public static final String CAPABILITIES = "openhouse.capabilities";
+  /**
+   * The config response's {@code endpoints}: the spec routes registered here ({@link
+   * IcebergRestServedRoutes}). An Iceberg 1.12 client uses only these once a list is sent (with
+   * none it assumes a default set this server does not match); a 1.5.2 client ignores the field.
+   */
+  public List<String> endpoints() {
+    return servedRoutes.endpoints();
+  }
 
-  /** The server capabilities these routes serve. Each name is added by the item that serves it. */
-  static final String SERVED_CAPABILITIES = "policies";
+  /** The config key that names the OpenHouse features a server serves (server capabilities). */
+  public static final String CAPABILITIES = CapabilityNames.ADVERTISED_PROPERTY;
 
   /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
   static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";

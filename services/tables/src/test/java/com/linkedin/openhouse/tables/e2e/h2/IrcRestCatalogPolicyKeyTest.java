@@ -77,7 +77,7 @@ class IrcRestCatalogPolicyKeyTest {
    */
   @Test
   void theCatalogPropertiesNameThePolicyCapability() {
-    assertEquals("policies", rest.properties().get("openhouse.capabilities"));
+    assertEquals("policies,grants,unlock", rest.properties().get("openhouse.capabilities"));
   }
 
   @Test

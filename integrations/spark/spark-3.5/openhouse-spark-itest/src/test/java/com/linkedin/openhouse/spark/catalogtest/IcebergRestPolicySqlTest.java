@@ -178,7 +178,7 @@ public class IcebergRestPolicySqlTest extends OpenHouseSparkITest {
 
   /**
    * The capability a client reads: an unmodified RESTCatalog configured as the Spark catalog is has
-   * {@code openhouse.capabilities=policies} in its properties (V5-2).
+   * {@code openhouse.capabilities=policies,grants,unlock} in its properties (V5-2, V5-3).
    */
   @Test
   void aRestCatalogReadsThePolicyCapability() throws Exception {
@@ -190,7 +190,8 @@ public class IcebergRestPolicySqlTest extends OpenHouseSparkITest {
             CatalogUtil.loadCatalog(
                 RESTCatalog.class.getName(), CATALOG, properties, new Configuration());
     try {
-      Assertions.assertEquals("policies", rest.properties().get("openhouse.capabilities"));
+      Assertions.assertEquals(
+          "policies,grants,unlock", rest.properties().get("openhouse.capabilities"));
     } finally {
       rest.close();
     }

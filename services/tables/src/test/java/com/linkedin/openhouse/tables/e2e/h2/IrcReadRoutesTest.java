@@ -143,9 +143,10 @@ public class IrcReadRoutesTest {
    * existing OpenHouse client's FileIO: with RESTCatalog's default (ResolvingFileIO) a Spark
    * merge-on-read delete fails, since this Iceberg line opens delete files with write properties
    * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The
-   * override {@code openhouse.capabilities} names the OpenHouse features these routes serve (V5-2):
-   * {@code policies}, the policy patch of OpenHouse's policy statements. It is an override so that
-   * the client's merged catalog properties say what the server serves, whatever the client was
+   * override {@code openhouse.capabilities} names the OpenHouse features these routes serve: {@code
+   * policies}, the policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and
+   * {@code unlock}, the OpenHouse routes under the base path (V5-3). It is an override so that the
+   * client's merged catalog properties say what the server serves, whatever the client was
    * configured with.
    */
   @Test
@@ -157,14 +158,17 @@ public class IrcReadRoutesTest {
     expected.put("rest-metrics-reporting-enabled", "false");
     expected.put("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
     assertEquals(expected, JsonPath.read(json, "$.defaults"));
-    Map<String, String> overrides = Collections.singletonMap("openhouse.capabilities", "policies");
+    Map<String, String> overrides =
+        Collections.singletonMap("openhouse.capabilities", "policies,grants,unlock");
     assertEquals(overrides, JsonPath.read(json, "$.overrides"));
+    // The served spec routes (IrcConfigEndpointsTest), which this Iceberg line's client ignores.
+    assertEquals(IrcConfigEndpointsTest.SERVED_ON_ICEBERG_1_5, JsonPath.read(json, "$.endpoints"));
     ConfigResponse config = IrcClientParsers.parse(json, ConfigResponse.class);
     assertEquals(expected, config.defaults());
     assertEquals(overrides, config.overrides());
     // What the client's catalog properties then hold, whatever it was configured with.
     assertEquals(
-        "policies",
+        "policies,grants,unlock",
         config
             .merge(Collections.singletonMap("openhouse.capabilities", "configured"))
             .get("openhouse.capabilities"));

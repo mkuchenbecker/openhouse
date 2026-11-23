@@ -5,6 +5,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequest
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllViewsResponseBody;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
+import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.services.ViewsServiceImpl;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -74,9 +75,21 @@ public class IcebergRestViewHandler {
 
   @Autowired private IcebergRestApiHandler readHandler;
 
-  /** Every view of the namespace, through the native list, page by page. */
+  @Autowired private ViewsFeatureGate viewsFeatureGate;
+
+  /**
+   * Every view of the namespace, through the native list, page by page. A database whose views are
+   * disabled holds no views: the list is empty (if the database exists), where the native list
+   * answers 404 "Views are disabled". The OpenHouse client shows such a database no views too, and
+   * a client that lists views with tables (Spark 4.2's SHOW TABLES on Iceberg 1.12) would fail
+   * every listing on the 404. The gate is the one the native list consults.
+   */
   public ListTablesResponse listViews(String namespace, String actingPrincipal) {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    if (!viewsFeatureGate.isEnabled(databaseId)) {
+      readHandler.requireNamespace(databaseId);
+      return ListTablesResponse.builder().build();
+    }
     List<TableIdentifier> views = new ArrayList<>();
     String pageToken = null;
     do {
