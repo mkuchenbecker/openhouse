@@ -1,6 +1,12 @@
 # Which stage below the image starts from: "default", or "iceberg-fork" for jars built with
 # -PicebergFork (docs/development/iceberg-fork.md, "Docker images").
 ARG OH_SPARK_BASE=default
+# Which stage provides /opt/livy and /opt/spark: "default", the builder stage below, or "dockerhub",
+# the stages after it, which take everything from Docker Hub, GitHub and Maven Central. The builder
+# stage installs some 200 Ubuntu packages and downloads Spark and Maven from archive.apache.org, and
+# Livy's build downloads a second Spark release from there. Where those hosts are slow the build
+# takes hours (on GitHub's runners: archive.apache.org at 46 kB/s, apt-get 9 and 42 minutes).
+ARG OH_SPARK_BUILDER=default
 
 FROM eclipse-temurin:11-jdk-jammy as builder
 
@@ -50,6 +56,43 @@ RUN git clone https://github.com/apache/incubator-livy \
     && mv "/opt/${ARCHIVE_FILENAME}" "${LIVY_HOME}" \
     && rm -rf "/incubator-livy"
 
+# OH_SPARK_BUILDER=dockerhub. The same Livy commit, patch and Maven version on the same Java, built
+# in Maven's image, which has git and needs no package installed. Maven builds every module but
+# integration-test, which downloads a Spark release from archive.apache.org although its tests are
+# skipped, and coverage, which reports on it; neither is part of the distribution. Keep the rest of
+# the build equal to the builder stage's.
+FROM maven:3.9.4-eclipse-temurin-11 AS livy-dockerhub
+ENV LIVY_VERSION=0.8.0-incubating-SNAPSHOT \
+LIVY_HOME=/opt/livy
+ARG ARCHIVE_FILENAME="apache-livy-${LIVY_VERSION}-bin"
+COPY /infra/recipes/docker-compose/common/spark/livy_spark3_hadoop3.patch /
+# The image has no unzip: the JDK's jar extracts the distribution, without the scripts' mode.
+RUN git clone https://github.com/apache/incubator-livy /incubator-livy \
+    && cd /incubator-livy \
+    && git checkout 4d8a912699683b973eee76d4e91447d769a0cb0d \
+    && git apply /livy_spark3_hadoop3.patch \
+    && rm /livy_spark3_hadoop3.patch \
+    && sed -i 's#apache-incubator-disclaimer-resource-bundle:1.2-SNAPSHOT#apache-incubator-disclaimer-resource-bundle:1.5#' pom.xml \
+    && mvn clean package -B -V -e --no-transfer-progress -Pspark-3.0 -Pthriftserver -DskipTests -DskipITs -Dmaven.javadoc.skip=true \
+       -pl '!integration-test,!coverage' \
+    && mkdir /opt/livy-dist \
+    && cd /opt/livy-dist \
+    && jar xf "/incubator-livy/assembly/target/${ARCHIVE_FILENAME}.zip" \
+    && mv "/opt/livy-dist/${ARCHIVE_FILENAME}" "${LIVY_HOME}" \
+    && chmod +x "${LIVY_HOME}"/bin/* \
+    && ls -l "${LIVY_HOME}" "${LIVY_HOME}/bin" \
+    && rm -rf /incubator-livy /opt/livy-dist
+
+FROM builder AS spark-builder-default
+
+# The Spark release of the builder stage (keep it equal to SPARK_VERSION there), from Apache's
+# Docker image of it: /opt/spark holds what the tarball's does but for the configuration templates,
+# the licenses and the YARN shuffle jar.
+FROM apache/spark:3.5.2-scala2.12-java17-python3-r-ubuntu AS spark-builder-dockerhub
+COPY --from=livy-dockerhub /opt/livy /opt/livy
+
+FROM spark-builder-${OH_SPARK_BUILDER} AS spark-builder
+
 
 FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8 AS spark-base-default
 
@@ -87,8 +130,8 @@ ARG OH_SPARK_APPS_NAME=openhouse-spark-apps_2.12
 ENV LIVY_HOME=/opt/livy \
 SPARK_HOME=/opt/spark
 
-COPY --from=builder /opt/livy /opt/livy
-COPY --from=builder /opt/spark /opt/spark
+COPY --from=spark-builder /opt/livy /opt/livy
+COPY --from=spark-builder /opt/spark /opt/spark
 
 WORKDIR $SPARK_HOME
 

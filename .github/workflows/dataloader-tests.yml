@@ -7,15 +7,31 @@ on:
       - main
     paths:
       - 'integrations/python/dataloader/**'
+  # The same job on the jars and images of a -PicebergFork build (docs/development/iceberg-fork.md):
+  # dataloader-tests-iceberg-fork.yml calls it with iceberg-fork: true. Without the input every
+  # step runs what it ran before.
+  workflow_call:
+    inputs:
+      iceberg-fork:
+        description: >-
+          Build the jars under -PicebergFork and the recipe's images with
+          infra/recipes/docker-compose/iceberg-fork.env (Spark 3.5, Java 17, Iceberg 1.12).
+        type: boolean
+        required: false
+        default: false
 
+# The two lines have their own groups, so a run of one never cancels a run of the other.
 concurrency:
-  group: dataloader-${{ github.event.pull_request.number || github.ref }}
+  group: dataloader-${{ inputs.iceberg-fork && 'iceberg-fork-' || '' }}${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: Dataloader Build and Test
+    name: Dataloader Build and Test${{ inputs.iceberg-fork && ' (-PicebergFork)' || '' }}
     runs-on: ubuntu-latest
+    env:
+      # Empty unless iceberg-fork: docker compose then reads no env file, as before.
+      COMPOSE_ENV_FILE: ${{ inputs.iceberg-fork && '--env-file infra/recipes/docker-compose/iceberg-fork.env' || '' }}
     steps:
       - name: Checkout project sources
         uses: actions/checkout@v6
@@ -43,11 +59,22 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
 
+      - name: Restore or publish the Iceberg fork
+        if: ${{ inputs.iceberg-fork }}
+        uses: ./.github/actions/iceberg-fork
+
       - name: Build project and Spark uber JARs
+        if: ${{ !inputs.iceberg-fork }}
         run: ./gradlew clean build shadowJar -x test
 
+      # dockerPrereqs also stages the fork's iceberg-spark-runtime for the Spark image.
+      - name: Build the uber JARs and the Docker prerequisites under -PicebergFork
+        if: ${{ inputs.iceberg-fork }}
+        run: ./gradlew -PicebergFork shadowJar dockerPrereqs
+
       - name: Start Docker Containers
-        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
+        id: containers
+        run: docker compose $COMPOSE_ENV_FILE -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
 
       - name: Wait for Docker Containers to be ready
         run: |
@@ -66,10 +93,52 @@ jobs:
           docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml ps
           exit 1
 
+      # For the record of each run: the Java, Spark, Iceberg runtime and Livy the image holds.
+      - name: Print what the Spark image of the -PicebergFork build holds
+        if: ${{ inputs.iceberg-fork }}
+        run: |
+          docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml exec -T spark-livy sh -c '
+            java -version 2>&1
+            /opt/spark/bin/spark-submit --version 2>&1 | head -n 12
+            echo "== /opt/spark"; ls /opt/spark
+            echo "== Iceberg and OpenHouse jars"; ls -l /opt/spark/jars/ | grep -i iceberg; ls -l /opt/spark/*.jar
+            echo "== /opt/livy"; ls -l /opt/livy /opt/livy/bin; ls /opt/livy/*jars* | grep -i -E "jars:|livy"
+            true'
+
+      # Under -PicebergFork the Spark image carries the fork's Iceberg runtime, so the tests ask
+      # Spark for no package (OH_SPARK_JARS_PACKAGES set and empty); otherwise it stays unset.
       - name: Run Data Loader Integration Tests
         working-directory: integrations/python/dataloader
-        run: make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
+        run: ${{ inputs.iceberg-fork && 'OH_SPARK_JARS_PACKAGES= ' || '' }}make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
+
+      # Only when a step after the start failed, and it only prints. Last comes what a failed Spark
+      # session leaves: Livy's sessions, the executors' output and the Livy server's log.
+      - name: Print the containers' state and logs
+        if: ${{ failure() && steps.containers.outcome == 'success' }}
+        run: |
+          compose="docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml"
+          $compose ps -a || true
+          print_log() {
+            echo "::group::$1 (last $2 lines)"
+            $compose logs --no-color --tail "$2" "$1" || true
+            echo "::endgroup::"
+          }
+          print_log mysql 40
+          print_log namenode 80
+          print_log datanode 80
+          print_log openhouse-housetables 150
+          print_log openhouse-tables 300
+          print_log spark-master 100
+          print_log spark-worker-a 150
+          echo "::group::Livy sessions"
+          curl -s http://localhost:9003/sessions || true
+          echo
+          echo "::endgroup::"
+          echo "::group::Executors' output (last 200 lines of each file)"
+          $compose exec -T spark-worker-a sh -c 'for f in /opt/spark/work/*/*/stderr; do echo "== $f"; tail -n 200 "$f"; done' || true
+          echo "::endgroup::"
+          print_log spark-livy 600
 
       - name: Stop Docker Containers
         if: always()
-        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml down
+        run: docker compose $COMPOSE_ENV_FILE -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml down
