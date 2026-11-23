@@ -8,6 +8,7 @@ import com.linkedin.openhouse.spark.SparkTestBase;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.BadRequestException;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +48,40 @@ public class AlterTableTestSpark3_5 {
             spark.sql(
                 String.format(
                     "ALTER TABLE openhouse.dbAlter.tb1 SET TBLPROPERTIES('%s'='%s')", key, value)));
+  }
+
+  @Test
+  public void testSetPoliciesTablePropsBlocked() {
+    GetTableResponseBody existingTable =
+        mockGetTableResponseBody(
+            "dbAlter",
+            "tb2",
+            "c1",
+            "dbAlter.tb2.c1",
+            "UUID",
+            mockTableLocationDefaultSchema(TableIdentifier.of("dbAlter", "tb2")),
+            "v1",
+            baseSchema,
+            null,
+            null);
+    mockTableService.enqueue(mockResponse(200, existingTable)); // doRefresh()
+    mockTableService.enqueue(mockResponse(200, existingTable)); // doRefresh()
+    mockTableService.enqueue(mockResponse(200, existingTable)); // doRefresh()
+
+    // Server rejects the commit because 'policies' is a preserved key
+    mockTableService.enqueue(mockResponse(400, existingTable)); // doCommit()
+
+    // Ported from the Spark 3.1 itest's AlterTableTest, which asserted only Exception.class. On
+    // Spark
+    // 3.1 (Iceberg 1.2) and on Spark 3.5 (Iceberg 1.5.2 and 1.12) the statement fails the same way:
+    // three reads, then the PUT, whose 400 the client turns into Iceberg's BadRequestException.
+    BadRequestException exception =
+        Assertions.assertThrows(
+            BadRequestException.class,
+            () ->
+                spark.sql(
+                    "ALTER TABLE openhouse.dbAlter.tb2 SET TBLPROPERTIES('policies'='{\"retention\":{\"count\":1,\"granularity\":\"DAY\"}}')"));
+    Assertions.assertTrue(exception.getMessage().startsWith("400 "), exception.getMessage());
   }
 
   @Test

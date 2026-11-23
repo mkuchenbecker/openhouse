@@ -1,7 +1,7 @@
 // The OpenHouse Spark SQL extensions (grammar, parser, analysis rule, exec nodes, the extensions
 // entry point) for Spark 4.2 / Scala 2.13 on the fork's Iceberg 1.12 line, ported from
-// :integrations:spark:spark-3.5:openhouse-spark-runtime (N3-x1). Only under -PicebergFork
-// (settings.gradle); see docs/development/iceberg-fork.md.
+// :integrations:spark:spark-3.5:openhouse-spark-runtime (N3-x1). Not in the -PicebergLinkedIn
+// reference build (settings.gradle), which has no Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Unlike the 3.5 runtime it has no OpenHouse catalog class and no OpenHouse Java client: the
 // extensions find OpenHouse features through the capabilities module (D23) and Iceberg's own
@@ -32,7 +32,7 @@ ext {
 def forkRepo = rootProject.ext.icebergForkRepo
 if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
   throw new GradleException(
-      "-PicebergFork: iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
           + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
 }
 

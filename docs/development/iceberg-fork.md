@@ -1,9 +1,19 @@
-# Opt-in build against an Iceberg fork (`-PicebergFork`)
+# The Iceberg lines of the build: 1.12 by default, LinkedIn's 1.5.2 as the reference (`-PicebergLinkedIn`)
 
-The default build compiles and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12) against
-LinkedIn's `com.linkedin.iceberg` 1.5.2 releases from Maven Central. `-PicebergFork` builds that
-same variant against a newer Iceberg built from source instead, so work on that line can be proven
-here without touching the default build. Without the property nothing changes.
+The default build compiles and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12), the Spark 4.2
+modules and Apache Iceberg's REST compatibility kit against Iceberg 1.12, built from a pinned commit
+of the Iceberg fork. `./gradlew build` with no property is that build, on Java 17.
+
+`-PicebergLinkedIn` builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
+`com.linkedin.iceberg` 1.5.2 releases from Maven Central. It exists for one purpose: LinkedIn's
+line is the behavior the 1.12 line is measured against (decision D8), so its suites and the
+delta-harness can still be run on it. The modules that need Iceberg 1.12 (Spark 4.2, the
+compatibility kit) are not in that build, and it builds no deployables.
+
+`-PicebergFork` selected the 1.12 line while it was opt-in. It is accepted for one more cycle and
+does nothing: Gradle prints a deprecation warning and builds the default. Together with
+`-PicebergLinkedIn` it is an error. `HARNESS_ICEBERG_FORK=1` is treated the same way by the
+delta-harness.
 
 ## What is pinned
 
@@ -18,10 +28,15 @@ committed as a binary and nothing is published remotely; bump the commit to move
 ```bash
 export JAVA_HOME=/path/to/jdk17        # the fork's Iceberg is Java 17 bytecode
 scripts/iceberg-fork/publish-local.sh  # once per pinned commit per machine; FORCE=1 republishes
-./gradlew -PicebergFork clean build    # clean keeps the published fork
-./gradlew -PicebergFork :services:tables:test
-./gradlew -PicebergFork :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+./gradlew clean build                  # clean keeps the published fork
+./gradlew :services:tables:test
+./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+
+./gradlew -PicebergLinkedIn build      # the reference line; needs no publish-local.sh
 ```
+
+Every Gradle command on the default build, `help` and the git hooks' `spotlessCheck` included,
+needs the fork published first: until then it stops with a message that names the script.
 
 `publish-local.sh` fetches the pinned commit into `~/.gradle/iceberg-fork/src`, then runs the fork's
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
@@ -39,91 +54,99 @@ kit. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
 support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes a few minutes (about two
 with Gradle's build cache warm); once the version is published it is a no-op.
 
-## What the switch changes
+## What differs between the two lines
 
-All in [`gradle/iceberg-fork.gradle`](../../gradle/iceberg-fork.gradle) or guarded by the same
-property:
+All in [`gradle/iceberg-fork.gradle`](../../gradle/iceberg-fork.gradle), which the default build
+applies and the reference build does not, or guarded by the same property (`icebergLinkedIn`):
 
-- `iceberg_1_5_version` becomes the fork version for every module on the 1.5 line.
-- A repository limited to `com.linkedin.iceberg` at exactly that version, served only from
+- `iceberg_1_5_version` is the fork version for every module of the Iceberg 1.5 variant; on the
+  reference line it is the `1.5.2.x` release named in the root `build.gradle`.
+- A repository limited to `com.linkedin.iceberg` at exactly the fork version, served only from
   `~/.gradle/iceberg-fork/<version>`.
 - `iceberg-aws` (the service's `S3FileIO` and `AwsClientFactories`, in `openhouse.iceberg-aws-conventions`)
   is the fork's too, with the AWS SDK at the pin file's `awsSdkVersion` plus `kms`, which it
   needs; `s3` brings `apache5-client`, its default HTTP client. The SDK's `netty-nio-client` is
   excluded: OpenHouse builds no async S3 client, and that SDK's Netty would split the service's
   Netty between 4.1.138 and 4.1.86 and break its WebClient. So no Iceberg jar of another line is
-  on any classpath, and snapshot summaries name the fork's version. The default build keeps
+  on any classpath, and snapshot summaries name the fork's version. The reference line keeps
   LinkedIn's `iceberg-aws` 1.2.0.6 and SDK 2.20.18; there its `iceberg-build.properties` can come
   before core's on a classpath, and `IcebergBuild.version()` then says 1.2.0.6 (seen on the Spark 3.5
   apps test classpath; LinkedIn's 1.5.2 does not record the version in snapshot summaries).
-- Every module compiles to Java 17 (`openhouse.java-minimal-conventions`).
-- The root ORC/Avro forces are replaced by the pinned versions, and Caffeine is pinned.
-- `iceberg-parquet`/`iceberg-orc` are added at runtime on the 1.5 line and kept off the Spark 3.5
-  test classpaths, where the shaded `iceberg-spark-runtime` already carries them.
+- Every module compiles to Java 17 (`openhouse.java-minimal-conventions`); on the reference line
+  to Java 8, as LinkedIn's line always has.
+- The root ORC/Avro forces are the pinned versions, and Caffeine is pinned; the reference line
+  keeps ORC 1.8.3 and Avro 1.11.4.
+- `iceberg-parquet`/`iceberg-orc` are added at runtime on the Iceberg 1.5 variant and kept off the
+  Spark 3.5 test classpaths, where the shaded `iceberg-spark-runtime` already carries them.
+- The Spark 4.2 modules and the REST compatibility kit are in the default build only
+  (`settings.gradle`), and the capabilities module compiles the REST transport of its line.
 
-The Iceberg 1.2 / Spark 3.1 projects are left out of the build under the switch (decision D15,
-`settings.gradle`): `apps/spark`, `integrations/java/iceberg-1.2/*`, `integrations/spark/spark-3.1/*`
-and `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`. The single-copy server modules compile
-against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The
-sources they share with the 1.5 projects live in the 1.5 projects, under `src/shared`, and the 1.2
-projects name those directories, so nothing in the build under the switch reads a directory of a
-left-out project. `services:tables` tests
-use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
-share, is built on the Spark 3.5 / fork line. There it skips the root dependency forces and keeps
-the thin `iceberg-orc`/`iceberg-parquet` jars off its test classpath, as the Spark 3.5 apps do.
-The deployables are built from the projects that are in the build: see "Docker images" below.
+The Iceberg 1.2 / Spark 3.1 projects (`apps/spark`, `integrations/java/iceberg-1.2`,
+`integrations/spark/spark-3.1`, `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`) are
+deleted (decision D3). The sources they shared with the 1.5 projects are those projects'
+`src/shared` directories, ordinary source roots now.
 
-The delta-harness runs on this build with `HARNESS_ICEBERG_FORK=1`
-(`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
+The delta-harness runs on the default build; `HARNESS_ICEBERG_LINKEDIN=1` runs it on the reference
+line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
+
+## Publishing
+
+The default build refuses to publish to a remote Maven repository. Its Iceberg is hosted nowhere
+(decision D7), so the POMs would name `com.linkedin.iceberg:*:<baseVersion>-ohfork.<commit>`, which
+no consumer can resolve. `./gradlew publish`, or any single task that publishes to a repository
+that is not a `file:` URL, stops when the task graph is ready, before any task runs, with a message
+that says so (`gradle/iceberg-fork.gradle`). The ways forward are to publish from the reference
+line (`./gradlew -PicebergLinkedIn publish`), or to host the fork's Iceberg artifacts first, which
+is the repository owner's decision (work item I6d). `publishToMavenLocal` is not affected.
+`build-tag-publish.yml` runs `./gradlew publish` only on `linkedin/openhouse`'s `main`; there it
+would now stop at this check.
 
 ## Docker images
 
-`./gradlew -PicebergFork shadowJar` builds every uber jar, and `./gradlew -PicebergFork
-dockerPrereqs` the jars the images need, from the projects that are in this build: the Spark 3.5
-apps uber jar where the default build takes the Iceberg 1.2 / Spark 3.1 one, and no Spark 3.1
-runtime. It also copies the fork's `iceberg-spark-runtime-3.5_2.12` to `build/iceberg-spark-runtime/`
+`./gradlew shadowJar` builds every uber jar, and `./gradlew dockerPrereqs` the jars the images need:
+the service boot jars, the Spark 3.5 runtime and apps uber jars, and the token generator. It also
+copies the fork's `iceberg-spark-runtime-3.5_2.12` to `build/iceberg-spark-runtime/`
 (`stageIcebergSparkRuntime`), because a Docker build reads only the checkout and no repository
-serves that jar.
-
-[`infra/recipes/docker-compose/iceberg-fork.env`](../../infra/recipes/docker-compose/iceberg-fork.env)
-holds the docker compose variables that select the images of this build. `./gradlew -PicebergFork
-dockerBuild`, `dockerUp` and `dockerDown` pass it; by hand:
+serves that jar. `./gradlew dockerBuild`, `dockerUp` and `dockerDown` wrap docker compose; by hand:
 
 ```bash
-./gradlew -PicebergFork dockerPrereqs
-docker compose --env-file infra/recipes/docker-compose/iceberg-fork.env \
-    -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
+./gradlew dockerPrereqs
+docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
 ```
 
-Without the file, and without the switch, every recipe and image is built as before. With it:
+The images are built from the default build only. Under `-PicebergLinkedIn`, `dockerPrereqs`,
+`dockerBuild` and `dockerUp` stop with a message: the reference build is not deployed.
 
-- The service images (tables, housetables, jobs, optimizer) need nothing: their Dockerfiles copy
-  `build/<service>/libs`, whichever build filled it, and their base images
-  (`openjdk:23-ea-11-slim`, `eclipse-temurin:17-jre-jammy`) run Java 17 class files.
-- `jobs-scheduler.Dockerfile` takes `OH_SPARK_APPS_NAME=openhouse-spark-apps-1.5_2.12` as a build
-  argument. The Spark 3.5 apps jar carries `log4j2.properties` under the switch (the Iceberg 1.2
-  line's apps jar always has): without it the scheduler logs errors only.
-- The Spark services (`OH_SPARK_DOCKERFILE`) are built from `spark-3.5-base-hadoop3.2.dockerfile`
-  with `OH_SPARK_BASE=iceberg-fork`: Spark 3.5.2, a Java 17 runtime for every JVM in the image (the
-  jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the Spark 3.5
-  apps jar. The OpenHouse jars keep the names they have in the Spark 3.1 image
-  (`/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar`,
-  `/opt/spark/openhouse-spark-apps_2.12-latest-all.jar`), so `jobs.yaml`, `livy_cli.py` and the
-  dataloader integration tests name the same paths on both.
-- `OH_SPARK_BUILDER=dockerhub` selects where that image's Livy and Spark come from. The
-  dockerfile's own builder stage installs some 200 Ubuntu packages and downloads Spark and Maven
-  from `archive.apache.org`, and Livy's build downloads a second Spark release from there; on
-  GitHub's runners that host served 46 kB/s (two and a half hours for one tarball) and `apt-get`
-  took 9 and 42 minutes. With `dockerhub`, Livy (the same commit and patch) is built in Maven's
-  Docker image without its `integration-test` and `coverage` modules, and `/opt/spark` is copied
-  from Apache's Docker image of the same release (`apache/spark:3.5.2-...`): nothing comes from
-  those two hosts. Without the argument the dockerfile does what it did.
-- The jobs service reads `jobs-iceberg-fork.yaml` (`OPENHOUSE_JOBS_CONFIG_PATH`): `jobs.yaml` without
-  `spark.jars.packages`, which has Spark download Apache's `iceberg-spark-runtime-3.1_2.12:1.2.0`.
-  Keep the two files equal otherwise.
-- A client that opens Spark sessions on that image must not ask for that download either: set
-  `OH_SPARK_JARS_PACKAGES` to the empty string for the dataloader's `make integration-tests` and for
-  `scripts/python/livy_cli.py`.
+- The service images (tables, housetables, jobs, optimizer) copy `build/<service>/libs`, and
+  their base images (`openjdk:23-ea-11-slim`, `eclipse-temurin:17-jre-jammy`) run the jars' Java 17
+  class files. They are the base images these Dockerfiles had before the build moved to Java 17.
+- `jobs-scheduler.Dockerfile` runs the scheduler from the Spark 3.5 apps uber jar
+  (`openhouse-spark-apps-1.5_2.12`), which carries `log4j2.properties`: without it the scheduler
+  logs errors only.
+- The Spark services of every recipe (`common/spark-services.yml`) are built from
+  `spark-3.5-base-hadoop3.2.dockerfile`: Spark 3.5.2, a Java 17 runtime for every JVM in the image
+  (the jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the
+  Spark 3.5 runtime and apps jars. The OpenHouse jars keep the names they had in the Spark 3.1
+  image, which is gone (`/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar`,
+  `/opt/spark/openhouse-spark-apps_2.12-latest-all.jar`), so `jobs.yaml`, `livy_cli.py`, the
+  dataloader integration tests and the Azure sandbox script name the paths they always did.
+- No Spark session asks for an Iceberg runtime with `spark.jars.packages` or `--packages` any more
+  (`jobs.yaml`, `scripts/python/livy_cli.py`, the dataloader's integration tests, `SETUP.md`): the
+  image has it. Before, each session downloaded Apache's `iceberg-spark-runtime-3.1_2.12:1.2.0`.
+- The build argument `OH_SPARK_BUILDER` selects where the Spark image's Livy and Spark come from.
+  Its default, `dockerhub`, builds Livy (the pinned commit with the repository's patch) in Maven's
+  Docker image, without its `integration-test` and `coverage` modules, and copies `/opt/spark`
+  from Apache's Docker image of the same release (`apache/spark:3.5.2-...`).
+  `OH_SPARK_BUILDER=default docker compose ... build` uses the dockerfile's older builder stage,
+  which installs some 200 Ubuntu packages and downloads Spark and Maven from
+  `archive.apache.org`; on GitHub's runners that host served 46 kB/s (two and a half hours for one
+  tarball) and `apt-get` took 9 and 42 minutes. Neither has finished on a GitHub runner yet: the
+  `dockerhub` stages avoid Ubuntu's archive and those two tarballs, but Livy's `thriftserver`
+  module still downloads a Spark release (228 MB) from `archive.apache.org`, and the build stopped
+  there. The untried next step is `-Ddownload.skip=true` on that stage's `mvn` line. So the Spark
+  image, and with it the `oh-hadoop-spark` recipe and the dataloader's integration tests, are
+  proven only by a build with a stand-in builder stage on a developer machine (Spark 3.5.2 and
+  Apache's released Livy 0.8.0: `spark-sql`, a Livy session and `spark-submit` passed), not in CI.
 
 ## Behavior that differs by Iceberg line
 
@@ -168,45 +191,51 @@ is not detectable and it declares the capability as before, with a warning.
 
 ## CI
 
-The opt-in build is one reusable workflow, `iceberg-fork-build.yml`, with one job
-(`iceberg-fork-build`). Two workflows call it, each beside its default build job, which it neither
-blocks nor waits for:
+Two jobs, each one reusable workflow, run beside each other on every pull request
+(`pr-validations.yml`, decision D33) and after each merge to `irc-integration`
+(`post-merge-build.yml`, also by hand with `workflow_dispatch`). Neither blocks nor waits for the
+other. A newer push to a pull request cancels the pull request's older run; a running post-merge
+run is never cancelled.
 
-- `post-merge-build.yml`, after each merge to `irc-integration` and by hand (`workflow_dispatch`).
-  A running post-merge run is never cancelled.
-- `pr-validations.yml`, on every pull request (decision D33): a change that breaks the build under
-  the switch is red before it merges. A newer push to a pull request cancels the pull request's
-  older run.
+**The default build**, `build-run-tests.yml` (job `build-and-run-tests`):
 
-The job runs `publish-local.sh`, then `-PicebergFork assemble testClasses`, then the opt-in suites:
-`:services:tables:test`, `:iceberg:openhouse:internalcatalog:test`,
-`:iceberg:openhouse:htscatalog:test`, the capabilities module's tests, the 1.5 Java itest, the
-Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
-the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`), and last, in a step of its own that
-runs even when a suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`).
+- restores the published fork from the cache or publishes it (the composite action
+  `.github/actions/iceberg-fork`);
+- `./gradlew clean assemble testClasses`, then `./gradlew build --continue`: every project's tests,
+  the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests
+  and the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`), and Apache Iceberg's REST
+  compatibility kit (`restCompatKitTest`, part of `check`);
+- after the tests, whatever their outcome (but not after a failed compile), the deployables
+  ("Docker images" above): `./gradlew shadowJar dockerPrereqs`; the jobs-scheduler image, built
+  through docker compose, in which the scheduler is started without arguments and must log its
+  first line at INFO (which needs the image's Java to run the jar and the jar to carry its
+  `log4j2.properties`); the `oh-only` recipe, then `scripts/python/integration_test.py` against
+  it. The tables container's jar must hold the fork's `iceberg-core` and no other. The containers
+  are stopped in every case, and their logs are printed when one of these steps failed.
 
-After the suites and the kit, whatever their outcome (but not after a failed compile), the job checks
-the deployables of the build ("Docker images" above):
+`build-tag-publish.yml` calls the same workflow before a release.
 
-- `-PicebergFork shadowJar dockerPrereqs`.
-- The jobs-scheduler image, built through docker compose with `iceberg-fork.env` from the Spark 3.5
-  apps jar. The scheduler is started in it without arguments and must log its first line at INFO,
-  which needs the image's Java to run the jar and the jar to carry its `log4j2.properties`.
-- The `oh-only` recipe with `iceberg-fork.env`, then `scripts/python/integration_test.py` against it,
-  as the default build does for its own containers. The tables container's jar must hold the fork's
-  `iceberg-core` and no other. The containers are stopped in every case, and their logs are printed
-  when one of these steps failed.
+**The reference build**, `iceberg-linkedin-build.yml` (job `iceberg-linkedin-build`): `./gradlew
+-PicebergLinkedIn clean build --continue`, the whole build on LinkedIn's Iceberg 1.5.2, so that a
+change that breaks the line the default is measured against is red before it merges. It needs no
+published fork and builds no image.
 
-The Spark image and the `oh-hadoop-spark` recipe are checked by the Dataloader job,
-`dataloader-tests.yml`, which takes an input, `iceberg-fork`. With it the job restores the fork,
-runs `-PicebergFork shadowJar dockerPrereqs`, starts the recipe with `iceberg-fork.env` (which builds
-the Spark 3.5 / Java 17 image, Livy included) and runs the dataloader's integration tests with
-`OH_SPARK_JARS_PACKAGES` empty. Without the input it is the default build's job, unchanged: pull
-requests into `main` that touch `integrations/python/dataloader/**`.
-`dataloader-tests-iceberg-fork.yml` calls it with the input, by hand only (`workflow_dispatch`, on
-any branch): no pull request and no merge runs it until it has been green. The trigger that then
-corresponds to the default build's (pull requests that touch the dataloader), widened by the files
-that define the recipe and its images on this line, is:
+When a suite fails, either job's last two steps print each failed test with the start of its
+failure (`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, plus, on the default
+build, the end of the Spark 4.2 tests' service logs) and upload the test reports as the artifact
+`default-build-test-reports` or `reference-build-test-reports` (kept 7 days). The failed tests are
+therefore at the end of the job's log, not only where they ran.
+
+**The Dataloader workflow**, `dataloader-tests.yml`, has two jobs. The dataloader's own checks and
+unit tests (`make sync verify`) run on pull requests into `main` that touch
+`integrations/python/dataloader/**`, as before. The integration tests run by hand only
+(`workflow_dispatch`, on any branch): the job restores the fork, runs `./gradlew shadowJar
+dockerPrereqs`, starts the `oh-hadoop-spark` recipe (which builds the Spark image, Livy included)
+and runs the dataloader's integration tests against it. No pull request and no merge runs it,
+because the Spark image has not finished building on a runner ("Docker images" above), so the job
+has never been green on this line. Once a run by hand is green, the trigger that corresponds to
+the one the integration tests had before, widened by the files that define the recipe and its
+images, is (with the job's `if:` removed):
 
 ```yaml
   pull_request:
@@ -216,15 +245,10 @@ that define the recipe and its images on this line, is:
       - 'integrations/python/dataloader/**'
       - 'infra/recipes/docker-compose/common/**'
       - 'infra/recipes/docker-compose/oh-hadoop-spark/**'
-      - 'infra/recipes/docker-compose/iceberg-fork.env'
       - '*.Dockerfile'
       - '.github/workflows/dataloader-tests.yml'
-      - '.github/workflows/dataloader-tests-iceberg-fork.yml'
       - '.github/actions/iceberg-fork/**'
 ```
-
-The steps that restore or publish the fork are one composite action, `.github/actions/iceberg-fork`,
-used by both jobs.
 
 The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
 script, so the fork is built (60 to 75 minutes on a runner) only when either changes:
@@ -242,21 +266,16 @@ script, so the fork is built (60 to 75 minutes on a runner) only when either cha
 The Gradle cache is written only on `irc-integration`; a pull request and a branch run by hand read
 it.
 
-When a suite fails, the job's last two steps print each failed test with the start of its failure
-(`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, plus the end of the Spark 4.2
-tests' service logs) and upload the test reports as the artifact `iceberg-fork-test-reports` (kept
-7 days). The failed tests are therefore at the end of the job's log, not only where they ran.
-
 ## Spark 4.2 over the IRC read routes
 
-`:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` exists only under the switch
+`:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` is not in the reference build
 (`settings.gradle`). Its tests run Spark 4.2 (the pin file's `spark42Version`) with the fork's
 `iceberg-spark-runtime-4.2_2.13`, Iceberg's own `SparkCatalog` and `RESTCatalog`
 (`type=rest`, `uri=<service>/iceberg`, `token=<bearer>`) and no OpenHouse catalog or client class on
 the classpath, against the tables service's IRC routes:
 
 ```bash
-./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
+./gradlew :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
 ```
 
 The service runs in its own JVM, which the test starts on a free port (`IrcReadTestServiceProcess`)
@@ -278,7 +297,7 @@ succeed from Spark 4.2 and the rows read back, on tables it creates and drops.
 
 ## OpenHouse SQL extensions on Spark 4.2
 
-`:integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13` (only under the switch) is the
+`:integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13` (not in the reference build) is the
 Spark 3.5 runtime's SQL extensions ported to Spark 4.2 / Scala 2.13: the same statements (SET and
 UNSET POLICY, MODIFY COLUMN ... SET TAG, GRANT, REVOKE, SHOW GRANTS, UNLOCK), configured the same
 way next to Iceberg's:
@@ -293,8 +312,8 @@ and Iceberg's own `SparkCatalog` and `RESTCatalog`. Its `uber` jar holds its cla
 capabilities module's; Spark and `iceberg-spark-runtime-4.2_2.13` are the engine's own.
 
 ```bash
-./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13:test
-./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest
+./gradlew :integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13:test
+./gradlew :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest
 ```
 
 Over a plain `RESTCatalog` every OpenHouse statement works. The policy statements ride the IRC
@@ -302,8 +321,8 @@ commit (the server advertises `policies` and applies the patch). GRANT, REVOKE, 
 UNLOCK go through the REST capability client in the capabilities module (`capabilities.rest`), which
 calls the OpenHouse routes under the IRC base with the catalog's own URI, prefix, `header.*` values
 and authentication, and gives the outcomes Spark 3.5 gives over `RESTCatalog`. The client's
-transport is the one per-line part: the module compiles `src/iceberg-1.5/java` by default and
-`src/iceberg-1.12/java` (Iceberg's `AuthManager`) under `-PicebergFork`. `extensionsTest` runs in its
+transport is the one per-line part: the module compiles `src/iceberg-1.12/java` (Iceberg's
+`AuthManager`) by default and `src/iceberg-1.5/java` under `-PicebergLinkedIn`. `extensionsTest` runs in its
 own JVM and service JVM, because Spark fixes a session's extensions when the session is built.
 
 ## The Spark SQL smoke suite on Spark 4.2
@@ -313,7 +332,7 @@ own JVM and service JVM, because Spark fixes a session's extensions when the ses
 catalog or client class, in its own JVM and service JVM:
 
 ```bash
-./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:smokeTest
+./gradlew :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:smokeTest
 ```
 
 - The statements and their baseline outcomes (Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2)
@@ -337,14 +356,14 @@ catalog or client class, in its own JVM and service JVM:
 
 ## Apache Iceberg's REST compatibility kit
 
-`:integrations:java:openhouse-rest-compat-kit` (only under the switch) runs Apache Iceberg's REST
+`:integrations:java:openhouse-rest-compat-kit` (not in the reference build) runs Apache Iceberg's REST
 compatibility kit (RCK), the fork's `iceberg-open-api` tests, against the tables service's IRC
 routes with Iceberg 1.12's own `RESTCatalog`: the kit's table suite (`CatalogTests`) and view suite
 (`ViewCatalogTests`), every test of both.
 
 ```bash
 scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's tests and test fixtures
-./gradlew -PicebergFork :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
+./gradlew :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
 ```
 
 The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory

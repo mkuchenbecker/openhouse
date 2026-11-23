@@ -262,7 +262,7 @@ public class IrcConfigEndpointsTest {
   /**
    * The client of this Iceberg line reads the config: Iceberg 1.5.2's {@code ConfigResponse} has no
    * {@code endpoints} and its mapper ignores unknown fields, so it reads what it read before;
-   * Iceberg 1.12's (the opt-in build) reads the list. (A real 1.5.2 {@code RESTCatalog}
+   * Iceberg 1.12's (the default build) reads the list. (A real 1.5.2 {@code RESTCatalog}
    * initializing against this config: IrcRestCatalogPolicyKeyTest and the IRC itests.)
    */
   @Test

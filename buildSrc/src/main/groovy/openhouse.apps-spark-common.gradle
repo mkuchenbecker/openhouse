@@ -83,7 +83,7 @@ shadowJar {
     // https://github.com/GradleUp/shadow/issues/877#issuecomment-2472922043
     exclude 'META-INF/versions/19/'
     // Same limit, Java 21 class files: jackson-core 2.22 carries them, and it is on this classpath
-    // under -PicebergFork (the default build's inputs have no such entry).
+    // on the Iceberg 1.12 line (the reference line's inputs have no such entry).
     exclude 'META-INF/versions/21/'
 
     relocate('io.', 'openhouse.relocated.io.') {

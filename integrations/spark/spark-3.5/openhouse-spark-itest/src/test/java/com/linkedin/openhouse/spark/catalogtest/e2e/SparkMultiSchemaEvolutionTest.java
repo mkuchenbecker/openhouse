@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
  * Builds multi-schema metadata with {@code TableMetadata.Builder#setCurrentSchema(Schema, int)},
  * which adds the schema and makes it current; {@code setCurrentSchema(int)} then restores the
  * previous current schema where a step only adds one. Unlike {@code addSchema(Schema, int)} it
- * exists on every Iceberg line OpenHouse builds against (1.2, 1.5, and the -PicebergFork line).
+ * exists on every Iceberg line OpenHouse builds against (1.2, 1.5, and the fork's 1.12 line).
  */
 public class SparkMultiSchemaEvolutionTest extends OpenHouseSparkITest {
 

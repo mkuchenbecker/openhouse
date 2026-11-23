@@ -8,8 +8,8 @@ plugins {
 ext {
   icebergVersion = rootProject.ext.iceberg_1_5_version
   sparkVersion = '3.5.2'
-  // Antlr grammar sources are owned by this module (spark-3.5 keeps its own copy of the
-  // grammar so it can evolve independently of spark-3.1).
+  // Antlr grammar sources are owned by this module (each Spark line keeps its own copy of the
+  // grammar so it can evolve independently).
   antlrPackageDirPrefix = "com/linkedin/openhouse/spark/sql/catalyst/parser/extensions/"
   antlrMainDir = "${projectDir}/src/main/antlr/${antlrPackageDirPrefix}"
   antlrMainGeneratedSrcDir = "${project.buildDir}/generated-src/antlr/main/"

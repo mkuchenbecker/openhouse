@@ -3,7 +3,6 @@ from builtins import str, staticmethod, input, range, repr, map, int, type
 
 import argparse
 import json
-import os
 import pathlib
 
 import requests
@@ -21,13 +20,8 @@ LIVY_SESSIONS_ENDPOINT = f'{LIVY_ENDPOINT}/sessions'
 HEADERS = {'Content-Type': 'application/json'}
 TABLES_SERVICE_TOKEN_FILE = pathlib.Path('services/common/src/main/resources/dummy.token')
 TABLES_SERVICE_TOKEN = TABLES_SERVICE_TOKEN_FILE.read_text()
-# The Iceberg runtime Spark downloads for a session. The Spark image of a -PicebergFork build has the
-# fork's runtime in /opt/spark/jars: run with OH_SPARK_JARS_PACKAGES set to the empty string there.
-SPARK_JARS_PACKAGES = os.environ.get(
-	'OH_SPARK_JARS_PACKAGES', 'org.apache.iceberg:iceberg-spark-runtime-3.1_2.12:1.2.0')
 SESSION_REQUEST_DATA_TEMPLATE = {
 	'conf': {
-		**({'spark.jars.packages': SPARK_JARS_PACKAGES} if SPARK_JARS_PACKAGES else {}),
 		'spark.sql.extensions': 'org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions',
 		'spark.sql.catalog.openhouse': 'org.apache.iceberg.spark.SparkCatalog',
 		'spark.sql.catalog.openhouse.catalog-impl': 'com.linkedin.openhouse.spark.OpenHouseCatalog',

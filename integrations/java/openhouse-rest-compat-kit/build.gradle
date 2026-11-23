@@ -1,7 +1,7 @@
 // Apache Iceberg's REST compatibility kit (RCK), from the fork's Iceberg 1.12 line, run against the
 // tables service's Iceberg REST Catalog (IRC) routes: the first objective measure of how far
-// OpenHouse is from a conforming IRC server (work item V13). Only under -PicebergFork
-// (settings.gradle); see docs/development/iceberg-fork.md.
+// OpenHouse is from a conforming IRC server (work item V13). Not in the -PicebergLinkedIn reference
+// build (settings.gradle), which has no Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs, as in the Spark 4.2 itest:
 // - test: the kit (iceberg-open-api's tests and test-fixtures jars, published by publish-local.sh),
@@ -22,7 +22,7 @@ def icebergVersion = rootProject.ext.iceberg_1_5_version
 def forkRepo = rootProject.ext.icebergForkRepo
 if (!new File(forkRepo, ".published-${icebergVersion}-open-api").exists()) {
   throw new GradleException(
-      "-PicebergFork: iceberg-open-api:${icebergVersion} (the REST compatibility kit) is not "
+      "The fork's iceberg-open-api:${icebergVersion} (the REST compatibility kit) is not "
           + "published in ${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
 }
 
@@ -109,10 +109,12 @@ dependencies {
 
 def kitClasses = 'com.linkedin.openhouse.irc.rck.OpenHouseRestCompatibilityKit*'
 
-// The module's own unit tests, if any; the kit runs only in restCompatKitTest.
+// The module's own unit tests, if any; the kit runs only in restCompatKitTest. There are none yet,
+// and a filter that matches no test must not fail `./gradlew build`.
 tasks.named('test') {
   filter {
     excludeTestsMatching kitClasses
+    failOnNoMatchingTests = false
   }
 }
 
@@ -204,3 +206,6 @@ tasks.register('restCompatKitTest', Test) {
         "exactly the ones listed in ${expectedFile.name}")
   }
 }
+
+// `./gradlew build` runs the kit, as it runs the Spark 4.2 itest's extra test tasks.
+tasks.named('check') { dependsOn tasks.named('restCompatKitTest') }

@@ -15,20 +15,33 @@
 # classes on the classpath — run once with FORCE_CP=1 after adding them (print-cp.init.gradle already
 # pulls :services:housetables). See HTS-EMBED-PLAN.md / HTS-EMBED-IMPL.md. Default (unset) uses the stub.
 #
-# Opt-in Iceberg 1.12 build (HARNESS_ICEBERG_FORK=1): resolves the classpath with -PicebergFork
+# Iceberg line. By default the classpath is the default build's, the fork's Iceberg 1.12
 # (docs/development/iceberg-fork.md; run scripts/iceberg-fork/publish-local.sh first), so the whole
-# harness JVM runs the fork's Iceberg. Its classpath cache and classes live in a separate work
-# directory, so a cached classpath of one build is never reused for the other.
+# harness JVM runs the fork's Iceberg. HARNESS_ICEBERG_LINKEDIN=1 resolves the classpath with
+# -PicebergLinkedIn instead: LinkedIn's Iceberg 1.5.2 releases, the reference line the recorded
+# baseline (BASELINE-2026-11-22.md) was measured on. Each line has its own work directory, so a
+# cached classpath of one is never reused for the other. HARNESS_ICEBERG_FORK=1, which selected the
+# 1.12 line while it was opt-in, is still accepted and does nothing.
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../../.. && pwd)"
 HERE="$(pwd)"
 WORK="${TMPDIR:-/tmp}/delta-harness-oh"
-FORK_ARGS=""
-if [[ "${HARNESS_ICEBERG_FORK:-0}" == "1" ]]; then
+LINE_ARGS=""
+if [[ "${HARNESS_ICEBERG_LINKEDIN:-0}" == "1" ]]; then
+  if [[ "${HARNESS_ICEBERG_FORK:-0}" == "1" ]]; then
+    echo "!! HARNESS_ICEBERG_LINKEDIN=1 and HARNESS_ICEBERG_FORK=1 contradict each other" >&2
+    exit 1
+  fi
+  LINE_ARGS="-PicebergLinkedIn"
+  echo ">> HARNESS_ICEBERG_LINKEDIN=1: classpath from the -PicebergLinkedIn reference build (work dir $WORK)"
+else
+  # The work directory names the 1.12 line had while it was opt-in, so its cached classpath is reused.
   WORK="${WORK}-iceberg-fork"
-  FORK_ARGS="-PicebergFork"
-  echo ">> HARNESS_ICEBERG_FORK=1: classpath from the opt-in -PicebergFork build (work dir $WORK)"
+  if [[ "${HARNESS_ICEBERG_FORK:-0}" == "1" ]]; then
+    echo ">> HARNESS_ICEBERG_FORK=1 is deprecated and does nothing: the Iceberg 1.12 line is the default" >&2
+  fi
+  echo ">> classpath from the default build, the Iceberg 1.12 line (work dir $WORK)"
 fi
 mkdir -p "$WORK"
 
@@ -54,20 +67,20 @@ if [[ "${FORCE_CP:-0}" != "1" && -s "$WORK/oh-cp.txt" ]]; then
 else
   echo ">> resolving OpenHouse itest runtime classpath (builds the runtime uber jar + fixtures)"
   ( cd "$REPO_ROOT" && "$GRADLE" -Dorg.gradle.java.home="$JDK17" -DcpOut="$WORK/oh-cp.txt" \
-      --init-script "$HERE/scripts/print-cp.init.gradle" ${FORK_ARGS} ${GRADLE_EXTRA_ARGS:-} \
+      --init-script "$HERE/scripts/print-cp.init.gradle" ${LINE_ARGS} ${GRADLE_EXTRA_ARGS:-} \
       :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:printHarnessCp --console=plain )
 fi
 OHCP="$(cat "$WORK/oh-cp.txt")"
 # The Iceberg runtime on the classpath must be the line that was asked for, or the run measures the
 # wrong Iceberg: the fork's version carries "-ohfork.", LinkedIn's releases never do.
 runtime_jars="$(printf '%s' "$OHCP" | tr ':' '\n' | grep -E '/iceberg-spark-runtime-3\.5_2\.12-[^/]*\.jar$' || true)"
-if [[ -n "$FORK_ARGS" ]]; then
+if [[ -z "$LINE_ARGS" ]]; then
   if [[ -z "$runtime_jars" ]] || printf '%s\n' "$runtime_jars" | grep -qv -- '-ohfork\.'; then
-    echo "!! HARNESS_ICEBERG_FORK=1 but the classpath's Iceberg runtime is not the fork's: ${runtime_jars:-none}" >&2
+    echo "!! the classpath's Iceberg runtime is not the fork's (the default line): ${runtime_jars:-none}" >&2
     exit 1
   fi
 elif printf '%s\n' "$runtime_jars" | grep -q -- '-ohfork\.'; then
-  echo "!! the classpath's Iceberg runtime is the fork's but HARNESS_ICEBERG_FORK is not set: $runtime_jars" >&2
+  echo "!! HARNESS_ICEBERG_LINKEDIN=1 but the classpath's Iceberg runtime is the fork's: $runtime_jars" >&2
   exit 1
 fi
 echo ">> Iceberg runtime: $(printf '%s' "$runtime_jars" | xargs -n1 basename 2>/dev/null | paste -sd ' ' -)"
