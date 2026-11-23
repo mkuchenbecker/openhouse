@@ -53,7 +53,12 @@ OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() 
 OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the service's tables are format v2; variant is v3
 OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the service's tables are format v2; variant is v3
 
-# (b) DIALECT: 10 test(s)
+# (b) CREATEHIST: 1 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransactionMultipleSchemas() | FAILED | b | a create stores the create transaction's final schema, spec and order as the table's first (ids 0); the kit expects the transaction's history (schema id 1)
+
+# (b) DIALECT: 13 test(s)
+OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
+OpenHouseRestCompatibilityKitViewCatalogTests.createAndReplaceViewWithLocation() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewErrorCases() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
@@ -62,6 +67,7 @@ OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionConflict() | FAI
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionErrorCases() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForCaseInsensitive() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForMultipleDialects() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
+OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocation() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400; then a commit that only sets the location is refused 400 (D30)
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocationConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 
@@ -69,10 +75,11 @@ OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesConflict() | F
 OpenHouseRestCompatibilityKitViewCatalogTests.concurrentReplaceViewVersion() | FAILED | b | views accept the spark dialect only and refuse reserved view properties (replace.drop-dialect.allowed); 400
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersion() | FAILED | b | views accept the spark dialect only and refuse reserved view properties (replace.drop-dialect.allowed); 400
 
-# (b) FMT: 3 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | b | the server creates every table at the cluster's format version (2); a requested format-version is not honored
-OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | FAILED | b | the server creates every table at the cluster's format version (2); a requested format-version is not honored
-OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[1] | FAILED | b | the server creates every table at the cluster's format version (2); a requested format-version is not honored
+# (b) FMT: 4 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
+OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
+OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[1] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
+OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
 
 # (b) IDS: 3 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testListNonExistingNamespace() | FAILED | b | a namespace id with a hyphen is not an OpenHouse id: 400 BadRequest, the kit expects 404
@@ -83,21 +90,9 @@ OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace()
 OpenHouseRestCompatibilityKitViewCatalogTests.listViews() | FAILED | b | listing a namespace that holds nothing is 404 NoSuchNamespace (it does not exist), not an empty list
 OpenHouseRestCompatibilityKitViewCatalogTests.listViewsAndTables() | FAILED | b | listing a namespace that holds nothing is 404 NoSuchNamespace (it does not exist), not an empty list
 
-# (b) LOC: 9 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionCreate() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionReplace() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTable() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransaction() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransactionMultipleSchemas() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransactionV2() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteReplaceTransaction() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitCatalogTests.testLoadTable() | FAILED | b | server owns table location: a create or replace naming a location is refused 400, not overridden
-
-# (b) RENAMEDB: 1 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.renameTableNamespaceMissing() | FAILED | b | rename across databases is refused 400 before the target namespace is looked up
-
-# (b) RTAS: 14 test(s)
+# (b) RTAS: 16 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionReplace() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
+OpenHouseRestCompatibilityKitCatalogTests.testCompleteReplaceTransaction() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
 OpenHouseRestCompatibilityKitCatalogTests.testConcurrentReplaceTransactionPartitionSpec() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
 OpenHouseRestCompatibilityKitCatalogTests.testConcurrentReplaceTransactionPartitionSpec2() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
 OpenHouseRestCompatibilityKitCatalogTests.testConcurrentReplaceTransactionPartitionSpecConflict() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
@@ -130,7 +125,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecServerSideRetry() |
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecThenRevert() | FAILED | b | partition evolution and bucket specs are refused 400 (not expressible as time partitioning plus clustering)
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | b | partition evolution and bucket specs are refused 400 (not expressible as time partitioning plus clustering)
 
-# (b) VIEWDB: 23 test(s)
+# (b) VIEWDB: 24 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.basicCreateView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[1] | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
@@ -138,6 +133,7 @@ OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[2] | 
 OpenHouseRestCompatibilityKitViewCatalogTests.createTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.createTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExists() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createViewWithCustomMetadataLocation() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.defaultViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.loadTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.overrideViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
@@ -155,12 +151,6 @@ OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForInvalidArguments() | FAI
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesErrorCases() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
 
-# (b) VLOC: 4 test(s)
-OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | b | server owns view location: a create naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitViewCatalogTests.createAndReplaceViewWithLocation() | FAILED | b | server owns view location: a create naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitViewCatalogTests.createViewWithCustomMetadataLocation() | FAILED | b | server owns view location: a create naming a location is refused 400, not overridden
-OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocation() | FAILED | b | server owns view location: a create naming a location is refused 400, not overridden
-
 # (c) NSWRITE: 7 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testCreateExistingNamespace() | FAILED | c | namespace create or drop is not served (406)
 OpenHouseRestCompatibilityKitCatalogTests.testCreateNamespace() | FAILED | c | namespace create or drop is not served (406)
@@ -177,9 +167,6 @@ OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | c | reg
 # (c) VRENAME: 2 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewSourceMissing() | FAILED | c | view rename is not served (406); OpenHouse has no view rename
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewTargetAlreadyExistsAsTable() | FAILED | c | view rename is not served (406); OpenHouse has no view rename
-
-# (d) HTSKEY: 1 test(s)
-OpenHouseRestCompatibilityKitViewCatalogTests.renameTableTargetAlreadyExistsAsView() | FAILED | d | rename of a table onto a view's name succeeds: the in-memory house-table stand-in lacks the shared key the real store enforces
 
 # (e) DISABLED: 1 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.createTableInUniqueLocation() | SKIPPED | e | @Disabled by the kit itself (RESTServerExtension is not configurable per test)
