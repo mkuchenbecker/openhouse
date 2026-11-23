@@ -1,14 +1,24 @@
 # Current state
 
-Bottom line: all work is on two integration branches in Mike's forks, nothing is merged into either fork's main or
-LinkedIn's repositories, and nothing is known red: post-merge runs for pull requests 109 and 110 passed on both builds.
-On the target platform (Spark 4.2 with Iceberg 1.12 over IRC, no OpenHouse class in the engine), 166 of 177 Spark
-SQL statements behave as on the baseline (after N6, 166 of 177); the other 11 are listed and are accepted or
-Spark 4's own (D37, `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). Of the five items needed to make 1.12
-the default (V9a to V9e), four are done (V9a to V9d) and V9e is running; T10, N6 and most of C9 are done. V6, V7,
-V8, V16, N5, T13, N3 and N3b are done. One data-loss risk remains, natively only: a create naming a renamed-away table's directory is
-closed over IRC and pinned natively, and the fix is put to Mike (D35). This is the single place for current state; other files record
-design, evidence and decisions. Dated 2026-11-23.
+Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is now
+the default build, and format v3 has started. Nothing is merged into either fork's main or into LinkedIn's or Apache's
+repositories. Nothing is known red. This is the single place for current state; other files record design, evidence and
+decisions. Dated 2026-11-23.
+
+- Conforming IRC server: every route of the specification is served except scan planning and credential vending. View
+  rename and namespace create, alter and drop are refused because OpenHouse has no such operations. Multi-table
+  transactions are served for one table and refused for several. The compatibility kit passes 39 of 160; 98 fail and 23
+  are skipped, almost all because the kit assumes behaviours OpenHouse deliberately does not have (see the kit result
+  files, `39-v13-compat-kit-result.md` and `42-v13b-spec-deviations-result.md`). What "conforming" should mean beyond the
+  wire contract is still the question put to Mike (D32).
+- Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 166 of 177 smoke statements behave as on the
+  Spark 3.5 baseline. The 11 differences are listed and are accepted or are Spark 4's own (D37,
+  `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`).
+- Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
+  reference, selected with `-PicebergLinkedIn`.
+- Format v3: started (X1 with W6, D42); nothing merged yet.
+- One data-loss risk remains, natively only: a create naming a renamed-away table's directory is closed over IRC and
+  pinned natively, and the fix is put to Mike (D35).
 
 ## What works today
 
@@ -16,7 +26,7 @@ design, evidence and decisions. Dated 2026-11-23.
 - Over the Iceberg REST Catalog, an unmodified Iceberg client and Spark 3.5 can read and write tables and views
   (`27-v3-irc-write-result.md`, `31-v4-irc-views-result.md`). Views cannot be renamed.
 - Every OpenHouse statement (policies, column tags, grants, unlock) now works through an unmodified Iceberg
-  `RESTCatalog` on Spark 3.5, and on Spark 4.2 with the fork's Iceberg 1.12 under the opt-in build, where the
+  `RESTCatalog` on Spark 3.5, and on Spark 4.2 with the fork's Iceberg 1.12, where the
   engine holds no OpenHouse catalog or client class (`33-v5-policies-over-irc-result.md`,
   `35-n3x1-spark42-extensions-result.md`, `36-v5-3-grants-unlock-endpoints-result.md`,
   `38-c2-3-rest-capability-client-result.md`). Failures keep the native message but arrive as Iceberg exception types.
@@ -39,46 +49,35 @@ design, evidence and decisions. Dated 2026-11-23.
   namespace create, alter and drop (OpenHouse refuses them natively too, D20).
 - Not atomic: multi-table transactions. A transaction of one table commits; several tables are refused whole with
   400 (D39, pull request 120, `53-v8-multi-table-commit-result.md`). Real atomicity is put to Mike (D40).
-- Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line by default.
+- Format v3 tables are not yet supported by the service; the work is running (D42).
 
 ## How far from the goal
 
-- Conformance: Apache's compatibility kit passes 39 of 160 tests (was 31, then 38). Of the 121 that do not, 78 are OpenHouse's own
-  rules or one known gap, 11 are routes not yet served, 22 are skipped by capability flags and 11 assert the
-  reference server's messages. What "conforming" should mean is a question put to Mike
-  (D32). The measurements are `39-v13-compat-kit-result.md` and
-  `42-v13b-spec-deviations-result.md`.
-- Iceberg 1.12 as the default: of the five items needed (V9a to V9e), four are done (V9a to V9d). V9e is running on
-  branch `irc/v9e-iceberg-1.12-default` (decisions in D38). T10 is done (pull request 115): the five Spark 3.5
-  test classes now run. C9 is done in part (pull request 114): the service and scheduler images are checked in CI on every pull
-  request, and the Spark image and dataloader tests are C10, after V9e. V9e's first step is done: the three Spark 3.1
-  tests pass unchanged on Spark 3.5 on both lines. Locally a plain build is already the 1.12 line. The list of what V9e flips and deletes is in `47-v9d-deployables-result.md`. Under the
-  switch the uber jars, scheduler image and Spark image build and start; both builds were green in CI on pull request 113.
-  I11 and V13b, which V9e also needed, are done. The opt-in build is green in CI and now runs on every pull request (C6). The fork
-  is pinned at `a88f556c` and published under the Gradle user home, outside the checkout. The Spark SQL harness differs
-  from the baseline in 6 of 2574 cases; the one real problem (I11) is fixed. Eleven blockers to deleting the old
-  projects are listed in `44-v9abc-flip-prep-result.md`. Measurements: `40-i6f-full-regression-result.md`,
-  `43-optin-ci-red-result.md`.
-- Format v3: not started in the service. It follows V9e.
+- Conformance: Apache's compatibility kit passes 39 of 160 tests. Of the 121 that do not pass, 78 are OpenHouse's own
+  rules or one known gap, 11 are routes not yet served, 22 are skipped by capability flags and 11 assert the reference
+  server's messages (D32).
+- Iceberg 1.12 as the default: done. The Iceberg 1.2 and Spark 3.1 projects are deleted. Open: the Spark image and the
+  dataloader tests have never finished on a CI runner on this line (C10), and the default build cannot publish
+  anywhere until Mike decides where the fork's Iceberg jars live.
+- Format v3: X1 and W6 are running on branch `irc/x1-format-v3`. v3 is off by default per cluster, chosen per table at
+  create or by explicit upgrade, never implied, with no downgrade (D42).
 
 ## Merged pull requests
 
-40 pull requests are merged into `irc-integration` (the last is 120, merge commit a217cce9) and 10 into the Iceberg
+41 pull requests are merged into `irc-integration` (the last is 118, merge commit 440249d1) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest three: 114 (C9 in part) and 119 (N6), both in `52-c9-n6-result.md`, and 120 (V8, in
-`53-v8-multi-table-commit-result.md`).
+The latest four: 114 (C9 in part) and 119 (N6), both in `52-c9-n6-result.md`, 120 (V8, in
+`53-v8-multi-table-commit-result.md`) and 118 (V9e, in `54-v9e-flip-result.md`).
 Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, C6, T9, V6, V7, V8, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V9e (make 1.12 the default and delete the Iceberg 1.2 and Spark 3.1 projects), branch
-  `irc/v9e-iceberg-1.12-default`, draft pull request 118. The orchestrator waits for green CI before merging it
-  (D38). It also corrects three wrong sentences from C9 and adds a guard to the release workflow.
+- X1 with W6 (format v3 tables in the service, D42), branch `irc/x1-format-v3`.
 - A bundle of three small service items on branch `irc/v15-v3b-v3c-service-followups`: V15 (a create whose
   metadata location will not fit House Tables' 255 characters is refused with 400 before anything is written, on
   both APIs, D41), V3b (the IRC config route's FileIO default follows the cluster's storage) and V3c (failed IRC
@@ -86,10 +85,7 @@ C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f
 
 ## Next
 
-After those: C10 (the Spark image and dataloader tests in CI, after V9e), then format v3 starting at X1. V9e includes C8. New from V13b: N4 and V14. N5 is pinned and waits for Mike
-(D35). New small items: C7, C8, T12, V17, and T11 (real S3, needs an environment with S3). N7 (one list of smoke
-scenarios for Spark 3.5 and 4.2) follows V9e. V11 and V12 can go alongside. The order of the large work
-is D29.
+C10 is about to start (the Spark image and dataloader tests in CI). Then the rest of format v3 (X2 to X7). New from V9e: V18, C11, C12 and C13. N5 is pinned and waits for Mike (D35). Other small items: C7, C8, T12, V17, and T11 (real S3, needs an environment with S3). N7 (one list of smoke scenarios for Spark 3.5 and 4.2) can start now. V11 and V12 can go alongside. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
@@ -100,7 +96,7 @@ test results from the previous run on identical inputs; no step was skipped. Une
 `test` task failed once in six runs (T8). `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading
 the access log early; pull request 112 made it wait for the last line and that may be T8, which stays open until a
 CI failure names its test. And the build is not reproducible bit
-for bit (`21-findings-continued.md`). Open product defect: V15, being fixed (D41).
+for bit (`21-findings-continued.md`). Open product defect: V15, being fixed (D41). Pull request 118's own CI was green on both jobs.
 
 ## How work is tested
 
@@ -110,7 +106,7 @@ changed, and Claude merges on that without waiting for the pull request's CI. Th
 known-red list above first. Heavy runs, such as the full delta-harness and the full Iceberg Spark suites, run after
 merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
 now requires, after the red build (`21-findings-continued.md`). D33 tightens it: a suite counts as passing under
-`-PicebergFork` only if it ran there.
+the 1.12 line only if it ran there.
 
 ## Waiting on Mike
 
@@ -122,7 +118,7 @@ now requires, after the red build (`21-findings-continued.md`). D33 tightens it:
 - A veto, if wanted, of the accepted Spark 4.2 differences in D37 (list in `50-n3b-spark42-smoke-result.md`). They
   become user-visible behaviour at release. It does not block work.
 - Publishing the fork's Iceberg jars anywhere is a one-way door, and the 1.12 default makes it needed before any
-  release. It does not block work (D38 addendum).
+  release. C13, the release workflow's order of tag and publish, belongs with it. It does not block work (D38 addendum).
 - D40: whether to build real atomic multi-table commit. It needs a new House Tables endpoint, a regenerated
   client and a split of the commit core, and is a one-way door. No engine sends the route, so leaving it as built
   is a reasonable choice. It does not block work.
@@ -135,6 +131,6 @@ Nothing blocks work.
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D41, with dated addenda).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

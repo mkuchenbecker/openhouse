@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 40 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 120, merge
-commit a217cce9) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 41 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 118, merge
+commit 440249d1) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -50,6 +50,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 114 | C9, in part: the tables and scheduler images built from the 1.12 jars start and pass the integration script in CI on every pull request; the Spark image and dataloader checks run by hand only (`52-c9-n6-result.md`) | 1fec3a0affab866b2c13425d135c9e565effb8a0 |
 | 119 | N6: `RENAME TO <catalog>.<db>.<t>` works over IRC on Spark 4.2 and on Spark 3.5 over a plain REST catalog; 166 of 177 statements as on the baseline (`52-c9-n6-result.md`) | 92c5e117cb80345b46cb8edd2d690358d9be5bba |
 | 120 | V8: the IRC multi-table commit route serves one table and refuses several whole with 400; the config lists 19 endpoints (`53-v8-multi-table-commit-result.md`) | a217cce94f9592c088a4193dad87a06969c0fd4c |
+| 118 | V9e: a plain build is the fork's Iceberg 1.12 line; `-PicebergLinkedIn` selects the 1.5.2 reference line; the Iceberg 1.2 / Spark 3.1 projects are deleted (`54-v9e-flip-result.md`) | 440249d1acdd2930add70d5e3b792c6c15eb40b3 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

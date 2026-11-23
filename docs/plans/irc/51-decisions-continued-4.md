@@ -2,11 +2,11 @@
 
 Continues `37-decisions-continued-3.md`, which is full.
 
-Bottom line: five decisions, all dated 2026-11-23. D37 to D39 and D41 are the orchestrator's, and D40 is put to Mike.
+Bottom line: six decisions, all dated 2026-11-23. D37 to D39, D41 and D42 are the orchestrator's, and D40 is put to Mike.
 D37 settles the 16 statements where Spark 4.2 over IRC differs from the baseline: one problem is fixed (the rename
 target, N6, done) and the rest are accepted. D38 records how V9e makes Iceberg 1.12 the default. D39 makes the IRC
 multi-table commit route serve one table and refuse several whole. D40 asks Mike whether to build real atomic
-multi-table commit. D41 refuses an over-long metadata location on both APIs. None is agreed by Mike unless the entry
+multi-table commit. D41 refuses an over-long metadata location on both APIs. D42 sets how format v3 tables are chosen. None is agreed by Mike unless the entry
 cites a statement. Claude wrote every entry.
 
 ## D37. The differences of Spark 4.2 over IRC: rename target fixed, the rest accepted
@@ -124,3 +124,16 @@ cites a statement. Claude wrote every entry.
 - Why: today such a request ends in 503 with commit state unknown and leaves an orphan metadata file
   (`21-findings-continued.md`, ninth round). A clean 400 takes nothing away from any client that works today.
 - Reverse by: removing the check restores the 503.
+
+## D42. Format v3 tables are off by default, chosen per table, never implied
+
+- Date: 2026-11-23. The orchestrator's decision, given to work items X1 and W6 (branch `irc/x1-format-v3`). Upgrading a
+  real table stays Mike's (D12).
+- Decision: v3 is off by default for a cluster. With it on, a table is v3 only when its create asks for format version 3
+  or an explicit upgrade is requested. The statements are the ones Spark SQL users would write:
+  `TBLPROPERTIES ('format-version'='3')` at create and `ALTER TABLE ... SET TBLPROPERTIES ('format-version'='3')`.
+  They work the same on the native API and over IRC. There is no downgrade. No migration upgrades tables on its own.
+  The reference line (LinkedIn's 1.5.2, D8) refuses v3 requests.
+- Why: a v3 table cannot go back and older readers cannot read it, so nothing may make a table v3 by accident.
+- One-way door: upgrading a real table is one-way for that table, which is why it stays Mike's (D12).
+- Reverse by: turning the cluster setting off stops new v3 tables; existing v3 tables stay v3.

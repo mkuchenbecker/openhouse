@@ -24,3 +24,11 @@ a stash stack that all worktrees share.
   that `git stash list` is empty before and after. Never use a bare `git stash`. Report foreign entries instead of
   touching them.
 - The hook itself is not edited, and `--no-verify` is never used.
+
+## Brief rule from the Iceberg 1.12 default, dated 2026-11-23
+
+Bottom line: every brief must now say that no property is the Iceberg 1.12 line.
+
+- Pull request 118 made a plain build the fork's Iceberg 1.12 line (`54-v9e-flip-result.md`).
+- `-PicebergLinkedIn` selects LinkedIn's Iceberg 1.5.2 line, the reference line. `-PicebergFork` does nothing.
+- The Iceberg 1.2 fixtures project and the Spark 3.1 projects no longer exist; a brief must not name them.
