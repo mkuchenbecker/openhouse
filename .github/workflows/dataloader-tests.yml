@@ -1,25 +1,39 @@
 name: Dataloader Tests
 
-# Two jobs. The dataloader's own checks and unit tests (`make sync verify`) run on every pull
-# request into main that touches the dataloader, as before. The integration tests (the
-# oh-hadoop-spark recipe with the Spark image, and the dataloader's tests against it) run by hand
-# only (workflow_dispatch): the Spark image of the default build, Spark 3.5 on Java 17 with Iceberg
-# 1.12, has not finished building on a GitHub runner yet (its Livy build downloads a Spark release
-# from archive.apache.org, which is rate-limited there), so on a pull request the job would only be
-# red. The pull request trigger for it is in the guide, ready to add once a run by hand has been
-# green (docs/development/iceberg-fork.md, "CI").
+# Two jobs. The dataloader's own checks and unit tests (`make sync verify`), and the integration
+# tests: the oh-hadoop-spark recipe with the Spark image of the default build (Spark 3.5 on Java 17
+# with Iceberg 1.12, Livy built from source), and the dataloader's tests against it
+# (docs/development/iceberg-fork.md, "Docker images" and "CI").
+#
+# Both run on a pull request into main or irc-integration that touches the dataloader or what the
+# recipe and its images are made from, after each merge to irc-integration (a change to the Spark
+# runtime or the apps, whose jars the Spark image carries, is on no pull request these paths
+# select), and by hand on any branch.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     branches:
       - main
+      - irc-integration
     paths:
       - 'integrations/python/dataloader/**'
+      - 'infra/recipes/docker-compose/common/**'
+      - 'infra/recipes/docker-compose/oh-hadoop-spark/**'
+      - '*.Dockerfile'
+      - 'scripts/iceberg-fork/**'
+      - '.github/workflows/dataloader-tests.yml'
+      - '.github/actions/iceberg-fork/**'
+  push:
+    branches:
+      - irc-integration
   workflow_dispatch:
 
+# A newer push to a pull request, or a newer run by hand on a branch, cancels the older run. A run
+# after a merge is never cancelled, as in post-merge-build.yml: GitHub keeps one pending run in the
+# group, and a newer pending run replaces an older pending one.
 concurrency:
-  group: dataloader-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: dataloader-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   test:
@@ -44,9 +58,11 @@ jobs:
         run: make sync verify
 
   integration-test:
-    name: Dataloader Integration Tests (by hand)
-    if: github.event_name == 'workflow_dispatch'
+    name: Dataloader Integration Tests
     runs-on: ubuntu-latest
+    # A run takes about 15 minutes on a pull request, which reads the fork and the Gradle cache
+    # irc-integration saved, and about 22 without them. The limit is for a step that stalls.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -84,37 +100,66 @@ jobs:
       - name: Build the uber JARs and the Docker prerequisites
         run: ./gradlew shadowJar dockerPrereqs
 
+      # Its own step, with a limit: the Spark image builds Livy from source and takes Spark from
+      # Docker Hub. A download that stalls fails the job here, with the build's log, in place of
+      # running into the job's limit. BuildKit prints each line with the seconds since its stage's
+      # step began.
+      - name: Build the images
+        timeout-minutes: 30
+        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml build
+
       - name: Start Docker Containers
         id: containers
-        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
+        timeout-minutes: 15
+        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d
 
+      # Until everything the tests use answers: the tables and house tables services, the Livy
+      # server, HDFS out of safe mode with its datanode, and the Spark master with its worker.
       - name: Wait for Docker Containers to be ready
+        timeout-minutes: 12
         run: |
-          echo "Waiting for openhouse-tables and spark-livy..."
-          for i in $(seq 1 120); do
-            tables_status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/v1/databases 2>&1 || echo "000")
-            livy_status=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9003/sessions 2>&1 || echo "000")
-            echo "Poll $i: tables=$tables_status livy=$livy_status"
-            if [ "$tables_status" != "000" ] && [ "$livy_status" != "000" ]; then
-              echo "Services ready after $((i * 5))s"
+          compose="docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml"
+          code() { curl -s -o /dev/null -m 5 -w '%{http_code}' "$1" || true; }
+          i=0
+          while [ "$SECONDS" -lt 600 ]; do
+            i=$((i + 1))
+            tables="$(code http://localhost:8000/actuator/health)"
+            housetables="$(code http://localhost:8001/actuator/health)"
+            livy="$(code http://localhost:9003/sessions)"
+            datanodes="$($compose exec -T namenode hdfs dfsadmin -report 2>/dev/null | grep -c '^Live datanodes (1)' || true)"
+            safemode="$($compose exec -T namenode hdfs dfsadmin -safemode get 2>/dev/null | grep -c '^Safe mode is OFF' || true)"
+            workers="$(curl -s -m 5 http://localhost:9001/json/ | python3 -c 'import json, sys; print(json.load(sys.stdin)["aliveworkers"])' 2>/dev/null || true)"
+            echo "Poll $i: tables=$tables housetables=$housetables livy=$livy live-datanodes=$datanodes safemode-off=$safemode spark-workers=$workers"
+            if [ "$tables" = 200 ] && [ "$housetables" = 200 ] && [ "$livy" = 200 ] \
+                && [ "$datanodes" = 1 ] && [ "$safemode" = 1 ] && [ "$workers" = 1 ]; then
+              echo "Services ready after ${SECONDS}s"
               exit 0
             fi
             sleep 5
           done
-          echo "Timed out waiting for services after 600s"
-          docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml ps
+          echo "The services were not ready within 600 s"
           exit 1
 
-      # For the record of each run: the Java, Spark, Iceberg runtime and Livy the image holds.
-      - name: Print what the Spark image holds
+      # For the record of each run: the containers, and the Java, Spark, Hadoop client, Iceberg
+      # runtime, Python and Livy the Spark image holds.
+      - name: Print the containers and what the Spark image holds
         run: |
-          docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml exec -T spark-livy sh -c '
+          compose="docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml"
+          $compose ps -a
+          $compose exec -T spark-livy sh -c '
             java -version 2>&1
             /opt/spark/bin/spark-submit --version 2>&1 | head -n 12
-            echo "== /opt/spark"; ls /opt/spark
+            echo "== /opt/spark"; ls -l /opt/spark; cat /opt/spark/RELEASE
+            echo "== Hadoop client and Spark jars"; ls /opt/spark/jars | grep -i -E "^hadoop|^spark-(core|sql|repl)_"
             echo "== Iceberg and OpenHouse jars"; ls -l /opt/spark/jars/ | grep -i iceberg; ls -l /opt/spark/*.jar
+            echo "== Python"; for p in python python3; do command -v $p && $p --version 2>&1; done; ls /opt/spark/python
+            echo "== HADOOP_HOME=$HADOOP_HOME HADOOP_CONF_DIR=$HADOOP_CONF_DIR"; grep defaultFS "$HADOOP_CONF_DIR/core-site.xml"
             echo "== /opt/livy"; ls -l /opt/livy /opt/livy/bin; ls /opt/livy/*jars* | grep -i -E "jars:|livy"
             true'
+          echo "== Livy server"
+          curl -s -m 10 http://localhost:9003/version || true
+          echo
+          $compose logs --no-color spark-livy | grep -i -E "spark version|scala version|not verified|spark master|Starting server" | head -n 20 || true
 
       - name: Run Data Loader Integration Tests
         working-directory: integrations/python/dataloader
@@ -139,9 +184,14 @@ jobs:
           print_log openhouse-tables 300
           print_log spark-master 100
           print_log spark-worker-a 150
-          echo "::group::Livy sessions"
-          curl -s http://localhost:9003/sessions || true
+          echo "::group::Livy sessions, and each one's log as Livy kept it"
+          curl -s http://localhost:9003/sessions | tee livy-sessions.json || true
           echo
+          for id in $(python3 -c 'import json; print(*[s["id"] for s in json.load(open("livy-sessions.json"))["sessions"]])' || true); do
+            echo "== session $id"
+            curl -s "http://localhost:9003/sessions/$id/log?from=0&size=500" \
+              | python3 -c 'import json, sys; print(*json.load(sys.stdin)["log"], sep="\n")' || true
+          done
           echo "::endgroup::"
           echo "::group::Executors' output (last 200 lines of each file)"
           $compose exec -T spark-worker-a sh -c 'for f in /opt/spark/work/*/*/stderr; do echo "== $f"; tail -n 200 "$f"; done' || true
