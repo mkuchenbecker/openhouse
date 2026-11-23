@@ -542,6 +542,226 @@ public class IrcRegisterRouteTest {
     }
   }
 
+  /** Writes {@code metadata} as a metadata file next to {@code lost} and returns its location. */
+  private static String plant(String lost, TableMetadata metadata) {
+    String planted = directory(lost) + "/00009-" + UUID.randomUUID() + ".metadata.json";
+    TableMetadataParser.write(metadata, IrcWrite.IO.newOutputFile(planted));
+    return planted;
+  }
+
+  /**
+   * Writes the metadata file {@code lost} again next to it, with its top-level JSON field {@code
+   * field} set to {@code valueJson}, and returns the new file's location.
+   */
+  private static String plantWithField(String lost, String field, String valueJson)
+      throws Exception {
+    com.fasterxml.jackson.databind.ObjectMapper mapper =
+        new com.fasterxml.jackson.databind.ObjectMapper();
+    com.fasterxml.jackson.databind.node.ObjectNode json =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            mapper.readTree(
+                new String(Files.readAllBytes(Paths.get(lost)), StandardCharsets.UTF_8));
+    json.set(field, mapper.readTree(valueJson));
+    String planted = directory(lost) + "/00009-" + UUID.randomUUID() + ".metadata.json";
+    Files.write(Paths.get(planted), mapper.writeValueAsBytes(json));
+    return planted;
+  }
+
+  /**
+   * A partition spec history (a table whose partitioning was changed, or given a second spec),
+   * which a created table does not have: a create stores one spec, with id 0.
+   */
+  @Test
+  void metadataWithAPartitionSpecHistoryIsRefused() throws Exception {
+    String db = "irc_reg_specs";
+    String lost = orphanWithData(db, "t");
+    TableMetadata metadata = read(lost);
+    PartitionSpec byName = PartitionSpec.builderFor(metadata.schema()).identity("name").build();
+    // The partitioning changed: two specs, the second the default.
+    String changed =
+        plant(lost, TableMetadata.buildFrom(metadata).setDefaultPartitionSpec(byName).build());
+    // A second spec that was added and never made the default.
+    String added = plant(lost, TableMetadata.buildFrom(metadata).addPartitionSpec(byName).build());
+    try {
+      assertEquals(2, read(changed).specs().size());
+      assertEquals(1, read(changed).defaultSpecId());
+      expectRefused(
+          db,
+          "t",
+          changed,
+          400,
+          "BadRequestException",
+          "its metadata holds a partition spec history (2 specs, default spec id 1), which a "
+              + "created table does not have");
+      assertEquals(2, read(added).specs().size());
+      assertEquals(0, read(added).defaultSpecId());
+      expectRefused(
+          db,
+          "t",
+          added,
+          400,
+          "BadRequestException",
+          "its metadata holds a partition spec history (2 specs, default spec id 0), which a "
+              + "created table does not have");
+    } finally {
+      Files.delete(Paths.get(changed));
+      Files.delete(Paths.get(added));
+    }
+    // The table's own file, which has one spec, is registered.
+    assertEquals(200, register(db, "t", lost).getResponse().getStatus());
+  }
+
+  /**
+   * Field ids a create would assign differently: a create numbers the columns from 1 in order and
+   * the partition fields from 1000, and the table's data files are written with the ids its
+   * metadata holds, so metadata with other ids cannot be stored by a create.
+   */
+  @Test
+  void metadataWithFieldIdsACreateWouldRenumberIsRefused() throws Exception {
+    String db = "irc_reg_ids";
+    String lost = orphanWithData(db, "t");
+    TableMetadata metadata = read(lost);
+
+    // One schema, with id 0, whose columns are numbered from 11: what a table has whose first
+    // columns were dropped and added again before its schema history was lost.
+    List<Types.NestedField> columns =
+        metadata.schema().columns().stream()
+            .map(
+                field ->
+                    Types.NestedField.of(
+                        field.fieldId() + 10, field.isOptional(), field.name(), field.type()))
+            .collect(Collectors.toList());
+    TableMetadata renumberedColumns =
+        TableMetadata.buildFromEmpty()
+            .assignUUID()
+            .setLocation(metadata.location())
+            .setCurrentSchema(new Schema(columns), metadata.lastColumnId() + 10)
+            .setDefaultPartitionSpec(PartitionSpec.unpartitioned())
+            .setDefaultSortOrder(SortOrder.unsorted())
+            .setProperties(metadata.properties())
+            .build();
+    assertEquals(1, renumberedColumns.schemas().size());
+    assertEquals(0, renumberedColumns.currentSchemaId());
+    assertEquals(11, renumberedColumns.schema().columns().get(0).fieldId());
+    String columnIds = plant(lost, renumberedColumns);
+
+    // The table's own schema, partitioned by a field numbered 1005 where a create assigns 1000.
+    int nameId = metadata.schema().findField("name").fieldId();
+    PartitionSpec byName =
+        org.apache.iceberg.PartitionSpecParser.fromJson(
+            metadata.schema(),
+            "{\"spec-id\":0,\"fields\":[{\"name\":\"name\",\"transform\":\"identity\","
+                + "\"source-id\":"
+                + nameId
+                + ",\"field-id\":1005}]}");
+    TableMetadata renumberedPartitionField =
+        TableMetadata.buildFromEmpty()
+            .assignUUID()
+            .setLocation(metadata.location())
+            .setCurrentSchema(metadata.schema(), metadata.lastColumnId())
+            .setDefaultPartitionSpec(byName)
+            .setDefaultSortOrder(SortOrder.unsorted())
+            .setProperties(metadata.properties())
+            .build();
+    assertEquals(1, renumberedPartitionField.specs().size());
+    assertEquals(0, renumberedPartitionField.defaultSpecId());
+    assertEquals(1005, renumberedPartitionField.spec().fields().get(0).fieldId());
+    String partitionFieldId = plant(lost, renumberedPartitionField);
+    try {
+      for (String planted : new String[] {columnIds, partitionFieldId}) {
+        expectRefused(
+            db,
+            "t",
+            planted,
+            400,
+            "BadRequestException",
+            "its schema, partition spec or sort order uses field ids a create would assign "
+                + "differently, and its data files are written with them");
+      }
+    } finally {
+      Files.delete(Paths.get(columnIds));
+      Files.delete(Paths.get(partitionFieldId));
+    }
+    assertEquals(200, register(db, "t", lost).getResponse().getStatus());
+  }
+
+  /**
+   * Statistics files (table statistics, or partition statistics), which a create does not store:
+   * registering the table would silently lose them.
+   */
+  @Test
+  void metadataWithStatisticsFilesIsRefused() throws Exception {
+    String db = "irc_reg_stats";
+    String lost = orphanWithData(db, "t");
+    long snapshotId = read(lost).currentSnapshot().snapshotId();
+    String statistics =
+        plantWithField(
+            lost,
+            "statistics",
+            "[{\"snapshot-id\":"
+                + snapshotId
+                + ",\"statistics-path\":\""
+                + directory(lost)
+                + "/metadata/stats.puffin\",\"file-size-in-bytes\":10,"
+                + "\"file-footer-size-in-bytes\":4,\"blob-metadata\":[]}]");
+    String partitionStatistics =
+        plantWithField(
+            lost,
+            "partition-statistics",
+            "[{\"snapshot-id\":"
+                + snapshotId
+                + ",\"statistics-path\":\""
+                + directory(lost)
+                + "/metadata/partition-stats.parquet\",\"file-size-in-bytes\":10}]");
+    try {
+      assertEquals(1, read(statistics).statisticsFiles().size());
+      assertEquals(0, read(statistics).partitionStatisticsFiles().size());
+      assertEquals(0, read(partitionStatistics).statisticsFiles().size());
+      assertEquals(1, read(partitionStatistics).partitionStatisticsFiles().size());
+      for (String planted : new String[] {statistics, partitionStatistics}) {
+        expectRefused(
+            db,
+            "t",
+            planted,
+            400,
+            "BadRequestException",
+            "its metadata holds statistics files, which a create does not store");
+      }
+    } finally {
+      Files.delete(Paths.get(statistics));
+      Files.delete(Paths.get(partitionStatistics));
+    }
+    assertEquals(200, register(db, "t", lost).getResponse().getStatus());
+  }
+
+  /**
+   * A replica table's metadata: the routes create primary tables only (a create over IRC that asks
+   * for another type is refused too), so registering it would turn a replica into a primary table.
+   */
+  @Test
+  void metadataOfAReplicaTableIsRefused() throws Exception {
+    String db = "irc_reg_replica";
+    String lost = orphanWithData(db, "t");
+    TableMetadata metadata = read(lost);
+    assertEquals("PRIMARY_TABLE", metadata.properties().get("openhouse.tableType"));
+    Map<String, String> replica = new HashMap<>();
+    replica.put("openhouse.tableType", "REPLICA_TABLE");
+    String planted = plant(lost, TableMetadata.buildFrom(metadata).setProperties(replica).build());
+    try {
+      assertEquals("REPLICA_TABLE", read(planted).properties().get("openhouse.tableType"));
+      expectRefused(
+          db,
+          "t",
+          planted,
+          400,
+          "BadRequestException",
+          "its metadata is a REPLICA_TABLE's: the routes create PRIMARY_TABLE tables");
+    } finally {
+      Files.delete(Paths.get(planted));
+    }
+    assertEquals(200, register(db, "t", lost).getResponse().getStatus());
+  }
+
   /** A snapshot whose manifest list is another table's attaches that table's data. */
   @Test
   void metadataWithASnapshotOutsideItsDirectoryIsRefused() throws Exception {
