@@ -137,17 +137,18 @@ public class IrcReadRoutesTest {
   // ---------------------------------------------------------------- config
 
   /**
-   * Two defaults and one override. Clients do not post metrics reports: the metrics route answers
-   * 406 until it is served, and RESTCatalog posts a report after every scan and commit and logs
-   * each refusal with a stack trace (seen in the V3 write itests). Clients use HadoopFileIO, the
-   * existing OpenHouse client's FileIO: with RESTCatalog's default (ResolvingFileIO) a Spark
-   * merge-on-read delete fails, since this Iceberg line opens delete files with write properties
-   * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The
-   * override {@code openhouse.capabilities} names the OpenHouse features these routes serve: {@code
-   * policies}, the policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and
-   * {@code unlock}, the OpenHouse routes under the base path (V5-3). It is an override so that the
-   * client's merged catalog properties say what the server serves, whatever the client was
-   * configured with.
+   * Two defaults and one override. Clients do not post metrics reports unless their own
+   * configuration says so: the metrics route is served (IrcMetricsRouteTest), but RESTCatalog left
+   * to itself posts a report after every scan and commit, and a create with data posts one before
+   * its table exists, which is answered 404 and logged by the client with a stack trace. Clients
+   * use HadoopFileIO, the existing OpenHouse client's FileIO: with RESTCatalog's default
+   * (ResolvingFileIO) a Spark merge-on-read delete fails, since this Iceberg line opens delete
+   * files with write properties that ResolvingFileIO does not support
+   * (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The override {@code
+   * openhouse.capabilities} names the OpenHouse features these routes serve: {@code policies}, the
+   * policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and {@code unlock},
+   * the OpenHouse routes under the base path (V5-3). It is an override so that the client's merged
+   * catalog properties say what the server serves, whatever the client was configured with.
    */
   @Test
   void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {
@@ -566,15 +567,17 @@ public class IrcReadRoutesTest {
 
   // ---------------------------------------------------------------- out of scope
 
-  /** Spec routes this server does not serve yet answer 406 in the spec's error shape. */
+  /**
+   * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
+   * report and register routes were among them until they were served: IrcMetricsRouteTest,
+   * IrcRegisterRouteTest.)
+   */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
     Object[][] routes = {
       {HttpMethod.POST, "/v1/namespaces"},
       {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/register"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/metrics"},
       {HttpMethod.POST, "/v1/transactions/commit"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
       {HttpMethod.POST, "/v1/oauth/tokens"},

@@ -22,6 +22,14 @@ public final class IrcClientParsers {
     return response;
   }
 
+  /** Parses {@code json} as a request of {@code type}, with the client's own mapper. */
+  public static <T extends RESTRequest> T parseRequest(String json, Class<T> type)
+      throws Exception {
+    T request = RESTObjectMapper.mapper().readValue(json, type);
+    request.validate();
+    return request;
+  }
+
   /** Writes a request body exactly as the client's HTTP client does. */
   public static String toJson(Object request) throws Exception {
     return RESTObjectMapper.mapper().writeValueAsString(request);

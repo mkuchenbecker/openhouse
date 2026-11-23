@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +60,21 @@ public class IcebergRestWriteController {
       return IcebergRestJson.staged(writeHandler.stageCreateTable(databaseId, request, principal));
     }
     return IcebergRestJson.loadTable(writeHandler.createTable(databaseId, request, principal));
+  }
+
+  /**
+   * Registers a table from a metadata file in the directory the server allocated to it, by creating
+   * it there through the native create ({@link IcebergRestWriteHandler#registerTable}). Not secured
+   * here, as the native create route is not: the handler checks the create privilege.
+   */
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC register table: OK"))
+  @PostMapping(V1 + "/namespaces/{namespace}/register")
+  public ResponseEntity<byte[]> registerTable(
+      @PathVariable("namespace") String namespace, @RequestBody(required = false) byte[] body) {
+    String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    RegisterTableRequest request = IcebergRestJson.read(body, RegisterTableRequest.class);
+    return IcebergRestJson.loadTable(
+        writeHandler.registerTable(databaseId, request, extractAuthenticatedUserPrincipal()));
   }
 
   /** Commits requirements and updates to a table, completing a staged create when asked to. */

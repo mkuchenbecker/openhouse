@@ -97,8 +97,13 @@ public class IcebergRestRoutesBoundaryTest {
       // Served: an empty create body is refused by the route itself (400), not as unserved (406).
       Assertions.assertEquals(
           400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
+      // Register, whose request class Iceberg 1.2 lacks, is one of the write routes.
+      Assertions.assertEquals(
+          400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
       return;
     }
+    Assertions.assertEquals(
+        406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
     Assertions.assertEquals(
         406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
     Assertions.assertEquals(
@@ -108,7 +113,10 @@ public class IcebergRestRoutesBoundaryTest {
     Assertions.assertEquals(406, call("POST", "/iceberg/v1/tables/rename", "{}"));
   }
 
-  /** The spec routes served on every Iceberg runtime: the reads. */
+  /**
+   * The spec routes served on every Iceberg runtime: the reads and the metrics report, whose
+   * request class every runtime has.
+   */
   private static final List<String> READ_ROUTES =
       Arrays.asList(
           "GET /v1/{prefix}/namespaces",
@@ -116,12 +124,14 @@ public class IcebergRestRoutesBoundaryTest {
           "HEAD /v1/{prefix}/namespaces/{namespace}",
           "GET /v1/{prefix}/namespaces/{namespace}/tables",
           "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
-          "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
+          "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics");
 
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
-   * registered: under Iceberg 1.2 the reads only, and no policy patch (it rides the write routes);
-   * under 1.5 the reads, the table writes and the views.
+   * registered: under Iceberg 1.2 the reads and the metrics report only, and no policy patch (it
+   * rides the write routes); under 1.5 those, the table writes and the views. On both, reporting
+   * stays off unless the client's own configuration turns it on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -129,6 +139,10 @@ public class IcebergRestRoutesBoundaryTest {
     List<String> endpoints = new ArrayList<>();
     config.path("endpoints").forEach(endpoint -> endpoints.add(endpoint.asText()));
     String capabilities = config.path("overrides").path("openhouse.capabilities").asText();
+    Assertions.assertEquals(
+        "false",
+        config.path("defaults").path("rest-metrics-reporting-enabled").asText(),
+        config.toString());
     if (!icebergWriteApiPresent()) {
       Assertions.assertEquals(READ_ROUTES, endpoints);
       Assertions.assertEquals("grants,unlock", capabilities);
@@ -141,8 +155,29 @@ public class IcebergRestRoutesBoundaryTest {
     Assertions.assertTrue(
         endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/views/{view}"),
         endpoints.toString());
-    Assertions.assertEquals(16, endpoints.size(), endpoints.toString());
+    Assertions.assertTrue(
+        endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register"),
+        endpoints.toString());
+    Assertions.assertEquals(18, endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
+  }
+
+  /**
+   * The metrics report route is served on every Iceberg runtime (its request class and parser exist
+   * from Iceberg 1.2 on): a report for a missing table is the route's own 404, not the 406 of a
+   * route that is not served, and a body that is not a report is its 400.
+   */
+  @Test
+  public void theMetricsRouteIsServedOnEveryIcebergRuntime() throws IOException {
+    String route = "/iceberg/v1/namespaces/irc_boundary_db/tables/no_such_table/metrics";
+    Assertions.assertEquals(
+        404,
+        call(
+            "POST",
+            route,
+            "{\"report-type\":\"commit-report\",\"table-name\":\"t\",\"snapshot-id\":1,"
+                + "\"sequence-number\":1,\"operation\":\"append\",\"metrics\":{}}"));
+    Assertions.assertEquals(400, call("POST", route, "{}"));
   }
 
   /** The OpenHouse grants and unlock routes use no Iceberg API and are served everywhere. */

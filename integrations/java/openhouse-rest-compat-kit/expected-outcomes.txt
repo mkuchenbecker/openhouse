@@ -75,6 +75,9 @@ OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesConflict() | F
 OpenHouseRestCompatibilityKitViewCatalogTests.concurrentReplaceViewVersion() | FAILED | b | views accept the spark dialect only and refuse reserved view properties (replace.drop-dialect.allowed); 400
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersion() | FAILED | b | views accept the spark dialect only and refuse reserved view properties (replace.drop-dialect.allowed); 400
 
+# (b) DROPPURGE: 1 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | b | the kit drops the table without purge and registers its old metadata file; OpenHouse's drop always removes the table's files with it, so register finds no file there (400)
+
 # (b) FMT: 4 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
 OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | FAILED | b | the server owns the format version (v2): a create or staged create asking for another format-version is refused 400
@@ -159,10 +162,6 @@ OpenHouseRestCompatibilityKitCatalogTests.testDropNonEmptyNamespace() | FAILED |
 OpenHouseRestCompatibilityKitCatalogTests.testDropNonexistentNamespace() | FAILED | c | namespace create or drop is not served (406)
 OpenHouseRestCompatibilityKitCatalogTests.testListNamespaces() | FAILED | c | namespace create or drop is not served (406)
 OpenHouseRestCompatibilityKitCatalogTests.testLoadNamespaceMetadata() | FAILED | c | namespace create or drop is not served (406)
-
-# (c) REGISTER: 2 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testRegisterExistingTable() | FAILED | c | register table is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | c | register table is not served (406)
 
 # (c) VRENAME: 2 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewSourceMissing() | FAILED | c | view rename is not served (406); OpenHouse has no view rename

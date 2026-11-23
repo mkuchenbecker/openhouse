@@ -111,6 +111,41 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
+   * Register is authorized as a create in that database, with the native create's refusal, before
+   * anything is read from storage: the refusal is the same whether or not the file exists.
+   */
+  @Test
+  void aDeniedRegisterIs403AsADeniedCreateAndReadsNothing() throws Exception {
+    String location =
+        "/tmp/" + DB + "/t9-" + java.util.UUID.randomUUID() + "/00000-none.metadata.json";
+    // Allowed, the request gets as far as the file, which is not there.
+    assertIrcError(register("t9", location), 400, "BadRequestException");
+    org.mockito.Mockito.verify(authorizationHandler)
+        .checkAccessDecision(
+            any(),
+            org.mockito.ArgumentMatchers.argThat(
+                (DatabaseDto database) -> database != null && DB.equals(database.getDatabaseId())),
+            org.mockito.ArgumentMatchers.eq(Privileges.CREATE_TABLE));
+
+    stubDecision(false);
+    String nativeMessage = message(post(mvc, newTable(DB, "t9")).andExpect(status().isForbidden()));
+    assertEquals(
+        nativeMessage,
+        assertIrcError(register("t9", location), 403, "ForbiddenException").message());
+    assertEquals(404, CommitPathHttp.status(get(mvc, DB, "t9")));
+  }
+
+  private org.springframework.test.web.servlet.MvcResult register(String name, String location)
+      throws Exception {
+    return IrcHttp.perform(
+        mvc,
+        IrcHttp.request(
+                org.springframework.http.HttpMethod.POST, IrcRegisterRouteTest.registerPath(DB))
+            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+            .content(IrcRegisterRouteTest.registerBody(name, location)));
+  }
+
+  /**
    * A policy change by a principal without the privilege: the native refusal of the client's
    * request (the key stripped, the patch merged into its policies) is the IRC refusal.
    */

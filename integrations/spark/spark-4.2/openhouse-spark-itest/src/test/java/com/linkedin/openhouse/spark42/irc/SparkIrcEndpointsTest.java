@@ -42,7 +42,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Before the list, a 1.12 client assumed its default set (read: {@code RESTSessionCatalog}
  * {@code DEFAULT_ENDPOINTS}): existence checks loaded the table or namespace, views were refused
- * locally, and namespace writes, register and transactions were sent and answered 406.
+ * locally, and namespace writes, register and transactions were sent and answered 406. Register and
+ * metrics reports are served and listed since V6 and V7.
  */
 public class SparkIrcEndpointsTest {
 
@@ -117,6 +118,8 @@ public class SparkIrcEndpointsTest {
       Assertions.assertTrue(catalog.namespaceExists(Namespace.of(DB)));
       Assertions.assertFalse(catalog.namespaceExists(Namespace.of("irc42_head_probe")));
     }
+    // The last request's line is written after its response is sent (see awaitRequest).
+    awaitRequest("HEAD /iceberg/v1/namespaces/irc42_head_probe 404");
     Assertions.assertEquals(
         Collections.singletonList(
             "HEAD /iceberg/v1/namespaces/irc42/tables/head_probe_missing 404"),
@@ -221,22 +224,67 @@ public class SparkIrcEndpointsTest {
       assertRefusedLocally(
           Assertions.assertThrows(
               UnsupportedOperationException.class,
-              () ->
-                  catalog.registerTable(
-                      TableIdentifier.of(DB, "registered"), "/tmp/nowhere/metadata.json")),
-          "POST /v1/{prefix}/namespaces/{namespace}/register");
-      assertRefusedLocally(
-          Assertions.assertThrows(
-              UnsupportedOperationException.class,
               () -> catalog.commitTransaction(Collections.emptyList())),
           "POST /v1/{prefix}/transactions/commit");
     }
     for (String path :
-        new String[] {
-          "POST /iceberg/v1/namespaces ", "/properties ", "/register ", "/transactions/commit "
-        }) {
+        new String[] {"POST /iceberg/v1/namespaces ", "/properties ", "/transactions/commit "}) {
       Assertions.assertEquals(Collections.emptyList(), requestsFor(path), path);
     }
+  }
+
+  // ---------------------------------------------------------------- newly served routes
+
+  /**
+   * Register is listed (V7), so the 1.12 client sends it (it used to refuse it locally). The server
+   * owns locations: metadata that does not lie in the directory OpenHouse assigned to a table of
+   * that name is refused, as Iceberg's {@link BadRequestException} with the server's message.
+   */
+  @Test
+  void registerReachesTheServerWhichRefusesAMetadataLocationItDidNotAssign() throws Exception {
+    try (RESTCatalog catalog = rest(READER)) {
+      BadRequestException refused =
+          Assertions.assertThrows(
+              BadRequestException.class,
+              () ->
+                  catalog.registerTable(
+                      TableIdentifier.of(DB, "registered"), "/tmp/nowhere/metadata.json"));
+      Assertions.assertTrue(
+          refused.getMessage().contains("OpenHouse assigns the location of a table"),
+          refused.getMessage());
+      Assertions.assertFalse(catalog.tableExists(TableIdentifier.of(DB, "registered")));
+    }
+    awaitRequest("POST /iceberg/v1/namespaces/irc42/register 400");
+  }
+
+  /**
+   * The metrics route is listed (V6). The config still turns reporting off by default, so Spark's
+   * own catalog posts nothing; a 1.12 client that turns it on posts the report of a scan, from a
+   * background thread, and the service takes it.
+   */
+  @Test
+  void aClientThatAsksToReportPostsItsScanReportAndSparkByDefaultPostsNone() throws Exception {
+    Assertions.assertFalse(rows("SELECT * FROM irc." + DB + ".flat").isEmpty());
+    Map<String, String> properties = new HashMap<>();
+    properties.put("uri", IrcSpark.service().uri() + "/iceberg");
+    properties.put("token", IrcSpark.service().token(READER));
+    properties.put("rest-metrics-reporting-enabled", "true");
+    try (RESTCatalog catalog = new RESTCatalog()) {
+      catalog.initialize("reporting_probe", properties);
+      org.apache.iceberg.Table table = catalog.loadTable(TableIdentifier.of(DB, "flat"));
+      try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.FileScanTask> tasks =
+          table.newScan().planFiles()) {
+        Assertions.assertTrue(tasks.iterator().hasNext());
+      }
+      awaitRequest("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204");
+    }
+    // Nothing else posted a report: not Spark's SELECT above, nor any other test's statements.
+    Assertions.assertEquals(
+        Collections.singletonList("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204"),
+        requests().stream()
+            .filter(line -> line.contains("/metrics "))
+            .distinct()
+            .collect(Collectors.toList()));
   }
 
   // ---------------------------------------------------------------- the OpenHouse routes
