@@ -1,0 +1,206 @@
+// Apache Iceberg's REST compatibility kit (RCK), from the fork's Iceberg 1.12 line, run against the
+// tables service's Iceberg REST Catalog (IRC) routes: the first objective measure of how far
+// OpenHouse is from a conforming IRC server (work item V13). Only under -PicebergFork
+// (settings.gradle); see docs/development/iceberg-fork.md.
+//
+// Two classpaths, two JVMs, as in the Spark 4.2 itest:
+// - test: the kit (iceberg-open-api's tests and test-fixtures jars, published by publish-local.sh),
+//   its base classes CatalogTests and ViewCatalogTests (iceberg-core's tests jar) and Iceberg 1.12's
+//   own RESTCatalog. No OpenHouse class, no Spring.
+// - service: the tables service as the Spark 3.5 tests embed it (tables-test-fixtures, in-memory H2
+//   stores, local storage). RestCompatKitServiceListener starts it in its own JVM when the test
+//   JVM's JUnit session opens and stops it when the session closes.
+//
+// restCompatKitTest runs every test of the kit's table and view suites, through subclasses that set
+// only the kit's capability flags (OpenHouseRestCompatibilityKit*Tests), and passes exactly when the
+// tests that do not pass are the ones listed, with the outcome listed, in expected-outcomes.txt.
+plugins {
+  id 'java'
+}
+
+def icebergVersion = rootProject.ext.iceberg_1_5_version
+def forkRepo = rootProject.file("${rootProject.buildDir}/iceberg-fork/repo")
+if (!new File(forkRepo, ".published-${icebergVersion}-open-api").exists()) {
+  throw new GradleException(
+      "-PicebergFork: iceberg-open-api:${icebergVersion} (the REST compatibility kit) is not "
+          + "published in ${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
+}
+
+java {
+  sourceCompatibility = JavaVersion.VERSION_17
+  targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+  service {
+    java.srcDirs = ['src/service/java']
+  }
+}
+
+configurations {
+  // The kit's JVM keeps the versions Iceberg 1.12 declares: the root build's forces (Jackson 2.13.4
+  // for the services) do not apply to it.
+  [testCompileClasspath, testRuntimeClasspath].each { it.resolutionStrategy.forcedModules = [] }
+  serviceImplementation {
+    exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
+  }
+}
+
+dependencies {
+  // The kit and the Iceberg test classes it extends, at the versions the fork's build uses.
+  testImplementation "com.linkedin.iceberg:iceberg-open-api:${icebergVersion}:tests"
+  testImplementation "com.linkedin.iceberg:iceberg-open-api:${icebergVersion}:test-fixtures"
+  testImplementation "com.linkedin.iceberg:iceberg-core:${icebergVersion}"
+  testImplementation "com.linkedin.iceberg:iceberg-core:${icebergVersion}:tests"
+  testImplementation "com.linkedin.iceberg:iceberg-api:${icebergVersion}"
+  testImplementation "com.linkedin.iceberg:iceberg-api:${icebergVersion}:tests"
+  testImplementation "com.linkedin.iceberg:iceberg-common:${icebergVersion}"
+  testImplementation "com.linkedin.iceberg:iceberg-bundled-guava:${icebergVersion}"
+  testImplementation platform('org.junit:junit-bom:5.14.4')
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testImplementation 'org.junit.platform:junit-platform-launcher'
+  testImplementation 'org.assertj:assertj-core:3.27.7'
+  // The kit's client writes manifests through HadoopFileIO to the service's local warehouse.
+  testImplementation('org.apache.hadoop:hadoop-common:3.4.3') {
+    // As the fork's iceberg-open-api test fixtures.
+    exclude group: 'org.slf4j'
+    exclude group: 'ch.qos.reload4j'
+    exclude group: 'org.apache.avro', module: 'avro'
+    exclude group: 'com.google.guava'
+    exclude group: 'com.google.protobuf'
+    exclude group: 'org.apache.curator'
+    exclude group: 'org.apache.zookeeper'
+    exclude group: 'org.apache.kerby'
+    exclude group: 'org.apache.hadoop.thirdparty', module: 'hadoop-shaded-protobuf_3_7'
+    exclude group: 'org.eclipse.jetty'
+    exclude group: 'com.google.re2j', module: 're2j'
+    exclude group: 'com.google.code.gson', module: 'gson'
+    exclude group: 'com.jcraft', module: 'jsch'
+    exclude group: 'com.google.code.findbugs', module: 'jsr305'
+    exclude group: 'io.dropwizard.metrics', module: 'metrics-core'
+    exclude group: 'dnsjava', module: 'dnsjava'
+    exclude group: 'org.xerial.snappy', module: 'snappy-java'
+    exclude group: 'commons-cli', module: 'commons-cli'
+    exclude group: 'com.github.pjfanning', module: 'jersey-json'
+  }
+  testRuntimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+
+  // The service JVM: what the Spark 3.5 tests embed.
+  serviceImplementation project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')
+  // The authorization handler and toggle store the service main uses live in services:tables, which
+  // the fixtures depend on at runtime only (as the Spark 3.5 itest compiles against it).
+  serviceCompileOnly project(path: ':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12', configuration: 'runtimeElements')
+  serviceImplementation project(':services:common')
+  serviceImplementation "com.linkedin.iceberg:iceberg-parquet:${icebergVersion}"
+  serviceImplementation "com.linkedin.iceberg:iceberg-orc:${icebergVersion}"
+  serviceImplementation("org.apache.hadoop:hadoop-client:2.10.0") {
+    // As openhouse.hadoop-conventions.
+    exclude group: 'junit', module: 'junit'
+    exclude group: 'javax', module: 'servlet-api'
+    exclude group: 'org.mortbay.jetty', module: 'servlet-api'
+    exclude group: 'com.zaxxer', module: 'HikariCP-java7'
+    exclude group: 'org.apache.commons', module: 'commons-lang3'
+    exclude group: 'com.codahale.metrics', module: 'metrics-core'
+    exclude group: 'com.squareup.okhttp', module: 'okhttp'
+  }
+  serviceImplementation 'org.slf4j:slf4j-simple:1.7.36'
+  serviceCompileOnly 'org.springframework.boot:spring-boot-starter-tomcat:' + spring_web_version
+}
+
+def kitClasses = 'com.linkedin.openhouse.irc.rck.OpenHouseRestCompatibilityKit*'
+
+// The module's own unit tests, if any; the kit runs only in restCompatKitTest.
+tasks.named('test') {
+  filter {
+    excludeTestsMatching kitClasses
+  }
+}
+
+// The expected outcome of every kit test that does not pass, one per line:
+//   <test class simple name>.<test name> | FAILED or SKIPPED | <class a to e> | <reason>
+def expectedFile = file('expected-outcomes.txt')
+def readExpected = {
+  Map<String, String> expected = new TreeMap<>()
+  expectedFile.readLines().eachWithIndex { line, i ->
+    def trimmed = line.trim()
+    if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+      return
+    }
+    def parts = trimmed.split(/\s*\|\s*/, 4)
+    if (parts.length != 4 || !(parts[1] in ['FAILED', 'SKIPPED']) || !(parts[2] ==~ /[a-e]/)) {
+      throw new GradleException(
+          "${expectedFile.name}:${i + 1}: expected '<test> | FAILED|SKIPPED | <a-e> | <reason>': ${line}")
+    }
+    if (expected.put(parts[0], parts[1]) != null) {
+      throw new GradleException("${expectedFile.name}:${i + 1}: ${parts[0]} is listed twice")
+    }
+  }
+  expected
+}
+
+tasks.register('restCompatKitTest', Test) {
+  description = "Runs Apache Iceberg's REST compatibility kit against the tables service and " +
+      "compares the outcome with ${expectedFile.name}."
+  group = 'verification'
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  dependsOn tasks.named('serviceClasses')
+  maxHeapSize = '1g'
+  filter {
+    includeTestsMatching kitClasses
+  }
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  inputs.file(expectedFile).withPropertyName('expectedOutcomes')
+  // Point the kit at an external server (the service), not its own in-process reference server.
+  systemProperty 'rck.local', 'false'
+  doFirst {
+    systemProperty 'rck.service.classpath', serviceClasspath.asPath
+    systemProperty 'rck.service.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'rck.service.workdir', "${temporaryDir}"
+  }
+  // The outcome depends on a server outside Gradle's view: never skip the run as up to date.
+  outputs.upToDateWhen { false }
+  // A failing kit test is not this task's failure; a change in which tests do not pass is (below).
+  ignoreFailures = true
+
+  Map<String, String> actual = new TreeMap<>()
+  afterTest { descriptor, result ->
+    if (result.resultType != TestResult.ResultType.SUCCESS) {
+      def simpleName = descriptor.className.substring(descriptor.className.lastIndexOf('.') + 1)
+      actual.put("${simpleName}.${descriptor.name}".toString(),
+          result.resultType == TestResult.ResultType.SKIPPED ? 'SKIPPED' : 'FAILED')
+    }
+  }
+  afterSuite { descriptor, result ->
+    if (descriptor.parent == null) {
+      logger.lifecycle("REST compatibility kit: ${result.testCount} tests, " +
+          "${result.successfulTestCount} passed, ${result.failedTestCount} failed, " +
+          "${result.skippedTestCount} skipped")
+    }
+  }
+  doLast {
+    Map<String, String> expected = readExpected()
+    def problems = []
+    (expected.keySet() + actual.keySet()).toSorted().each { name ->
+      def want = expected.get(name)
+      def got = actual.get(name)
+      if (want == got) {
+        return
+      }
+      if (want == null) {
+        problems << "  ${name}: ${got}, not listed (a regression, or list it with its class and reason)"
+      } else if (got == null) {
+        problems << "  ${name}: passed or did not run, listed as ${want} (remove it from the list)"
+      } else {
+        problems << "  ${name}: ${got}, listed as ${want}"
+      }
+    }
+    if (!problems.isEmpty()) {
+      throw new GradleException(
+          "The REST compatibility kit's outcome differs from ${expectedFile}:\n" + problems.join('\n'))
+    }
+    logger.lifecycle("REST compatibility kit: the ${expected.size()} tests that do not pass are " +
+        "exactly the ones listed in ${expectedFile.name}")
+  }
+}

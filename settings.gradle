@@ -68,6 +68,8 @@ include ':integrations:spark:spark-3.5:openhouse-spark-itest'
 if (icebergFork) {
   include ':integrations:spark:spark-4.2:openhouse-spark-runtime'
   include ':integrations:spark:spark-4.2:openhouse-spark-itest'
+  // Apache Iceberg's REST compatibility kit against the tables service's IRC routes (V13).
+  include ':integrations:java:openhouse-rest-compat-kit'
 }
 
 include ':iceberg:openhouse:htscatalog'

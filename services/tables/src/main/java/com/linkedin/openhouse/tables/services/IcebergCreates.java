@@ -58,7 +58,10 @@ public final class IcebergCreates {
               .databaseId(identifier.namespace().toString())
               .tableId(identifier.name())
               .clusterId(clusterId)
-              .schema(IcebergSchemaHelper.getSchemaJsonFromSchema(schema))
+              // The new table's schema, with the ids the sort order below is bound to (the
+              // request's ids may differ: newTableMetadata assigns fresh ones), as the Java
+              // client sends a new table's metadata.
+              .schema(IcebergSchemaHelper.getSchemaJsonFromSchema(metadata.schema()))
               .timePartitioning(partitionSpecMapper.toTimePartitionSpec(table))
               .clustering(partitionSpecMapper.toClusteringSpec(table))
               .tableProperties(properties != null ? new HashMap<>(properties) : new HashMap<>())

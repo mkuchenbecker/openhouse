@@ -223,6 +223,47 @@ public class IrcWriteRoutesTest {
     assertSameStored("irc_w_n_csort", "irc_w_i_csort");
   }
 
+  /**
+   * A create whose schema's field ids are not the ones a new table gets (Iceberg's REST
+   * compatibility kit sends ids 3 and 4; the table gets 1 and 2) with a write order on them: the
+   * order is kept on the column it names. Before, the request's schema went to the native create
+   * with its own ids and the order with the new ones, and the create was refused with "Cannot find
+   * source column for sort field".
+   */
+  @Test
+  void createWithASortOrderOnASchemaWithOtherIdsSortsByTheNamedColumns() throws Exception {
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(3, "id", Types.IntegerType.get()),
+            Types.NestedField.required(4, "data", Types.StringType.get()));
+    track("irc_w_sortids", "t");
+    CreateTableRequest request =
+        CreateTableRequest.builder()
+            .withName("t")
+            .withSchema(schema)
+            .withWriteOrder(
+                SortOrder.builderFor(schema)
+                    .asc(org.apache.iceberg.expressions.Expressions.bucket("id", 16))
+                    .asc("data")
+                    .build())
+            .build();
+    MvcResult result = IrcWrite.create(mvc, "irc_w_sortids", request);
+    assertEquals(200, result.getResponse().getStatus(), body(result));
+    TableMetadata stored = IrcWrite.load(mvc, "irc_w_sortids", "t");
+    Schema fresh =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.IntegerType.get()),
+            Types.NestedField.required(2, "data", Types.StringType.get()));
+    assertEquals(fresh.asStruct(), stored.schema().asStruct());
+    assertEquals(
+        SortOrder.builderFor(fresh)
+            .asc(org.apache.iceberg.expressions.Expressions.bucket("id", 16))
+            .asc("data")
+            .build()
+            .fields(),
+        stored.sortOrder().fields());
+  }
+
   @Test
   void createOfAnExistingTableIs409AlreadyExists() throws Exception {
     createNative(nativeBody("irc_w_exists"));

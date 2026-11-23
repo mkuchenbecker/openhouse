@@ -95,3 +95,11 @@ jobs:
           :integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13:test
           :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
           :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest
+
+      # Apache Iceberg's REST compatibility kit against the service (V13). Its own step, run even when
+      # a suite above failed, so a red kit never hides or blocks the other suites' results. It passes
+      # when the kit tests that do not pass are exactly those listed, with their outcome, in
+      # integrations/java/openhouse-rest-compat-kit/expected-outcomes.txt.
+      - name: Run Apache Iceberg's REST compatibility kit under -PicebergFork
+        if: ${{ !cancelled() }}
+        run: ./gradlew -PicebergFork :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
