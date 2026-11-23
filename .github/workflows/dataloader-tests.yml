@@ -47,6 +47,7 @@ jobs:
     name: Dataloader Integration Tests (by hand)
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
@@ -84,9 +85,18 @@ jobs:
       - name: Build the uber JARs and the Docker prerequisites
         run: ./gradlew shadowJar dockerPrereqs
 
+      # Its own step, with a limit: the Spark image builds Livy from source and takes Spark from
+      # Docker Hub. A download that stalls fails the job here, with the build's log, in place of
+      # running into the job's limit. BuildKit prints each line with the seconds since its stage's
+      # step began.
+      - name: Build the images
+        timeout-minutes: 30
+        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml build
+
       - name: Start Docker Containers
         id: containers
-        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d --build
+        timeout-minutes: 15
+        run: docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml up -d
 
       - name: Wait for Docker Containers to be ready
         run: |
@@ -105,15 +115,21 @@ jobs:
           docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml ps
           exit 1
 
-      # For the record of each run: the Java, Spark, Iceberg runtime and Livy the image holds.
+      # For the record of each run: the Java, Spark, Hadoop client, Iceberg runtime, Python and Livy
+      # the image holds.
       - name: Print what the Spark image holds
         run: |
           docker compose -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml exec -T spark-livy sh -c '
             java -version 2>&1
             /opt/spark/bin/spark-submit --version 2>&1 | head -n 12
-            echo "== /opt/spark"; ls /opt/spark
+            echo "== /opt/spark"; ls -l /opt/spark; cat /opt/spark/RELEASE
+            echo "== /opt/spark/conf"; ls -l /opt/spark/conf
+            echo "== Hadoop client jars"; ls /opt/spark/jars | grep -i -E "^hadoop|^spark-(core|sql|repl)_"
             echo "== Iceberg and OpenHouse jars"; ls -l /opt/spark/jars/ | grep -i iceberg; ls -l /opt/spark/*.jar
+            echo "== Python"; for p in python python3; do command -v $p && $p --version 2>&1; done; ls /opt/spark/python
+            echo "== HADOOP_HOME=$HADOOP_HOME HADOOP_CONF_DIR=$HADOOP_CONF_DIR"; grep -A1 defaultFS "$HADOOP_CONF_DIR/core-site.xml"
             echo "== /opt/livy"; ls -l /opt/livy /opt/livy/bin; ls /opt/livy/*jars* | grep -i -E "jars:|livy"
+            echo "== Livy server"; curl -s http://localhost:8998/version; echo
             true'
 
       - name: Run Data Loader Integration Tests
@@ -139,9 +155,14 @@ jobs:
           print_log openhouse-tables 300
           print_log spark-master 100
           print_log spark-worker-a 150
-          echo "::group::Livy sessions"
-          curl -s http://localhost:9003/sessions || true
+          echo "::group::Livy sessions, and each one's log as Livy kept it"
+          curl -s http://localhost:9003/sessions | tee livy-sessions.json || true
           echo
+          for id in $(python3 -c 'import json; print(*[s["id"] for s in json.load(open("livy-sessions.json"))["sessions"]])' || true); do
+            echo "== session $id"
+            curl -s "http://localhost:9003/sessions/$id/log?from=0&size=500" \
+              | python3 -c 'import json, sys; print(*json.load(sys.stdin)["log"], sep="\n")' || true
+          done
           echo "::endgroup::"
           echo "::group::Executors' output (last 200 lines of each file)"
           $compose exec -T spark-worker-a sh -c 'for f in /opt/spark/work/*/*/stderr; do echo "== $f"; tail -n 200 "$f"; done' || true
