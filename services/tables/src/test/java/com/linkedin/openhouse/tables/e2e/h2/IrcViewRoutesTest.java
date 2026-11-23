@@ -37,6 +37,7 @@ import org.apache.iceberg.rest.IrcClientParsers;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
 import org.apache.iceberg.rest.requests.ImmutableCreateViewRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
+import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
 import org.apache.iceberg.types.Types;
 import org.apache.iceberg.view.ImmutableSQLViewRepresentation;
@@ -815,7 +816,10 @@ public class IrcViewRoutesTest {
    * IRC answers the same 404 with the type that makes {@code RESTCatalog} raise the exception a
    * catalog without views raises: {@code NoSuchViewException} on the view's own routes (so Spark's
    * view probe falls back to tables, and a drop answers false), {@code NoSuchNamespaceException} on
-   * the namespace's routes (list and create).
+   * creating one. Listing is the exception: a database whose views are disabled holds no views, so
+   * IRC lists none (200, empty), as the OpenHouse client shows the user; a 404 there would fail
+   * every listing of a client that lists views with tables (Spark 4.2's SHOW TABLES on Iceberg
+   * 1.12, once the view routes are advertised). A missing database is still 404.
    */
   @Test
   void withViewsDisabledEveryRouteIsTheNative404() throws Exception {
@@ -838,10 +842,17 @@ public class IrcViewRoutesTest {
             .message());
     assertEquals(
         404, IrcHttp.head(mvc, IrcViewWrite.view("irc_v_off", "v")).getResponse().getStatus());
+    MvcResult listed = IrcHttp.get(mvc, IrcViewWrite.views("irc_v_off"));
+    assertEquals(200, listed.getResponse().getStatus(), IrcHttp.body(listed));
     assertEquals(
-        nativeMsg,
+        Collections.emptyList(),
+        IrcClientParsers.parse(IrcHttp.body(listed), ListTablesResponse.class).identifiers());
+    assertEquals(
+        "Namespace does not exist: irc_v_off_never",
         assertIrcError(
-                IrcHttp.get(mvc, IrcViewWrite.views("irc_v_off")), 404, "NoSuchNamespaceException")
+                IrcHttp.get(mvc, IrcViewWrite.views("irc_v_off_never")),
+                404,
+                "NoSuchNamespaceException")
             .message());
     assertEquals(
         nativeMsg,

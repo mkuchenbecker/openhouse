@@ -152,7 +152,8 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
 
   /**
    * With views off for a database (the default), tables read as before: Spark's view probe gets
-   * {@code NoSuchViewException} and falls back to the table. View statements there fail.
+   * {@code NoSuchViewException} and falls back to the table. Creating a view there fails, and SHOW
+   * VIEWS shows none.
    */
   @Test
   void withViewsDisabledTablesReadAndViewStatementsFail() {
@@ -162,11 +163,8 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
     Throwable create = thrown(() -> spark.sql("CREATE VIEW " + off + ".v AS SELECT 1"));
     Assertions.assertTrue(
         String.valueOf(create.getMessage()).contains("SCHEMA_NOT_FOUND"), create.toString());
-    Throwable show = thrown(() -> spark.sql("SHOW VIEWS IN " + off).collectAsList());
-    Assertions.assertTrue(
-        String.valueOf(show.getMessage()).contains("SCHEMA_NOT_FOUND")
-            || String.valueOf(show.getMessage()).contains("Views are disabled"),
-        show.toString());
+    // No views to show: the database holds none while its views are disabled.
+    Assertions.assertEquals(Collections.emptyList(), rows("SHOW VIEWS IN " + off));
     Assertions.assertEquals(
         Collections.singletonList("[" + OFF_DB + ",t,false]"), rows("SHOW TABLES IN " + off));
   }

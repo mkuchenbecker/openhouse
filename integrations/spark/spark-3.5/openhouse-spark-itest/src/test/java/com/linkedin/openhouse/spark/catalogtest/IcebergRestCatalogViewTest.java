@@ -236,7 +236,7 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   /**
    * With views off for a database (the default), each route answers the native 404, so the client
    * behaves as against a catalog without views: no view to load or drop, no namespace to create a
-   * view in or list views of.
+   * view in, and no views to list.
    */
   @Test
   void withViewsDisabledTheClientSeesNoViews() {
@@ -244,10 +244,8 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
     assertThrown(NoSuchViewException.class, "Views are disabled", thrown(() -> rest.loadView(off)));
     Assertions.assertFalse(rest.viewExists(off));
     Assertions.assertFalse(rest.dropView(off));
-    assertThrown(
-        NoSuchNamespaceException.class,
-        "Views are disabled",
-        thrown(() -> rest.listViews(Namespace.of(OFF_DB))));
+    // A database whose views are disabled holds no views: the list is empty (not the native 404).
+    Assertions.assertEquals(Collections.emptyList(), rest.listViews(Namespace.of(OFF_DB)));
     assertThrown(
         NoSuchNamespaceException.class,
         "Views are disabled",
