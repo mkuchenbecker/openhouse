@@ -16,6 +16,7 @@ import javax.persistence.ElementCollection;
 import javax.persistence.Entity;
 import javax.persistence.Id;
 import javax.persistence.IdClass;
+import javax.persistence.Transient;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -82,6 +83,14 @@ public class TableDto {
   private boolean stageReplace;
 
   private boolean replaceCommit;
+
+  /**
+   * The Iceberg format version of the stored table this was read from; 0 when it was not read from
+   * one (a request, or a table built by hand). Not part of the table's identity or of any API
+   * response: it tells the write path whether the stored table is format v3. A long, as this
+   * class's other numbers are.
+   */
+  @Transient @EqualsAndHashCode.Exclude private long formatVersion;
 
   /**
    * Bundling eligible string type field into a map as {@link org.mapstruct.Mapper} doesn't provide
