@@ -251,11 +251,6 @@ if (icebergFork) {
   }
 }
 
-// docker compose with the variables that select the images of this build.
-def dockerCompose = { String... args ->
-  ['docker', 'compose', '--env-file', "${rootDir}/infra/recipes/docker-compose/iceberg-fork.env".toString()] + args.toList()
-}
-
 tasks.register('dockerPrereqs') {
   description = 'Builds all JAR files required by Docker images'
   group = 'docker'
@@ -318,7 +313,7 @@ tasks.register('dockerBuild', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine dockerCompose('build')
+  commandLine 'docker', 'compose', 'build'
 
   doFirst {
     if (!file(recipeDir).exists()) {
@@ -347,7 +342,7 @@ tasks.register('dockerUp', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine dockerCompose('up', '-d')
+  commandLine 'docker', 'compose', 'up', '-d'
 
   doFirst {
     println ''
@@ -383,7 +378,7 @@ tasks.register('dockerDown', Exec) {
   def recipeDir = "${rootDir}/infra/recipes/docker-compose/${recipe}"
 
   workingDir recipeDir
-  commandLine dockerCompose('down')
+  commandLine 'docker', 'compose', 'down'
 
   doFirst {
     if (!file(recipeDir).exists()) {

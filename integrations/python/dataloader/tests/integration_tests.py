@@ -36,15 +36,9 @@ COL_SCORE = "score"
 
 CREATE_COLUMNS = f"{COL_ID} BIGINT, {COL_NAME} STRING, {COL_SCORE} DOUBLE"
 
-# The Iceberg runtime Spark downloads for a session. The Spark image of a -PicebergFork build has the
-# fork's runtime in /opt/spark/jars: run with OH_SPARK_JARS_PACKAGES set to the empty string there.
-SPARK_JARS_PACKAGES = os.environ.get(
-    "OH_SPARK_JARS_PACKAGES", "org.apache.iceberg:iceberg-spark-runtime-3.1_2.12:1.2.0"
-)
-
+# No "spark.jars.packages": the Spark image carries its Iceberg runtime in /opt/spark/jars.
 SPARK_CONF = {
     "spark.jars": "local:/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar",
-    **({"spark.jars.packages": SPARK_JARS_PACKAGES} if SPARK_JARS_PACKAGES else {}),
     "spark.sql.extensions": (
         "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,"
         "com.linkedin.openhouse.spark.extensions.OpenhouseSparkSessionExtensions"

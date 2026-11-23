@@ -1,15 +1,13 @@
 version: "3.3"
-# The Spark image is the Spark 3.1 one unless OH_SPARK_DOCKERFILE names another, and a build
-# argument is passed only when it is set where docker compose runs. ../iceberg-fork.env sets all
-# of them for a -PicebergFork build.
+# One Spark image: Spark 3.5 on Java 17 with the build's Iceberg runtime
+# (docs/development/iceberg-fork.md, "Docker images"). OH_SPARK_BUILDER is passed only when it is
+# set where docker compose runs; the dockerfile explains its two values.
 services:
   spark-master:
     build:
       context: ../../../../
-      dockerfile: ${OH_SPARK_DOCKERFILE:-infra/recipes/docker-compose/common/spark/spark-base-hadoop2.8.dockerfile}
+      dockerfile: infra/recipes/docker-compose/common/spark/spark-3.5-base-hadoop3.2.dockerfile
       args:
-        - OH_SPARK_APPS_NAME
-        - OH_SPARK_BASE
         - OH_SPARK_BUILDER
     ports:
       - 9001:8080
@@ -24,10 +22,8 @@ services:
   spark-worker-a:
     build:
       context: ../../../../
-      dockerfile: ${OH_SPARK_DOCKERFILE:-infra/recipes/docker-compose/common/spark/spark-base-hadoop2.8.dockerfile}
+      dockerfile: infra/recipes/docker-compose/common/spark/spark-3.5-base-hadoop3.2.dockerfile
       args:
-        - OH_SPARK_APPS_NAME
-        - OH_SPARK_BASE
         - OH_SPARK_BUILDER
     ports:
       - 9002:8080
@@ -45,10 +41,8 @@ services:
   spark-livy:
     build:
       context: ../../../../
-      dockerfile: ${OH_SPARK_DOCKERFILE:-infra/recipes/docker-compose/common/spark/spark-base-hadoop2.8.dockerfile}
+      dockerfile: infra/recipes/docker-compose/common/spark/spark-3.5-base-hadoop3.2.dockerfile
       args:
-        - OH_SPARK_APPS_NAME
-        - OH_SPARK_BASE
         - OH_SPARK_BUILDER
     ports:
       - 9003:8998

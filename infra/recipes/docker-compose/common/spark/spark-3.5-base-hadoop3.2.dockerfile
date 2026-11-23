@@ -1,12 +1,15 @@
-# Which stage below the image starts from: "default", or "iceberg-fork" for jars built with
-# -PicebergFork (docs/development/iceberg-fork.md, "Docker images").
-ARG OH_SPARK_BASE=default
-# Which stage provides /opt/livy and /opt/spark: "default", the builder stage below, or "dockerhub",
-# the stages after it, which take everything from Docker Hub, GitHub and Maven Central. The builder
-# stage installs some 200 Ubuntu packages and downloads Spark and Maven from archive.apache.org, and
-# Livy's build downloads a second Spark release from there. Where those hosts are slow the build
-# takes hours (on GitHub's runners: archive.apache.org at 46 kB/s, apt-get 9 and 42 minutes).
-ARG OH_SPARK_BUILDER=default
+# The Spark image of every recipe: Spark 3.5 on Java 17 with the build's Iceberg runtime and the
+# OpenHouse jars of `./gradlew dockerPrereqs` (docs/development/iceberg-fork.md, "Docker images").
+#
+# Which stage provides /opt/livy and /opt/spark: "dockerhub", the stages that take Spark from
+# Apache's Docker image and build Livy in Maven's image, or "default", the builder stage below.
+# The builder stage installs some 200 Ubuntu packages and downloads Spark and Maven from
+# archive.apache.org, and Livy's build downloads a second Spark release from there. Where those
+# hosts are slow the build takes hours (on GitHub's runners: archive.apache.org at 46 kB/s, apt-get
+# 9 and 42 minutes). The "dockerhub" stages avoid Ubuntu's archive and the two tarballs, but not
+# archive.apache.org altogether: Livy's thriftserver module still downloads a Spark release from
+# it, and with that neither value has finished building on a GitHub runner yet.
+ARG OH_SPARK_BUILDER=dockerhub
 
 FROM eclipse-temurin:11-jdk-jammy as builder
 
@@ -59,8 +62,11 @@ RUN git clone https://github.com/apache/incubator-livy \
 # OH_SPARK_BUILDER=dockerhub. The same Livy commit, patch and Maven version on the same Java, built
 # in Maven's image, which has git and needs no package installed. Maven builds every module but
 # integration-test, which downloads a Spark release from archive.apache.org although its tests are
-# skipped, and coverage, which reports on it; neither is part of the distribution. Keep the rest of
-# the build equal to the builder stage's.
+# skipped, and coverage, which reports on it; neither is part of the distribution. The thriftserver
+# module (thriftserver/server), which is part of it, has the same download execution
+# (download-spark-files, spark-3.1.1-bin-hadoop2.7.tgz, 228 MB) and is not left out: on a GitHub
+# runner the build stopped there. Not fixed yet; the untried next step is -Ddownload.skip=true on
+# the mvn line. Keep the rest of the build equal to the builder stage's.
 FROM maven:3.9.4-eclipse-temurin-11 AS livy-dockerhub
 ENV LIVY_VERSION=0.8.0-incubating-SNAPSHOT \
 LIVY_HOME=/opt/livy
@@ -94,12 +100,10 @@ COPY --from=livy-dockerhub /opt/livy /opt/livy
 FROM spark-builder-${OH_SPARK_BUILDER} AS spark-builder
 
 
-FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8 AS spark-base-default
+FROM bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
 
-# For jars built with -PicebergFork: they are Java 17 class files, so every JVM in the image
-# (Spark, Livy, the token generator below) runs on a Java 17 runtime, and Spark gets the fork's
-# Iceberg runtime, which `./gradlew -PicebergFork dockerPrereqs` stages and no repository serves.
-FROM spark-base-default AS spark-base-iceberg-fork
+# The OpenHouse jars are Java 17 class files, so every JVM in the image (Spark, Livy, the token
+# generator below) runs on a Java 17 runtime, not on the base image's Java 8.
 COPY --from=eclipse-temurin:17-jre-jammy /opt/java/openjdk /opt/java/openjdk-17
 ENV JAVA_HOME=/opt/java/openjdk-17
 ENV PATH=$JAVA_HOME/bin:$PATH
@@ -119,13 +123,9 @@ ENV LIVY_SERVER_JAVA_OPTS="\
 --add-opens=java.base/sun.nio.cs=ALL-UNNAMED \
 --add-opens=java.base/sun.security.action=ALL-UNNAMED \
 --add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+# The build's Iceberg runtime, which `./gradlew dockerPrereqs` stages (no public repository serves
+# the fork's): every Spark application in the image has it without `--packages`.
 COPY /build/iceberg-spark-runtime/ /opt/spark/jars/
-
-FROM spark-base-${OH_SPARK_BASE}
-
-# The Spark apps uber jar: build/<name>/libs/<name>-uber.jar. A build with -PicebergFork has only
-# openhouse-spark-apps-1.5_2.12. The name inside the image stays the same for both.
-ARG OH_SPARK_APPS_NAME=openhouse-spark-apps_2.12
 
 ENV LIVY_HOME=/opt/livy \
 SPARK_HOME=/opt/spark
@@ -162,7 +162,7 @@ RUN mkdir -p "${LIVY_HOME}/logs"
 
 COPY /infra/recipes/docker-compose/common/spark/start-spark.sh /
 COPY /build/openhouse-spark-3.5-runtime_2.12/libs/openhouse-spark-3.5-runtime_2.12-uber.jar $SPARK_HOME/openhouse-spark-runtime_2.12-latest-all.jar
-COPY /build/${OH_SPARK_APPS_NAME}/libs/${OH_SPARK_APPS_NAME}-uber.jar $SPARK_HOME/openhouse-spark-apps_2.12-latest-all.jar
+COPY /build/openhouse-spark-apps-1.5_2.12/libs/openhouse-spark-apps-1.5_2.12-uber.jar $SPARK_HOME/openhouse-spark-apps_2.12-latest-all.jar
 COPY /build/dummytokens/libs/dummytokens*.jar /dummytokens.jar
 RUN java -jar /dummytokens.jar -d /var/config/
 
