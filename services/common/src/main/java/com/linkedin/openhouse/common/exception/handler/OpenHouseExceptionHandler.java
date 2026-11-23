@@ -432,6 +432,25 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
   }
 
   /**
+   * The message of the 400 for a request body that cannot be read: the enum constants for an
+   * unknown enum value, else the reader's own message. Shared with the IRC routes that take the
+   * native request bodies, so both answer the same message.
+   */
+  public static String unreadableMessage(HttpMessageNotReadableException exception) {
+    if (exception.getCause() instanceof InvalidFormatException) {
+      InvalidFormatException ifx = (InvalidFormatException) exception.getCause();
+      if (ifx.getTargetType() != null && ifx.getTargetType().isEnum()) {
+        return String.format(
+            "Invalid enum value: '%s' for the field: '%s'. The value must be one of: %s.",
+            ifx.getValue(),
+            ifx.getPath().get(ifx.getPath().size() - 1).getFieldName(),
+            Arrays.toString(ifx.getTargetType().getEnumConstants()));
+      }
+    }
+    return "Unacceptable JSON " + exception.getMessage();
+  }
+
+  /**
    * Springboot fails for incompatible request enums without any useful message. This controller
    * advice changes the response to a useful error message.
    */
@@ -441,25 +460,11 @@ public class OpenHouseExceptionHandler extends ResponseEntityExceptionHandler {
       HttpHeaders headers,
       HttpStatus status,
       WebRequest request) {
-    String genericMessage = "Unacceptable JSON " + exception.getMessage();
-    String errorDetails = genericMessage;
-
-    if (exception.getCause() instanceof InvalidFormatException) {
-      InvalidFormatException ifx = (InvalidFormatException) exception.getCause();
-      if (ifx.getTargetType() != null && ifx.getTargetType().isEnum()) {
-        errorDetails =
-            String.format(
-                "Invalid enum value: '%s' for the field: '%s'. The value must be one of: %s.",
-                ifx.getValue(),
-                ifx.getPath().get(ifx.getPath().size() - 1).getFieldName(),
-                Arrays.toString(ifx.getTargetType().getEnumConstants()));
-      }
-    }
     ErrorResponseBody errorResponseBody =
         ErrorResponseBody.builder()
             .status(HttpStatus.BAD_REQUEST)
             .error(HttpStatus.BAD_REQUEST.getReasonPhrase())
-            .message(errorDetails)
+            .message(unreadableMessage(exception))
             .stacktrace(getAbbreviatedStackTrace(exception))
             .cause(getExceptionCause(exception))
             .build();
