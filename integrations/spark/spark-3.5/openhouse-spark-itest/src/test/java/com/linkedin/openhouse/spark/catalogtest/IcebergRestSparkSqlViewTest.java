@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Arrays;
 import java.util.Collections;
@@ -118,10 +119,16 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
     Assertions.assertEquals(
         Arrays.asList("[2]", "[4]"), rows("SELECT * FROM " + t("vv") + " ORDER BY twice"));
 
-    // The native view API has no rename.
+    // The native view API has no rename: the server's 406 on Iceberg 1.5.2; on 1.12 the client
+    // refuses first, since the config's endpoint list omits the route.
     Throwable rename = thrown(() -> spark.sql("ALTER VIEW " + t("vv") + " RENAME TO " + t("vv2")));
     Assertions.assertTrue(
-        String.valueOf(rename.getMessage()).contains("do not support rename"), rename.toString());
+        String.valueOf(rename.getMessage())
+            .contains(
+                IcebergLine.current() == IcebergLine.LEGACY
+                    ? "do not support rename"
+                    : "Server does not support endpoint: POST /v1/{prefix}/views/rename"),
+        rename.toString());
     Assertions.assertEquals(
         Arrays.asList("[2]", "[4]"), rows("SELECT * FROM " + t("vv") + " ORDER BY twice"));
 

@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Collections;
 import org.apache.hadoop.conf.Configuration;
@@ -196,12 +197,20 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
         system);
     assertSameView("v");
 
-    // The native view API has no rename, so the route answers 406, which 1.5.2 raises as
-    // RESTException; the view is unchanged.
-    assertThrown(
-        RESTException.class,
-        "do not support rename",
-        thrown(() -> rest.renameView(id("v"), id("v_renamed"))));
+    // The native view API has no rename. The route answers 406, which 1.5.2 raises as
+    // RESTException; 1.12 reads the config's endpoint list, which omits the route, and refuses
+    // before sending. The view is unchanged.
+    if (IcebergLine.current() == IcebergLine.LEGACY) {
+      assertThrown(
+          RESTException.class,
+          "do not support rename",
+          thrown(() -> rest.renameView(id("v"), id("v_renamed"))));
+    } else {
+      assertThrown(
+          UnsupportedOperationException.class,
+          "Server does not support endpoint: POST /v1/{prefix}/views/rename",
+          thrown(() -> rest.renameView(id("v"), id("v_renamed"))));
+    }
     Assertions.assertTrue(rest.viewExists(id("v")));
     Assertions.assertFalse(rest.viewExists(id("v_renamed")));
     assertSameView("v");
