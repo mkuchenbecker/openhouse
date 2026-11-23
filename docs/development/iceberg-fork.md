@@ -106,15 +106,18 @@ Without the file, and without the switch, every recipe and image is built as bef
 - The Spark services (`OH_SPARK_DOCKERFILE`) are built from `spark-3.5-base-hadoop3.2.dockerfile`
   with `OH_SPARK_BASE=iceberg-fork`: Spark 3.5.2, a Java 17 runtime for every JVM in the image (the
   jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the Spark 3.5
-  apps jar. Two more arguments keep the build off `archive.apache.org`, which is rate-limited (a
-  GitHub runner got 46 kB/s: two and a half hours for the Spark tarball): `OH_SPARK_DIST=image`
-  takes `/opt/spark` from Apache's Docker image of the same release (`apache/spark:3.5.2-...`)
-  instead of the tarball, and `OH_LIVY_MAVEN_ARGS=-pl assembly -am` builds Livy's distribution
-  without Livy's integration-test module, which downloads another Spark release from there. Without
-  them the dockerfile downloads the tarball and builds all of Livy, as before. The OpenHouse jars keep the names they have in the Spark 3.1 image
+  apps jar. The OpenHouse jars keep the names they have in the Spark 3.1 image
   (`/opt/spark/openhouse-spark-runtime_2.12-latest-all.jar`,
   `/opt/spark/openhouse-spark-apps_2.12-latest-all.jar`), so `jobs.yaml`, `livy_cli.py` and the
   dataloader integration tests name the same paths on both.
+- `OH_SPARK_BUILDER=dockerhub` selects where that image's Livy and Spark come from. The
+  dockerfile's own builder stage installs some 200 Ubuntu packages and downloads Spark and Maven
+  from `archive.apache.org`, and Livy's build downloads a second Spark release from there; on
+  GitHub's runners that host served 46 kB/s (two and a half hours for one tarball) and `apt-get`
+  took 9 and 42 minutes. With `dockerhub`, Livy (the same commit and patch) is built in Maven's
+  Docker image without its `integration-test` and `coverage` modules, and `/opt/spark` is copied
+  from Apache's Docker image of the same release (`apache/spark:3.5.2-...`): nothing comes from
+  those two hosts. Without the argument the dockerfile does what it did.
 - The jobs service reads `jobs-iceberg-fork.yaml` (`OPENHOUSE_JOBS_CONFIG_PATH`): `jobs.yaml` without
   `spark.jars.packages`, which has Spark download Apache's `iceberg-spark-runtime-3.1_2.12:1.2.0`.
   Keep the two files equal otherwise.

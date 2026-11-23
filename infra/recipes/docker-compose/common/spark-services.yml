@@ -10,8 +10,7 @@ services:
       args:
         - OH_SPARK_APPS_NAME
         - OH_SPARK_BASE
-        - OH_SPARK_DIST
-        - OH_LIVY_MAVEN_ARGS
+        - OH_SPARK_BUILDER
     ports:
       - 9001:8080
       - 7077:7077
@@ -29,8 +28,7 @@ services:
       args:
         - OH_SPARK_APPS_NAME
         - OH_SPARK_BASE
-        - OH_SPARK_DIST
-        - OH_LIVY_MAVEN_ARGS
+        - OH_SPARK_BUILDER
     ports:
       - 9002:8080
       - 7000:7000
@@ -51,8 +49,7 @@ services:
       args:
         - OH_SPARK_APPS_NAME
         - OH_SPARK_BASE
-        - OH_SPARK_DIST
-        - OH_LIVY_MAVEN_ARGS
+        - OH_SPARK_BUILDER
     ports:
       - 9003:8998
     environment:
