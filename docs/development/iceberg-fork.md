@@ -125,6 +125,13 @@ the Spark 4.2 itest (`test`, `extensionsTest`), and last, in a step of its own t
 suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`). It does not block or
 wait for the default build job.
 
+When a suite fails, the job's last two steps print each failed test with the start of its failure
+(`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, plus the end of the Spark 4.2
+tests' service logs) and upload the test reports as the artifact `iceberg-fork-test-reports` (kept
+7 days). The failed tests are therefore at the end of the job's log, not only where they ran.
+Pull requests do not run this job: a change is first built under `-PicebergFork` after it merges,
+so run the suites it touches under the switch before merging.
+
 ## Spark 4.2 over the IRC read routes
 
 `:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` exists only under the switch

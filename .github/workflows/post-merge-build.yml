@@ -90,6 +90,7 @@ jobs:
       # The Spark 3.5 itest `test` task depends on its catalogTest and statementTest tasks. The
       # capabilities module compiles its REST capability client's Iceberg 1.12 transport only here.
       - name: Run the opt-in suites under -PicebergFork
+        id: suites
         run: >-
           ./gradlew -PicebergFork --continue
           :services:tables:test
@@ -109,3 +110,29 @@ jobs:
       - name: Run Apache Iceberg's REST compatibility kit under -PicebergFork
         if: ${{ !cancelled() }}
         run: ./gradlew -PicebergFork :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
+
+      # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
+      # log, above the kit's output, in what several test tasks wrote at once, and Gradle's closing
+      # summary names only the task. These two steps come last so that the job's log ends with each
+      # failed test and the start of its failure (and the Spark 4.2 tests' own service processes'
+      # logs), and the full reports can be downloaded. The kit reports its own outcomes above.
+      - name: Print the opt-in suites' failed tests
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
+        run: >-
+          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'
+          build
+
+      - name: Upload the opt-in suites' test reports
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: iceberg-fork-test-reports
+          path: |
+            build/*/reports/tests
+            build/*/test-results
+            build/openhouse-spark-4.2-itest/tmp/*/*/service.log
+            build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs
+          if-no-files-found: ignore
+          retention-days: 7
