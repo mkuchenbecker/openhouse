@@ -97,3 +97,22 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
   baseline stores it is unknown, because `SHOW TBLPROPERTIES` hides it.
 - Follow-up N7: the Spark 4.2 smoke scenarios are a guarded copy of the Spark 3.5 suite's. After V9e the Spark 3.5
   suite should extend the shared scenarios and the copy check should be deleted.
+
+## Thirteenth round (C10, C14 and X1, 2026-11-23)
+
+- Data safety, found by the X1 work (`56-decisions-continued-5.md`, D43): on the Iceberg 1.12 line, a native table
+  update with `format-version=3` upgraded a v2 table to v3 with no switch and no check. It was reachable on the
+  integration branch since the flip and under the opt-in build before it. Nothing is deployed from the branch. It is
+  closed in pull request 124, with a test that sweeps every write path. A v3 table cannot go back (D42).
+- CI, latent for as long as the workflow existed: the dataloader job's "wait for services" step never waited. Its
+  probe read a refused connection (`000` appended twice, `000000`) as ready. The tests passed only because their
+  setup took longer than the services' start. Fixed by pull request 122 (`55-c10-c14-result.md`).
+- Build: the Spark image never built in CI because Livy's build downloaded a 228 MB Spark release for tests it
+  skips. One flag, `-Ddownload.plugin.skip=true`, fixes it. The flag proposed earlier would not have worked.
+- Build: a single `curl` of the OpenAPI generator jar after every `clean` failed builds at random when Maven Central
+  answered 429. Fixed by pull request 123; a sustained limit on an empty cache still fails, now with a clear message.
+- Build, new work item C15: the OpenAPI specs the generator reads are not byte-stable between two builds of the same
+  sources (the order of the properties of Spring's `Page` type), probably the cause of the tenth round's "not
+  reproducible bit for bit".
+- Hooks: the pre-commit hook prints `[[: not found` under `sh`, so a failing `spotlessCheck` would not print its
+  hint. The exit code still propagates (see also the fifth round of `08-findings.md`).

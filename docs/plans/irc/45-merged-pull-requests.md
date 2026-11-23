@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 41 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 118, merge
-commit 440249d1) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 43 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last are 122 and 123,
+merge commits 71c4c70b and 75d6e185; pull requests 121 and 124 are open) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -51,6 +51,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 119 | N6: `RENAME TO <catalog>.<db>.<t>` works over IRC on Spark 4.2 and on Spark 3.5 over a plain REST catalog; 166 of 177 statements as on the baseline (`52-c9-n6-result.md`) | 92c5e117cb80345b46cb8edd2d690358d9be5bba |
 | 120 | V8: the IRC multi-table commit route serves one table and refuses several whole with 400; the config lists 19 endpoints (`53-v8-multi-table-commit-result.md`) | a217cce94f9592c088a4193dad87a06969c0fd4c |
 | 118 | V9e: a plain build is the fork's Iceberg 1.12 line; `-PicebergLinkedIn` selects the 1.5.2 reference line; the Iceberg 1.2 / Spark 3.1 projects are deleted (`54-v9e-flip-result.md`) | 440249d1acdd2930add70d5e3b792c6c15eb40b3 |
+| 122 | C10: the Spark image builds on a CI runner in six to seven minutes; the Hadoop recipe starts and all 15 dataloader integration checks pass; the wait step now waits; the job runs on pull requests and after every merge (`55-c10-c14-result.md`) | 71c4c70be081b9d7c51e6538066e59c216586e5a |
+| 123 | C14: the OpenAPI generator jar is a Gradle dependency in the cache that `clean` keeps, not a `curl` after every `clean` (`55-c10-c14-result.md`) | 75d6e1851f80b0688a0aa22ddac52388c9dfbc89 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

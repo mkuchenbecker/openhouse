@@ -137,3 +137,11 @@ cites a statement. Claude wrote every entry.
 - Why: a v3 table cannot go back and older readers cannot read it, so nothing may make a table v3 by accident.
 - One-way door: upgrading a real table is one-way for that table, which is why it stays Mike's (D12).
 - Reverse by: turning the cluster setting off stops new v3 tables; existing v3 tables stay v3.
+
+- Amended 2026-11-23, after the V15 work: the limit is a cluster property, not a constant. The row limit for the
+  metadata location is `cluster.housetables.metadata-location-max-length`, default 255 (the width in the production
+  schema migrations), settable to 512 for a store created from the bootstrap `schema.sql`, which declares 512. The
+  premise above, that a clean 400 takes nothing away from any client that works today, was wrong for stores created
+  from the bootstrap schema. There a location of 256 to 512 characters works today, and after this change it is
+  refused by default unless the property is set to 512. The default stays 255 because production uses the
+  migrations. Work item V15, pull request 121 (commit d80d38f3).

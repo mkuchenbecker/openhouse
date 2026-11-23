@@ -23,7 +23,7 @@ Each exists on the native path only (J3).
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| X1 | oh | **Running (2026-11-23, with W6, branch `irc/x1-format-v3`; D42).** Tables can be created at v3 or upgraded from v2, gated per table. The service returns v3 metadata exactly as committed. | V9e, V3 | Round-trip test. v2 tables untouched. |
+| X1 | oh | **Running (2026-11-23, with W6, branch `irc/x1-format-v3`, pull request 124; D42, D43).** Tables can be created at v3 or upgraded from v2, gated per table. The service returns v3 metadata exactly as committed. | V9e, V3 | Round-trip test. v2 tables untouched. |
 | X2 | oh | Deletion vectors written and read through Spark SQL. | X1, N2 or N3 | Delete, update and merge scenarios on a v3 table. |
 | X3 | oh | Row lineage maintained across writes and compaction. | X1, N2 or N3 | Row ids stable across a rewrite. |
 | X4 | oh | Native default values on v3 tables. The v2 read bridge is untouched. See W7. | X1, N2 or N3 | Add a defaulted column, read old files. |
