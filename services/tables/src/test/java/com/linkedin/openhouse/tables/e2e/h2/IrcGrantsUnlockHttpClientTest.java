@@ -340,7 +340,7 @@ class IrcGrantsUnlockHttpClientTest {
 
     // 400 (not a lock reason)
     assertEquals(
-        "Malformed request: Invalid lock reason: NONE; expected one of [LEGACY, SYSTEM_ONLY]",
+        "Malformed request: Invalid reason: NONE; expected one of [LEGACY, SYSTEM_ONLY]",
         assertThrows(
                 BadRequestException.class,
                 () -> client.delete(lock("u") + "/NONE", AclPolicies.class, NO_HEADERS, TABLE))

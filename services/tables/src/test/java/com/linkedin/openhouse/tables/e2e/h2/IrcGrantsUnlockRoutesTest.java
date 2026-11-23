@@ -293,6 +293,24 @@ public class IrcGrantsUnlockRoutesTest {
   }
 
   /**
+   * A message with its bean-validation violations sorted: the validator reports them in no fixed
+   * order (two native requests with the same body can list them differently).
+   */
+  private static String violations(String message) {
+    // A missing body: Spring's message names the controller method that was to receive it, the
+    // native controller's natively and the IRC controller's here (pinned in the body tests).
+    message =
+        message.replaceAll(
+            "Required request body is missing: .*$", "Required request body is missing: <method>");
+    String[] parts = message.split("; ");
+    if (parts.length < 2 || !message.contains("UpdateAclPoliciesRequestBody.")) {
+      return message;
+    }
+    java.util.Arrays.sort(parts);
+    return String.join("; ", parts);
+  }
+
+  /**
    * Asserts the native and the IRC outcome are the same once database names are aligned: success
    * status and body, or error status and message (the IRC one in the spec's error shape); the same
    * audit events and access decisions. Returns the status.
@@ -309,8 +327,8 @@ public class IrcGrantsUnlockRoutesTest {
           assertIrcError(ircOutcome.result, ircOutcome.status, ircType(ircOutcome.status))
               .message();
       assertEquals(
-          nativeMessage(nativeOutcome.body).replace(n, "DB"),
-          ircMessage.replace(i, "DB"),
+          violations(nativeMessage(nativeOutcome.body).replace(n, "DB")),
+          violations(ircMessage.replace(i, "DB")),
           "error message");
     }
     assertEquals(nativeOutcome.audit, ircOutcome.audit, "table audit");
@@ -539,6 +557,18 @@ public class IrcGrantsUnlockRoutesTest {
     for (String body : refused) {
       assertEquals(400, tableAcl("bodies", HttpMethod.POST, body), body);
     }
+    assertEquals(
+        "Unacceptable JSON Required request body is missing: public"
+            + " org.springframework.http.ResponseEntity<java.lang.Void>"
+            + " com.linkedin.openhouse.tables.api.irc.IcebergRestOpenHouseController"
+            + ".updateTableAclPolicies(java.lang.String,java.lang.String,"
+            + "com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody)",
+        assertIrcError(
+                mvc.perform(ircRequest(HttpMethod.POST, ircTableAcl(ircDb("bodies"), "t"), ""))
+                    .andReturn(),
+                400,
+                "BadRequestException")
+            .message());
     assertEquals(Collections.emptyList(), acls.stored(ircDb("bodies") + ".t"));
     // An unknown field is ignored on both.
     assertEquals(
@@ -754,7 +784,7 @@ public class IrcGrantsUnlockRoutesTest {
                   "BadRequestException")
               .message();
       assertEquals(
-          "Invalid lock reason: " + reason + "; expected one of [LEGACY, SYSTEM_ONLY]", message);
+          "Invalid reason: " + reason + "; expected one of [LEGACY, SYSTEM_ONLY]", message);
     }
     assertEquals("locked=true reason=LEGACY", state(ircDb("reason")));
   }
