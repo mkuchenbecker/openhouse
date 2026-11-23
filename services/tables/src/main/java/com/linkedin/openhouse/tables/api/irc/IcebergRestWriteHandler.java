@@ -95,6 +95,9 @@ public class IcebergRestWriteHandler {
   /** The stored policies, as a property; the OpenHouse client parses it into request policies. */
   private static final String POLICIES_KEY = "policies";
 
+  /** The format version a create asks for, as a property (Iceberg's {@code format-version}). */
+  private static final String FORMAT_VERSION_KEY = "format-version";
+
   /** The table type, as a property; the OpenHouse client reads it into the request's type. */
   private static final String TABLE_TYPE_KEY = "openhouse.tableType";
 
@@ -171,6 +174,7 @@ public class IcebergRestWriteHandler {
     // allocates it as for a request that names none.
     if (request.properties() != null) {
       refuseRewrittenCreateProperties(identifier, request.properties());
+      refuseOtherFormatVersion(identifier, request.properties());
     }
     return IcebergCreates.toCreateBody(
         identifier,
@@ -494,6 +498,25 @@ public class IcebergRestWriteHandler {
               "Create of table %s sets the table property %s to %s: the table type cannot be set "
                   + "through the Iceberg REST routes; they create %s tables",
               identifier, TABLE_TYPE_KEY, tableType, TableType.PRIMARY_TABLE.name()));
+    }
+  }
+
+  /**
+   * Refuses a create or staged create whose {@code format-version} property asks for a version the
+   * cluster does not create, as the commit that completes a staged create refuses one (the server
+   * owns the format version: D19, D20). The native create overwrites the property with the
+   * cluster's version, which here would answer, or stage, other metadata than was asked for.
+   */
+  private void refuseOtherFormatVersion(
+      TableIdentifier identifier, Map<String, String> properties) {
+    String asked = properties.get(FORMAT_VERSION_KEY);
+    int clusterVersion = clusterProperties.getClusterIcebergFormatVersion();
+    if (asked != null && !asked.trim().equals(Integer.toString(clusterVersion))) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "Create of table %s sets the table property %s to %s: OpenHouse creates tables "
+                  + "with format version %d",
+              identifier, FORMAT_VERSION_KEY, asked, clusterVersion));
     }
   }
 
