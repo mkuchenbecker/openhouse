@@ -2,7 +2,7 @@
 
 Continues `51-decisions-continued-4.md`, which is full (its D41 carries a dated amendment).
 
-Bottom line: one new decision, D43, dated 2026-11-23, the orchestrator's. It records the format v3 design choices
+Bottom line: one new decision, D43 (with a dated addendum for the merge of pull request 124), dated 2026-11-23, the orchestrator's. It records the format v3 design choices
 the orchestrator accepted while work item X1 (with W6, pull request 124) was being built, and one data-safety finding
 that the same work closes. D42 (v3 off by default, chosen per table, never implied) still stands and D43 refines it.
 Nothing here is agreed by Mike. Claude wrote the entry.
@@ -34,3 +34,23 @@ Nothing here is agreed by Mike. Claude wrote the entry.
 - Reverse by: each refusal is one check; removing it restores the earlier answer. A table that became v3 stays v3.
 - References: D12, D42, `45-merged-pull-requests.md` for what is merged; the record of the work is
   `x1-format-v3.md` in the session's reports directory (outside the repository), with pushed head `5f7c4a44`.
+
+### Addendum, 2026-11-23: the decisions recorded when pull request 124 merged
+
+Pull request 124 merged into `irc-integration` as `e2e02bfa0d1b674cb774f591355e19c911fee46b`. The report's section 10
+lists seven answers; sections 5 and 9 carry two more design choices. These nine are the orchestrator's and are two-way
+doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
+
+1. A native table update asking for v3 with the switch off is refused with 400, which closes the unguarded upgrade.
+2. A native create asking for v3 with the switch off is refused with 400, not made silently at v2.
+3. A replace with `format-version` 3 on a v2 table is honoured when the switch is on. A replace keeps the table's own
+   version. A replace naming 2 on a v3 table is refused.
+4. Refused rather than lost: register of a v3 file, replica tables at v3, v3-only types and encryption.
+5. A `write-default` below v3 is refused only when a commit introduces or changes it.
+6. Defaults on a re-cased field are kept, in their own commit and test.
+7. A test sweeps every write path with the switch off and asserts none leaves a table above the cluster's version.
+8. The switch never makes a table v3 by itself, and `cluster.iceberg.format-version` stays 2. Turning the switch off
+   again refuses new v3 creates and upgrades and leaves existing v3 tables working.
+9. One-way door: upgrading a table to v3 is irreversible, and LinkedIn 1.5.2 clients cannot load it afterwards. The
+   code allows it behind the switch, but turning the switch on for a real cluster and upgrading a real table stay
+   Mike's (D12; `58-waiting-on-mike.md`). On the 1.5.2 reference line every v3 request is refused.

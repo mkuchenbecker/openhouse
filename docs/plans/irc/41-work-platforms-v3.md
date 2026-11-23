@@ -23,10 +23,10 @@ Each exists on the native path only (J3).
 
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
-| X1 | oh | **Running (2026-11-23, with W6, branch `irc/x1-format-v3`, pull request 124; D42, D43).** Tables can be created at v3 or upgraded from v2, gated per table. The service returns v3 metadata exactly as committed. | V9e, V3 | Round-trip test. v2 tables untouched. |
-| X2 | oh | Deletion vectors written and read through Spark SQL. | X1, N2 or N3 | Delete, update and merge scenarios on a v3 table. |
-| X3 | oh | Row lineage maintained across writes and compaction. | X1, N2 or N3 | Row ids stable across a rewrite. |
-| X4 | oh | Native default values on v3 tables. The v2 read bridge is untouched. See W7. | X1, N2 or N3 | Add a defaulted column, read old files. |
-| X5 | oh | New v3 types pass schema validation and column policies. | X1 | Create and evolve with each type. |
-| X6 | oh | Maintenance jobs run on the new line and are correct for X2 to X5. | V9e, I4, X2 | Each job on a v3 table loses no live data. |
-| X7 | oh | Replication of v3 tables. Investigate first (J24). | X1 | Defined by the investigation. |
+| X1 | oh | **Done 2026-11-23 (with W6, pull request 124, merge commit `e2e02bfa`; D42, D43).** Result in `57-x1-format-v3-result.md`. Tables are created at v3 or upgraded from v2 through the table property, on both APIs, behind `cluster.iceberg.format-v3.enabled` (default off). The service returns v3 metadata as committed. | V9e, V3 | Round-trip tests on both APIs and both Spark lines; v2 tables untouched. |
+| X2 | oh | **Partly proven by X1.** Deletion vectors are written and applied on read by Spark's default writers (DELETE, UPDATE, MERGE in merge-on-read) on Spark 3.5 and 4.2, tested at the SQL level. Remaining: the wider scenarios, and maintenance, which is X6. | X1, N2 or N3 | Delete, update and merge scenarios on a v3 table, beyond X1's tests. |
+| X3 | oh | **Partly proven by X1.** Row lineage is maintained by INSERT, DELETE, UPDATE, MERGE and the first commit after an upgrade, and `_row_id` reads back, on Spark 3.5 and 4.2. Remaining: row ids kept across compaction (X6) and the wider scenarios. | X1, N2 or N3 | Row ids stable across a rewrite. |
+| X4 | oh | Native default values on v3 tables. The service stores defaults as committed (W6); reading old files with them through Spark is untested (W7). The v2 read bridge is untouched. | X1, N2 or N3 | Add a defaulted column, read old files. |
+| X5 | oh | New v3 types pass schema validation and column policies. Refused today with 400, naming X5 (`variant` is refused by request validation without naming it). | X1 | Create and evolve with each type. |
+| X6 | oh | **Next, and the v3 item with the most risk.** Maintenance jobs (compaction, snapshot expiry, orphan-file removal) run on the new line and are correct for X2 to X5, with row ids kept across compaction. None has run on a v3 table, and a job that mishandles deletion vectors or row ids loses data. | V9e, I4, X2 | Each job on a v3 table loses no live data. |
+| X7 | oh | Replication of v3 tables. Refused today with 400, naming X7. Investigate first (J24). | X1 | Defined by the investigation. |
