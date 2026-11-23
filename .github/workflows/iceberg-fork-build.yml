@@ -35,63 +35,13 @@ jobs:
           # run by hand.
           cache-read-only: ${{ github.ref != 'refs/heads/irc-integration' }}
 
-      # The published fork depends only on the pinned commit and on what the script publishes, so
-      # the cache key is the commit plus the script's hash: the fork is rebuilt only when either
-      # changes. On a hit the script finds its markers and does nothing. The script publishes into
-      # ~/.gradle/iceberg-fork/<version> (outside build/, so a clean keeps it); the version is
-      # <baseVersion>-ohfork.<first 12 characters of the commit>, as in gradle/iceberg-fork.gradle.
-      - name: Read the pinned Iceberg commit
-        id: pin
-        run: |
-          commit="$(sed -n 's/^commit=//p' scripts/iceberg-fork/iceberg-fork.properties)"
-          base="$(sed -n 's/^baseVersion=//p' scripts/iceberg-fork/iceberg-fork.properties)"
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "version=$base-ohfork.${commit:0:12}" >> "$GITHUB_OUTPUT"
-
-      # Whether a pull request itself changes what is published, the pin or the script: it decides
-      # below whether the pull request may save the fork it publishes.
-      - name: See whether the pull request changes the pin or the publish script
-        id: fork-change
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA"
-          if git diff --quiet "$BASE_SHA" HEAD -- \
-              scripts/iceberg-fork/iceberg-fork.properties scripts/iceberg-fork/publish-local.sh; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Every run restores. A pull request can read what its base branch saved, so one that
-      # leaves the pin and the script alone gets the fork irc-integration published.
-      - name: Restore the published Iceberg fork
-        id: fork-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
-          key: iceberg-fork-home-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('scripts/iceberg-fork/publish-local.sh') }}
-
-      - name: Publish the Iceberg fork to ~/.gradle/iceberg-fork
-        run: scripts/iceberg-fork/publish-local.sh
-
-      # Saved right after publishing, so a red test run below still keeps the fork for the next run.
-      # A run on a branch saves whenever it had to publish. A pull request saves only when it
-      # changes the pin or the script: GitHub keeps that cache in the pull request's own scope, so
-      # the pull request's later pushes restore it and no other pull request or branch can read it.
-      # A pull request that misses without such a change (the base's cache was evicted, or its
-      # post-merge run has not saved yet) publishes and saves nothing; irc-integration's run saves.
-      - name: Save the published Iceberg fork
-        if: >-
-          steps.fork-cache.outputs.cache-hit != 'true'
-          && (github.event_name != 'pull_request' || steps.fork-change.outputs.changed == 'true')
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
-          key: ${{ steps.fork-cache.outputs.cache-primary-key }}
+      # Restores the published fork from the cache, or builds it and saves it. The action is shared
+      # with the Dataloader job on this line (dataloader-tests.yml), so both use one cache entry.
+      - name: Restore or publish the Iceberg fork
+        uses: ./.github/actions/iceberg-fork
 
       - name: Compile everything under -PicebergFork
+        id: compile
         run: ./gradlew -PicebergFork assemble testClasses
 
       # The suites docs/plans/irc/25-optin-green-result.md lists, plus the Spark 4.2 modules: the
@@ -121,6 +71,109 @@ jobs:
       - name: Run Apache Iceberg's REST compatibility kit under -PicebergFork
         if: ${{ !cancelled() }}
         run: ./gradlew -PicebergFork :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
+
+      # The deployables of this build (docs/development/iceberg-fork.md, "Docker images"): the jars
+      # the images are built from, the jobs-scheduler image from the Spark 3.5 apps jar, and the
+      # oh-only recipe with the integration tests the default build runs on its own containers
+      # (build-run-tests.yml). After the suites and the kit, and whatever their outcome, so that
+      # they report first and a red image never hides or blocks them; not after a failed compile,
+      # which leaves nothing to build images from. The Spark image and the oh-hadoop-spark recipe
+      # are the Dataloader job's (dataloader-tests-iceberg-fork.yml).
+      - name: Build the uber jars and the Docker prerequisites under -PicebergFork
+        id: docker-prereqs
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        run: ./gradlew -PicebergFork shadowJar dockerPrereqs
+
+      # Built as the recipes build it, through docker compose with the env file. Then the image is
+      # started without arguments: the scheduler logs its first line at INFO and stops on the
+      # missing options, which shows the image's Java runs the jar's Java 17 classes and the jar
+      # carries its log4j2 configuration (without it only errors are logged). Its output is printed
+      # with a prefix, so that the expected exception is not annotated as an error of the run.
+      - name: Build the jobs-scheduler image from the Spark 3.5 apps jar and start the scheduler in it
+        if: ${{ !cancelled() && steps.docker-prereqs.outcome == 'success' }}
+        env:
+          COMPOSE: >-
+            docker compose --env-file infra/recipes/docker-compose/iceberg-fork.env
+            -f infra/recipes/docker-compose/oh-hadoop-spark/docker-compose.yml
+            --profile with_jobs_scheduler
+        run: |
+          $COMPOSE build openhouse-jobs-scheduler
+          image="$($COMPOSE config --images | grep -- '-openhouse-jobs-scheduler$')"
+          echo "Image: $image"
+          docker run --rm --entrypoint sh "$image" -c 'echo "APP_NAME=$APP_NAME"; ls -l "$APP_NAME.jar"; java -version' 2>&1 | tee scheduler-image.txt
+          grep -qx 'APP_NAME=openhouse-spark-apps-1.5_2.12' scheduler-image.txt
+          timeout 120 docker run --rm "$image" > scheduler-start.txt 2>&1 || true
+          sed 's/^/scheduler: /' scheduler-start.txt | head -n 12
+          grep -q 'INFO  JobsScheduler:[0-9]* - Starting scheduler' scheduler-start.txt
+
+      - name: Start the oh-only recipe from the -PicebergFork jars
+        id: oh-only
+        if: ${{ !cancelled() && steps.docker-prereqs.outcome == 'success' }}
+        run: >-
+          docker compose --env-file infra/recipes/docker-compose/iceberg-fork.env
+          -f infra/recipes/docker-compose/oh-only/docker-compose.yml up -d --build
+
+      # Until both services answer HTTP (Spring opens the port when the application is ready).
+      - name: Wait for the tables and house tables services
+        id: oh-only-wait
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          for i in $(seq 1 60); do
+            tables="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/actuator/health || true)"
+            housetables="$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8001/actuator/health || true)"
+            echo "Poll $i: tables=$tables housetables=$housetables"
+            if [ "$tables" = 200 ] && [ "$housetables" = 200 ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "The services did not answer within 300 s"
+          exit 1
+
+      - name: Set up Python
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Run the integration tests against the oh-only containers
+        id: oh-only-tests
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          pip install -r scripts/python/requirements.txt
+          python scripts/python/integration_test.py ./tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
+
+      # The running tables service is the one built under the switch: its jar carries the fork's
+      # iceberg-core (version <baseVersion>-ohfork.<commit>) and no other.
+      - name: Check the Iceberg in the tables container
+        id: oh-only-iceberg
+        if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
+        run: |
+          docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml \
+            exec -T openhouse-tables sh -c 'java -version 2>&1; jar tf tables.jar' > tables-container.txt
+          head -n 3 tables-container.txt
+          grep 'iceberg-core-' tables-container.txt | tee tables-iceberg-core.txt
+          test "$(wc -l < tables-iceberg-core.txt)" = 1
+          grep -q 'iceberg-core-.*-ohfork\.' tables-iceberg-core.txt
+
+      - name: Print the oh-only containers' state and logs
+        if: >-
+          ${{ !cancelled() && (steps.oh-only.outcome == 'failure' || steps.oh-only-wait.outcome == 'failure'
+          || steps.oh-only-tests.outcome == 'failure' || steps.oh-only-iceberg.outcome == 'failure') }}
+        run: |
+          compose="docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml"
+          $compose ps -a
+          for service in prometheus opa oauth openhouse-housetables openhouse-tables; do
+            echo "::group::$service (last 300 lines)"
+            $compose logs --no-color --tail 300 "$service" || true
+            echo "::endgroup::"
+          done
+
+      - name: Stop the oh-only containers
+        if: ${{ always() && steps.oh-only.outcome != 'skipped' }}
+        run: >-
+          docker compose --env-file infra/recipes/docker-compose/iceberg-fork.env
+          -f infra/recipes/docker-compose/oh-only/docker-compose.yml down
 
       # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
       # log, above the kit's output, in what several test tasks wrote at once, and Gradle's closing
