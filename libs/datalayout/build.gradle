@@ -25,6 +25,14 @@ if (rootProject.hasProperty('icebergFork')) {
         openhouseSparkRuntimeModule = ":integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12"
         tablesTestFixturesModule = ":tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12"
     }
+    // The 1.5 fixtures bring the thin iceberg-orc/iceberg-parquet jars the -PicebergFork build adds
+    // (openhouse.iceberg-conventions-1.5.2). Next to the shaded iceberg-spark-runtime they break ORC
+    // reads (shaded TypeDescription cannot be cast to org.apache.orc.TypeDescription), so they are
+    // kept off the test classpath here as in the Spark 3.5 apps and itest.
+    configurations.testRuntimeClasspath {
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
+    }
 }
 
 dependencies {
