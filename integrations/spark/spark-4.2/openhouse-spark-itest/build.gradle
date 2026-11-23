@@ -1,8 +1,8 @@
 // Spark 4.2 (Scala 2.13) on the fork's Iceberg 1.12 line reads OpenHouse tables over the Iceberg
 // REST Catalog (IRC) routes of the tables service, with Iceberg's own SparkCatalog and RESTCatalog
 // and no OpenHouse catalog or client class in the Spark JVM; with the OpenHouse SQL extensions
-// (extensionsTest), the OpenHouse statements run the same way. Only under -PicebergFork
-// (settings.gradle); see docs/development/iceberg-fork.md.
+// (extensionsTest), the OpenHouse statements run the same way, and so does the Spark SQL smoke suite
+// (smokeTest). Only under -PicebergFork (settings.gradle); see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs:
 // - test: Spark 4.2, the fork's shaded iceberg-spark-runtime-4.2_2.13 and the OpenHouse SQL
@@ -38,12 +38,25 @@ sourceSets {
   service {
     java.srcDirs = ['src/service/java']
   }
+  // The Spark SQL smoke suite. src/shared/test holds its statements and baseline outcomes, which
+  // need only spark.sql and JUnit, so that another Spark line's itest can name the directory and
+  // run the same list (as the Spark 3.1 itest names the Spark 3.5 itest's src/shared/test).
+  // src/smoke holds what runs them on Spark 4.2 over IRC. Its own source set, so that the other
+  // tests' JVMs, which assert what is on their classpath, do not get these classes.
+  smoke {
+    java.srcDirs = ['src/shared/test/java', 'src/smoke/java']
+  }
 }
 
 configurations {
+  // The smoke suite runs on the classpath of the other Spark 4.2 tests.
+  smokeImplementation.extendsFrom testImplementation
+  smokeRuntimeOnly.extendsFrom testRuntimeOnly
   // The Spark 4.2 JVM keeps the versions Spark and the shaded runtime declare: the root build's
   // forces (Jackson 2.13.4 for the services, ORC/Avro/Caffeine for the 1.5 line) do not apply.
-  [testCompileClasspath, testRuntimeClasspath].each { it.resolutionStrategy.forcedModules = [] }
+  [testCompileClasspath, testRuntimeClasspath, smokeCompileClasspath, smokeRuntimeClasspath].each {
+    it.resolutionStrategy.forcedModules = []
+  }
   serviceImplementation {
     exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
   }
@@ -127,4 +140,38 @@ tasks.register('extensionsTest', Test) {
     includeTestsMatching 'com.linkedin.openhouse.spark42.extensions.*'
   }
 }
-tasks.named('check') { dependsOn tasks.named('extensionsTest') }
+
+// The Spark SQL smoke suite and the write statements, from Spark 4.2 over IRC, against their own
+// service JVM (IrcSmokeTestService: the service the Spark 3.5 smoke suite embeds). Their own test
+// JVM: the session names its catalog `openhouse`, as the smoke statements do.
+tasks.register('smokeTest', Test) {
+  testClassesDirs = sourceSets.smoke.output.classesDirs
+  classpath = sourceSets.smoke.runtimeClasspath
+  dependsOn tasks.named('serviceClasses')
+  mustRunAfter tasks.named('test'), tasks.named('extensionsTest')
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  // The scenarios are a copy of the Spark 3.5 suite's: SmokeScenariosCopyTest compares the sources.
+  def spark35SmokeSuite = rootProject.file(
+      'integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/SparkSqlSmokeTest.java')
+  def smokeScenarios = file(
+      'src/shared/test/java/com/linkedin/openhouse/spark/smoke/SparkSqlSmokeScenarios.java')
+  inputs.file(spark35SmokeSuite).withPropertyName('spark35SmokeSuite')
+  def outcomes = layout.buildDirectory.file('reports/smoke/spark-4.2-irc-outcomes.tsv')
+  outputs.file(outcomes).withPropertyName('smokeOutcomes')
+  doFirst {
+    systemProperty 'irc42.service.classpath', serviceClasspath.asPath
+    systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'irc42.workdir', "${temporaryDir}"
+    systemProperty 'smoke.spark35.suite', spark35SmokeSuite.path
+    systemProperty 'smoke.scenarios.source', smokeScenarios.path
+    // One line per smoke statement: the statement, the baseline, what Spark 4.2 over IRC did.
+    systemProperty 'smoke.outcomes.file', outcomes.get().asFile.path
+  }
+  outputs.upToDateWhen { false }
+}
+// As for the other test classes of the build (spotbugsTest is off in the root build).
+tasks.matching { it.name == 'spotbugsSmoke' }.configureEach { enabled = false }
+tasks.named('check') { dependsOn tasks.named('extensionsTest'), tasks.named('smokeTest') }
