@@ -27,8 +27,8 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>GRANT, REVOKE, SHOW GRANTS and UNLOCK parse and analyze, resolve the catalog's capabilities,
  * and fail with "does not support": a plain {@code RESTCatalog} has no client for the OpenHouse
- * grant and lock routes yet (work item C2-3), and the server does not serve them yet (V5-3). These
- * pins are meant to fail when the capability client lands; they then become the cases that show the
+ * grant and lock routes yet (work item C2-3), though the server now serves them (V5-3). These pins
+ * are meant to fail when the capability client lands; they then become the cases that show the
  * statements working.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -102,8 +102,9 @@ public class SparkIrcOpenHouseStatementsTest {
 
   /**
    * What the resolver finds on the session's IRC catalogs: Iceberg's REST path, the server's
-   * advertised {@code policies} (its config override wins over {@code irc_adv}'s client-side
-   * claim), and policies the only usable capability.
+   * advertised {@code policies,grants,unlock} (its config override wins over {@code irc_adv}'s
+   * client-side claim; grants and unlock since V5-3), and policies the only usable capability:
+   * grants and unlock need the capability client (C2-3).
    */
   @Test
   void theResolverReadsTheServersAdvertisedCapabilities() throws Exception {
@@ -113,7 +114,7 @@ public class SparkIrcOpenHouseStatementsTest {
               ExtensionsSpark.session().sessionState().catalogManager().catalog(catalog));
       Assertions.assertEquals(CatalogCapabilities.Path.ICEBERG_REST, capabilities.path(), catalog);
       Assertions.assertEquals(
-          new LinkedHashSet<>(Collections.singletonList("policies")),
+          new LinkedHashSet<>(Arrays.asList("policies", "grants", "unlock")),
           capabilities.advertised(),
           catalog);
       Assertions.assertEquals(
