@@ -9,6 +9,7 @@ import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.commit.TableCommit;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultException;
@@ -90,7 +91,11 @@ final class TableCommitCore {
         databaseId, tableId, Optional.of(base), candidate.getTableProperties());
     candidate = LockPolicyValidator.prepare(base, candidate);
     try {
-      candidate = readBridgeStripProtection.prepare(candidate);
+      // On a format v3 table column defaults are Iceberg's own and are stored as committed (work
+      // item W6); below v3 every initial-default is a read-bridge overlay and is dropped.
+      if (!FormatVersionRule.writesFormatV3(base, candidate)) {
+        candidate = readBridgeStripProtection.prepare(candidate);
+      }
     } catch (ColumnDefaultException e) {
       throw new UnsupportedClientOperationException(
           UnsupportedClientOperationException.Operation.COLUMN_DEFAULT, e.getMessage(), e);
