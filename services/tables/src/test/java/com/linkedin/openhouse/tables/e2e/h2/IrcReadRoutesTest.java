@@ -566,7 +566,8 @@ public class IrcReadRoutesTest {
 
   /**
    * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
-   * report route was one of them until it was served: IrcMetricsRouteTest.)
+   * report and register routes were among them until they were served: IrcMetricsRouteTest,
+   * IrcRegisterRouteTest.)
    */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
@@ -574,7 +575,6 @@ public class IrcReadRoutesTest {
       {HttpMethod.POST, "/v1/namespaces"},
       {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/register"},
       {HttpMethod.POST, "/v1/transactions/commit"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
       {HttpMethod.POST, "/v1/oauth/tokens"},

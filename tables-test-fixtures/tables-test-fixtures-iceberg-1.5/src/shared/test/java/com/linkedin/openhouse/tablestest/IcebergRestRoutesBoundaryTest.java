@@ -97,8 +97,13 @@ public class IcebergRestRoutesBoundaryTest {
       // Served: an empty create body is refused by the route itself (400), not as unserved (406).
       Assertions.assertEquals(
           400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
+      // Register, whose request class Iceberg 1.2 lacks, is one of the write routes.
+      Assertions.assertEquals(
+          400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
       return;
     }
+    Assertions.assertEquals(
+        406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
     Assertions.assertEquals(
         406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
     Assertions.assertEquals(
@@ -148,7 +153,10 @@ public class IcebergRestRoutesBoundaryTest {
     Assertions.assertTrue(
         endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/views/{view}"),
         endpoints.toString());
-    Assertions.assertEquals(17, endpoints.size(), endpoints.toString());
+    Assertions.assertTrue(
+        endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register"),
+        endpoints.toString());
+    Assertions.assertEquals(18, endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 

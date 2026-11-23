@@ -1446,7 +1446,7 @@ public class IrcWriteRoutesTest {
 
   // ---------------------------------------------------------------- still unserved
 
-  /** Namespace writes, register and transactions. (Metrics reports are served now.) */
+  /** Namespace writes and transactions. (Metrics reports and register are served now.) */
   @Test
   void namespaceWritesStillAnswer406() throws Exception {
     for (Object[] route :
@@ -1454,7 +1454,6 @@ public class IrcWriteRoutesTest {
           {HttpMethod.POST, "/v1/namespaces"},
           {HttpMethod.DELETE, "/v1/namespaces/irc_w_ns"},
           {HttpMethod.POST, "/v1/namespaces/irc_w_ns/properties"},
-          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/register"},
           {HttpMethod.POST, "/v1/transactions/commit"}
         }) {
       assertIrcError(

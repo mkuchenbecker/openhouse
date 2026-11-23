@@ -37,7 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * Iceberg line, in the spec's format ({@code "<METHOD> /v1/{prefix}/<path>"}, the strings of
  * Iceberg 1.12's {@code Endpoint}). An Iceberg 1.12 client uses only the routes listed once a list
  * is sent; with none it assumes a fixed default set that this server does not match (namespace
- * writes, register and transactions it does not serve; HEAD and views it does).
+ * writes and transactions it does not serve; HEAD and views it does).
  *
  * <p>Three checks keep the list and the routes from drifting: the list equals a fixed expectation
  * (so adding or removing a route changes this test); every listed route is served (a request does
@@ -53,13 +53,14 @@ public class IrcConfigEndpointsTest {
 
   /**
    * What this service serves on Iceberg 1.5 (its test classpath): reads, metrics reports, table
-   * writes, views.
+   * writes (register among them), views.
    */
   static final List<String> SERVED_ON_ICEBERG_1_5 =
       Arrays.asList(
           "GET /v1/{prefix}/namespaces",
           "GET /v1/{prefix}/namespaces/{namespace}",
           "HEAD /v1/{prefix}/namespaces/{namespace}",
+          "POST /v1/{prefix}/namespaces/{namespace}/register",
           "GET /v1/{prefix}/namespaces/{namespace}/tables",
           "POST /v1/{prefix}/namespaces/{namespace}/tables",
           "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
