@@ -28,6 +28,10 @@ import org.apache.spark.sql.SparkSession;
  *
  * No statement differs because of Iceberg 1.12 alone (c), and none is a defect of the IRC routes or
  * of the SQL extensions (e).
+ *
+ * <p>A {@code RENAME TO} target that names the catalog (s13b, and the cross-catalog refusal of s29)
+ * is not on the list: the OpenHouse catalog class decided those outcomes in the engine too, and the
+ * SQL extensions now read the target as it did ({@code ResolveRenameTableTarget}, decision D37).
  */
 public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
 
@@ -43,11 +47,6 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
       "Decision D20: namespace create, update and drop stay unsupported over IRC, as natively."
           + " Still an UnsupportedOperationException. The wording is the Iceberg 1.12 client's,"
           + " which refuses a route the service's config does not list before sending anything.";
-  private static final String RENAME_TARGET =
-      "Spark keeps the catalog name of a RENAME TO target as a namespace level (it does so on 3.5"
-          + " as well). OpenHouseCatalog.renameTable took a first level equal to its own name off"
-          + " and refused any other first level as a rename across catalogs. Over IRC the levels"
-          + " reach the service, which refuses a namespace of two levels with a 400.";
 
   @Override
   protected SparkSession sparkSession() throws Exception {
@@ -72,33 +71,9 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
 
   @Override
   protected List<Difference> differences() {
-    String s13b = CAT_DB + ".s13b_rename";
-    String s13bRenamed = CAT_DB + ".s13b_renamed";
     String s26 = CAT_DB + ".s26_describe";
     String s29 = CAT_DB + ".s29_rename";
     return Arrays.asList(
-        // ---- s13b: a rename whose target names the catalog. Baseline: accepted.
-        Difference.on("s13b", "ALTER TABLE " + s13b + " RENAME TO " + s13bRenamed)
-            .baseline(succeeds())
-            .here(
-                fails(
-                    BAD_REQUEST,
-                    "OpenHouse namespaces are databases and have exactly one level: " + CAT_DB))
-            .because(IRC_UNDECIDED, RENAME_TARGET),
-        // The next three follow from it: the table keeps its name.
-        Difference.on("s13b", "SELECT * FROM " + s13b)
-            .baseline(tableNotFound())
-            .here(rows("1"))
-            .because(IRC_UNDECIDED, "Follows from the refused rename: the table kept its name."),
-        Difference.on("s13b", "SELECT * FROM " + s13bRenamed)
-            .baseline(rows("1"))
-            .here(tableNotFound())
-            .because(IRC_UNDECIDED, "Follows from the refused rename: the table kept its name."),
-        Difference.on("s13b", "SHOW TABLES IN " + CAT_DB + " LIKE 's13b_*'")
-            .baseline(rows(DB + ",s13b_renamed,false"))
-            .here(rows(DB + ",s13b_rename,false"))
-            .because(IRC_UNDECIDED, "Follows from the refused rename: the table kept its name."),
-
         // ---- s19, s24: namespace statements.
         Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
@@ -213,24 +188,7 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                 DECIDED,
                 "The goal excludes the Java client's exception class from the engine. The IRC"
                     + " routes answer a native 400 as Iceberg's BadRequestException with the native"
-                    + " message (decision D16, V3 error mapping)."),
-        Difference.on(
-                "s29", "ALTER TABLE " + s29 + " RENAME TO other_catalog." + DB + ".s29_renamed")
-            .baseline(
-                fails(
-                    UNSUPPORTED,
-                    "Cannot rename tables across catalogs: from="
-                        + s29
-                        + ", to=other_catalog."
-                        + DB
-                        + ".s29_renamed"))
-            .here(
-                fails(
-                    BAD_REQUEST,
-                    "OpenHouse namespaces are databases and have exactly one level: other_catalog."
-                        + DB))
-            .because(
-                IRC_UNDECIDED, "Still refused, with another class and message. " + RENAME_TARGET));
+                    + " message (decision D16, V3 error mapping)."));
   }
 
   private static Expectation showTablesNeedsADatabase() {
