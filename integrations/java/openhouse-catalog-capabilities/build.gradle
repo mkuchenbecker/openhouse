@@ -24,4 +24,6 @@ checkstyle {
 dependencies {
   compileOnly "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
   testImplementation "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
+  // The REST capability client's tests call a stub server through Iceberg's own HTTP client.
+  testImplementation "com.linkedin.iceberg:iceberg-core:${rootProject.ext.iceberg_1_5_version}"
 }
