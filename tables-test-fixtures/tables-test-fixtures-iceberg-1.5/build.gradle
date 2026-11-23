@@ -10,32 +10,20 @@ ext {
   sparkVersion = '3.5.2'
 }
 
-// Under -PicebergFork the iceberg-1.2 fixtures project is not in the build (settings.gradle), so
-// its directories are named directly.
-def icebergFork = rootProject.hasProperty('icebergFork')
-def fixtures12 = 'tables-test-fixtures/tables-test-fixtures-iceberg-1.2'
-if (!icebergFork) {
-  project.evaluationDependsOn(':tables-test-fixtures:tables-test-fixtures_2.12')
-}
-
+// src/shared holds the sources, resources and tests the iceberg-1.2 fixtures compile as well: that
+// project names these directories. src/main and src/test are for what only this project compiles.
 sourceSets {
   main {
     java {
-      srcDirs += icebergFork
-          ? [rootProject.file("${fixtures12}/src/main/java")]
-          : project(':tables-test-fixtures:tables-test-fixtures_2.12').sourceSets.main.java.srcDirs
+      srcDirs += 'src/shared/main/java'
     }
     resources {
-      srcDirs += icebergFork
-          ? [rootProject.file("${fixtures12}/src/main/resources")]
-          : project(':tables-test-fixtures:tables-test-fixtures_2.12').sourceSets.main.resources.srcDirs
+      srcDirs += 'src/shared/main/resources'
     }
   }
   test {
     java {
-      srcDirs += icebergFork
-          ? [rootProject.file("${fixtures12}/src/test/java")]
-          : project(':tables-test-fixtures:tables-test-fixtures_2.12').sourceSets.test.java.srcDirs
+      srcDirs += 'src/shared/test/java'
     }
   }
 }

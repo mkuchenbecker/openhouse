@@ -68,7 +68,7 @@ jobs:
 
       - name: Run Data Loader Integration Tests
         working-directory: integrations/python/dataloader
-        run: make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/resources/dummy.token
+        run: make integration-tests TOKEN_FILE=../../../tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token
 
       - name: Stop Docker Containers
         if: always()
