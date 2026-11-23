@@ -57,6 +57,7 @@ public class IrcReadRoutesAuthTest {
 
   @Autowired WebApplicationContext webApplicationContext;
   @MockBean AuthorizationHandler authorizationHandler;
+  @Autowired io.micrometer.core.instrument.MeterRegistry meterRegistry;
 
   private final List<String[]> created = new ArrayList<>();
   private String token;
@@ -125,6 +126,53 @@ public class IrcReadRoutesAuthTest {
   }
 
   /**
+   * A metrics report is authorized like a read of the table: the read privilege is asked for, and a
+   * principal without it is refused 403 and its report is not counted.
+   */
+  @Test
+  void aDeniedPrincipalCannotReportMetricsAs403Forbidden() throws Exception {
+    create("t1");
+    String path = IrcMetricsRouteTest.metrics(DB, "t1");
+    MvcResult allowed = reportMetrics(path);
+    assertEquals(204, allowed.getResponse().getStatus(), body(allowed));
+    org.mockito.Mockito.verify(authorizationHandler)
+        .checkAccessDecision(
+            org.mockito.ArgumentMatchers.eq("irc_user"),
+            org.mockito.ArgumentMatchers.argThat(
+                (TableDto table) ->
+                    table != null
+                        && DB.equals(table.getDatabaseId())
+                        && "t1".equals(table.getTableId())),
+            org.mockito.ArgumentMatchers.eq(Privileges.GET_TABLE_METADATA));
+
+    stubDecision(false);
+    double counted =
+        meterRegistry
+            .counter(IrcMetricsRouteTest.COUNTER, IrcMetricsRouteTest.TYPE_TAG, "scan_report")
+            .count();
+    String message = assertIrcError(reportMetrics(path), 403, "ForbiddenException").message();
+    assertTrue(message.contains("unauthorized"), message);
+    assertEquals(
+        counted,
+        meterRegistry
+            .counter(IrcMetricsRouteTest.COUNTER, IrcMetricsRouteTest.TYPE_TAG, "scan_report")
+            .count());
+    // A missing table is 404 before any decision, as for a load.
+    assertIrcError(
+        reportMetrics(IrcMetricsRouteTest.metrics(DB, "no_such_table")),
+        404,
+        "NoSuchTableException");
+  }
+
+  private MvcResult reportMetrics(String path) throws Exception {
+    return IrcHttp.perform(
+        mvc,
+        withToken(IrcHttp.request(HttpMethod.POST, path))
+            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+            .content(IrcMetricsRouteTest.SCAN_REPORT));
+  }
+
+  /**
    * The native routes that list databases and tables and check existence make no authorization
    * decision, so the IRC routes that answer the same questions make none either.
    */
@@ -161,6 +209,14 @@ public class IrcReadRoutesAuthTest {
           401,
           "NotAuthorizedException");
     }
+    assertIrcError(
+        IrcHttp.perform(
+            withoutCredentials(),
+            IrcHttp.request(HttpMethod.POST, IrcMetricsRouteTest.metrics(DB, "t1"))
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(IrcMetricsRouteTest.SCAN_REPORT)),
+        401,
+        "NotAuthorizedException");
   }
 
   @Test

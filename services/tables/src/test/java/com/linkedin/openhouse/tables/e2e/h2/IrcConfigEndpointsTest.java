@@ -37,7 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * Iceberg line, in the spec's format ({@code "<METHOD> /v1/{prefix}/<path>"}, the strings of
  * Iceberg 1.12's {@code Endpoint}). An Iceberg 1.12 client uses only the routes listed once a list
  * is sent; with none it assumes a fixed default set that this server does not match (namespace
- * writes, register, metrics and transactions it does not serve; HEAD and views it does).
+ * writes, register and transactions it does not serve; HEAD and views it does).
  *
  * <p>Three checks keep the list and the routes from drifting: the list equals a fixed expectation
  * (so adding or removing a route changes this test); every listed route is served (a request does
@@ -51,7 +51,10 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 public class IrcConfigEndpointsTest {
 
-  /** What this service serves on Iceberg 1.5 (its test classpath): reads, table writes, views. */
+  /**
+   * What this service serves on Iceberg 1.5 (its test classpath): reads, metrics reports, table
+   * writes, views.
+   */
   static final List<String> SERVED_ON_ICEBERG_1_5 =
       Arrays.asList(
           "GET /v1/{prefix}/namespaces",
@@ -63,6 +66,7 @@ public class IrcConfigEndpointsTest {
           "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
           "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
           "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
           "GET /v1/{prefix}/namespaces/{namespace}/views",
           "POST /v1/{prefix}/namespaces/{namespace}/views",
           "GET /v1/{prefix}/namespaces/{namespace}/views/{view}",
@@ -260,7 +264,9 @@ public class IrcConfigEndpointsTest {
     MvcResult result = IrcHttp.get(mvc, "/v1/config");
     ConfigResponse parsed = IrcClientParsers.parse(body(result), ConfigResponse.class);
     assertEquals("policies,grants,unlock", parsed.overrides().get("openhouse.capabilities"));
-    assertEquals(2, parsed.defaults().size());
+    assertEquals(
+        Collections.singletonMap("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO"),
+        parsed.defaults());
     java.lang.reflect.Method endpoints;
     try {
       endpoints = ConfigResponse.class.getMethod("endpoints");

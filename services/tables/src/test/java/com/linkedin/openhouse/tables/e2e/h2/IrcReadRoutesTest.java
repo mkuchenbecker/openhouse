@@ -137,26 +137,24 @@ public class IrcReadRoutesTest {
   // ---------------------------------------------------------------- config
 
   /**
-   * Two defaults and one override. Clients do not post metrics reports: the metrics route answers
-   * 406 until it is served, and RESTCatalog posts a report after every scan and commit and logs
-   * each refusal with a stack trace (seen in the V3 write itests). Clients use HadoopFileIO, the
-   * existing OpenHouse client's FileIO: with RESTCatalog's default (ResolvingFileIO) a Spark
-   * merge-on-read delete fails, since this Iceberg line opens delete files with write properties
-   * that ResolvingFileIO does not support (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The
-   * override {@code openhouse.capabilities} names the OpenHouse features these routes serve: {@code
-   * policies}, the policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and
-   * {@code unlock}, the OpenHouse routes under the base path (V5-3). It is an override so that the
-   * client's merged catalog properties say what the server serves, whatever the client was
-   * configured with.
+   * One default and one override. Clients use HadoopFileIO, the existing OpenHouse client's FileIO:
+   * with RESTCatalog's default (ResolvingFileIO) a Spark merge-on-read delete fails, since this
+   * Iceberg line opens delete files with write properties that ResolvingFileIO does not support
+   * (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). Metrics reporting is left to the client:
+   * the metrics route is served (IrcMetricsRouteTest), so the default that turned reporting off
+   * while it answered 406 is no longer sent. The override {@code openhouse.capabilities} names the
+   * OpenHouse features these routes serve: {@code policies}, the policy patch of OpenHouse's policy
+   * statements (V5-2), and {@code grants} and {@code unlock}, the OpenHouse routes under the base
+   * path (V5-3). It is an override so that the client's merged catalog properties say what the
+   * server serves, whatever the client was configured with.
    */
   @Test
-  void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {
+  void configDefaultsUseHadoopFileIoAndLeaveMetricsReportingToTheClient() throws Exception {
     MvcResult result = IrcHttp.get(mvc, "/v1/config");
     assertEquals(200, result.getResponse().getStatus(), body(result));
     String json = body(result);
-    Map<String, String> expected = new java.util.HashMap<>();
-    expected.put("rest-metrics-reporting-enabled", "false");
-    expected.put("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
+    Map<String, String> expected =
+        Collections.singletonMap("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
     assertEquals(expected, JsonPath.read(json, "$.defaults"));
     Map<String, String> overrides =
         Collections.singletonMap("openhouse.capabilities", "policies,grants,unlock");
@@ -181,7 +179,7 @@ public class IrcReadRoutesTest {
             mvc, IrcHttp.request(HttpMethod.GET, "/v1/config").param("warehouse", "anything"));
     assertEquals(200, result.getResponse().getStatus(), body(result));
     // The same defaults as without a warehouse
-    // (configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo).
+    // (configDefaultsUseHadoopFileIoAndLeaveMetricsReportingToTheClient).
     assertEquals(
         IrcClientParsers.parse(body(IrcHttp.get(mvc, "/v1/config")), ConfigResponse.class)
             .defaults(),
@@ -566,7 +564,10 @@ public class IrcReadRoutesTest {
 
   // ---------------------------------------------------------------- out of scope
 
-  /** Spec routes this server does not serve yet answer 406 in the spec's error shape. */
+  /**
+   * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
+   * report route was one of them until it was served: IrcMetricsRouteTest.)
+   */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
     Object[][] routes = {
@@ -574,7 +575,6 @@ public class IrcReadRoutesTest {
       {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/metrics"},
       {HttpMethod.POST, "/v1/transactions/commit"},
       {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
       {HttpMethod.POST, "/v1/oauth/tokens"},
