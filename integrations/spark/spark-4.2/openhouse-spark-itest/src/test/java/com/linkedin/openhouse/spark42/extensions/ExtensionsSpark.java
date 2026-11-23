@@ -15,6 +15,7 @@ import org.apache.spark.sql.SparkSession;
  *   <li>{@code irc_adv}: the same, and it also claims {@code
  *       openhouse.capabilities=policies,grants,unlock} on the client side; the server's own config
  *       override wins, so it must behave as {@code irc}.
+ *   <li>{@code irc_stranger}: the same as {@code irc}, as a principal the service denies.
  *   <li>{@code local}: Iceberg's Hadoop catalog on a local directory, for tables that are not
  *       OpenHouse tables.
  * </ul>
@@ -23,6 +24,7 @@ final class ExtensionsSpark {
 
   static final String IRC = "irc";
   static final String IRC_ADVERTISED = "irc_adv";
+  static final String IRC_STRANGER = "irc_stranger";
   static final String LOCAL = "local";
 
   private static SparkSession spark;
@@ -56,6 +58,12 @@ final class ExtensionsSpark {
             .config(prefix + ".uri", service.uri() + "/iceberg")
             .config(prefix + ".token", service.token(ExtensionsTestService.WRITER));
       }
+      String stranger = "spark.sql.catalog." + IRC_STRANGER;
+      builder
+          .config(stranger, "org.apache.iceberg.spark.SparkCatalog")
+          .config(stranger + ".type", "rest")
+          .config(stranger + ".uri", service.uri() + "/iceberg")
+          .config(stranger + ".token", service.token(ExtensionsTestService.STRANGER));
       builder.config(
           "spark.sql.catalog." + IRC_ADVERTISED + ".openhouse.capabilities",
           "policies,grants,unlock");

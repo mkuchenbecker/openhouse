@@ -136,7 +136,11 @@ capabilities module's; Spark and `iceberg-spark-runtime-4.2_2.13` are the engine
 ./gradlew -PicebergFork :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest
 ```
 
-Over a plain `RESTCatalog` the policy statements work (the server advertises `policies` and applies
-the patch); GRANT, REVOKE, SHOW GRANTS and UNLOCK fail with the "does not support" messages they give
-on Spark 3.5 over `RESTCatalog`, until a REST capability client exists. `extensionsTest` runs in its
+Over a plain `RESTCatalog` every OpenHouse statement works. The policy statements ride the IRC
+commit (the server advertises `policies` and applies the patch). GRANT, REVOKE, SHOW GRANTS and
+UNLOCK go through the REST capability client in the capabilities module (`capabilities.rest`), which
+calls the OpenHouse routes under the IRC base with the catalog's own URI, prefix, `header.*` values
+and authentication, and gives the outcomes Spark 3.5 gives over `RESTCatalog`. The client's
+transport is the one per-line part: the module compiles `src/iceberg-1.5/java` by default and
+`src/iceberg-1.12/java` (Iceberg's `AuthManager`) under `-PicebergFork`. `extensionsTest` runs in its
 own JVM and service JVM, because Spark fixes a session's extensions when the session is built.

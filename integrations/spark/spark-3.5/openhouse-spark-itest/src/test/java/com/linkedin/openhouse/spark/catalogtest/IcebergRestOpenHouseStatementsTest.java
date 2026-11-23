@@ -23,9 +23,11 @@ import org.junit.jupiter.api.TestInstance;
  * <p>Two catalogs point at the same server: {@code irc}, configured as a user would, and {@code
  * irc_adv}, which also sets {@code openhouse.capabilities=policies,grants,unlock} on the client
  * side. The server's own config override ({@code policies,grants,unlock} since V5-3) wins over that
- * client value, so the two behave the same. Grants and unlock stay unavailable on both: the
- * resolver offers them over REST only through the capability client (C2-3), whatever the server
- * advertises.
+ * client value, so the two behave the same. Grants and unlock reach the server through the REST
+ * capability client (C2-3); this fixture's authorization handler stores no grants, so SHOW GRANTS
+ * is empty here as on the OpenHouse catalog (smoke test s17). {@code
+ * IcebergRestGrantsUnlockSqlTest} compares every outcome and the stored grants and locks with the
+ * OpenHouse catalog's.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
@@ -128,11 +130,7 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
   private void assertGrants(String catalog) {
     for (Map.Entry<String, String> statement : grantStatements(catalog).entrySet()) {
       Assertions.assertEquals(
-          "java.lang.UnsupportedOperationException: Catalog '"
-              + catalog
-              + "' does not support Grant Revoke Statements",
-          outcome(statement.getValue()),
-          statement.getKey() + " on " + catalog);
+          "ok", outcome(statement.getValue()), statement.getKey() + " on " + catalog);
     }
   }
 
@@ -145,13 +143,10 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
         outcome("ALTER TABLE " + t(catalog) + " UNLOCK"));
     spark.conf().set(UNLOCK_ENABLED, "true");
     try {
+      // The table holds no lock: the server removes nothing, with either reason.
       for (String suffix : Arrays.asList("", " REASON SYSTEM_ONLY")) {
         Assertions.assertEquals(
-            "java.lang.UnsupportedOperationException: Catalog '"
-                + catalog
-                + "' does not support UNLOCK",
-            outcome("ALTER TABLE " + t(catalog) + " UNLOCK" + suffix),
-            catalog + suffix);
+            "ok", outcome("ALTER TABLE " + t(catalog) + " UNLOCK" + suffix), catalog + suffix);
       }
     } finally {
       spark.conf().unset(UNLOCK_ENABLED);
@@ -182,13 +177,17 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
   }
 
   @Test
-  void grantStatementsAreUnsupported() {
+  void grantStatementsReachTheServerThroughTheCapabilityClient() {
+    // A grant needs a shared table; sharing is set through the OpenHouse catalog so this case does
+    // not depend on the policy case's order.
+    Assertions.assertEquals(
+        "ok", outcome("ALTER TABLE openhouse." + DB + "." + TABLE + " SET POLICY (SHARING=TRUE)"));
     assertGrants(PLAIN);
     assertGrants(ADVERTISED);
   }
 
   @Test
-  void unlockIsUnsupported() {
+  void unlockReachesTheServerThroughTheCapabilityClient() {
     assertUnlock(PLAIN);
     assertUnlock(ADVERTISED);
   }

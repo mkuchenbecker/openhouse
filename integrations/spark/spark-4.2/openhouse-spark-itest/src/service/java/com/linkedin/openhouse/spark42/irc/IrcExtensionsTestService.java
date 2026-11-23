@@ -4,6 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
+import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
+import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tablestest.SpringH2TestApplication;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -12,6 +16,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -20,6 +30,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.PartitionSpec;
@@ -35,8 +46,9 @@ import org.springframework.context.ConfigurableApplicationContext;
 /**
  * The tables service for the Spark 4.2 SQL-extensions tests, in its own JVM: the same service as
  * {@link IrcReadTestService} ({@link SpringH2TestApplication}, in-memory H2, local storage, the
- * dummy token interceptor, the authorization handler that denies {@value
- * IrcReadTestService#STRANGER}), without the read test's seeded tables.
+ * dummy token interceptor; an authorization handler that denies {@value
+ * IrcReadTestService#STRANGER}, here {@link RecordingAuthorization}, which also stores grants),
+ * without the read test's seeded tables.
  *
  * <p>Instead it serves a small control API on a second local port, so the test can do, through the
  * existing OpenHouse Java client over the native API, what Spark 3.5 with the OpenHouse catalog
@@ -52,6 +64,12 @@ import org.springframework.context.ConfigurableApplicationContext;
  *       with its class and message.
  *   <li>{@code GET /properties?table=<table>}: the table's properties, freshly loaded through the
  *       Java client.
+ *   <li>{@code GET /acls?resource=<db or db.table>}: the grants the service stored for it, as
+ *       {@code principal=role} in grant order.
+ *   <li>{@code POST /lock {"table", "reason"}}: locks {@code irc42x.<table>} through the native
+ *       lock route as the writer ({@code reason} omitted: a LEGACY lock); no SQL statement locks.
+ *   <li>{@code GET /lockState?table=<table>}: {@code unlocked}, {@code locked <reason>} or {@code
+ *       missing}, from the service's table store (loading a SYSTEM_ONLY-locked table fails).
  * </ul>
  *
  * <p>It writes {@code ready.json} (both ports and the tokens) and serves until its standard input
@@ -76,8 +94,7 @@ public final class IrcExtensionsTestService {
     Path work = Paths.get(args[0]).toAbsolutePath();
     Path warehouse = Files.createDirectories(work.resolve("warehouse"));
     ConfigurableApplicationContext context =
-        new SpringApplication(
-                SpringH2TestApplication.class, IrcReadTestService.DenyStrangerConfig.class)
+        new SpringApplication(SpringH2TestApplication.class, RecordingAuthorization.Config.class)
             .run(
                 "--server.port=0",
                 "--server.shutdown=immediate",
@@ -113,6 +130,39 @@ public final class IrcExtensionsTestService {
                       "properties",
                       new LinkedHashMap<>(
                           openhouse.loadTable(TableIdentifier.of(DB, table)).properties()));
+                  return result;
+                }));
+    RecordingAuthorization acls = context.getBean(RecordingAuthorization.class);
+    OpenHouseInternalRepository repository = context.getBean(OpenHouseInternalRepository.class);
+    control.createContext(
+        "/acls",
+        exchange ->
+            handle(
+                exchange,
+                body -> {
+                  Map<String, Object> result = new LinkedHashMap<>();
+                  result.put("acls", acls.stored(query(exchange, "resource")));
+                  return result;
+                }));
+    control.createContext(
+        "/lock",
+        exchange ->
+            handle(
+                exchange,
+                body ->
+                    lock(
+                        port,
+                        tokens.get(IrcReadTestService.WRITER),
+                        body.get("table").asText(),
+                        body.path("reason").asText(null))));
+    control.createContext(
+        "/lockState",
+        exchange ->
+            handle(
+                exchange,
+                body -> {
+                  Map<String, Object> result = new LinkedHashMap<>();
+                  result.put("lock", lockState(repository, query(exchange, "table")));
                   return result;
                 }));
     control.start();
@@ -184,6 +234,54 @@ public final class IrcExtensionsTestService {
   private static void applyPatch(Catalog openhouse, String table, String patch) {
     Table loaded = openhouse.loadTable(TableIdentifier.of(DB, table));
     loaded.updateProperties().set(POLICY_PATCH, patch).commit();
+  }
+
+  /** The value of the request's only query parameter, {@code name=value}. */
+  private static String query(HttpExchange exchange, String name) {
+    return URLDecoder.decode(
+        exchange.getRequestURI().getRawQuery().replaceFirst("^" + name + "=", ""),
+        StandardCharsets.UTF_8);
+  }
+
+  /** Locks a table through the native lock route; a failure answers 400 with the response. */
+  private static Map<String, Object> lock(int port, String token, String table, String reason)
+      throws Exception {
+    String body =
+        reason == null
+            ? "{\"locked\":true,\"message\":\"locked by the test\"}"
+            : "{\"locked\":true,\"reason\":\"" + reason + "\"}";
+    HttpResponse<String> response =
+        HttpClient.newHttpClient()
+            .send(
+                HttpRequest.newBuilder(
+                        URI.create(
+                            "http://localhost:"
+                                + port
+                                + "/v1/databases/"
+                                + DB
+                                + "/tables/"
+                                + table
+                                + "/lock"))
+                    .header("Authorization", "Bearer " + token)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+    if (response.statusCode() != 201) {
+      throw new IllegalStateException(response.statusCode() + " " + response.body());
+    }
+    return new LinkedHashMap<>();
+  }
+
+  private static String lockState(OpenHouseInternalRepository repository, String table) {
+    Optional<TableDto> dto =
+        repository.findById(TableDtoPrimaryKey.builder().databaseId(DB).tableId(table).build());
+    if (!dto.isPresent()) {
+      return "missing";
+    }
+    LockState lock =
+        dto.get().getPolicies() == null ? null : dto.get().getPolicies().getLockState();
+    return lock == null || !lock.isLocked() ? "unlocked" : "locked " + lock.getReason();
   }
 
   /** The existing OpenHouse Java client, as the Spark 3.5 tests configure it. */

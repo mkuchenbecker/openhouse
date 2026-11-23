@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.spark.capabilities;
 
 import com.linkedin.openhouse.capabilities.CapabilityNames;
+import com.linkedin.openhouse.capabilities.rest.RestCapabilityClient;
 import com.linkedin.openhouse.spark.capabilities.CatalogCapabilities.Path;
 import java.nio.file.Files;
 import java.util.Arrays;
@@ -215,17 +216,73 @@ class OpenHouseCapabilitiesTest {
     assertUnsupportedGrantsAndUnlock(catalog);
   }
 
-  @Test
-  void restCatalogAdvertisingGrantsAndUnlockStillOffersNeitherWithoutTheCapabilityClient() {
-    SparkCatalog catalog = sparkCatalog("irc", rest(null, " Policies, GRANTS ,unlock,metrics"));
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void restCatalogAdvertisingGrantsAndUnlockOffersThemThroughTheCapabilityClient(
+      boolean cacheEnabled) {
+    SparkCatalog catalog =
+        sparkCatalog("irc", rest(null, " Policies, GRANTS ,unlock,metrics"), cacheEnabled);
     CatalogCapabilities capabilities = OpenHouseCapabilities.resolve(catalog);
+    Assertions.assertEquals(Path.ICEBERG_REST, capabilities.path());
     Assertions.assertEquals(
         new LinkedHashSet<>(Arrays.asList("policies", "grants", "unlock", "metrics")),
         capabilities.advertised());
-    Assertions.assertEquals(Collections.singleton("policies"), capabilities.offered());
-    Assertions.assertFalse(capabilities.grants().isPresent());
-    Assertions.assertFalse(capabilities.unlock().isPresent());
-    assertUnsupportedGrantsAndUnlock(catalog);
+    Assertions.assertEquals(ALL, capabilities.offered());
+    Assertions.assertTrue(capabilities.grants().get() instanceof RestCapabilityClient);
+    Assertions.assertTrue(capabilities.unlock().get() instanceof RestCapabilityClient);
+    Assertions.assertTrue(
+        OpenHouseCapabilities.requireGrants(catalog) instanceof RestCapabilityClient);
+    Assertions.assertTrue(
+        OpenHouseCapabilities.requireUnlock(catalog) instanceof RestCapabilityClient);
+    OpenHouseCapabilities.requirePolicies(catalog);
+  }
+
+  @Test
+  void theCapabilityClientIsBuiltFromTheCatalogsOwnMergedProperties() {
+    // The same URI, prefix, token and header.* values as the catalog, after the server's config
+    // overrides are merged in: the statements authenticate as the session's catalog does.
+    Map<String, String> properties = rest(null, "grants,unlock");
+    properties.put("token", "the-token");
+    properties.put("prefix", "warehouse-1");
+    properties.put("header.X-Client-Name", "spark-sql");
+    SparkCatalog catalog = sparkCatalog("irc", properties);
+    RESTCatalog iceberg = (RESTCatalog) OpenHouseCapabilities.icebergCatalog(catalog);
+    RestCapabilityClient grants =
+        (RestCapabilityClient) OpenHouseCapabilities.requireGrants(catalog);
+    RestCapabilityClient unlock =
+        (RestCapabilityClient) OpenHouseCapabilities.requireUnlock(catalog);
+    Assertions.assertEquals(iceberg.properties(), grants.properties());
+    Assertions.assertEquals(iceberg.properties(), unlock.properties());
+    Assertions.assertEquals("grants,unlock", grants.properties().get("openhouse.capabilities"));
+    Assertions.assertEquals("the-token", grants.properties().get("token"));
+    Assertions.assertEquals("warehouse-1", grants.properties().get("prefix"));
+    Assertions.assertEquals("spark-sql", grants.properties().get("header.X-Client-Name"));
+  }
+
+  @Test
+  void eachCapabilityIsOfferedOnlyWhereItIsAdvertised() {
+    SparkCatalog grantsOnly = sparkCatalog("irc", rest(null, "policies,grants"));
+    Assertions.assertEquals(
+        new LinkedHashSet<>(Arrays.asList("policies", "grants")),
+        OpenHouseCapabilities.resolve(grantsOnly).offered());
+    Assertions.assertNotNull(OpenHouseCapabilities.requireGrants(grantsOnly));
+    Assertions.assertEquals(
+        "Catalog 'irc' does not support UNLOCK",
+        Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> OpenHouseCapabilities.requireUnlock(grantsOnly))
+            .getMessage());
+
+    SparkCatalog unlockOnly = sparkCatalog("irc", rest(null, "unlock"));
+    Assertions.assertEquals(
+        Collections.singleton("unlock"), OpenHouseCapabilities.resolve(unlockOnly).offered());
+    Assertions.assertNotNull(OpenHouseCapabilities.requireUnlock(unlockOnly));
+    Assertions.assertEquals(
+        "Catalog 'irc' does not support Grant Revoke Statements",
+        Assertions.assertThrows(
+                UnsupportedOperationException.class,
+                () -> OpenHouseCapabilities.requireGrants(unlockOnly))
+            .getMessage());
   }
 
   @Test
@@ -237,6 +294,9 @@ class OpenHouseCapabilitiesTest {
             () -> OpenHouseCapabilities.requirePolicies(catalog));
     Assertions.assertTrue(
         policies.getMessage().endsWith("(advertised: [grants, unlock])"), policies.getMessage());
+    Assertions.assertEquals(
+        new LinkedHashSet<>(Arrays.asList("grants", "unlock")),
+        OpenHouseCapabilities.resolve(catalog).offered());
   }
 
   @Test
