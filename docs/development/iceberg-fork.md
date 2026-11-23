@@ -49,7 +49,9 @@ property:
   `~/.gradle/iceberg-fork/<version>`.
 - `iceberg-aws` (the service's `S3FileIO` and `AwsClientFactories`, in `openhouse.iceberg-aws-conventions`)
   is the fork's too, with the AWS SDK at the pin file's `awsSdkVersion` plus `kms`, which it
-  needs; `s3` brings `apache5-client`, its default HTTP client. So no Iceberg jar of another line is
+  needs; `s3` brings `apache5-client`, its default HTTP client. The SDK's `netty-nio-client` is
+  excluded: OpenHouse builds no async S3 client, and that SDK's Netty would split the service's
+  Netty between 4.1.138 and 4.1.86 and break its WebClient. So no Iceberg jar of another line is
   on any classpath, and snapshot summaries name the fork's version. The default build keeps
   LinkedIn's `iceberg-aws` 1.2.0.6 and SDK 2.20.18; there its `iceberg-build.properties` can come
   before core's on a classpath, and `IcebergBuild.version()` then says 1.2.0.6 (seen on the Spark 3.5
