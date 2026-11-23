@@ -79,7 +79,8 @@ jobs:
       - name: Compile everything under -PicebergFork
         run: ./gradlew -PicebergFork assemble testClasses
 
-      # The suites docs/plans/irc/25-optin-green-result.md lists, plus the Spark 4.2 IRC read module.
+      # The suites docs/plans/irc/25-optin-green-result.md lists, plus the Spark 4.2 modules: the
+      # SQL extensions' unit tests, the IRC read itest and its SQL-extensions tests (extensionsTest).
       # The Spark 3.5 itest `test` task depends on its catalogTest and statementTest tasks.
       - name: Run the opt-in suites under -PicebergFork
         run: >-
@@ -89,4 +90,6 @@ jobs:
           :iceberg:openhouse:htscatalog:test
           :integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-itest:test
           :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+          :integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13:test
           :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:test
+          :integrations:spark:spark-4.2:openhouse-spark-4.2-itest:extensionsTest

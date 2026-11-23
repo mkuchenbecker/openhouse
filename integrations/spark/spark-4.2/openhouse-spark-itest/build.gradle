@@ -1,10 +1,13 @@
 // Spark 4.2 (Scala 2.13) on the fork's Iceberg 1.12 line reads OpenHouse tables over the Iceberg
 // REST Catalog (IRC) routes of the tables service, with Iceberg's own SparkCatalog and RESTCatalog
-// and no OpenHouse class in the Spark JVM. Only under -PicebergFork (settings.gradle); see
-// docs/development/iceberg-fork.md.
+// and no OpenHouse catalog or client class in the Spark JVM; with the OpenHouse SQL extensions
+// (extensionsTest), the OpenHouse statements run the same way. Only under -PicebergFork
+// (settings.gradle); see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs:
-// - test: Spark 4.2 and the fork's shaded iceberg-spark-runtime-4.2_2.13, nothing of OpenHouse.
+// - test: Spark 4.2, the fork's shaded iceberg-spark-runtime-4.2_2.13 and the OpenHouse SQL
+//   extensions' uber jar (the extensions and the capabilities module): no OpenHouse catalog, no
+//   OpenHouse Java client, no Spring.
 // - service: the tables service as the Spark 3.5 tests embed it (tables-test-fixtures, in-memory
 //   H2 stores), plus the existing OpenHouse Java client that seeds the tables through the native
 //   API. The test starts it in its own JVM (IrcReadTestServiceProcess) and stops it.
@@ -49,6 +52,8 @@ configurations {
 dependencies {
   testImplementation "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
   testImplementation("org.apache.spark:spark-sql_2.13:${spark42Version}")
+  // The OpenHouse SQL extensions for Spark 4.2 (N3-x1), as an engine would add them: the uber jar.
+  testImplementation project(path: ':integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13', configuration: 'shadow')
 
   // The service JVM: what the Spark 3.5 tests embed, and the existing Java client.
   serviceImplementation project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')
@@ -94,4 +99,32 @@ tasks.named('test') {
   }
   // The outcome depends on a server outside Gradle's view: never skip the run as up to date.
   outputs.upToDateWhen { false }
+  // The SQL-extensions tests need a session built with the extensions: their own JVM, below.
+  filter {
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.extensions.*'
+  }
 }
+
+// The OpenHouse statements from Spark 4.2 with the OpenHouse SQL extensions in the session, against
+// their own service JVM (IrcExtensionsTestService). Spark fixes a session's extensions when it is
+// built, so these tests cannot share the IRC read tests' JVM and session.
+tasks.register('extensionsTest', Test) {
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  dependsOn tasks.named('serviceClasses')
+  mustRunAfter tasks.named('test')
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  doFirst {
+    systemProperty 'irc42.service.classpath', serviceClasspath.asPath
+    systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'irc42.workdir', "${temporaryDir}"
+  }
+  outputs.upToDateWhen { false }
+  filter {
+    includeTestsMatching 'com.linkedin.openhouse.spark42.extensions.*'
+  }
+}
+tasks.named('check') { dependsOn tasks.named('extensionsTest') }
