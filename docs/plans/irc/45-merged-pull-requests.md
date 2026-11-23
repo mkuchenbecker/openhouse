@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 37 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 117, merge
-commit c1303849) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 39 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 119, merge
+commit 92c5e117) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -47,6 +47,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 116 | V16, N5, T13: an IRC create can no longer take a live table's directory; the native defect pinned; four register refusals tested (`48-v16-directory-reuse-result.md`) | 0a3bf5292fd861405d416b26227d1f504d2a1288 |
 | 115 | T10: five Spark 3.5 ALTER TABLE and CREATE TABLE test classes (12 tests) compile and run on both builds (`49-t10-spark35-tests-result.md`) | 5ea51d35aacd62f124ce2a05ad7c1c004ad2a3c4 |
 | 117 | N3b, closing N3: the Spark SQL smoke suite runs on Spark 4.2 over IRC only, 161 of 177 statements as on the baseline (`50-n3b-spark42-smoke-result.md`) | c1303849f3baf92b95896b75317171886768fec8 |
+| 114 | C9, in part: the tables and scheduler images built from the 1.12 jars start and pass the integration script in CI on every pull request; the Spark image and dataloader checks run by hand only (`52-c9-n6-result.md`) | 1fec3a0affab866b2c13425d135c9e565effb8a0 |
+| 119 | N6: `RENAME TO <catalog>.<db>.<t>` works over IRC on Spark 4.2 and on Spark 3.5 over a plain REST catalog; 166 of 177 statements as on the baseline (`52-c9-n6-result.md`) | 92c5e117cb80345b46cb8edd2d690358d9be5bba |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

@@ -1,4 +1,6 @@
 # N3b result: the Spark SQL smoke suite runs on Spark 4.2 over IRC only
+> Note, 2026-11-23: N6 (pull request 119) removed five of the 16 rows below, the rename rows of s13b and s29. 11 differences remain and 166 of 177 statements behave as on the baseline. The table below is the record as of pull request 117 and is not rewritten. See `52-c9-n6-result.md`.
+
 
 Bottom line: the Spark SQL smoke suite (31 scenarios, 177 statements) runs on Spark 4.2 with Iceberg 1.12 over the
 Iceberg REST Catalog only, with no OpenHouse catalog or client class in the engine. 161 statements give the Spark

@@ -2,9 +2,9 @@
 
 Continues `37-decisions-continued-3.md`, which is full.
 
-Bottom line: two more decisions, both dated 2026-11-23 and both the orchestrator's. D37 settles the 16 statements
-where Spark 4.2 over IRC differs from the baseline: one problem is fixed (the rename target, N6) and the rest are
-accepted. D38 records how V9e makes Iceberg 1.12 the default. None is agreed by Mike unless the entry cites a
+Bottom line: two more decisions, both dated 2026-11-23 and both the orchestrator's, each with a dated addendum. D37
+settles the 16 statements where Spark 4.2 over IRC differs from the baseline: one problem is fixed (the rename
+target, N6, done) and the rest are accepted. D38 records how V9e makes Iceberg 1.12 the default. None is agreed by Mike unless the entry cites a
 statement. Claude wrote every entry.
 
 ## D37. The differences of Spark 4.2 over IRC: rename target fixed, the rest accepted
@@ -40,6 +40,12 @@ statement. Claude wrote every entry.
   behaviour; making a refusal again needs a change in the extensions. N6 can be dropped to accept the rename
   difference.
 
+- Addendum, 2026-11-23, after N6 (pull request 119, `52-c9-n6-result.md`): the rename target is fixed and the
+  smoke suite declares 11 differences, 166 of 177 statements as on the baseline. One more detail is accepted: the
+  rule refuses during analysis, so `EXPLAIN` of a refused rename prints the refusal where the baseline prints a
+  plan, and `EXPLAIN` of an accepted rename shows `db.t2` where the baseline shows `openhouse.db.t2`. The
+  `owner` property is the same on every line, so no difference is recorded for it.
+
 ## D38. How V9e makes Iceberg 1.12 the default
 
 - Date: 2026-11-23. The orchestrator's decision, a two-way door. V9e is running on branch
@@ -56,3 +62,15 @@ statement. Claude wrote every entry.
 - References: `44-v9abc-flip-prep-result.md`, `47-v9d-deployables-result.md`; D3, D8, D18.
 - Reverse by: flipping the default property back; the 1.2 and Spark 3.1 projects are deleted by the same item and
   would come back from git history.
+- Addendum, 2026-11-23, after the first V9e results (draft pull request 118; `52-c9-n6-result.md` for C9):
+  - The three Spark 3.1-only tests are ported and pass unchanged on Spark 3.5 on both Iceberg lines, so there is no
+    Spark SQL difference between Spark 3.1 and 3.5 for those statements.
+  - Locally the default is switched: a plain build is the 1.12 line, `-PicebergLinkedIn` selects LinkedIn's 1.5.2
+    reference line, and `-PicebergFork` is a no-op with a warning. Jar contents equal what each line produced before.
+  - Accepted by the orchestrator: the reference line builds no deployables; the reference CI job runs the whole
+    build under the opt-out; the publish script is left untouched because its hash keys CI's fork cache.
+  - Added to V9e's scope: a guard so the release workflow fails early with an explanation. After the flip it would
+    publish artifacts whose metadata names fork Iceberg jars that no repository hosts.
+  - Publishing the fork's Iceberg jars anywhere is a one-way door and stays Mike's decision. It does not block work.
+  - C9 is merged in part (pull request 114). The orchestrator still waits for green CI before merging V9e. The
+    Spark image checks it did not get are C10, after V9e.

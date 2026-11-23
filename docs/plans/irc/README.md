@@ -49,13 +49,14 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `48-v16-directory-reuse-result.md` | Result of V16, N5 and T13 (pull request 116): the data-loss path run on both APIs, the three IRC ways in closed, the four native ways pinned, and the register refusal tests | Observation by a delegated agent |
 | `49-t10-spark35-tests-result.md` | Result of T10 (pull request 115): five Spark 3.5 test classes never compiled now run, why seven failed first, and the three Spark 3.1 tests with no Spark 3.5 equivalent | Observation by a delegated agent |
 | `50-n3b-spark42-smoke-result.md` | Result of N3b (pull request 117): the smoke suite on Spark 4.2 over IRC only, the 16 differing statements, the 18 extra write statements and what was not compared | Observation by a delegated agent |
-| `51-decisions-continued-4.md` | Decisions D37 and D38: the Spark 4.2 differences (rename target fixed, the rest accepted) and how V9e makes 1.12 the default | Claude, not agreed unless it cites a statement |
+| `51-decisions-continued-4.md` | Decisions D37 and D38 with dated addenda: the Spark 4.2 differences (rename target fixed, the rest accepted) and how V9e makes 1.12 the default | Claude, not agreed unless it cites a statement |
+| `52-c9-n6-result.md` | Result of C9 in part (pull request 114) and N6 (pull request 119): which Docker checks are green in CI, why the Spark image never finished building, the rename target fixed on Spark 4.2 and 3.5, 11 differences left, and the `owner` property | Observation by delegated agents |
 | `41-work-platforms-v3.md` | Work items for the native path, platforms and v3 functions, moved out of `04-work.md` | Claude |
 | `21-findings-continued.md` | The seventh to eleventh rounds of findings: what selective testing missed, the native rename defect, the red opt-in job, the flip-preparation findings, the directory-reuse data-loss risk, now confirmed by running it, and the twelfth round (T10, N3b) | Observation by delegated agents and from CI |
 | `28-capabilities-over-irc-design.md` | Design for OpenHouse capabilities (policies, grants, unlock) over IRC, with the Spark 4.2 extension build and the one-way doors | Delegated agent from reading code, adopted in D23 |
 | `29-capabilities-over-irc-work.md` | The design's work items and what is not verified | Delegated agent from reading code |
 | `30-work-defaults.md` | Work items W1 to W12 for column defaults, moved out of `04-work.md` | Claude |
-| `17-delegation.md` | Which kind of agent takes which work item | Claude |
+| `17-delegation.md` | Which kind of agent takes which work item, and the rule to commit under a shared lock | Claude |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
 

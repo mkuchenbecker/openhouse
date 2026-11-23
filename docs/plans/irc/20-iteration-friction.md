@@ -83,3 +83,8 @@ Need a repository or environment change:
 On 2026-11-23 the shared machine hit "No space left on device" twice and one out-of-memory kill. 22 GB of stale
 worktree build output was deleted. The fork is now published once under the Gradle user home instead of 400 MB per
 worktree.
+
+## Addendum, 2026-11-23: shared stash stack
+
+The commit and push hooks stash and pop on a stack all worktrees share, so two agents committing together swapped
+entries once and now must commit under a shared lock. Nothing was lost. The rule is in `17-delegation.md`.
