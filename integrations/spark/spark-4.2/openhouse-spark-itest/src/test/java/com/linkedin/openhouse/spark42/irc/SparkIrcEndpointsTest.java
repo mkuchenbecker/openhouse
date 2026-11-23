@@ -19,7 +19,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.Namespace;
+import org.apache.iceberg.catalog.TableCommit;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.ForbiddenException;
@@ -43,7 +46,8 @@ import org.junit.jupiter.api.Test;
  * <p>Before the list, a 1.12 client assumed its default set (read: {@code RESTSessionCatalog}
  * {@code DEFAULT_ENDPOINTS}): existence checks loaded the table or namespace, views were refused
  * locally, and namespace writes, register and transactions were sent and answered 406. Register and
- * metrics reports are served and listed since V6 and V7.
+ * metrics reports are served and listed since V6 and V7, and the multi-table commit route, for
+ * transactions of one table, since V8.
  */
 public class SparkIrcEndpointsTest {
 
@@ -220,20 +224,85 @@ public class SparkIrcEndpointsTest {
     assertRefusedLocally(
         failure("ALTER NAMESPACE irc." + DB + " SET PROPERTIES ('k'='v')"),
         "POST /v1/{prefix}/namespaces/{namespace}/properties");
-    try (RESTCatalog catalog = rest(READER)) {
-      assertRefusedLocally(
-          Assertions.assertThrows(
-              UnsupportedOperationException.class,
-              () -> catalog.commitTransaction(Collections.emptyList())),
-          "POST /v1/{prefix}/transactions/commit");
-    }
-    for (String path :
-        new String[] {"POST /iceberg/v1/namespaces ", "/properties ", "/transactions/commit "}) {
+    for (String path : new String[] {"POST /iceberg/v1/namespaces ", "/properties "}) {
       Assertions.assertEquals(Collections.emptyList(), requestsFor(path), path);
     }
   }
 
   // ---------------------------------------------------------------- newly served routes
+
+  private static final String TRANSACTIONS = "POST /iceberg/v1/transactions/commit ";
+
+  private static String location(RESTCatalog catalog, TableIdentifier identifier) {
+    return ((HasTableOperations) catalog.loadTable(identifier))
+        .operations()
+        .current()
+        .metadataFileLocation();
+  }
+
+  private static TableCommit setProperty(RESTCatalog catalog, TableIdentifier identifier) {
+    TableMetadata base =
+        ((HasTableOperations) catalog.loadTable(identifier)).operations().current();
+    return TableCommit.create(
+        identifier,
+        base,
+        TableMetadata.buildFrom(base).setProperties(Collections.singletonMap("tx.k", "v")).build());
+  }
+
+  /**
+   * The multi-table commit route is listed (V8), so the 1.12 client sends {@code
+   * commitTransaction}; before, it refused every transaction locally ("Server does not support
+   * endpoint"), a transaction of one table included, and it has no fallback to per-table commits. A
+   * transaction of one table commits. One of two tables reaches the server, which refuses it whole
+   * (OpenHouse cannot commit two tables atomically): Iceberg's {@link BadRequestException} with the
+   * server's message, and neither table changes.
+   *
+   * <p>No Spark statement uses the route: every commit Spark makes, of whatever statement, is a
+   * commit of one table on that table's own route. The access log shows it for the statements here
+   * and for every request the service has had from this JVM's other tests.
+   */
+  @Test
+  void aTransactionOfOneTableCommitsAndOneOfTwoIsRefusedByTheServer() throws Exception {
+    String a = "irc." + DB + ".tx_a";
+    String b = "irc." + DB + ".tx_b";
+    TableIdentifier idA = TableIdentifier.of(DB, "tx_a");
+    TableIdentifier idB = TableIdentifier.of(DB, "tx_b");
+    try (RESTCatalog catalog = rest(READER)) {
+      rows("CREATE TABLE " + a + " (id bigint, name string) USING iceberg");
+      rows("CREATE TABLE " + b + " USING iceberg AS SELECT 1L AS id, 'x' AS name");
+      rows("INSERT INTO " + a + " VALUES (1, 'a'), (2, 'b')");
+      rows("INSERT INTO " + a + " SELECT * FROM " + b);
+      rows("DELETE FROM " + a + " WHERE id = 2");
+      rows("ALTER TABLE " + a + " SET TBLPROPERTIES ('spark.k'='v')");
+      rows("ALTER TABLE " + a + " ADD COLUMN extra int");
+      awaitRequest("POST /iceberg/v1/namespaces/irc42/tables/tx_a 200");
+      Assertions.assertEquals(Collections.emptyList(), requestsFor(TRANSACTIONS));
+
+      catalog.commitTransaction(setProperty(catalog, idA));
+      Assertions.assertEquals("v", catalog.loadTable(idA).properties().get("tx.k"));
+
+      TableCommit onA = setProperty(catalog, idA);
+      TableCommit onB = setProperty(catalog, idB);
+      String locationA = location(catalog, idA);
+      String locationB = location(catalog, idB);
+      BadRequestException refused =
+          Assertions.assertThrows(
+              BadRequestException.class, () -> catalog.commitTransaction(onA, onB));
+      Assertions.assertTrue(
+          refused.getMessage().contains("OpenHouse commits one table per transaction"),
+          refused.getMessage());
+      Assertions.assertEquals(locationA, location(catalog, idA));
+      Assertions.assertEquals(locationB, location(catalog, idB));
+      Assertions.assertNull(catalog.loadTable(idB).properties().get("tx.k"));
+
+      awaitRequest(TRANSACTIONS + "400");
+      Assertions.assertEquals(
+          Arrays.asList(TRANSACTIONS + "204", TRANSACTIONS + "400"), requestsFor(TRANSACTIONS));
+    } finally {
+      rows("DROP TABLE IF EXISTS " + a);
+      rows("DROP TABLE IF EXISTS " + b);
+    }
+  }
 
   /**
    * Register is listed (V7), so the 1.12 client sends it (it used to refuse it locally). The server
