@@ -1,5 +1,5 @@
 def generatedCodeDir = "$buildDir/generated"
-// Use a shared location for the OpenAPI CLI JAR (downloaded once by :client:common:setUp)
+// Use a shared location for the OpenAPI CLI JAR (resolved by Gradle and copied there by :client:common:setUp)
 def sharedBinDir = "${rootProject.buildDir}/openapi-cli"
 def commonDir = "${project(':client:common').projectDir}"
 /**

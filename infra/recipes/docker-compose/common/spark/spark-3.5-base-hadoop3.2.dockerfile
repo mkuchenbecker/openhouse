@@ -4,11 +4,15 @@
 # Which stage provides /opt/livy and /opt/spark: "dockerhub", the stages that take Spark from
 # Apache's Docker image and build Livy in Maven's image, or "default", the builder stage below.
 # The builder stage installs some 200 Ubuntu packages and downloads Spark and Maven from
-# archive.apache.org, and Livy's build downloads a second Spark release from there. Where those
-# hosts are slow the build takes hours (on GitHub's runners: archive.apache.org at 46 kB/s, apt-get
-# 9 and 42 minutes). The "dockerhub" stages avoid Ubuntu's archive and the two tarballs, but not
-# archive.apache.org altogether: Livy's thriftserver module still downloads a Spark release from
-# it, and with that neither value has finished building on a GitHub runner yet.
+# archive.apache.org. Where those hosts are slow the build takes hours (on GitHub's runners:
+# archive.apache.org at 46 kB/s, apt-get 9 and 42 minutes). The "dockerhub" stages need only
+# Docker Hub, GitHub and Maven Central.
+#
+# Livy's own build would download one more Spark release (spark-3.1.1-bin-hadoop2.7.tgz, 228 MB)
+# from archive.apache.org, in its thriftserver and integration-test modules, for tests that
+# -DskipTests skips. -Ddownload.plugin.skip=true keeps both stages from doing it: the property
+# of the skip parameter of download-maven-plugin (1.3.0 in Livy's pom). The log then says
+# "maven-download-plugin:wget skipped".
 ARG OH_SPARK_BUILDER=dockerhub
 
 FROM eclipse-temurin:11-jdk-jammy as builder
@@ -55,18 +59,14 @@ RUN git clone https://github.com/apache/incubator-livy \
     && rm /livy_spark3_hadoop3.patch \
     && sed -i 's#apache-incubator-disclaimer-resource-bundle:1.2-SNAPSHOT#apache-incubator-disclaimer-resource-bundle:1.5#' pom.xml \
     && /opt/maven/bin/mvn clean package -B -V -e -Pspark-3.0 -Pthriftserver -DskipTests -DskipITs -Dmaven.javadoc.skip=true \
+       -Ddownload.plugin.skip=true \
     && unzip -qq ./assembly/target/${ARCHIVE_FILENAME}.zip -d /opt \
     && mv "/opt/${ARCHIVE_FILENAME}" "${LIVY_HOME}" \
     && rm -rf "/incubator-livy"
 
 # OH_SPARK_BUILDER=dockerhub. The same Livy commit, patch and Maven version on the same Java, built
 # in Maven's image, which has git and needs no package installed. Maven builds every module but
-# integration-test, which downloads a Spark release from archive.apache.org although its tests are
-# skipped, and coverage, which reports on it; neither is part of the distribution. The thriftserver
-# module (thriftserver/server), which is part of it, has the same download execution
-# (download-spark-files, spark-3.1.1-bin-hadoop2.7.tgz, 228 MB) and is not left out: on a GitHub
-# runner the build stopped there. Not fixed yet; the untried next step is -Ddownload.skip=true on
-# the mvn line. Keep the rest of the build equal to the builder stage's.
+# integration-test and coverage (which reports on it); neither is part of the distribution.
 FROM maven:3.9.4-eclipse-temurin-11 AS livy-dockerhub
 ENV LIVY_VERSION=0.8.0-incubating-SNAPSHOT \
 LIVY_HOME=/opt/livy
@@ -80,7 +80,7 @@ RUN git clone https://github.com/apache/incubator-livy /incubator-livy \
     && rm /livy_spark3_hadoop3.patch \
     && sed -i 's#apache-incubator-disclaimer-resource-bundle:1.2-SNAPSHOT#apache-incubator-disclaimer-resource-bundle:1.5#' pom.xml \
     && mvn clean package -B -V -e --no-transfer-progress -Pspark-3.0 -Pthriftserver -DskipTests -DskipITs -Dmaven.javadoc.skip=true \
-       -pl '!integration-test,!coverage' \
+       -Ddownload.plugin.skip=true -pl '!integration-test,!coverage' \
     && mkdir /opt/livy-dist \
     && cd /opt/livy-dist \
     && jar xf "/incubator-livy/assembly/target/${ARCHIVE_FILENAME}.zip" \
