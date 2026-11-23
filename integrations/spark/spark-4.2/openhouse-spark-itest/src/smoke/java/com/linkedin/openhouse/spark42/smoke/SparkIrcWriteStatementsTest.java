@@ -3,6 +3,7 @@ package com.linkedin.openhouse.spark42.smoke;
 import com.linkedin.openhouse.spark42.smoke.SmokeTestService.StoredTable;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.stream.Collectors;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -307,6 +308,49 @@ public class SparkIrcWriteStatementsTest {
         failure("ALTER TABLE " + t + " SET TBLPROPERTIES ('openhouse.foo'='hack')"),
         "table properties starting with `openhouse.` and the `policies` key cannot be modified");
     Assertions.assertFalse(stored("properties").properties().containsKey("openhouse.foo"));
+  }
+
+  /**
+   * Spark adds the property {@code owner}, the user Spark runs as, to every table it creates
+   * ({@code CatalogV2Util.withDefaultOwnership}, on Spark 3.5 as on 4.2), and Iceberg's catalog
+   * classes pass it on as a table property. The service stores it, from Spark 3.5 with the
+   * OpenHouse catalog as from here (run there for N6: {@code owner=<user>} for CREATE TABLE and for
+   * CREATE TABLE AS SELECT, with the OpenHouse catalog and over IRC). Spark hides it from SHOW
+   * TBLPROPERTIES and keeps it from being set, on both lines, so only the stored table shows it.
+   */
+  @Test
+  void aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner() throws Exception {
+    String t = fresh("owner");
+    String ctas = fresh("owner_ctas");
+    SparkSession spark = SmokeSpark.session();
+    String sparkUser = spark.sparkContext().sparkUser();
+
+    sql("CREATE TABLE " + t + " (id bigint)");
+    sql("CREATE TABLE " + ctas + " AS SELECT 1L AS id");
+    Assertions.assertEquals(sparkUser, stored("owner").properties().get("owner"));
+    Assertions.assertEquals(sparkUser, stored("owner_ctas").properties().get("owner"));
+
+    // Not shown, and not a property a statement can name.
+    Assertions.assertEquals(
+        Collections.emptyList(),
+        spark.sql("SHOW TBLPROPERTIES " + t).collectAsList().stream()
+            .map(row -> row.getString(0))
+            .filter("owner"::equals)
+            .collect(Collectors.toList()));
+    Assertions.assertEquals(
+        "[owner,Table " + t + " does not have property: owner]",
+        spark.sql("SHOW TBLPROPERTIES " + t + " ('owner')").collectAsList().get(0).toString());
+    Throwable reserved = failure("ALTER TABLE " + t + " SET TBLPROPERTIES ('owner'='someone')");
+    Assertions.assertEquals(
+        "org.apache.spark.sql.catalyst.parser.ParseException",
+        reserved.getClass().getName(),
+        String.valueOf(reserved));
+    Assertions.assertEquals(sparkUser, stored("owner").properties().get("owner"));
+
+    // A later write keeps it.
+    sql("INSERT INTO " + t + " VALUES (1)");
+    sql("ALTER TABLE " + t + " SET TBLPROPERTIES ('team'='x')");
+    Assertions.assertEquals(sparkUser, stored("owner").properties().get("owner"));
   }
 
   // ---------------------------------------------------------------- branches and staged writes

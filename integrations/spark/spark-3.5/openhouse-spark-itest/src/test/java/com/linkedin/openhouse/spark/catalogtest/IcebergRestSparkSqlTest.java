@@ -178,4 +178,114 @@ public class IcebergRestSparkSqlTest extends OpenHouseSparkITest {
     spark.sql("DROP TABLE " + t("dropped"));
     Assertions.assertFalse(openhouse.tableExists(TableIdentifier.of(DB, "dropped")));
   }
+
+  /** "ok", or the failure's class and message. */
+  private String outcome(String sql) {
+    try {
+      spark.sql(sql).collectAsList();
+      return "ok";
+    } catch (Throwable failure) {
+      return failure.getClass().getName() + ": " + failure.getMessage();
+    }
+  }
+
+  private boolean exists(String database, String table) {
+    return openhouse.tableExists(TableIdentifier.of(database, table));
+  }
+
+  /**
+   * {@code ALTER TABLE ... RENAME TO} with a target that names a catalog, through the OpenHouse
+   * catalog, as the reference, and through Iceberg's own {@code RESTCatalog}. Spark hands the
+   * target to the catalog as written. The OpenHouse catalog class reads a two-level namespace as
+   * {@code <catalog>.<database>} ({@code OpenHouseCatalog.renameTable}), and over REST the SQL
+   * extensions read it the same way ({@code ResolveRenameTableTarget}): each statement answers the
+   * same on both, and the service has the same tables afterwards.
+   */
+  @Test
+  void renameToATargetThatNamesACatalogAnswersAsThroughTheOpenHouseCatalog() {
+    for (String catalog : Arrays.asList("openhouse", CATALOG)) {
+      String otherCatalog = catalog.equals(CATALOG) ? "openhouse" : CATALOG;
+      // One set of tables per catalog, in the test's database and in one named like the catalog.
+      String t = "rn_" + catalog;
+      String inDb = catalog + "." + DB + "." + t;
+      String inNamesake = catalog + "." + catalog + "." + t;
+      for (String table : Arrays.asList(t, t + "_2", t + "_3", t + "_4")) {
+        for (String database : Arrays.asList(DB, catalog)) {
+          try {
+            openhouse.dropTable(TableIdentifier.of(database, table));
+          } catch (RuntimeException ignored) {
+            // not there
+          }
+        }
+      }
+      spark.sql("CREATE TABLE " + inDb + " (id bigint)");
+
+      // The catalog's own name is not a namespace level.
+      Assertions.assertEquals(
+          "ok", outcome("ALTER TABLE " + inDb + " RENAME TO " + inDb + "_2"), catalog);
+      Assertions.assertFalse(exists(DB, t), catalog);
+      Assertions.assertTrue(exists(DB, t + "_2"), catalog);
+
+      // Another name is another catalog: a name no catalog has, the session's other catalog (the
+      // same service), and the own name in another case.
+      for (String name : Arrays.asList("other_catalog", otherCatalog, catalog.toUpperCase())) {
+        String target = name + "." + DB + "." + t + "_3";
+        Assertions.assertEquals(
+            "java.lang.UnsupportedOperationException: Cannot rename tables across catalogs: from="
+                + inDb
+                + "_2, to="
+                + target,
+            outcome("ALTER TABLE " + inDb + "_2 RENAME TO " + target),
+            catalog);
+      }
+
+      // More than two levels, counted before the first one is looked at.
+      for (String namespace :
+          Arrays.asList(catalog + "." + DB + ".extra", "other_catalog." + DB + ".extra")) {
+        Assertions.assertEquals(
+            "org.apache.iceberg.exceptions.ValidationException: Namespace has unexpected levels "
+                + namespace,
+            outcome("ALTER TABLE " + inDb + "_2 RENAME TO " + namespace + "." + t + "_3"),
+            catalog);
+      }
+      Assertions.assertTrue(exists(DB, t + "_2"), catalog);
+      Assertions.assertFalse(exists(DB, t + "_3"), catalog);
+
+      // A target that names no catalog, with and without a database.
+      Assertions.assertEquals(
+          "ok", outcome("ALTER TABLE " + inDb + "_2 RENAME TO " + DB + "." + t + "_3"), catalog);
+      Assertions.assertEquals(
+          "ok", outcome("ALTER TABLE " + inDb + "_3 RENAME TO " + t + "_4"), catalog);
+      Assertions.assertTrue(exists(DB, t + "_4"), catalog);
+
+      // A database named like the catalog: a one-level target namespace is a database, a
+      // two-level one is <catalog>.<database>, of which one level goes.
+      spark.sql("CREATE TABLE " + inNamesake + " (id bigint)");
+      Assertions.assertEquals(
+          "ok",
+          outcome("ALTER TABLE " + inNamesake + " RENAME TO " + catalog + "." + t + "_2"),
+          catalog);
+      Assertions.assertTrue(exists(catalog, t + "_2"), catalog);
+      Assertions.assertEquals(
+          "ok",
+          outcome("ALTER TABLE " + inNamesake + "_2 RENAME TO " + inNamesake + "_3"),
+          catalog);
+      Assertions.assertTrue(exists(catalog, t + "_3"), catalog);
+      // From another database it is a rename into the database named like the catalog, which the
+      // service refuses on both paths (each with its path's exception class).
+      String acrossDatabases =
+          outcome("ALTER TABLE " + inDb + "_4 RENAME TO " + catalog + "." + t + "_4");
+      Assertions.assertTrue(
+          acrossDatabases.contains(
+              "Rename table across databases is not supported. Cannot rename table "
+                  + t
+                  + "_4 from "
+                  + DB
+                  + " to "
+                  + catalog),
+          acrossDatabases);
+      Assertions.assertTrue(exists(DB, t + "_4"), catalog);
+      Assertions.assertFalse(exists(catalog, t + "_4"), catalog);
+    }
+  }
 }
