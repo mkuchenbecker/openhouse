@@ -2,22 +2,23 @@
 
 Bottom line: all work is on two integration branches in Mike's forks. Nothing is merged into either fork's
 main or into LinkedIn's repositories. This is the single place for current state; other files record
-design, evidence and decisions. Dated 2026-11-22.
+design, evidence and decisions. Dated 2026-11-23.
 
 ## What works today
 
 - The native API and Spark 3.5 with the OpenHouse catalog are unchanged.
-- An unmodified Iceberg `RESTCatalog`, and Spark 3.5 through it, can read and write OpenHouse tables under
-  `/iceberg` with the native rules (`27-v3-irc-write-result.md`).
-- Views work over IRC for an unmodified `RESTCatalog` and Spark 3.5, without rename. They do not yet work for
-  Iceberg 1.12 clients until the config route advertises view support (`31-v4-irc-views-result.md`).
-- Spark 4.2 on the fork's Iceberg 1.12 can read OpenHouse tables over IRC, and can now also create tables and
-  insert rows over IRC, under the opt-in build (`26-n3a-spark42-read-result.md`, `32-optin-green-ci-result.md`).
-- Policies over IRC are refused with a clear 400 until the translation lands (D25).
-- The opt-in Iceberg 1.12 build passes all its listed suites.
-- Not yet over IRC: policies (refused), grants, unlock, metrics, register, multi-table commits, scan planning and
-  credentials.
-- Format v3 tables are not yet supported by the service.
+- Over the Iceberg REST Catalog, an unmodified Iceberg client and Spark 3.5 can read and write tables and views and
+  set OpenHouse policies (`27-v3-irc-write-result.md`, `31-v4-irc-views-result.md`, `33-v5-policies-over-irc-result.md`).
+  Views cannot be renamed.
+- The server serves grants and unlock routes (`36-v5-3-grants-unlock-endpoints-result.md`). The client for them is in
+  progress, so GRANT, REVOKE, SHOW GRANTS and UNLOCK do not yet work over plain IRC.
+- Spark 4.2 on the fork's Iceberg 1.12, with no OpenHouse catalog or client class, can read and write tables, use
+  views, and run every OpenHouse policy statement (`35-n3x1-spark42-extensions-result.md`). This is the opt-in build only.
+- The server tells newer clients exactly which routes it serves, so they use HEAD checks and views and do not send
+  routes that are not served.
+- Not yet over IRC: metrics reports, register table, multi-table commits, scan planning, credential vending, and view
+  rename (OpenHouse has none).
+- Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line.
 
 ## Integration branches
 
@@ -45,6 +46,10 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 95 | V4: the IRC view routes (`31-v4-irc-views-result.md`) | 71b3e826 |
 | 97 | C5, W12, I10: the opt-in build is green and under post-merge CI (`32-optin-green-ci-result.md`) | e353a36d |
 | 98 | Fix-forward: the Iceberg 1.2 line boots again (`27-v3-irc-write-result.md`, follow-ups) | cc76d485 |
+| 99 | V5-1, V5-2: policies through the IRC commit route (`33-v5-policies-over-irc-result.md`) | 1fa8cb34 |
+| 100 | C2-1, C2-2: the capabilities module and resolver (`34-c2-capabilities-resolver-result.md`) | 19605614 |
+| 101 | N3-x1: OpenHouse SQL extensions for Spark 4.2 (`35-n3x1-spark42-extensions-result.md`) | b07613f9 |
+| 102 | V5-3, V10a: grants and unlock routes; the config advertises served endpoints (`36-v5-3-grants-unlock-endpoints-result.md`) | 6015e111 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -59,27 +64,26 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
-P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, N3a, C5, W1 to W4, W12, I10,
-and the X0 design. The meaning of each
-item is in `04-work.md`.
+P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
+C2-1, C2-2, N3-x1, N3a, C5, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V5-1 with V5-2 (policies over IRC), on branch `irc/v5-policies-over-irc`.
-- C2-1 with C2-2 (capabilities module and resolver), on branch `irc/c2-capabilities-resolver`.
+- C2-3 (the REST capability client, with the rest of N3-x2), on branch `irc/c2-3-rest-capability-client`.
+- I6f (full regression on the opt-in build), on branch `irc/i6f-optin-full-regression`.
 
 ## Next
 
-V5-3, C2-3, V10a, N3b, N3-x1, N3-x2, V6, V7, V3b, V3c, I6f, then V9 and the v3 items. The capabilities
-items come from `28-capabilities-over-irc-design.md` (D23) and are listed in `04-work.md`.
+V9, then the v3 items. N3b, V6, V7, V8, V11, V12, V13, V3b and V3c can go in parallel. The order of the large work is
+D29.
 
 ## Known red on `irc-integration`
 
-The default build was red on `irc-integration` from 14f23870 (pull request 94) until cc76d485 (pull request 98),
-on the Iceberg 1.2 fixture. The fix was verified locally on the merged head (the three failing tasks and the Spark
-3.1 itest tasks pass). No post-merge run has yet been read for cc76d485. The first run of the opt-in post-merge job
-is also pending. The last completed post-merge build read was run 45062814318 on 94877d49, which passed (27
-minutes).
+- Default build: the last full run read was on cc76d485 and passed. Pull requests 99 to 102 since then passed
+  targeted suites only.
+- Opt-in Iceberg 1.12 build: the 8 failing view tests from pull request 95 are fixed by pull request 102 (verified
+  locally: Spark 3.5 catalog tests 255, 0 failed under the switch). No run of the opt-in post-merge CI job has been
+  read yet.
 
 ## How work is tested
 
@@ -92,9 +96,9 @@ now requires, after the red build (`21-findings-continued.md`).
 
 ## Waiting on Mike
 
-Nothing blocks work. His to decide: worker sessions on separate machines, because a bigger container is not
-available (D21), and the one-way doors in D12 and D24. The diagnosis behind the first is in
-`20-iteration-friction.md`.
+Nothing blocks work. His to decide: the one-way doors in D12 and D24 before any release outside the forks, and worker
+sessions on separate machines, because a bigger container is not available (D21). The diagnosis behind the second is
+in `20-iteration-friction.md`.
 
 ## How to audit
 

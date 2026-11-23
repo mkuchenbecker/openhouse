@@ -2,12 +2,13 @@
 
 Continues `16-decisions-continued.md`.
 
-Bottom line: six more decisions (D22 to D27). Four were made after the IRC table write routes landed and the
+Bottom line: eight more decisions (D22 to D29). Four were made after the IRC table write routes landed and the
 capabilities design was written: two accept behavior as built, one adopts a design, and one is a temporary refusal.
-D24 sets aside the one-way doors for Mike. D26 and D27 came after the red build and the view routes. Each has its reason, the evidence it rests on, and how to reverse it.
+D24 sets aside the one-way doors for Mike. D26 and D27 came after the red build and the view routes. D28 and D29 came
+after the policy, capability and grants work landed. Each has its reason, the evidence it rests on, and how to reverse it.
 None is agreed by Mike unless the entry cites a statement.
 
-Dates are all 2026-11-22. Claude wrote every entry.
+Dates are 2026-11-22 for D22 to D28 and 2026-11-23 for D29. Claude wrote every entry.
 
 ## D22. Behaviors of the IRC table write routes are accepted as built
 
@@ -87,3 +88,30 @@ Dates are all 2026-11-22. Claude wrote every entry.
 - Why: there is no native path to build on, and 406 is the response the spec lists for this route.
 - References: `31-v4-irc-views-result.md`, "What does not work, and why".
 - Reverse by: adding a native view rename, then serving the IRC route.
+
+## D28. The IRC view list answers an empty list where views are switched off
+
+- Date: 2026-11-22.
+- Decision: the IRC view list of a database whose views switch is off answers an empty list, where it answered the
+  native 404 "Views are disabled". A missing database is still 404, and the native view list is unchanged.
+- Why: once the server advertises view support, Spark 4.2 on Iceberg 1.12 also lists views for SHOW TABLES, and the
+  404 failed SHOW TABLES in every database with views off, which is the default. This reverses part of what pull
+  request 95 pinned.
+- References: `36-v5-3-grants-unlock-endpoints-result.md`; pull request 102.
+- Reverse by: restoring the 404 in the IRC view list.
+
+## D29. Order of the remaining large work
+
+- Date: 2026-11-23.
+- Decision: the remaining large work goes in this order, by leverage.
+  - First, measure the opt-in Iceberg 1.12 build against everything not yet run under it and against the full Spark
+    SQL harness (item I6f, in progress).
+  - Then make the 1.12 line the default build and remove the Iceberg 1.2 and Spark 3.1 projects (item V9, which
+    follows D3).
+  - Then format v3 tables and the v3 features.
+  - In parallel, the remaining IRC areas (metrics, register, multi-table commit, scan planning, credentials) and
+    Apache's compatibility kit as the proof of conformance.
+- Why: every v3 item needs the service on 1.12, and the compatibility kit ships with the newer Iceberg line. This is an
+  ordering of independent work items by dependency, not a schedule.
+- References: `04-work.md` items I6f, V9, X1 and V13; D3.
+- Reverse by: choosing a different order. Nothing is built on the order itself.
