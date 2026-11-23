@@ -54,14 +54,14 @@ Each refusal names the later work item where there is one.
 
 Four answers change, as the source record lists them (the first two were measured before the change).
 
-1. A table update (PUT) with `format-version` 3 on a v2 table used to answer 200 and upgrade the table, with no check.
-   With the switch off it now answers 400. With it on, it is the explicit upgrade.
-2. A create asking for a format version above the cluster's used to answer 201 and store v2. It now answers 400, or
-   creates v3 when the request asks for 3 and the switch is on. A create naming 1, 2 or a non-number is unchanged.
-3. A replace used to force the cluster's version. It now keeps the table's version, honours 3 when the switch is on,
-   and refuses a version below a v3 table's.
-4. An update asking for a version above the table's other than an enabled 3 used to answer 500 from Iceberg. It now
-   answers 400.
+1. A create asking for a format version above the cluster's: was 201 at v2, now 400 `FORMAT_VERSION_REFUSED`.
+2. A table PUT asking for a higher format version: 3 gave 200 and upgraded the table, 4 or 5 gave 500; now 400, except
+   an upgrade to 3 with the cluster switch on.
+3. Below v3, a commit that introduces or changes a column `write-default`: now 400 `COLUMN_DEFAULT_REQUIRES_V3`.
+4. A replace of a v3 table keeps v3 instead of forcing the cluster's version.
+
+Note, 2026-11-23: the list of four answers was corrected. The earlier list had one wrong item and has been replaced by
+the list above.
 
 The OpenHouse Java client now sends `format-version` only when it commits v3 metadata over an absent or lower base.
 A v2 request is byte-identical to before. Before this work, on Spark 3.5 the `CREATE TABLE` statement silently made a

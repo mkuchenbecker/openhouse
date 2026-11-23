@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 44 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 124, merge
-commit e2e02bfa; pull request 121 is open) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 45 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 121, merge
+commit 72947228) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-23.
 
@@ -54,6 +54,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 122 | C10: the Spark image builds on a CI runner in six to seven minutes; the Hadoop recipe starts and all 15 dataloader integration checks pass; the wait step now waits; the job runs on pull requests and after every merge (`55-c10-c14-result.md`) | 71c4c70be081b9d7c51e6538066e59c216586e5a |
 | 123 | C14: the OpenAPI generator jar is a Gradle dependency in the cache that `clean` keeps, not a `curl` after every `clean` (`55-c10-c14-result.md`) | 75d6e1851f80b0688a0aa22ddac52388c9dfbc89 |
 | 124 | X1, W6: format v3 tables behind `cluster.iceberg.format-v3.enabled`, default off; create or upgrade through the table property on both APIs; Spark's row-level writes work on them; four native answers change (`57-x1-format-v3-result.md`) | e2e02bfa0d1b674cb774f591355e19c911fee46b |
+| 121 | V15, V3b, V3c: a write whose House Tables row would not fit is refused with 400 before anything is written, the limit a cluster property (default 255); the IRC config route's FileIO follows the default storage; failed IRC requests are audited (`59-v15-v3b-v3c-result.md`) | 72947228dc77359a6c1b76fef667ba108ee7769d |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
