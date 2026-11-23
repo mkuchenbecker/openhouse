@@ -16,6 +16,7 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -82,6 +83,7 @@ public class IrcWriteRoutesTest {
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
   @Autowired AuditHandler<TableAuditEvent> tableAuditHandler;
+  @Autowired ClusterProperties clusterProperties;
 
   private final List<String[]> created = new ArrayList<>();
 
@@ -351,6 +353,53 @@ public class IrcWriteRoutesTest {
                 .setProperties(props)
                 .build()));
     assertSameStored("irc_w_n_resv", "irc_w_i_resv");
+  }
+
+  /**
+   * The server owns the format version (D19, D20): a create or a staged create whose {@code
+   * format-version} property asks for another version than the cluster's is refused with 400 naming
+   * the property and the version the server uses, as the commit that completes a staged create
+   * already refuses a mismatch. Before, the staged create silently answered metadata of the
+   * cluster's version, which its completion then stored. The cluster's own version is accepted.
+   * (The native create overwrites the property with the cluster's version; that is unchanged.)
+   */
+  @Test
+  void createOrStagedCreateAskingForAnotherFormatVersionIsRefusedAndNamesIt() throws Exception {
+    int clusterVersion = clusterProperties.getClusterIcebergFormatVersion();
+    track("irc_w_fmt", "t");
+    for (boolean staged : new boolean[] {false, true}) {
+      for (String asked : new String[] {"1", "3", "x"}) {
+        CreateTableRequest.Builder builder =
+            CreateTableRequest.builder()
+                .withName("t")
+                .withSchema(SCHEMA)
+                .setProperties(with(nativeBody("x").getTableProperties(), "format-version", asked));
+        CreateTableRequest request = staged ? builder.stageCreate().build() : builder.build();
+        String message =
+            assertIrcError(IrcWrite.create(mvc, "irc_w_fmt", request), 400, "BadRequestException")
+                .message();
+        assertTrue(message.contains("format-version"), message);
+        assertTrue(message.contains("format version " + clusterVersion), message);
+        assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_fmt", "t")));
+        assertTrue(filesUnder("irc_w_fmt").isEmpty(), filesUnder("irc_w_fmt").toString());
+      }
+    }
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_fmt",
+                CreateTableRequest.builder()
+                    .withName("t")
+                    .withSchema(SCHEMA)
+                    .setProperties(
+                        with(
+                            nativeBody("x").getTableProperties(),
+                            "format-version",
+                            Integer.toString(clusterVersion)))
+                    .stageCreate()
+                    .build()));
+    assertEquals(clusterVersion, staged.formatVersion());
   }
 
   // ---------------------------------------------------------------- staged create
