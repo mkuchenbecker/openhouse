@@ -4,10 +4,12 @@ import static com.linkedin.openhouse.internal.catalog.InternalCatalogMetricsCons
 
 import com.linkedin.openhouse.cluster.metrics.micrometer.MetricsReporter;
 import com.linkedin.openhouse.cluster.storage.StorageType;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Collections;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -31,12 +33,14 @@ public class ViewCommitEngineConfiguration {
       FileIOManager fileIOManager,
       ViewMetadataCodec viewMetadataCodec,
       StorageType storageType,
-      MeterRegistry meterRegistry) {
+      MeterRegistry meterRegistry,
+      ObjectProvider<HouseTableRowLimits> houseTableRowLimits) {
     return new ViewCommitEngineImpl(
         houseTableRepository,
         fileIOManager,
         viewMetadataCodec,
         storageType,
-        new MetricsReporter(meterRegistry, METRICS_PREFIX, Collections.emptyList()));
+        new MetricsReporter(meterRegistry, METRICS_PREFIX, Collections.emptyList()),
+        houseTableRowLimits.getIfAvailable(() -> HouseTableRowLimits.DEFAULT));
   }
 }

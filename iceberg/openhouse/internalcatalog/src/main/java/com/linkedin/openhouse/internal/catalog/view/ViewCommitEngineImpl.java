@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.catalog.Namespace;
@@ -57,6 +58,7 @@ import org.apache.iceberg.view.ViewVersion;
  * <p>Build pointer rows directly: FileIO-to-storage lookup is ambiguous for HDFS and LOCAL.
  */
 @AllArgsConstructor
+@RequiredArgsConstructor
 @Slf4j
 public class ViewCommitEngineImpl implements ViewCommitEngine {
 
@@ -75,6 +77,9 @@ public class ViewCommitEngineImpl implements ViewCommitEngine {
   private final StorageType storageType;
 
   private final MetricsReporter metricsReporter;
+
+  /** What the cluster's House Tables row holds; the production store's widths unless given. */
+  private HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 
   @Override
   public ViewCommitResult commit(ViewCommitIntent intent) {
@@ -164,8 +169,8 @@ public class ViewCommitEngineImpl implements ViewCommitEngine {
    * Rejects a write whose House Tables row the store could not take, before the metadata file is
    * written: the row write comes second, and would fail with the file already on storage.
    */
-  private static void requireRowFits(ViewCommitIntent intent, String newMetadataLocation) {
-    HouseTableRowLimits.requireMetadataLocationFits(
+  private void requireRowFits(ViewCommitIntent intent, String newMetadataLocation) {
+    houseTableRowLimits.requireMetadataLocationFits(
         "View " + intent.getDatabaseId() + "." + intent.getViewId(), newMetadataLocation);
   }
 

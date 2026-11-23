@@ -23,6 +23,7 @@ import com.linkedin.openhouse.common.exception.UnsupportedClientOperationExcepti
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalTableOperations;
 import com.linkedin.openhouse.internal.catalog.SnapshotsUtil;
@@ -122,6 +123,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Autowired SchemaValidator schemaValidator;
 
   @Autowired ClusterProperties clusterProperties;
+
+  @Autowired(required = false)
+  HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 
   @Autowired PreservedKeyChecker preservedKeyChecker;
 
@@ -280,7 +284,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     // Nothing is written here, so the commit that completes this create is the first to learn
     // that its House Tables row would not fit; say so now, before the client writes its data.
     OpenHouseInternalTableOperations.rejectIfFirstMetadataLocationWillNotFit(
-        tableIdentifier, staged);
+        tableIdentifier, staged, houseTableRowLimits);
     return staged;
   }
 

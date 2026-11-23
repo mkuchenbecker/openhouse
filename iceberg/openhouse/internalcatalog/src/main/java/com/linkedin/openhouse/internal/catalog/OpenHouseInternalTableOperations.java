@@ -98,6 +98,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
 
   PreCommitCheckRunner preCommitCheckRunner;
 
+  /** What the cluster's House Tables row holds; the production store's widths unless set. */
+  HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
+
   /**
    * Backward-compatible constructor without a {@link PostCommitOperationRunner} or {@link
    * PreCommitCheckRunner}: post-commit operations are disabled and no pre-commit checks run (no
@@ -709,7 +712,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     if (tableId != null) {
       HouseTableRowLimits.requireTableIdFits(entity, tableId);
     }
-    HouseTableRowLimits.requireMetadataLocationFits(entity, newMetadataLocation);
+    houseTableRowLimits.requireMetadataLocationFits(entity, newMetadataLocation);
   }
 
   /**
@@ -718,8 +721,8 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
    * nothing): the commit that completes it would be rejected for the same reason.
    */
   public static void rejectIfFirstMetadataLocationWillNotFit(
-      TableIdentifier tableIdentifier, TableMetadata metadata) {
-    HouseTableRowLimits.requireMetadataLocationFits(
+      TableIdentifier tableIdentifier, TableMetadata metadata, HouseTableRowLimits limits) {
+    limits.requireMetadataLocationFits(
         "Table " + tableIdentifier, rootMetadataFileLocation(metadata, 0));
   }
 
