@@ -18,7 +18,6 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -47,16 +46,23 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * PINNED DEFECT (work item V15), as it is before the fix: what the service answers, and what it
- * leaves on storage, when a write's house-table row will not fit House Tables.
+ * A write whose house-table row would not fit House Tables is refused before anything is written
+ * (work item V15).
  *
  * <p>The row holds the metadata location in 255 characters and the table name in 255 ({@code
  * user_table_row.metadata_location} and {@code table_id}, both {@code VARCHAR(255)} in {@code
  * services/housetables/ddl/0000__baseline.sql}; the H2 stand-in these tests run on has the same
  * widths). The location is {@code <table directory>/<5-digit version>-<uuid>.metadata.json}, and
  * the table directory is {@code <storage root>/<database>/<table>-<uuid>}, so it grows with the two
- * names (each at most 128 characters) and the storage root. The service writes the metadata file
- * first and the row second, so a row that does not fit fails after the file is written.
+ * names (each at most 128 characters in a create) and the storage root. The service writes the
+ * metadata file first and the row second, so before the check a row that did not fit failed after
+ * the file was written: the caller was told the commit's state was unknown (native 503, or a plain
+ * 500 from the snapshots and rename routes; IRC 500 {@code CommitStateUnknownException}), the file
+ * stayed, and a commit to an existing table left the table refusing every commit for five minutes.
+ *
+ * <p>Each test shows the limit is exact (255 fits, 256 is refused), that the refusal is the native
+ * API's 400 and IRC's 400 {@code BadRequestException} with a message naming the limit and the
+ * actual length, and that storage holds nothing it did not hold before.
  *
  * <p>Lengths are of the location as stored, which for this storage has no scheme; the native GET
  * reports it with {@code file:} in front.
@@ -69,9 +75,6 @@ public class MetadataLocationLimitTest {
   private static final Schema SCHEMA =
       IcebergSchemaHelper.getSchemaFromSchemaJson(TableModelConstants.HEALTH_SCHEMA_LITERAL);
   private static final String CODEC = "write.metadata.compression-codec";
-
-  /** What the pinned answers have in common: the row write's failure, as the store words it. */
-  private static final String ROW_WRITE_FAILED = "could not execute statement";
 
   @Autowired MockMvc mvc;
   @Autowired HouseTableRepository houseTableRepository;
@@ -210,10 +213,30 @@ public class MetadataLocationLimitTest {
     return after.stream().filter(path -> !before.contains(path)).collect(Collectors.toList());
   }
 
+  private static String tooLong(String entity, int length) {
+    return entity
+        + " cannot be written: its metadata location would be "
+        + length
+        + " characters long and House Tables holds at most 255"
+        + " (user_table_row.metadata_location). The location is made of the storage root, the"
+        + " database name, the name and UUID it was created with, and the metadata file's name.";
+  }
+
+  /** The native API's refusal: 400 with exactly {@code message}. */
+  private static void expectRefused(ResultActions answer, String message) throws Exception {
+    assertEquals(400, status(answer), json(answer));
+    assertEquals(message, message(answer));
+  }
+
+  /** IRC's refusal: 400 {@code BadRequestException} with exactly {@code message}. */
+  private static void expectRefused(MvcResult answer, String message) throws Exception {
+    assertEquals(message, assertIrcError(answer, 400, "BadRequestException").message());
+  }
+
   // ---------------------------------------------------------------- creates
 
   @Test
-  void aNativeCreateOneCharacterOverTheLimitIs503AndLeavesItsMetadataFile() throws Exception {
+  void aNativeCreateAt255FitsAndAt256IsRefusedWithNothingWritten() throws Exception {
     String db = databaseWhere255IsANameOf("mll_nc_", 60);
     String fits = name("a", 60);
     track(db, fits);
@@ -222,20 +245,32 @@ public class MetadataLocationLimitTest {
 
     String over = name("b", 61);
     TreeSet<String> before = stored(db);
-    ResultActions answer = post(mvc, plain(db, over));
-
-    expectError(answer, 503, "isn't ack'ed by server about the commit status");
-    expectError(answer, 503, ROW_WRITE_FAILED);
+    expectRefused(post(mvc, plain(db, over)), tooLong("Table " + db + "." + over, 256));
     assertFalse(hasRow(db, over));
     assertEquals(404, status(get(mvc, db, over)));
-    assertEquals(
-        Arrays.asList(over + "-<uuid>", over + "-<uuid>/00000-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    assertEquals(before, stored(db));
+  }
+
+  /** The file name counts as it will be written: compressed metadata is three characters more. */
+  @Test
+  void aNativeCreateWithCompressedMetadataCountsTheLongerFileName() throws Exception {
+    String db = databaseWhere255IsANameOf("mll_ng_", 60);
+    String fits = name("a", 57);
+    track(db, fits);
+    assertEquals(201, status(post(mvc, withProperty(plain(db, fits), CODEC, "gzip"))));
+    assertEquals(255, row(db, fits).getTableLocation().length());
+    assertTrue(row(db, fits).getTableLocation().endsWith(".gz.metadata.json"));
+
+    String over = name("b", 58);
+    TreeSet<String> before = stored(db);
+    expectRefused(
+        post(mvc, withProperty(plain(db, over), CODEC, "gzip")),
+        tooLong("Table " + db + "." + over, 256));
+    assertEquals(before, stored(db));
   }
 
   @Test
-  void anIrcCreateOneCharacterOverTheLimitIs500CommitStateUnknownAndLeavesItsMetadataFile()
-      throws Exception {
+  void anIrcCreateAt255FitsAndAt256IsRefusedWithNothingWritten() throws Exception {
     String db = databaseWhere255IsANameOf("mll_ic_", 60);
     String fits = name("a", 60);
     track(db, fits);
@@ -244,56 +279,70 @@ public class MetadataLocationLimitTest {
 
     String over = name("b", 61);
     TreeSet<String> before = stored(db);
-    MvcResult answer = IrcWrite.create(mvc, db, ircCreate(over).build());
-
-    assertTrue(
-        assertIrcError(answer, 500, "CommitStateUnknownException")
-            .message()
-            .contains(ROW_WRITE_FAILED));
+    expectRefused(
+        IrcWrite.create(mvc, db, ircCreate(over).build()),
+        tooLong("Table " + db + "." + over, 256));
     assertFalse(hasRow(db, over));
-    assertEquals(
-        Arrays.asList(over + "-<uuid>", over + "-<uuid>/00000-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    assertEquals(before, stored(db));
   }
 
+  /**
+   * The IRC staged create writes nothing, so it is where a create with data learns that it will not
+   * fit, before the client writes its data files. A staged create that fits can still be completed
+   * by a commit that does not (here one that turns metadata compression on), and that is refused
+   * too.
+   */
   @Test
-  void anIrcStagedCreateOverTheLimitIsAnsweredAndItsCompletionIs500() throws Exception {
+  void anIrcStagedCreateOverTheLimitIsRefusedAndSoIsACompletionThatCrossesIt() throws Exception {
     String db = databaseWhere255IsANameOf("mll_is_", 60);
     String over = name("b", 61);
     TreeSet<String> before = stored(db);
+    expectRefused(
+        IrcWrite.create(mvc, db, ircCreate(over).stageCreate().build()),
+        tooLong("Table " + db + "." + over, 256));
 
+    String fits = name("a", 60);
     TableMetadata staged =
-        IrcWrite.parsed(IrcWrite.create(mvc, db, ircCreate(over).stageCreate().build()));
+        IrcWrite.parsed(IrcWrite.create(mvc, db, ircCreate(fits).stageCreate().build()));
+    TableMetadata compressed =
+        TableMetadata.buildFrom(staged)
+            .discardChanges()
+            .setProperties(Collections.singletonMap(CODEC, "gzip"))
+            .build();
+    expectRefused(
+        IrcWrite.commit(mvc, db, fits, IrcWrite.createCommit(compressed, Collections.emptyList())),
+        tooLong("Table " + db + "." + fits, 258));
+    assertFalse(hasRow(db, fits));
     assertEquals(before, stored(db));
-    MvcResult completion =
-        IrcWrite.commit(mvc, db, over, IrcWrite.createCommit(staged, Collections.emptyList()));
 
-    assertIrcError(completion, 500, "CommitStateUnknownException");
-    assertFalse(hasRow(db, over));
-    assertEquals(
-        Arrays.asList(over + "-<uuid>", over + "-<uuid>/00000-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    track(db, fits);
+    IrcWrite.parsed(
+        IrcWrite.commit(mvc, db, fits, IrcWrite.createCommit(staged, Collections.emptyList())));
+    assertEquals(255, row(db, fits).getTableLocation().length());
   }
 
+  /**
+   * The native staged create writes its metadata file and no row, over the limit or not, and is
+   * left as it is; the snapshots PUT that completes the create is what is refused, before it writes
+   * a second file.
+   */
   @Test
-  void aNativeCreateWithDataOverTheLimitIs500AndLeavesAMetadataFile() throws Exception {
+  void aNativeCreateWithDataOverTheLimitIsRefusedByTheCommitThatWouldWriteTheRow()
+      throws Exception {
     String db = databaseWhere255IsANameOf("mll_nd_", 60);
     String over = name("b", 61);
-
-    // The staged create writes its metadata file and no row, over the limit or not; the snapshots
-    // PUT that completes it lets the unknown commit state through as a plain 500.
     Path dataFile = Files.createTempFile("mll_ctas", ".orc");
     dataFile.toFile().deleteOnExit();
-    ResultActions answer = NativeCtas.createWithData(mvc, plain(db, over), dataFile.toString());
 
-    expectError(answer, 500, "CommitStateUnknownException");
-    expectError(answer, 500, ROW_WRITE_FAILED);
+    expectRefused(
+        NativeCtas.createWithData(mvc, plain(db, over), dataFile.toString()),
+        tooLong("Table " + db + "." + over, 256));
+
     assertFalse(hasRow(db, over));
     assertEquals(
-        2,
-        new File(directories.get(db))
-            .listFiles()[0].listFiles((dir, file) -> file.endsWith(".metadata.json")).length,
-        "the staged create's metadata file and the failed create's");
+        1,
+        stored(db).stream().filter(path -> path.endsWith(".metadata.json")).count(),
+        "the staged create's metadata file: " + stored(db));
   }
 
   // ---------------------------------------------------------------- commits
@@ -301,10 +350,12 @@ public class MetadataLocationLimitTest {
   /**
    * A later commit can cross the limit although the create did not: the file name is three
    * characters longer once the table compresses its metadata ({@code .gz.metadata.json}), and one
-   * longer from version 100000 on.
+   * longer from version 100000 on (OpenHouseInternalTableOperationsTest). The refusal leaves the
+   * table as it was, also for the next commit: nothing reaches the catalog's retry cache, which
+   * would answer every commit on the same base as stale for five minutes.
    */
   @Test
-  void aNativeCommitThatCrossesTheLimitIs503LeavesItsFileAndBlocksTheTableForAWhile()
+  void aNativeCommitThatCrossesTheLimitIsRefusedAndTheNextCommitOnTheSameBaseLands()
       throws Exception {
     String db = databaseWhere255IsANameOf("mll_nu_", 60);
     String table = name("a", 60);
@@ -313,23 +364,19 @@ public class MetadataLocationLimitTest {
     String before = json(get(mvc, db, table));
     TreeSet<String> storedBefore = stored(db);
 
-    ResultActions answer = put(mvc, withProperty(bodyFromGet(before), CODEC, "gzip"));
-
-    expectError(answer, 503, ROW_WRITE_FAILED);
+    expectRefused(
+        put(mvc, withProperty(bodyFromGet(before), CODEC, "gzip")),
+        tooLong("Table " + db + "." + table, 258));
     expectUnchanged(mvc, before, db, table);
-    assertEquals(
-        Collections.singletonList(table + "-<uuid>/00001-<uuid>.gz.metadata.json"),
-        added(storedBefore, stored(db)));
-    // The failed commit stays in the catalog's retry cache, which answers any commit on the same
-    // base as stale for five minutes: a change that fits is refused too.
-    expectError(
-        put(mvc, withProperty(bodyFromGet(before), "user.note", "fits")),
-        409,
-        "is stale, please consider retry from application");
+    assertEquals(storedBefore, stored(db));
+
+    assertEquals(200, status(put(mvc, withProperty(bodyFromGet(before), "user.note", "fits"))));
+    assertEquals(255, row(db, table).getTableLocation().length());
   }
 
   @Test
-  void anIrcCommitThatCrossesTheLimitIs500CommitStateUnknownAndLeavesItsFile() throws Exception {
+  void anIrcCommitThatCrossesTheLimitIsRefusedAndTheNextCommitOnTheSameBaseLands()
+      throws Exception {
     String db = databaseWhere255IsANameOf("mll_iu_", 60);
     String table = name("a", 60);
     track(db, table);
@@ -337,7 +384,7 @@ public class MetadataLocationLimitTest {
     TableMetadata base = IrcWrite.load(mvc, db, table);
     TreeSet<String> storedBefore = stored(db);
 
-    MvcResult answer =
+    expectRefused(
         IrcWrite.commit(
             mvc,
             db,
@@ -345,20 +392,31 @@ public class MetadataLocationLimitTest {
             base,
             TableMetadata.buildFrom(base)
                 .setProperties(Collections.singletonMap(CODEC, "gzip"))
-                .build());
-
-    assertIrcError(answer, 500, "CommitStateUnknownException");
+                .build()),
+        tooLong("Table " + db + "." + table, 258));
     assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, db, table).metadataFileLocation());
-    assertEquals(
-        Collections.singletonList(table + "-<uuid>/00001-<uuid>.gz.metadata.json"),
-        added(storedBefore, stored(db)));
+    assertEquals(storedBefore, stored(db));
+
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            db,
+            table,
+            base,
+            TableMetadata.buildFrom(base)
+                .setProperties(Collections.singletonMap("user.note", "fits"))
+                .build()));
+    assertEquals(255, row(db, table).getTableLocation().length());
   }
 
   // ---------------------------------------------------------------- rename
 
-  /** The rename target has no length check; the create's 128 does not apply to it. */
+  /**
+   * The rename target has no length check of its own (the create's 128 does not apply to it), so
+   * the row's width is the only limit: 255 fits, as it always has, and 256 is refused.
+   */
   @Test
-  void aRenameToANameOverTheRowsLimitIs500AndLeavesItsMetadataFile() throws Exception {
+  void aRenameToANameOf255FitsAndOf256IsRefusedWithNothingWritten() throws Exception {
     String db = databaseWhere255IsANameOf("mll_rn_", 100);
     for (String source : new String[] {"a", "b", "c"}) {
       track(db, source);
@@ -371,20 +429,26 @@ public class MetadataLocationLimitTest {
 
     TreeSet<String> before = stored(db);
     String over = name("o", 256);
-    expectError(rename(mvc, db, "b", db, over), 500, "CommitStateUnknownException");
+    expectRefused(
+        rename(mvc, db, "b", db, over),
+        "Table "
+            + db
+            + ".b cannot be written under a name of 256 characters: House Tables holds at most"
+            + " 255 (user_table_row.table_id).");
+    expectRefused(
+        IrcWrite.rename(mvc, TableIdentifier.of(db, "c"), TableIdentifier.of(db, over)),
+        "Table "
+            + db
+            + ".c cannot be written under a name of 256 characters: House Tables holds at most"
+            + " 255 (user_table_row.table_id).");
     assertFalse(hasRow(db, over));
     assertEquals(200, status(get(mvc, db, "b")));
-    assertEquals(
-        Collections.singletonList("b-<uuid>/00001-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    assertEquals(200, status(get(mvc, db, "c")));
+    assertEquals(before, stored(db));
 
-    before = stored(db);
-    MvcResult irc = IrcWrite.rename(mvc, TableIdentifier.of(db, "c"), TableIdentifier.of(db, over));
-    assertEquals(500, irc.getResponse().getStatus(), IrcHttp.body(irc));
-    assertFalse(hasRow(db, over));
-    assertEquals(
-        Collections.singletonList("c-<uuid>/00001-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    // The refused source is not left blocked.
+    assertEquals(204, status(rename(mvc, db, "b", db, "b2")));
+    track(db, "b2");
   }
 
   /**
@@ -409,8 +473,9 @@ public class MetadataLocationLimitTest {
 
   // ---------------------------------------------------------------- views
 
+  /** A view's row is the same row: its create wrote the file first too, and answered 500. */
   @Test
-  void aViewCreateOneCharacterOverTheLimitIs500AndLeavesItsMetadataFile() throws Exception {
+  void aViewCreateAt255FitsAndAt256IsRefusedWithNothingWritten() throws Exception {
     String db = databaseWhere255IsANameOf("mll_vw_", 60);
     NativeViewHttp.enableViews(toggles, db);
     // A view needs its database to exist, and a database exists while it holds a table.
@@ -424,20 +489,12 @@ public class MetadataLocationLimitTest {
     String over = name("b", 61);
     TreeSet<String> before = stored(db);
     MvcResult answer = nativeView(db, over);
-    assertEquals(500, NativeViewHttp.code(answer), NativeViewHttp.body(answer));
-    assertEquals("Unexpected view service failure", str(NativeViewHttp.body(answer), "$.message"));
+    assertEquals(400, NativeViewHttp.code(answer), NativeViewHttp.body(answer));
+    assertEquals(
+        tooLong("View " + db + "." + over, 256), str(NativeViewHttp.body(answer), "$.message"));
+    expectRefused(
+        IrcViewWrite.create(mvc, db, ircView(db, over)), tooLong("View " + db + "." + over, 256));
     assertFalse(hasRow(db, over));
-    assertEquals(
-        Arrays.asList(over + "-<uuid>", over + "-<uuid>/00001-<uuid>.metadata.json"),
-        added(before, stored(db)));
-
-    String overIrc = name("c", 61);
-    before = stored(db);
-    MvcResult irc = IrcViewWrite.create(mvc, db, ircView(db, overIrc));
-    assertIrcError(irc, 500, "ServiceFailureException");
-    assertFalse(hasRow(db, overIrc));
-    assertEquals(
-        Arrays.asList(overIrc + "-<uuid>", overIrc + "-<uuid>/00001-<uuid>.metadata.json"),
-        added(before, stored(db)));
+    assertEquals(before, stored(db));
   }
 }

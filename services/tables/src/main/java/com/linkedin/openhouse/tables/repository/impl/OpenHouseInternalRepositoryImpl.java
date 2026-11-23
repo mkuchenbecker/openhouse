@@ -24,6 +24,7 @@ import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.internal.catalog.OpenHouseInternalTableOperations;
 import com.linkedin.openhouse.internal.catalog.SnapshotsUtil;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
@@ -273,8 +274,14 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                 tableDto.getTableCreator(),
                 tableProps);
     SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
-    return TableMetadata.newTableMetadata(
-        writeSchema, partitionSpec, sortOrder, tableLocation, tableProps);
+    TableMetadata staged =
+        TableMetadata.newTableMetadata(
+            writeSchema, partitionSpec, sortOrder, tableLocation, tableProps);
+    // Nothing is written here, so the commit that completes this create is the first to learn
+    // that its House Tables row would not fit; say so now, before the client writes its data.
+    OpenHouseInternalTableOperations.rejectIfFirstMetadataLocationWillNotFit(
+        tableIdentifier, staged);
+    return staged;
   }
 
   protected Table createTable(

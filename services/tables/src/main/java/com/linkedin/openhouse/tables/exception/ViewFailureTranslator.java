@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.exception;
 
+import com.linkedin.openhouse.common.exception.CommitRejectedException;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableRepositoryStateUnknownException;
 import com.linkedin.openhouse.internal.catalog.view.ViewSourceDialectMismatchException;
@@ -39,6 +40,11 @@ public final class ViewFailureTranslator {
           ViewErrorCode.INVALID_VIEW_DEFINITION,
           "System view properties cannot be added, changed or removed",
           e);
+    }
+    if (e instanceof CommitRejectedException) {
+      // A rule checked before anything is written (the House Tables row would not fit): a bad
+      // request, with the rule's own message, as the table routes answer it.
+      return new ViewApiException(ViewErrorCode.INVALID_VIEW_DEFINITION, e.getMessage(), e);
     }
     if (e instanceof AlreadyExistsException) {
       return new ViewApiException(ViewErrorCode.VIEW_ALREADY_EXISTS, "View already exists", e);
