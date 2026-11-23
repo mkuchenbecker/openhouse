@@ -193,8 +193,8 @@ public class SparkIrcEndpointsTest {
   /**
    * Spark 4.2 lists views with tables in SHOW TABLES, now that the view routes are listed. In a
    * database whose views are disabled (the default) the view list is empty, so SHOW TABLES shows
-   * the tables and SHOW VIEWS nothing (the native view list answers 404 "Views are disabled",
-   * which would fail both).
+   * the tables and SHOW VIEWS nothing (the native view list answers 404 "Views are disabled", which
+   * would fail both).
    */
   @Test
   void whereViewsAreDisabledShowTablesListsTheTablesAndShowViewsNothing() throws Exception {
