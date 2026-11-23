@@ -344,6 +344,55 @@ class OpenHouseCapabilitiesTest {
         Path.OTHER_ICEBERG, OpenHouseCapabilities.resolve(hadoopSession).path());
   }
 
+  // ------------------------------------------------------------------ OpenHouse over REST
+
+  @Test
+  void anOpenHouseRestCatalogIsIcebergsRestCatalogOnAServerThatAdvertisesACapability() {
+    // By what the catalog's merged properties advertise, whichever names those are and whether or
+    // not this client knows them.
+    for (boolean cacheEnabled : new boolean[] {true, false}) {
+      Assertions.assertTrue(
+          OpenHouseCapabilities.resolve(sparkCatalog("irc", rest(null, "policies"), cacheEnabled))
+              .isOpenHouseRest());
+    }
+    Assertions.assertTrue(
+        OpenHouseCapabilities.resolve(sparkCatalog("irc", rest(null, "metrics")))
+            .isOpenHouseRest());
+    Assertions.assertTrue(
+        OpenHouseCapabilities.resolve(sparkCatalog("irc", rest("policies", null)))
+            .isOpenHouseRest());
+
+    // A REST server that advertises none is not an OpenHouse server, whatever the client claims.
+    Assertions.assertFalse(
+        OpenHouseCapabilities.resolve(sparkCatalog("irc", rest(null, null))).isOpenHouseRest());
+    Assertions.assertFalse(
+        OpenHouseCapabilities.resolve(sparkCatalog("irc", rest(null, " , "))).isOpenHouseRest());
+    Assertions.assertFalse(
+        OpenHouseCapabilities.resolve(sparkCatalog("irc", rest("policies", ""))).isOpenHouseRest());
+
+    // An OpenHouse catalog class is not Iceberg's REST catalog: it has its own behavior. That
+    // holds for the in-process OpenHouseRestCatalog too, though it is a RESTCatalog.
+    for (String catalogClass :
+        Arrays.asList(
+            com.linkedin.openhouse.spark.OpenHouseCatalog.class.getName(),
+            com.linkedin.openhouse.spark.OpenHouseRestCatalog.class.getName())) {
+      Assertions.assertFalse(
+          OpenHouseCapabilities.resolve(sparkCatalog("openhouse", openHouse(catalogClass)))
+              .isOpenHouseRest(),
+          catalogClass);
+    }
+    Assertions.assertFalse(
+        OpenHouseCapabilities.resolve(
+                sparkCatalog("native", hadoop(CapabilityTestCatalogs.Native.class.getName())))
+            .isOpenHouseRest());
+    // Nor is any other catalog, though policy statements are not refused on an Iceberg one.
+    Assertions.assertFalse(
+        OpenHouseCapabilities.resolve(sparkCatalog("hadoop", hadoop(null))).isOpenHouseRest());
+    TableCatalog other = Mockito.mock(TableCatalog.class);
+    Mockito.when(other.name()).thenReturn("spark_catalog");
+    Assertions.assertFalse(OpenHouseCapabilities.resolve(other).isOpenHouseRest());
+  }
+
   @Test
   void aNonIcebergCatalogOffersNothing() {
     TableCatalog catalog = Mockito.mock(TableCatalog.class);
