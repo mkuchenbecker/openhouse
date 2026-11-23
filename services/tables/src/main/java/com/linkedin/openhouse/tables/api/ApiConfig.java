@@ -1,8 +1,11 @@
 package com.linkedin.openhouse.tables.api;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.handler.impl.OpenHouseTablesApiHandler;
 import com.linkedin.openhouse.tables.config.CatalogRequestContext;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionCommitPolicy;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultCommitPolicy;
 import com.linkedin.openhouse.tables.readbridge.ColumnDefaultsSource;
@@ -34,6 +37,15 @@ public class ApiConfig {
   public ReadBridgeStripProtection readBridgeStripProtection(
       ReadBridgeConfigResolver readBridgeConfigResolver) {
     return new ReadBridgeStripProtection(readBridgeConfigResolver);
+  }
+
+  /**
+   * A pre-commit check: the format version a commit may leave, and what a format v3 table may
+   * carry. The internal catalog runs it on every table commit.
+   */
+  @Bean
+  public FormatVersionCommitPolicy formatVersionCommitPolicy(ClusterProperties clusterProperties) {
+    return new FormatVersionCommitPolicy(new FormatVersionRule(clusterProperties));
   }
 
   /** A pre-commit check: the internal catalog runs it on every table commit. */

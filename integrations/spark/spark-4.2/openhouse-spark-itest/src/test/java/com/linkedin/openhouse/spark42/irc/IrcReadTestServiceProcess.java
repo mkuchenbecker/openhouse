@@ -7,7 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -24,6 +26,7 @@ final class IrcReadTestServiceProcess {
 
   private static final long START_TIMEOUT_SECONDS = 300;
   private static IrcReadTestServiceProcess instance;
+  private static IrcReadTestServiceProcess formatV3Instance;
 
   private final Process process;
   private final Path work;
@@ -37,25 +40,46 @@ final class IrcReadTestServiceProcess {
 
   static synchronized IrcReadTestServiceProcess get() throws Exception {
     if (instance == null) {
-      instance = start();
+      instance = start(Collections.emptyList());
       Runtime.getRuntime().addShutdownHook(new Thread(instance::stop, "irc42-service-stop"));
     }
     return instance;
   }
 
-  private static IrcReadTestServiceProcess start() throws Exception {
+  /**
+   * A second service, the same but for the cluster switch {@code
+   * cluster.iceberg.format-v3.enabled}, which it has on (a cluster has it off by default, and so
+   * does {@link #get()}). Started on first use, for the format v3 tests only.
+   */
+  static synchronized IrcReadTestServiceProcess getWithFormatV3() throws Exception {
+    if (formatV3Instance == null) {
+      formatV3Instance =
+          start(Collections.singletonList("-Dcluster.iceberg.format-v3.enabled=true"));
+      Runtime.getRuntime()
+          .addShutdownHook(new Thread(formatV3Instance::stop, "irc42-v3-service-stop"));
+    }
+    return formatV3Instance;
+  }
+
+  /**
+   * @param serviceJvmArgs more arguments for the service's JVM; a system property is a
+   *     configuration property of the service
+   */
+  private static IrcReadTestServiceProcess start(List<String> serviceJvmArgs) throws Exception {
     Path parent = Paths.get(required("irc42.workdir"));
     Files.createDirectories(parent);
     Path work = Files.createTempDirectory(parent, "service-");
     List<String> command =
+        new ArrayList<>(
+            Arrays.asList(
+                required("irc42.java"), "-Xmx768m", "--add-opens=java.base/java.net=ALL-UNNAMED"));
+    command.addAll(serviceJvmArgs);
+    command.addAll(
         Arrays.asList(
-            required("irc42.java"),
-            "-Xmx768m",
-            "--add-opens=java.base/java.net=ALL-UNNAMED",
             "-cp",
             required("irc42.service.classpath"),
             "com.linkedin.openhouse.spark42.irc.IrcReadTestService",
-            work.toString());
+            work.toString()));
     Process process =
         new ProcessBuilder(command)
             .directory(work.toFile())

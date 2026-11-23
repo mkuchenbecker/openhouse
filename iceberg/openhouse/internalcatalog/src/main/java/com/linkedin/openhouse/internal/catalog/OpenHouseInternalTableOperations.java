@@ -155,6 +155,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
   /** Upper bound, and value OpenHouse stamps, for {@link TableProperties#MAX_REF_AGE_MS}. */
   private static final long MAX_REF_AGE_MS_LIMIT = TimeUnit.DAYS.toMillis(7);
 
+  /** The first Iceberg format version above the one {@code TableMetadata.buildFromEmpty} gives. */
+  private static final int FORMAT_V3 = 3;
+
   @Override
   protected String tableName() {
     return this.tableIdentifier.toString();
@@ -408,7 +411,13 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       return TableMetadata.buildFrom(newMetadata)
           .setCurrentSchema(writerSchema, writerSchema.highestFieldId());
     } else {
-      return TableMetadata.buildFromEmpty()
+      TableMetadata.Builder rebuilt = TableMetadata.buildFromEmpty();
+      if (newMetadata.formatVersion() >= FORMAT_V3) {
+        // Rebuilding from empty restarts at Iceberg's default format version. A format v3 create
+        // must stay v3: its schema may hold what only v3 allows, and it was asked for.
+        rebuilt.upgradeFormatVersion(newMetadata.formatVersion());
+      }
+      return rebuilt
           .setLocation(newMetadata.location())
           .setCurrentSchema(writerSchema, newMetadata.lastColumnId())
           .addPartitionSpec(

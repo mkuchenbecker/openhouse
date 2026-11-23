@@ -4,12 +4,16 @@ import com.linkedin.openhouse.common.exception.RequestValidationFailureException
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.PartitionField;
@@ -31,10 +35,11 @@ import org.apache.iceberg.io.LocationProvider;
  * spell it.
  *
  * <p>The update commit persists the current schema, the sort order, the properties, the policies
- * and the snapshots and refs; it never writes a partition spec, location, UUID, format version or
- * statistics. A candidate that changes one of those is refused here rather than silently stored
- * without it. Partition specs are compared by what the native API can express (time partitioning
- * and clustering), and then checked by the same partition-evolution rule as a native PUT.
+ * and the snapshots and refs; it never writes a partition spec, location, UUID, statistics or
+ * encryption keys, and it changes the format version only as the upgrade {@link FormatVersionRule}
+ * allows. A candidate that changes one of those is refused here rather than silently stored without
+ * it. Partition specs are compared by what the native API can express (time partitioning and
+ * clustering), and then checked by the same partition-evolution rule as a native PUT.
  */
 final class CandidateViews {
   private CandidateViews() {}
@@ -46,15 +51,23 @@ final class CandidateViews {
       TableMetadata candidate,
       Policies policies,
       PartitionSpecMapper partitionSpecMapper,
-      boolean replace) {
-    refuseUnpersistedChanges(base, baseMetadata, candidate, partitionSpecMapper);
+      boolean replace,
+      boolean formatUpgradeAllowed) {
+    refuseUnpersistedChanges(
+        base, baseMetadata, candidate, partitionSpecMapper, formatUpgradeAllowed);
     Table candidateTable = staticTable(candidate);
+    Map<String, String> properties = new HashMap<>(candidate.properties());
+    if (baseMetadata.formatVersion() != candidate.formatVersion()) {
+      // The upgrade the format version rule allows, spelled as a native request spells it: the
+      // format-version property, which the update applies as Iceberg's upgrade.
+      properties.put(FormatVersionRule.PROPERTY, Integer.toString(candidate.formatVersion()));
+    }
     TableDto.TableDtoBuilder view =
         base.toBuilder()
             .schema(IcebergSchemaHelper.getSchemaJsonFromSchema(candidate.schema()))
             .timePartitioning(partitionSpecMapper.toTimePartitionSpec(candidateTable))
             .clustering(partitionSpecMapper.toClusteringSpec(candidateTable))
-            .tableProperties(new HashMap<>(candidate.properties()))
+            .tableProperties(properties)
             .policies(policies)
             .tableVersion(baseVersion)
             .sortOrder(SortOrderParser.toJson(candidate.sortOrder()))
@@ -100,7 +113,8 @@ final class CandidateViews {
       TableDto base,
       TableMetadata baseMetadata,
       TableMetadata candidate,
-      PartitionSpecMapper partitionSpecMapper) {
+      PartitionSpecMapper partitionSpecMapper,
+      boolean formatUpgradeAllowed) {
     List<String> changed = new ArrayList<>();
     if (!Objects.equals(baseMetadata.location(), candidate.location())) {
       changed.add("location");
@@ -108,8 +122,17 @@ final class CandidateViews {
     if (!Objects.equals(baseMetadata.uuid(), candidate.uuid())) {
       changed.add("table UUID");
     }
-    if (baseMetadata.formatVersion() != candidate.formatVersion()) {
+    if (baseMetadata.formatVersion() != candidate.formatVersion() && !formatUpgradeAllowed) {
       changed.add("format version");
+    }
+    if (!new ArrayList<>(IcebergV3.encryptionKeys(baseMetadata))
+        .equals(new ArrayList<>(IcebergV3.encryptionKeys(candidate)))) {
+      changed.add("encryption keys");
+    }
+    Set<Long> storedSnapshots = new HashSet<>(snapshotIds(baseMetadata));
+    if (candidate.snapshots().stream()
+        .anyMatch(s -> !storedSnapshots.contains(s.snapshotId()) && IcebergV3.keyId(s) != null)) {
+      changed.add("encrypted manifest lists (a snapshot's key-id)");
     }
     if (!Objects.equals(baseMetadata.statisticsFiles(), candidate.statisticsFiles())
         || !Objects.equals(

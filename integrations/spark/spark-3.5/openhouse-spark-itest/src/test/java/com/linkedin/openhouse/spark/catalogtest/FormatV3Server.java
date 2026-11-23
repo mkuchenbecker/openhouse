@@ -1,0 +1,31 @@
+package com.linkedin.openhouse.spark.catalogtest;
+
+import com.linkedin.openhouse.tablestest.SpringH2TestApplication;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.web.context.WebServerApplicationContext;
+import org.springframework.context.ConfigurableApplicationContext;
+
+/**
+ * A second embedded tables service for the format v3 itests, with the cluster switch {@code
+ * cluster.iceberg.format-v3.enabled} on. The service every other test runs against keeps it off, as
+ * a cluster does by default. One per test class, closed with it.
+ */
+final class FormatV3Server implements AutoCloseable {
+  private final ConfigurableApplicationContext context;
+
+  FormatV3Server() {
+    org.apache.catalina.webresources.TomcatURLStreamHandlerFactory.disable();
+    context =
+        new SpringApplication(SpringH2TestApplication.class)
+            .run("--server.port=0", "--cluster.iceberg.format-v3.enabled=true");
+  }
+
+  String uri() {
+    return "http://localhost:" + ((WebServerApplicationContext) context).getWebServer().getPort();
+  }
+
+  @Override
+  public void close() {
+    context.close();
+  }
+}

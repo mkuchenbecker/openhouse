@@ -30,8 +30,8 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
    * Rewrites every field name in {@code writeSchema} — at top level <em>and</em> inside nested
    * structs, list elements, and map keys/values — to use the casing from {@code tableSchema},
    * matched by Iceberg field ID. Fields whose ID is absent from {@code tableSchema} (genuinely new
-   * columns) are left unchanged. All other field attributes (type, doc, optional/required,
-   * identifier-field-ids) are preserved.
+   * columns) are left unchanged. All other field attributes (type, doc, optional/required, column
+   * defaults, identifier-field-ids) are preserved.
    *
    * <p>Uses {@code TypeUtil.indexById} to build a single flat {@code Map<Integer, NestedField>} for
    * the entire table schema in one O(n) walk, giving O(1) name lookup at any depth. Uses {@code
@@ -71,6 +71,11 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
                   // Reuse the original if nothing changed (cheap reference-equality short-circuit).
                   if (name.equals(original.name()) && type == original.type()) {
                     rebuilt.add(original);
+                  } else if (original.initialDefault() != null || original.writeDefault() != null) {
+                    // A field with column defaults keeps them: on a format v3 table they are the
+                    // table's native defaults, stored as committed.
+                    rebuilt.add(
+                        Types.NestedField.from(original).withName(name).ofType(type).build());
                   } else {
                     rebuilt.add(
                         original.isOptional()

@@ -33,6 +33,9 @@ public class ReadBridgeConfigResolver {
   /** Client contract: {@code openhouse.read-bridge.column-default.<fieldId>}. */
   public static final String COLUMN_DEFAULT_PREFIX = "openhouse.read-bridge.column-default.";
 
+  /** From this format version on, column defaults are Iceberg's native ones (work item W6). */
+  private static final int NATIVE_DEFAULTS_FORMAT_VERSION = 3;
+
   private final ColumnDefaultsSource columnDefaultsSource;
 
   public ReadBridgeConfigResolver(ColumnDefaultsSource columnDefaultsSource) {
@@ -47,6 +50,10 @@ public class ReadBridgeConfigResolver {
    * @throws TableConfigUnavailableException if the table's stored settings cannot be applied
    */
   public Map<String, String> resolve(TableDto tableDto) {
+    if (tableDto != null && tableDto.getFormatVersion() >= NATIVE_DEFAULTS_FORMAT_VERSION) {
+      // A format v3 table's column defaults are in its metadata: there is nothing to bridge.
+      return Collections.emptyMap();
+    }
     return storedColumnDefaults(tableDto).entrySet().stream()
         .collect(toMap(e -> COLUMN_DEFAULT_PREFIX + e.getKey(), Map.Entry::getValue));
   }

@@ -6,9 +6,12 @@ import com.linkedin.openhouse.common.exception.RequestValidationFailureException
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.OptionalInt;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SortOrder;
@@ -43,13 +46,20 @@ public final class IcebergCreates {
       SortOrder sortOrder,
       Map<String, String> properties,
       PartitionSpecMapper partitionSpecMapper) {
+    // Metadata built only to spell the request. It is built at format v3 when the create asks for
+    // v3, since a v3 schema (column defaults) is not valid below v3; whether the create may have
+    // v3 is the native create's rule, not decided here.
+    OptionalInt asked = FormatVersionRule.requested(properties);
     TableMetadata metadata =
         TableMetadata.newTableMetadata(
             schema,
             spec != null ? spec : PartitionSpec.unpartitioned(),
             sortOrder != null ? sortOrder : SortOrder.unsorted(),
             "candidate",
-            Collections.emptyMap());
+            asked.isPresent() && asked.getAsInt() == IcebergV3.VERSION && IcebergV3.supported()
+                ? Collections.singletonMap(
+                    FormatVersionRule.PROPERTY, Integer.toString(IcebergV3.VERSION))
+                : Collections.emptyMap());
     Table table = CandidateViews.staticTable(metadata);
     CreateUpdateTableRequestBody body;
     try {

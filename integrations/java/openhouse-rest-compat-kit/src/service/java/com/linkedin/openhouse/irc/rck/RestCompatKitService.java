@@ -72,6 +72,9 @@ public final class RestCompatKitService {
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
                 "--cluster.storages.types.local.rootpath=" + warehouse,
+                // Format v3 tables may exist on this cluster (off by default): the kit asks for
+                // them by format-version, and what it finds is what the routes do with v3.
+                "--cluster.iceberg.format-v3.enabled=true",
                 // Every request and its status, unbuffered, to read what the kit sent.
                 "--server.tomcat.accesslog.enabled=true",
                 "--server.tomcat.accesslog.directory=" + work.resolve("access"),
