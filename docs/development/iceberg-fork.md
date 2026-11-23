@@ -135,7 +135,12 @@ handler that denies one principal. It cannot share the Spark 4.2 JVM, which need
 2.21 where the service runs on 2.13. The service JVM seeds the tables through the existing OpenHouse
 Java client over the native API (Iceberg's generic writers write the Parquet and ORC files, the
 client commits each append) and records what that client shows, for comparison. Its log and work
-directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`.
+directory are under `build/openhouse-spark-4.2-itest/tmp/test/service-*`. Its tables are not: the
+warehouse is a new `oh42-*` directory under the system's temporary directory (`ready.json` names
+it), removed when the service exits. House Tables keeps a table's metadata location in 255
+characters, and a warehouse under the build directory made the location's length, and so whether
+a table could be created, depend on where the repository is checked out. The SQL-extensions tests'
+service (`tmp/extensionsTest/extensions-service-*`) does the same.
 
 The service serves the IRC write routes; `SparkIrcWriteTest` pins that `CREATE TABLE` and `INSERT`
 succeed from Spark 4.2 and the rows read back, on tables it creates and drops.
