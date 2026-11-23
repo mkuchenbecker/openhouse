@@ -17,7 +17,6 @@ import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -352,17 +351,7 @@ public class IrcFormatV3RoutesTest {
                 db,
                 "t",
                 IrcWrite.replace(
-                    base,
-                    replacement,
-                    Arrays.asList(
-                        new MetadataUpdate.AddSnapshot(snapshot),
-                        new MetadataUpdate.SetSnapshotRef(
-                            "main",
-                            snapshot.snapshotId(),
-                            org.apache.iceberg.SnapshotRefType.BRANCH,
-                            null,
-                            null,
-                            null)))));
+                    base, replacement, IrcWrite.withMain(replacement, snapshot).changes())));
     assertEquals(3, replaced.formatVersion());
     assertEquals(1L, IcebergV3.nextRowId(replaced));
     assertAnsweredIsStored(db, replaced);
