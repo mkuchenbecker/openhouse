@@ -46,6 +46,11 @@ public class ServiceAuditAspect {
   private static final MetricsReporter METRICS_REPORTER =
       MetricsReporter.of(MetricsConstant.SERVICE_AUDIT);
 
+  /**
+   * The tables service's Iceberg REST Catalog routes (its {@code IcebergRestCatalogController}).
+   */
+  private static final String ICEBERG_REST_BASE_PATH = "/iceberg";
+
   private static final String SESSION_ID = "session-id";
   private static final String ACTION_TYPE = "X-OpenHouse-Action-Type";
 
@@ -133,12 +138,77 @@ public class ServiceAuditAspect {
     return result;
   }
 
+  /**
+   * Audits a failed request whose error is rendered by a handler this aspect does not advise,
+   * because its error body is not an {@link ErrorResponseBody}: the Iceberg REST Catalog routes
+   * answer in that specification's error shape. The event is the one {@link #auditFailedRequests}
+   * emits for a native failure, built from the same request; the caller supplies what a native
+   * handler puts in its error body. Like the advice, it never fails the request it audits.
+   *
+   * @param statusCode the status answered
+   * @param responseErrorMessage the message answered
+   * @param stacktrace the failure's stack trace, abbreviated as the native handlers abbreviate it
+   * @param cause the failure's cause, as the native handlers word it
+   */
+  public void auditFailedRequest(
+      int statusCode, String responseErrorMessage, String stacktrace, String cause) {
+    try {
+      RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
+      if (requestAttributes != null) {
+        HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
+        serviceAuditHandler.audit(
+            buildServiceAuditEvent(
+                (Instant) request.getAttribute(ATTRIBUTE_START_TIME),
+                Instant.now(),
+                request,
+                statusCode,
+                responseErrorMessage,
+                stacktrace,
+                cause));
+      }
+    } catch (Exception e) {
+      log.error("Exception during auditing failed requests:\n", e);
+      METRICS_REPORTER.count(MetricsConstant.FAILED_SERVICE_AUDIT);
+    }
+  }
+
   private ServiceAuditEvent buildServiceAuditEvent(
       Instant startTime,
       Instant endTime,
       HttpServletRequest request,
       ResponseEntity<?> response,
       boolean isFailed) {
+    // Get response error message
+    String responseErrorMessage = null;
+    String stacktrace = null;
+    String cause = null;
+    if (isFailed) {
+      ErrorResponseBody errorResponseBody =
+          ((ResponseEntity<ErrorResponseBody>) response).getBody();
+      if (errorResponseBody != null) {
+        responseErrorMessage = errorResponseBody.getMessage();
+        stacktrace = errorResponseBody.getStacktrace();
+        cause = errorResponseBody.getCause();
+      }
+    }
+    return buildServiceAuditEvent(
+        startTime,
+        endTime,
+        request,
+        response.getStatusCodeValue(),
+        responseErrorMessage,
+        stacktrace,
+        cause);
+  }
+
+  private ServiceAuditEvent buildServiceAuditEvent(
+      Instant startTime,
+      Instant endTime,
+      HttpServletRequest request,
+      int statusCode,
+      String responseErrorMessage,
+      String stacktrace,
+      String cause) {
 
     // Get request payload
     JsonElement requestPayload = null;
@@ -154,19 +224,6 @@ public class ServiceAuditAspect {
       // A payload that could not be parsed is dropped from the audit event.
       log.error("Exception during parsing request payload:\n", e);
       METRICS_REPORTER.count(MetricsConstant.FAILED_PARSING_REQUEST_PAYLOAD);
-    }
-    // Get response error message
-    String responseErrorMessage = null;
-    String stacktrace = null;
-    String cause = null;
-    if (isFailed) {
-      ErrorResponseBody errorResponseBody =
-          ((ResponseEntity<ErrorResponseBody>) response).getBody();
-      if (errorResponseBody != null) {
-        responseErrorMessage = errorResponseBody.getMessage();
-        stacktrace = errorResponseBody.getStacktrace();
-        cause = errorResponseBody.getCause();
-      }
     }
     // Get request uri and query string
     String uriAndQueryString =
@@ -185,7 +242,7 @@ public class ServiceAuditAspect {
         .method(HttpMethod.valueOf(request.getMethod()))
         .uri(uriAndQueryString)
         .requestPayload(requestPayload)
-        .statusCode(response.getStatusCodeValue())
+        .statusCode(statusCode)
         .responseErrorMessage(responseErrorMessage)
         .stacktrace(stacktrace)
         .cause(cause)
@@ -197,7 +254,9 @@ public class ServiceAuditAspect {
       return ServiceName.JOBS_SERVICE;
     } else if (uri.startsWith("/hts")) {
       return ServiceName.HOUSETABLES_SERVICE;
-    } else if (uri.startsWith("/databases") || uri.matches("/v[0-9]+/databases.*")) {
+    } else if (uri.startsWith("/databases")
+        || uri.matches("/v[0-9]+/databases.*")
+        || uri.startsWith(ICEBERG_REST_BASE_PATH + "/")) {
       return ServiceName.TABLES_SERVICE;
     }
     return ServiceName.UNRECOGNIZED;

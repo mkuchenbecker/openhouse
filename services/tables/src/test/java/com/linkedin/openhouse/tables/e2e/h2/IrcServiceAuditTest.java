@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.clearInvocations;
@@ -61,11 +62,15 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * request that succeeds (around the controller method) and for one that fails (around the native
  * exception handler, whose error body carries the message, stack trace and cause).
  *
- * <p>As it is today (work item V3c): an IRC request that succeeds is audited by the same advice,
- * with the service named {@code UNRECOGNIZED}, because the aspect names the service from the
- * request path and knows only the native paths. An IRC request that fails or is refused is not
- * audited at all: its error is rendered by the IRC exception handler, which the aspect does not
- * advise.
+ * <p>An IRC request is audited as the equivalent native request is (work item V3c): the same event
+ * class from the same aspect, with the same fields. One that succeeds always was, by the advice
+ * around the controller method. One that fails or is refused is rendered by the IRC exception
+ * handler, which the aspect does not advise and whose body is the specification's and not the
+ * native one; that handler now hands the audit the status and message it answers and the failure's
+ * stack trace and cause, as the native handler's body carries them. Both name the tables service.
+ *
+ * <p>What differs is the request itself: the {@code uri} names the IRC route, the payload is the
+ * IRC body, and the status is the one IRC answers (a create is 200, where the native one is 201).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -200,10 +205,30 @@ public class IrcServiceAuditTest {
     }
   }
 
+  /** The first line of a stack trace: the failure's class and message. */
+  private static String failure(ServiceAuditEvent event) {
+    assertNotNull(event.getStacktrace());
+    return event.getStacktrace().split("\\R", 2)[0];
+  }
+
+  /**
+   * A refusal's two events agree on everything but the path and the body sent: the status, the
+   * message, the cause, and the failure the stack trace starts with.
+   */
+  private static void assertSameRefusal(
+      ServiceAuditEvent nativeEvent, ServiceAuditEvent ircEvent, int status) throws Exception {
+    assertSameAudit(nativeEvent, ircEvent, "requestPayload");
+    assertEquals(status, ircEvent.getStatusCode());
+    assertNotNull(ircEvent.getResponseErrorMessage());
+    assertNotNull(ircEvent.getCause());
+    assertEquals(failure(nativeEvent), failure(ircEvent));
+    assertEquals(ServiceName.TABLES_SERVICE, ircEvent.getServiceName());
+  }
+
   // ---------------------------------------------------------------- requests that succeed
 
   @Test
-  void aTableLoadIsAuditedLikeTheNativeGetButForTheServiceName() throws Exception {
+  void aTableLoadIsAuditedAsTheNativeGetIs() throws Exception {
     created.add("r1");
     post(mvc, nativeCreate("r1"));
 
@@ -213,7 +238,7 @@ public class IrcServiceAuditTest {
     ServiceAuditEvent ircEvent =
         theAuditOf(IrcHttp.request(HttpMethod.GET, IrcWrite.table(DB, "r1")), 200);
 
-    assertSameAudit(nativeEvent, ircEvent, "serviceName");
+    assertSameAudit(nativeEvent, ircEvent);
     assertEquals("/v1/databases/" + DB + "/tables/r1", nativeEvent.getUri());
     assertEquals("/iceberg/v1/namespaces/" + DB + "/tables/r1", ircEvent.getUri());
     assertEquals(HttpMethod.GET, ircEvent.getMethod());
@@ -222,12 +247,11 @@ public class IrcServiceAuditTest {
     assertNull(ircEvent.getResponseErrorMessage());
     assertNull(ircEvent.getStacktrace());
     assertNull(ircEvent.getCause());
-    assertEquals(ServiceName.TABLES_SERVICE, nativeEvent.getServiceName());
-    assertEquals(ServiceName.UNRECOGNIZED, ircEvent.getServiceName());
+    assertEquals(ServiceName.TABLES_SERVICE, ircEvent.getServiceName());
   }
 
   @Test
-  void aCreateIsAuditedLikeTheNativeCreateButForTheServiceName() throws Exception {
+  void aCreateIsAuditedAsTheNativeCreateIs() throws Exception {
     created.add("w1");
     created.add("w2");
     CreateUpdateTableRequestBody nativeBody = nativeCreate("w1");
@@ -237,60 +261,95 @@ public class IrcServiceAuditTest {
     ServiceAuditEvent ircEvent = theAuditOf(ircPost(ircBody), 200);
 
     // Each API's own success status and its own request body.
-    assertSameAudit(nativeEvent, ircEvent, "serviceName", "statusCode", "requestPayload");
+    assertSameAudit(nativeEvent, ircEvent, "statusCode", "requestPayload");
     assertEquals("/v1/databases/" + DB + "/tables/", nativeEvent.getUri());
     assertEquals("/iceberg/v1/namespaces/" + DB + "/tables", ircEvent.getUri());
     assertEquals(HttpMethod.POST, ircEvent.getMethod());
     assertEquals(JsonParser.parseString(nativeBody.toJson()), nativeEvent.getRequestPayload());
     assertEquals(
         JsonParser.parseString(IrcClientParsers.toJson(ircBody)), ircEvent.getRequestPayload());
-    assertEquals(ServiceName.TABLES_SERVICE, nativeEvent.getServiceName());
-    assertEquals(ServiceName.UNRECOGNIZED, ircEvent.getServiceName());
+    assertEquals(ServiceName.TABLES_SERVICE, ircEvent.getServiceName());
   }
 
   // ---------------------------------------------------------------- requests that are refused
 
   @Test
-  void aCreateRefusedForAuthorizationIsAuditedNativelyAndNotOverIrc() throws Exception {
+  void aCreateRefusedForAuthorizationIsAuditedAsTheNativeRefusalIs() throws Exception {
     created.add("a0");
     post(mvc, nativeCreate("a0"));
     stubDecision(false);
 
     ServiceAuditEvent nativeEvent = theAuditOf(nativePost(nativeCreate("a1")), 403);
-    assertEquals(ServiceName.TABLES_SERVICE, nativeEvent.getServiceName());
-    assertNotNull(nativeEvent.getResponseErrorMessage());
-    assertNotNull(nativeEvent.getStacktrace());
+    ServiceAuditEvent ircEvent = theAuditOf(ircPost(ircCreate("a1")), 403);
 
-    assertEquals(Collections.emptyList(), audited(ircPost(ircCreate("a1")), 403));
+    assertSameRefusal(nativeEvent, ircEvent, 403);
+    assertEquals("/iceberg/v1/namespaces/" + DB + "/tables", ircEvent.getUri());
+    assertEquals(
+        JsonParser.parseString(IrcClientParsers.toJson(ircCreate("a1"))),
+        ircEvent.getRequestPayload());
+    assertTrue(
+        failure(ircEvent).startsWith("org.springframework.security.access.AccessDeniedException"),
+        failure(ircEvent));
   }
 
   @Test
-  void aCreateRefusedForValidationIsAuditedNativelyAndNotOverIrc() throws Exception {
+  void aCreateRefusedForValidationIsAuditedAsTheNativeRefusalIs() throws Exception {
     String tooLong = String.join("", Collections.nCopies(129, "v"));
 
     ServiceAuditEvent nativeEvent = theAuditOf(nativePost(nativeCreate(tooLong)), 400);
+    ServiceAuditEvent ircEvent = theAuditOf(ircPost(ircCreate(tooLong)), 400);
+
+    assertSameRefusal(nativeEvent, ircEvent, 400);
     assertEquals(
         "CreateUpdateTableRequestBody.tableId : size must be between 0 and 128",
-        nativeEvent.getResponseErrorMessage());
-
-    assertEquals(Collections.emptyList(), audited(ircPost(ircCreate(tooLong)), 400));
+        ircEvent.getResponseErrorMessage());
   }
 
   @Test
-  void aCreateRefusedForAConflictIsAuditedNativelyAndNotOverIrc() throws Exception {
+  void aCreateRefusedForAConflictIsAuditedAsTheNativeRefusalIs() throws Exception {
     created.add("c1");
     post(mvc, nativeCreate("c1"));
 
     ServiceAuditEvent nativeEvent = theAuditOf(nativePost(nativeCreate("c1")), 409);
-    assertNotNull(nativeEvent.getResponseErrorMessage());
+    ServiceAuditEvent ircEvent = theAuditOf(ircPost(ircCreate("c1")), 409);
 
-    assertEquals(Collections.emptyList(), audited(ircPost(ircCreate("c1")), 409));
+    assertSameRefusal(nativeEvent, ircEvent, 409);
   }
 
+  /** A failure of the IRC layer itself, with no native request to compare with. */
   @Test
-  void aRouteThisServerDoesNotServeIsNotAudited() throws Exception {
+  void aRouteThisServerDoesNotServeIsAudited() throws Exception {
+    ServiceAuditEvent event =
+        theAuditOf(IrcHttp.request(HttpMethod.GET, "/v1/namespaces/" + DB + "/functions"), 406);
+
+    assertEquals(ServiceName.TABLES_SERVICE, event.getServiceName());
+    assertEquals(HttpMethod.GET, event.getMethod());
+    assertEquals("/iceberg/v1/namespaces/" + DB + "/functions", event.getUri());
+    assertEquals(406, event.getStatusCode());
     assertEquals(
-        Collections.emptyList(),
-        audited(IrcHttp.request(HttpMethod.GET, "/v1/namespaces/" + DB + "/functions"), 406));
+        "This server does not support GET /v1/namespaces/" + DB + "/functions yet",
+        event.getResponseErrorMessage());
+    assertEquals("Not Available", event.getCause());
+    assertNotNull(event.getStacktrace());
+  }
+
+  /**
+   * The audit takes the stack trace; the client still gets the specification's error and no more.
+   */
+  @Test
+  void theStackTraceGoesToTheAuditAndNotToTheClient() throws Exception {
+    created.add("s1");
+    post(mvc, nativeCreate("s1"));
+    clearInvocations(serviceAuditHandler);
+
+    org.apache.iceberg.rest.responses.ErrorResponse error =
+        IrcHttp.assertIrcError(
+            IrcHttp.perform(mvc, ircPost(ircCreate("s1"))), 409, "AlreadyExistsException");
+
+    assertNull(error.stack());
+    ArgumentCaptor<ServiceAuditEvent> events = ArgumentCaptor.forClass(ServiceAuditEvent.class);
+    verify(serviceAuditHandler).audit(events.capture());
+    assertEquals(error.message(), events.getValue().getResponseErrorMessage());
+    assertTrue(events.getValue().getStacktrace().contains("\tat "));
   }
 }
