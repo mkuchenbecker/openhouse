@@ -41,3 +41,16 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
 - The in-memory stand-ins for the house table store overwrote a view's row on a rename onto its key, which the real
   store never does, so tests reported a success that production refuses. Both stand-ins now refuse (pull request
   106). The same kind of gap as T5.
+
+## Ninth round (the red opt-in job, 2026-11-23)
+
+- The opt-in Iceberg 1.12 job was red on five post-merge runs in a row and notes said it was green. Two test-side
+  causes, fixed by pull requests 107 and 108 (`43-optin-ci-red-result.md`).
+- Product, both Iceberg lines, not fixed: the tables service accepts a create whose metadata location will not fit
+  House Tables' 255-character column, then answers 503 with commit status unknown (`CommitStateUnknownException`
+  at the client) and leaves the metadata file it wrote. Table names have no length check. Seen against the H2
+  stand-in; the real store's DDL has the same `VARCHAR(255)`. Work item V15.
+- Test: the Spark 4.2 itest's `test` task failed once in six post-merge runs (run 45099517406). The test is unknown
+  and path length is ruled out. The job now prints failed tests, so the next occurrence will name it. Work item T8.
+- Test: the compatibility kit's service builds its warehouse under the checkout too, and is green on the runner with
+  about 23 characters to spare. Work item T9.

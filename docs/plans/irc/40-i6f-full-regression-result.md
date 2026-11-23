@@ -1,5 +1,8 @@
 # Full regression of the opt-in Iceberg 1.12 build (I6f): result
 
+> Correction, 2026-11-23: %s In CI the opt-in job failed on five post-merge runs in a row (6015e111 to bfdcf266) and
+> first passed on run 45120792269 at 3222cf78. See `43-optin-ci-red-result.md`. The text below is unchanged.
+
 Bottom line: the 1.12 line is not ready to become the default, but it is close. Every test task that
 `./gradlew build` runs under `-PicebergFork` passes on the final head, the Docker-backed tests pass, and the CI's
 Docker integration step passes with images built from the fork build. No problem was found in OpenHouse's own

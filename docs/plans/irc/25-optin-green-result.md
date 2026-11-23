@@ -1,5 +1,8 @@
 # Opt-in build made green: result
 
+> Correction, 2026-11-23: %s In CI the opt-in job failed on five post-merge runs in a row (6015e111 to bfdcf266) and
+> first passed on run 45120792269 at 3222cf78. See `43-optin-ci-red-result.md`. The text below is unchanged.
+
 Bottom line: the default build gives the same results as before, plus the new tests. The opt-in Iceberg 1.12 build
 passes every listed suite except two seam view cases. Written by a delegated agent from branch `irc/i6-optin-green`
 (openhouse pull request 91, a draft into `irc-integration`, on top of pull request 87). Counts are tests and

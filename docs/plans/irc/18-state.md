@@ -30,7 +30,9 @@ design, evidence and decisions. Dated 2026-11-23.
   reference server's messages. What "conforming" should mean is a question put to Mike
   (D32). The measurements are `39-v13-compat-kit-result.md` and
   `42-v13b-spec-deviations-result.md`.
-- Iceberg 1.12 as the default: the whole build passes under the opt-in switch, and the Spark SQL harness differs
+- Iceberg 1.12 as the default: the opt-in build was red in CI on five post-merge runs (pull requests 102 to 106)
+  and nobody read it until 2026-11-23. Pull requests 107 and 108 fixed two test-side causes, and run 45120792269 on
+  3222cf78 is the first with both jobs green (`43-optin-ci-red-result.md`). The Spark SQL harness differs
   from the baseline in 6 of 2574 cases. The one real problem, time travel with a write-audit-publish branch set, is
   fixed in the Iceberg fork (I11); the rest are accepted or internal. OpenHouse still pins the older fork commit
   `28742df3e538`, and the bump is part of V9a. What remains is listed as V9a to V9e. The measurement is `40-i6f-full-regression-result.md`.
@@ -70,6 +72,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 104 | V13a: Apache's compatibility kit (`39-v13-compat-kit-result.md`) | fb8c1240 |
 | 105 | I6f: full regression of the opt-in build (`40-i6f-full-regression-result.md`) | 7ddc5bb4 |
 | 106 | V13b: the IRC routes follow the specification in four places (`42-v13b-spec-deviations-result.md`) | bfdcf266 |
+| 107 | Fix-forward: the grants client test follows Iceberg 1.12's HTTP client; the opt-in job prints failed tests (`43-optin-ci-red-result.md`) | 152b08e7 |
+| 108 | Fix-forward: the Spark 4.2 test services keep their warehouse in a short temporary directory (`43-optin-ci-red-result.md`) | 3222cf78 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -86,7 +90,7 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, V13b, I11, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, V13b, I11, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
@@ -97,25 +101,26 @@ C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, V13b, I11, W1 to W4, W12, I1
 
 ## Next
 
-V9d (Docker images), V9e (make 1.12 the default), then format v3 starting at X1. New from V13b: N4 (native
+C6 (run the opt-in job on pull requests too, D33) after V9a merges, since both touch the workflow files. Then V9d (Docker images), V9e (make 1.12 the default), then format v3 starting at X1. New from V13b: N4 (native
 rename onto a view answers 409) and V14 (create transaction history). N3b, V6, V7, V8, V11, V12, V3b and V3c can go alongside. The order of the large work
 is D29.
 
 ## Known red on `irc-integration`
 
-- Default build: green at 6015e111 (the last full run read). Pull requests 103 to 106 since then passed targeted
-  suites only.
-- Opt-in build: the whole build passes locally on the head of pull request 105 (pull request 106 ran its compile, kit and Spark 4.2 suites); no run of the opt-in post-merge CI
-  job has been read.
+- Default build: green on every post-merge run read, including 45120792269 at 3222cf78.
+- Opt-in build: green on run 45120792269 at 3222cf78, the first green run. It was red on the five runs before it.
+- Unexplained: the Spark 4.2 `test` task failed once in six runs (T8). Open product defect: V15
+  (`21-findings-continued.md`).
 
 ## How work is tested
 
-Under D18, before a merge an agent runs the test classes it touched plus the black-box suite of the module it
+Post-merge results are read after every merge, not assumed (D33). Under D18, before a merge an agent runs the test classes it touched plus the black-box suite of the module it
 changed, and Claude merges on that without waiting for the pull request's CI. The full build runs on
 `irc-integration` after each merge and a failure is fixed forward, so work that starts from the branch checks the
 known-red list above first. Heavy runs, such as the full delta-harness and the full Iceberg Spark suites, run after
 merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
-now requires, after the red build (`21-findings-continued.md`).
+now requires, after the red build (`21-findings-continued.md`). D33 tightens it: a suite counts as passing under
+`-PicebergFork` only if it ran there.
 
 ## Waiting on Mike
 
@@ -130,6 +135,6 @@ Nothing blocks work.
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md`.
+  `37-decisions-continued-3.md` (D30 to D33).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

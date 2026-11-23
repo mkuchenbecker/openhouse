@@ -2,10 +2,10 @@
 
 Continues `22-decisions-continued-2.md`.
 
-Bottom line: three more decisions (D30 to D32), all dated 2026-11-23. D30 reverses part of D20 for creates after
+Bottom line: four more decisions (D30 to D33), all dated 2026-11-23. D30 reverses part of D20 for creates after
 Apache's compatibility kit showed the cost. D31 accepts two differences of Iceberg 1.12 and names one that is not
 accepted. D32 is a question put to Mike, because it defines the goal; work proceeds on the first reading until he
-answers. Each has its reason, the evidence it rests on, and how to reverse it. None is agreed by Mike unless the
+answers. D33 tightens the testing rule after the opt-in build was found red in CI. Each has its reason, the evidence it rests on, and how to reverse it. None is agreed by Mike unless the
 entry cites a statement. Claude wrote every entry.
 
 ## D30. A location named by an IRC client is ignored on create
@@ -51,3 +51,20 @@ entry cites a statement. Claude wrote every entry.
 - References: `39-v13-compat-kit-result.md` (31 of 160 kit tests pass; 84 of the rest are OpenHouse rules that the
   specification permits).
 - Reverse by: Mike's answer. If it is the second reading, the class b work items in that file become the plan.
+
+## D33. A suite passes under `-PicebergFork` only if it ran there, and pull request CI runs the opt-in job
+
+- Date: 2026-11-23. The orchestrator's decision, a two-way door.
+- Decision:
+  - A suite counts as passing under `-PicebergFork` only when it ran there. "Compiled only" is reported as not
+    tested. Any suite a change touches is run on the default build and under the switch before merge. This tightens
+    D26.
+  - Pull request CI will run the opt-in job as well as the default build, through one reusable workflow called from
+    both `post-merge-build.yml` and `pr-validations.yml`. Not yet done: it is work item C6, to start after V9a
+    merges, because V9a touches the same workflow files.
+  - Post-merge CI results are read after every merge, not assumed.
+- Why: the opt-in job was red for five post-merge runs because only post-merge runs covered the switch, and
+  nobody read the result. The measured cost is 11.5 to 18 minutes per push, beside a 24 to 34 minute default job,
+  so wall-clock time does not grow.
+- References: `43-optin-ci-red-result.md`; D18 and D26.
+- Reverse by: removing the second call of the workflow, and going back to local runs under the switch.

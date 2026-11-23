@@ -1,5 +1,8 @@
 # Opt-in build green under CI (C5, W12, I10): result
 
+> Correction, 2026-11-23: %s In CI the opt-in job failed on five post-merge runs in a row (6015e111 to bfdcf266) and
+> first passed on run 45120792269 at 3222cf78. See `43-optin-ci-red-result.md`. The text below is unchanged.
+
 Bottom line: on the final merged head the opt-in Iceberg 1.12 build (`-PicebergFork`) passes every listed suite
 and the Spark 4.2 module with 0 failures. The default build gives the base's counts plus the new tests, and its
 resolved classpath for all 59 projects is identical to `irc-integration`. A CI job for the opt-in build now exists
