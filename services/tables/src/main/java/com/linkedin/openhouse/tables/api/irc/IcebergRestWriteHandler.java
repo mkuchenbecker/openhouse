@@ -51,8 +51,9 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>A create is spelled as the native create request ({@link IcebergCreates}) and sent through
- *       the native create handler (validation, create rules, audit). The server owns the location:
- *       a request that names one is refused.
+ *       the native create handler (validation, create rules, audit). The server owns the location
+ *       (D30): a location the request names is ignored, and the table is created, and returned,
+ *       where the server puts it, as for a request that names none.
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
  *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
@@ -61,7 +62,9 @@ import org.springframework.stereotype.Component;
  *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
  *       stored table's version as base, so a commit that landed in between is refused by the core's
  *       guards. A replace commit (see {@link IcebergRestRequirements#isReplace}) is handed over as
- *       a replace.
+ *       a replace; a set-location among its changes, which is how a client's replace that names a
+ *       location arrives, is ignored (D30). An ordinary commit that changes the location is
+ *       refused.
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
@@ -159,13 +162,8 @@ public class IcebergRestWriteHandler {
   private CreateUpdateTableRequestBody createBody(
       TableIdentifier identifier, CreateTableRequest request) {
     request.validate();
-    if (request.location() != null) {
-      throw new RequestValidationFailureException(
-          String.format(
-              "Create of table %s names a location (%s): OpenHouse assigns the location of a "
-                  + "table; leave location unset",
-              identifier, request.location()));
-    }
+    // request.location() is not read: the server owns the location (D30), and the native create
+    // allocates it as for a request that names none.
     if (request.properties() != null) {
       refuseRewrittenCreateProperties(identifier, request.properties());
     }
@@ -196,8 +194,18 @@ public class IcebergRestWriteHandler {
       return new IcebergRestLoadedTable(
           base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
     }
+    boolean replace = IcebergRestRequirements.isReplace(request);
+    // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
+    // replacement at the requested location); the server owns the location (D30), so a replace
+    // keeps the table's. An ordinary commit's set-location stays, and the commit refuses it.
+    List<MetadataUpdate> updates =
+        replace
+            ? request.updates().stream()
+                .filter(update -> !(update instanceof MetadataUpdate.SetLocation))
+                .collect(Collectors.toList())
+            : request.updates();
     TableMetadata.Builder builder = TableMetadata.buildFrom(baseMetadata);
-    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, request.updates());
+    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
       return new IcebergRestLoadedTable(
@@ -208,7 +216,6 @@ public class IcebergRestWriteHandler {
         patch
             .map(p -> PolicyPatch.apply(base.getTableDto().getPolicies(), p, identifier.toString()))
             .orElse(null);
-    boolean replace = IcebergRestRequirements.isReplace(request);
     CommitKind kind =
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
