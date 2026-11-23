@@ -1,10 +1,29 @@
-// Shared OpenAPI CLI setup for client code generation
+// Shared OpenAPI generator CLI for client code generation.
+//
+// The CLI jar is an ordinary dependency, not a file fetched by a script: Gradle downloads it once,
+// keeps it in its dependency cache (which `clean` does not delete, and which CI restores), reports
+// the URL and the HTTP status when the download fails, and can resolve it under --offline.
+// setUp only copies the cached jar to where client_codegen.sh expects it.
+//
+// Like the build's other dependencies, the jar is not compared with a checksum: the build has no
+// dependency verification metadata, and Gradle does not check a download against the .sha1 the
+// repository publishes.
 def sharedBinDir = "${rootProject.buildDir}/openapi-cli"
 def openApiCliVersion = "5.3.0"
 
-task setUp(type: Exec) {
-  commandLine "sh", "${projectDir}/jar_download.sh",
-      "-o", sharedBinDir,
-      "-v", openApiCliVersion
-  outputs.dir(sharedBinDir)
+configurations {
+  openApiGeneratorCli {
+    canBeConsumed = false
+    // The published jar is the self-contained executable; client_codegen.sh runs it with `java -jar`.
+    transitive = false
+  }
+}
+
+dependencies {
+  openApiGeneratorCli "org.openapitools:openapi-generator-cli:${openApiCliVersion}"
+}
+
+task setUp(type: Sync) {
+  from configurations.openApiGeneratorCli
+  into sharedBinDir
 }
