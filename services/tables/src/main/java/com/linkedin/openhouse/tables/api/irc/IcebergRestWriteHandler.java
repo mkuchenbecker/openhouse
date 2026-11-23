@@ -3,9 +3,12 @@ package com.linkedin.openhouse.tables.api.irc;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.cluster.storage.Storage;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
+import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
@@ -15,10 +18,12 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
+import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
+import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
@@ -27,6 +32,7 @@ import com.linkedin.openhouse.tables.services.IcebergUpdates;
 import com.linkedin.openhouse.tables.services.PolicyPatch;
 import com.linkedin.openhouse.tables.services.TableCommitService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,17 +43,23 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.TableMetadata;
+import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.NotFoundException;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
+import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 /**
@@ -74,6 +86,9 @@ import org.springframework.stereotype.Component;
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
  *       when it does.
+ *   <li>A registration is a native create read from the metadata file the request names, in the
+ *       directory the file lies in, which must be one the server allocated to that table and no
+ *       table uses ({@link #registerTable}).
  *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
  *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
  *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
@@ -129,6 +144,12 @@ public class IcebergRestWriteHandler {
   @Autowired private IcebergRestApiHandler readHandler;
 
   @Autowired private HouseTableRepository houseTableRepository;
+
+  @Autowired private AuthorizationUtils authorizationUtils;
+
+  @Autowired private FileIOManager fileIOManager;
+
+  @Autowired private PoliciesSpecMapper policiesSpecMapper;
 
   // ---------------------------------------------------------------- create
 
@@ -335,22 +356,63 @@ public class IcebergRestWriteHandler {
     Policies policies =
         patch.map(p -> PolicyPatch.apply(null, p, identifier.toString())).orElse(null);
     refuseRewrittenCreateProperties(identifier, candidate.properties());
+    requireTheClustersFormatVersion("Create", identifier, candidate);
+    TableDto ids = TableDto.builder().databaseId(databaseId).tableId(tableId).build();
+    UUID tableUUID =
+        tableUUID(
+            identifier,
+            candidate.location(),
+            creatableProperties(candidate.properties(), ids),
+            actingPrincipal);
+    return create(
+        identifier, candidate, candidate.location(), tableUUID, policies, actingPrincipal);
+  }
+
+  private void requireTheClustersFormatVersion(
+      String operation, TableIdentifier identifier, TableMetadata candidate) {
     if (candidate.formatVersion() != clusterProperties.getClusterIcebergFormatVersion()) {
       throw new RequestValidationFailureException(
           String.format(
-              "Create of table %s asks for format version %d: OpenHouse creates tables with "
+              "%s of table %s asks for format version %d: OpenHouse creates tables with "
                   + "format version %d",
+              operation,
               identifier,
               candidate.formatVersion(),
               clusterProperties.getClusterIcebergFormatVersion()));
     }
-    TableDto ids = TableDto.builder().databaseId(databaseId).tableId(tableId).build();
-    Map<String, String> properties = new HashMap<>();
-    candidate.properties().entrySet().stream()
+  }
+
+  /** {@code properties} without the keys the server sets itself, and without a policy patch. */
+  private Map<String, String> creatableProperties(Map<String, String> properties, TableDto ids) {
+    Map<String, String> creatable = new HashMap<>();
+    properties.entrySet().stream()
         .filter(e -> !preservedKeyChecker.isKeyPreservedForTable(e.getKey(), ids))
         .filter(e -> !PolicyPatch.KEY.equals(e.getKey()))
-        .forEach(e -> properties.put(e.getKey(), e.getValue()));
-    UUID tableUUID = tableUUID(identifier, candidate.location(), properties, actingPrincipal);
+        .forEach(e -> creatable.put(e.getKey(), e.getValue()));
+    return creatable;
+  }
+
+  /**
+   * Creates {@code identifier} as the native create the OpenHouse Java client sends for {@code
+   * candidate}: the native create when it carries no snapshot, the native create-with-data
+   * (snapshots PUT on the initial version) when it does. Shared by the commit that completes a
+   * staged create and by register.
+   *
+   * @param location the table's location, one the server allocates, {@code null} for a new one
+   * @param tableUUID the OpenHouse UUID that location carries
+   * @param policies the request's policies, {@code null} for none
+   */
+  private IcebergRestLoadedTable create(
+      TableIdentifier identifier,
+      TableMetadata candidate,
+      String location,
+      UUID tableUUID,
+      Policies policies,
+      String actingPrincipal) {
+    String databaseId = identifier.namespace().toString();
+    String tableId = identifier.name();
+    TableDto ids = TableDto.builder().databaseId(databaseId).tableId(tableId).build();
+    Map<String, String> properties = creatableProperties(candidate.properties(), ids);
     CreateUpdateTableRequestBody body =
         IcebergCreates.toCreateBody(
             identifier,
@@ -374,7 +436,7 @@ public class IcebergRestWriteHandler {
     Map<String, String> withIds = new HashMap<>(properties);
     withIds.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, databaseId);
     withIds.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, tableId);
-    withIds.put(TABLE_LOCATION_KEY, candidate.location());
+    withIds.put(TABLE_LOCATION_KEY, location);
     icebergSnapshotsApiHandler.putIcebergSnapshots(
         databaseId,
         tableId,
@@ -432,6 +494,275 @@ public class IcebergRestWriteHandler {
             "Create of table %s sets location %s, which is not a location OpenHouse assigned to "
                 + "it: OpenHouse assigns the location of a table",
             identifier, location));
+  }
+
+  // ---------------------------------------------------------------- register
+
+  /** The suffix of the metadata files OpenHouse writes, which the native drop insists on too. */
+  private static final String METADATA_FILE_SUFFIX = ".metadata.json";
+
+  private static final int SOFT_DELETED_PAGE_SIZE = 100;
+
+  /**
+   * Registers {@code databaseId.<name>} from the metadata file the request names.
+   *
+   * <p>The native API has no register, and a house-table row cannot simply be pointed at a file:
+   * the file's reserved properties (ids, UUID, creator, type, policies) are what the service
+   * authorizes and governs the table by, and nothing has validated them. So a registration is a
+   * native create, read from the file instead of sent: the file's current schema, partition spec,
+   * sort order, properties, policies, snapshots and refs are handed to the native create (the
+   * native create-with-data when there are snapshots), in the directory the file lies in, exactly
+   * as the commit that completes a staged create hands over what the client built. Every create
+   * rule and validation applies, the server writes the table's metadata and its house-table row as
+   * for any created table, and the caller becomes its creator.
+   *
+   * <p>What makes that safe is that register reaches no further than the native create already
+   * does. A principal who may create tables in a database can natively create a table named {@code
+   * t} in a directory OpenHouse allocated to a table {@code t} of that database, with snapshots
+   * that lie there (the completion of a staged create; the server cannot tell who wrote the files).
+   * Register accepts the same directories and no others, and is stricter in three ways:
+   *
+   * <ol>
+   *   <li>The file must lie directly in the directory OpenHouse allocates to a table of that name
+   *       in that database (the server owns locations, D30), so the storage is only read at a place
+   *       the caller could have been handed, and after the create privilege was checked.
+   *   <li>No house-table row, live or soft-deleted, may point into that directory or carry its
+   *       UUID. A table renamed away keeps its directory, and a soft-deleted table can be restored
+   *       into its own. Two registrations of one directory are for one name, so the house-table key
+   *       lets one win.
+   *   <li>The metadata's own {@code location} must be that directory, and every snapshot's manifest
+   *       list must lie in it: a file planted there cannot attach another table.
+   * </ol>
+   *
+   * <p>Metadata a create cannot store as it is refused rather than stored as something else (as D19
+   * refuses on a commit): another format version, a schema or partition spec history, field ids a
+   * create would renumber, statistics files, a replica table. Not kept, as for any create: the
+   * Iceberg table UUID, the metadata log and the snapshot log.
+   *
+   * <p>A name that is taken is 409, whatever the request's {@code overwrite} flag (Iceberg 1.12):
+   * OpenHouse does not replace a table's metadata by registration.
+   */
+  public IcebergRestLoadedTable registerTable(
+      String databaseId, RegisterTableRequest request, String actingPrincipal) {
+    String tableId = request.name();
+    tablesApiValidator.validateGetTable(databaseId, tableId);
+    TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
+    HouseTablePrimaryKey key =
+        HouseTablePrimaryKey.builder().databaseId(databaseId).tableId(tableId).build();
+    // The native create's order: the name (409), then the privilege (403).
+    Optional<HouseTable> occupant = houseTableRepository.findEntityById(key);
+    if (occupant.isPresent()) {
+      throw new AlreadyExistsException(
+          "%s already exists: %s",
+          CatalogConstants.ENTITY_TYPE_VIEW.equalsIgnoreCase(occupant.get().getEntityType())
+              ? "View"
+              : "Table",
+          identifier);
+    }
+    authorizationUtils.checkDatabasePrivilege(databaseId, actingPrincipal, Privileges.CREATE_TABLE);
+
+    Storage storage = storageSelector.selectStorage(databaseId, tableId);
+    String metadataLocation = request.metadataLocation();
+    UUID tableUUID = allocatedUUID(identifier, storage, metadataLocation, actingPrincipal);
+    String location =
+        storage.allocateTableLocation(
+            databaseId, tableId, tableUUID.toString(), actingPrincipal, new HashMap<>());
+    String directory = withoutEndpoint(storage, location);
+    refuseADirectoryInUse(identifier, storage, directory, tableUUID);
+
+    TableMetadata metadata = readRegistered(identifier, storage, metadataLocation);
+    if (!directory.equals(withoutEndpoint(storage, metadata.location()))) {
+      // The file's own location is not told: it may be a table the caller cannot see.
+      throw refusedRegistration(
+          identifier,
+          "the location in the metadata at %s is not the directory it lies in",
+          metadataLocation);
+    }
+    refuseWhatACreateCannotStore(identifier, storage, directory, metadata);
+
+    String stored = metadata.properties().get(POLICIES_KEY);
+    Policies policies;
+    try {
+      policies =
+          stored == null || stored.trim().isEmpty()
+              ? null
+              : policiesSpecMapper.toPoliciesObject(stored);
+    } catch (RuntimeException e) {
+      throw refusedRegistration(identifier, "its policies cannot be read");
+    }
+    String patch = metadata.properties().get(PolicyPatch.KEY);
+    if (patch != null) {
+      policies = PolicyPatch.apply(policies, patch, identifier.toString());
+    }
+    return create(identifier, metadata, location, tableUUID, policies, actingPrincipal);
+  }
+
+  /**
+   * The OpenHouse UUID in {@code metadataLocation}, if that is a metadata file directly in the
+   * directory the server allocates to this table with that UUID; refused otherwise, before anything
+   * is read.
+   */
+  private UUID allocatedUUID(
+      TableIdentifier identifier,
+      Storage storage,
+      String metadataLocation,
+      String actingPrincipal) {
+    String path = withoutEndpoint(storage, metadataLocation);
+    int fileAt = path.lastIndexOf('/');
+    if (fileAt > 0 && path.endsWith(METADATA_FILE_SUFFIX)) {
+      String directory = path.substring(0, fileAt);
+      String directoryName = directory.substring(directory.lastIndexOf('/') + 1);
+      String prefix = identifier.name() + "-";
+      if (directoryName.startsWith(prefix)) {
+        try {
+          UUID uuid = UUID.fromString(directoryName.substring(prefix.length()));
+          String allocated =
+              storage.allocateTableLocation(
+                  identifier.namespace().toString(),
+                  identifier.name(),
+                  uuid.toString(),
+                  actingPrincipal,
+                  new HashMap<>());
+          if (directory.equals(withoutEndpoint(storage, allocated))) {
+            return uuid;
+          }
+        } catch (IllegalArgumentException e) {
+          // not a UUID: refused below
+        }
+      }
+    }
+    throw refusedRegistration(
+        identifier,
+        "%s is not a metadata file in a directory OpenHouse assigned to a table of that name in "
+            + "that database: OpenHouse assigns the location of a table",
+        metadataLocation);
+  }
+
+  /** {@code location} as the house-table store spells it: without the storage's endpoint. */
+  private static String withoutEndpoint(Storage storage, String location) {
+    String endpoint = storage.getClient().getEndpoint();
+    return endpoint != null && !endpoint.isEmpty() && location.startsWith(endpoint)
+        ? location.substring(endpoint.length())
+        : location;
+  }
+
+  /** Refuses a directory a house-table row, live or soft-deleted, points into or names by UUID. */
+  private void refuseADirectoryInUse(
+      TableIdentifier identifier, Storage storage, String directory, UUID tableUUID) {
+    String databaseId = identifier.namespace().toString();
+    for (HouseTable row : houseTableRepository.findAllByDatabaseId(databaseId)) {
+      if (uses(row, storage, directory, tableUUID)) {
+        throw refusedRegistration(
+            identifier, "that directory belongs to %s.%s", row.getDatabaseId(), row.getTableId());
+      }
+    }
+    for (int page = 0; ; page++) {
+      List<HouseTable> rows =
+          houseTableRepository
+              .searchSoftDeletedTables(
+                  databaseId, null, PageRequest.of(page, SOFT_DELETED_PAGE_SIZE))
+              .getContent();
+      for (HouseTable row : rows) {
+        if (uses(row, storage, directory, tableUUID)) {
+          throw refusedRegistration(
+              identifier,
+              "that directory belongs to the soft-deleted table %s.%s, which can be restored",
+              row.getDatabaseId(),
+              row.getTableId());
+        }
+      }
+      if (rows.size() < SOFT_DELETED_PAGE_SIZE) {
+        return;
+      }
+    }
+  }
+
+  private static boolean uses(HouseTable row, Storage storage, String directory, UUID tableUUID) {
+    if (tableUUID.toString().equals(row.getTableUUID())) {
+      return true;
+    }
+    String location = row.getTableLocation();
+    return location != null && withoutEndpoint(storage, location).startsWith(directory + "/");
+  }
+
+  /** Reads the metadata file; a failure is told without the file's content. */
+  private TableMetadata readRegistered(
+      TableIdentifier identifier, Storage storage, String metadataLocation) {
+    FileIO io = fileIOManager.getFileIO(storage.getType());
+    try {
+      return TableMetadataParser.read(io, metadataLocation);
+    } catch (NotFoundException e) {
+      throw refusedRegistration(identifier, "there is no file at %s", metadataLocation);
+    } catch (RuntimeException e) {
+      throw refusedRegistration(
+          identifier, "the file at %s is not table metadata this server reads", metadataLocation);
+    }
+  }
+
+  /** Refuses metadata whose current state a native create would store as something else. */
+  private void refuseWhatACreateCannotStore(
+      TableIdentifier identifier, Storage storage, String directory, TableMetadata metadata) {
+    requireTheClustersFormatVersion("Registration", identifier, metadata);
+    if (metadata.schemas().size() != 1 || metadata.currentSchemaId() != 0) {
+      throw refusedRegistration(
+          identifier,
+          "its metadata holds a schema history (%d schemas, current schema id %d), which a created "
+              + "table does not have",
+          metadata.schemas().size(),
+          metadata.currentSchemaId());
+    }
+    if (metadata.specs().size() != 1 || metadata.defaultSpecId() != 0) {
+      throw refusedRegistration(
+          identifier,
+          "its metadata holds a partition spec history (%d specs, default spec id %d), which a "
+              + "created table does not have",
+          metadata.specs().size(),
+          metadata.defaultSpecId());
+    }
+    TableMetadata created =
+        TableMetadata.newTableMetadata(
+            metadata.schema(),
+            metadata.spec(),
+            metadata.sortOrder(),
+            "candidate",
+            Collections.emptyMap());
+    if (!created.schema().sameSchema(metadata.schema())
+        || !created.spec().fields().equals(metadata.spec().fields())
+        || !created.sortOrder().sameOrder(metadata.sortOrder())) {
+      throw refusedRegistration(
+          identifier,
+          "its schema, partition spec or sort order uses field ids a create would assign "
+              + "differently, and its data files are written with them");
+    }
+    if (!metadata.statisticsFiles().isEmpty() || !metadata.partitionStatisticsFiles().isEmpty()) {
+      throw refusedRegistration(
+          identifier, "its metadata holds statistics files, which a create does not store");
+    }
+    String tableType = metadata.properties().get(TABLE_TYPE_KEY);
+    if (tableType != null && !TableType.PRIMARY_TABLE.name().equals(tableType)) {
+      throw refusedRegistration(
+          identifier,
+          "its metadata is a %s's: the routes create %s tables",
+          tableType,
+          TableType.PRIMARY_TABLE.name());
+    }
+    for (Snapshot snapshot : metadata.snapshots()) {
+      String manifestList = snapshot.manifestListLocation();
+      if (manifestList == null
+          || !withoutEndpoint(storage, manifestList).startsWith(directory + "/")
+          || manifestList.contains("/../")) {
+        throw refusedRegistration(
+            identifier,
+            "the manifest list of snapshot %d does not lie in the table's directory",
+            snapshot.snapshotId());
+      }
+    }
+  }
+
+  private static RequestValidationFailureException refusedRegistration(
+      TableIdentifier identifier, String reason, Object... args) {
+    return new RequestValidationFailureException(
+        String.format("Cannot register table %s: %s", identifier, String.format(reason, args)));
   }
 
   // ---------------------------------------------------------------- drop and rename

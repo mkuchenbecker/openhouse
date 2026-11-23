@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
  * IRC-scoped exception handler, so the native routes' JSON and error bodies are untouched. Hidden
  * from the service's generated OpenAPI spec, from which the native clients are generated.
  *
- * <p>The write routes (create, staged create, commit, drop, rename) are {@link
+ * <p>The write routes (create, staged create, commit, register, drop, rename) are {@link
  * IcebergRestWriteController}'s, registered only where their Iceberg API exists; where it does not
  * (Iceberg 1.2), they are answered 406 here, as before they existed. Every other request under the
  * base path is answered in the spec's error shape: 406 for a route of the specification this server
@@ -146,9 +146,9 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/tables/*"},
           new String[] {"DELETE", "/v1/namespaces/*/tables/*"},
           new String[] {"POST", "/v1/tables/rename"},
+          new String[] {"POST", "/v1/namespaces/*/register"},
           new String[] {"DELETE", "/v1/namespaces/*"},
           new String[] {"POST", "/v1/namespaces/*/properties"},
-          new String[] {"POST", "/v1/namespaces/*/register"},
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/plan"},
