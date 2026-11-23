@@ -1,7 +1,6 @@
 package com.linkedin.openhouse.tables.e2e.h2;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor.DummySecurityJWT;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -31,10 +30,11 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * An unmodified Iceberg {@link RESTCatalog}, over HTTP and configured with nothing but the server's
- * address: after a commit and after a scan it posts the report Iceberg builds to the metrics route,
- * and the service counts each by its type. (Until the route was served the config told the client
- * not to report, and the route answered 406.)
+ * An unmodified Iceberg {@link RESTCatalog}, over HTTP. Configured to report ({@code
+ * rest-metrics-reporting-enabled=true}), after a commit and after a scan it posts the report
+ * Iceberg builds to the metrics route, and the service counts each by its type (the route used to
+ * answer 406). Configured with nothing but the server's address, it takes the config's default and
+ * posts nothing.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
@@ -49,17 +49,28 @@ class IrcRestCatalogMetricsTest {
 
   @Autowired MeterRegistry meterRegistry;
 
+  /** The catalog a client gets with nothing configured but the server's address. */
   private RESTCatalog rest;
 
-  @BeforeEach
-  void start() throws Exception {
+  /** The same, with reporting turned on by the client. */
+  private RESTCatalog reporting;
+
+  private RESTCatalog catalog(boolean report) throws Exception {
     Map<String, String> properties = new HashMap<>();
     properties.put("uri", "http://localhost:" + port + "/iceberg");
     properties.put("token", new DummySecurityJWT("irc_reporter").buildNoopJWT());
-    rest =
-        (RESTCatalog)
-            CatalogUtil.loadCatalog(
-                RESTCatalog.class.getName(), "openhouse", properties, new Configuration());
+    if (report) {
+      properties.put("rest-metrics-reporting-enabled", "true");
+    }
+    return (RESTCatalog)
+        CatalogUtil.loadCatalog(
+            RESTCatalog.class.getName(), "openhouse", properties, new Configuration());
+  }
+
+  @BeforeEach
+  void start() throws Exception {
+    rest = catalog(false);
+    reporting = catalog(true);
     rest.createTable(
         ID,
         new Schema(Types.NestedField.required(1, "id", Types.LongType.get())),
@@ -72,6 +83,7 @@ class IrcRestCatalogMetricsTest {
       rest.dropTable(ID);
     } finally {
       rest.close();
+      reporting.close();
     }
   }
 
@@ -90,36 +102,51 @@ class IrcRestCatalogMetricsTest {
     assertEquals(expected, received(type), type);
   }
 
-  @Test
-  void theClientIsNotToldToKeepItsReports() {
-    assertFalse(
-        rest.properties().containsKey("rest-metrics-reporting-enabled"),
-        rest.properties().toString());
+  private static DataFile file(Table table, String name) {
+    return DataFiles.builder(table.spec())
+        .withPath(table.location() + "/data/" + name + ".orc")
+        .withFileSizeInBytes(10)
+        .withRecordCount(2)
+        .build();
   }
 
-  @Test
-  void aCommitReportAndAScanReportArrive() throws Exception {
-    Table table = rest.loadTable(ID);
-    double commits = received("commit_report");
-    double scans = received("scan_report");
-
-    DataFile file =
-        DataFiles.builder(table.spec())
-            .withPath(table.location() + "/data/irc_metrics_rest_a.orc")
-            .withFileSizeInBytes(10)
-            .withRecordCount(2)
-            .build();
-    table.newFastAppend().appendFile(file).commit();
-    awaitReceived("commit_report", commits + 1);
-
+  private static int scan(Table table) throws Exception {
     int planned = 0;
     try (CloseableIterable<FileScanTask> tasks = table.newScan().planFiles()) {
       for (FileScanTask ignored : tasks) {
         planned++;
       }
     }
-    assertEquals(1, planned);
+    return planned;
+  }
+
+  @Test
+  void aClientThatAsksToReportHasItsCommitAndScanReportsCounted() throws Exception {
+    assertEquals("true", reporting.properties().get("rest-metrics-reporting-enabled"));
+    Table table = reporting.loadTable(ID);
+    double commits = received("commit_report");
+    double scans = received("scan_report");
+
+    table.newFastAppend().appendFile(file(table, "irc_metrics_rest_a")).commit();
+    awaitReceived("commit_report", commits + 1);
+
+    assertEquals(1, scan(table));
     awaitReceived("scan_report", scans + 1);
     assertEquals(commits + 1, received("commit_report"));
+  }
+
+  @Test
+  void aClientConfiguredWithNothingTakesTheDefaultAndPostsNoReport() throws Exception {
+    assertEquals("false", rest.properties().get("rest-metrics-reporting-enabled"));
+    Table table = rest.loadTable(ID);
+    double commits = received("commit_report");
+    double scans = received("scan_report");
+
+    table.newFastAppend().appendFile(file(table, "irc_metrics_rest_b")).commit();
+    assertEquals(1, scan(table));
+    // Long enough for Iceberg 1.12's background reporter, had it been given a report.
+    Thread.sleep(1500);
+    assertEquals(commits, received("commit_report"));
+    assertEquals(scans, received("scan_report"));
   }
 }

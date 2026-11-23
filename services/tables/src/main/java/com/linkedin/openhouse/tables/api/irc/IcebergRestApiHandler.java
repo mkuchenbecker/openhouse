@@ -91,6 +91,13 @@ public class IcebergRestApiHandler {
    * override.
    *
    * <ul>
+   *   <li>{@code rest-metrics-reporting-enabled=false}: the metrics route is served ({@link
+   *       #reportMetrics}) and listed, but a client reports only if its own configuration says so.
+   *       Left to itself {@code RESTCatalog} posts a report after every scan and every commit, each
+   *       costing this service a house-table lookup and an authorization decision to increment a
+   *       counter; an Iceberg 1.5.2 client posts them inline, on the planning and commit path; and
+   *       a create with data (CTAS) posts its commit report before the table exists, which is
+   *       answered 404 and logged by the client as a warning with a stack trace.
    *   <li>{@code io-impl=HadoopFileIO}: the existing OpenHouse client's FileIO. RESTCatalog's own
    *       default (ResolvingFileIO) cannot write delete files on this Iceberg line, which opens
    *       them with write properties ResolvingFileIO rejects.
@@ -103,13 +110,10 @@ public class IcebergRestApiHandler {
    *       this server serves whatever the client was configured with. Not {@link #endpoints()}
    *       entries: those name the spec's routes.
    * </ul>
-   *
-   * Metrics reporting is left to the client: {@code rest-metrics-reporting-enabled=false}, which
-   * was sent while the metrics route answered 406, is not sent now that {@link #reportMetrics}
-   * serves it.
    */
   public ConfigResponse config() {
     return ConfigResponse.builder()
+        .withDefault(REST_METRICS_REPORTING_ENABLED, "false")
         .withDefault(CatalogProperties.FILE_IO_IMPL, HADOOP_FILE_IO)
         .withOverride(CAPABILITIES, String.join(",", servedRoutes.capabilities()))
         .build();
@@ -126,6 +130,9 @@ public class IcebergRestApiHandler {
 
   /** The config key that names the OpenHouse features a server serves (server capabilities). */
   public static final String CAPABILITIES = CapabilityNames.ADVERTISED_PROPERTY;
+
+  /** RESTCatalog's switch for posting metrics reports (private in RESTSessionCatalog). */
+  static final String REST_METRICS_REPORTING_ENABLED = "rest-metrics-reporting-enabled";
 
   static final String HADOOP_FILE_IO = "org.apache.iceberg.hadoop.HadoopFileIO";
 
@@ -215,8 +222,8 @@ public class IcebergRestApiHandler {
    * debug level.
    *
    * <p>Authorized as a read of the table, with the read privilege, on the table's house-table row
-   * alone, as the native drop is: a report arrives after every scan and every commit, and loading
-   * the table's metadata for each would double the loads a client causes. The lock and capability
+   * alone, as the native drop is: a reporting client posts after every scan and every commit, and
+   * loading the table's metadata for each would double the loads it causes. The lock and capability
    * checks of a load, which need that metadata, are not run: a report reads nothing, and a client
    * those checks turn away never loads the table it would report on.
    *

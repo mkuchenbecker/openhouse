@@ -137,24 +137,27 @@ public class IrcReadRoutesTest {
   // ---------------------------------------------------------------- config
 
   /**
-   * One default and one override. Clients use HadoopFileIO, the existing OpenHouse client's FileIO:
-   * with RESTCatalog's default (ResolvingFileIO) a Spark merge-on-read delete fails, since this
-   * Iceberg line opens delete files with write properties that ResolvingFileIO does not support
-   * (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). Metrics reporting is left to the client:
-   * the metrics route is served (IrcMetricsRouteTest), so the default that turned reporting off
-   * while it answered 406 is no longer sent. The override {@code openhouse.capabilities} names the
-   * OpenHouse features these routes serve: {@code policies}, the policy patch of OpenHouse's policy
-   * statements (V5-2), and {@code grants} and {@code unlock}, the OpenHouse routes under the base
-   * path (V5-3). It is an override so that the client's merged catalog properties say what the
-   * server serves, whatever the client was configured with.
+   * Two defaults and one override. Clients do not post metrics reports unless their own
+   * configuration says so: the metrics route is served (IrcMetricsRouteTest), but RESTCatalog left
+   * to itself posts a report after every scan and commit, and a create with data posts one before
+   * its table exists, which is answered 404 and logged by the client with a stack trace. Clients
+   * use HadoopFileIO, the existing OpenHouse client's FileIO: with RESTCatalog's default
+   * (ResolvingFileIO) a Spark merge-on-read delete fails, since this Iceberg line opens delete
+   * files with write properties that ResolvingFileIO does not support
+   * (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The override {@code
+   * openhouse.capabilities} names the OpenHouse features these routes serve: {@code policies}, the
+   * policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and {@code unlock},
+   * the OpenHouse routes under the base path (V5-3). It is an override so that the client's merged
+   * catalog properties say what the server serves, whatever the client was configured with.
    */
   @Test
-  void configDefaultsUseHadoopFileIoAndLeaveMetricsReportingToTheClient() throws Exception {
+  void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {
     MvcResult result = IrcHttp.get(mvc, "/v1/config");
     assertEquals(200, result.getResponse().getStatus(), body(result));
     String json = body(result);
-    Map<String, String> expected =
-        Collections.singletonMap("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
+    Map<String, String> expected = new java.util.HashMap<>();
+    expected.put("rest-metrics-reporting-enabled", "false");
+    expected.put("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO");
     assertEquals(expected, JsonPath.read(json, "$.defaults"));
     Map<String, String> overrides =
         Collections.singletonMap("openhouse.capabilities", "policies,grants,unlock");
@@ -179,7 +182,7 @@ public class IrcReadRoutesTest {
             mvc, IrcHttp.request(HttpMethod.GET, "/v1/config").param("warehouse", "anything"));
     assertEquals(200, result.getResponse().getStatus(), body(result));
     // The same defaults as without a warehouse
-    // (configDefaultsUseHadoopFileIoAndLeaveMetricsReportingToTheClient).
+    // (configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo).
     assertEquals(
         IrcClientParsers.parse(body(IrcHttp.get(mvc, "/v1/config")), ConfigResponse.class)
             .defaults(),

@@ -13,7 +13,6 @@ import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitial
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import org.apache.iceberg.rest.IrcClientParsers;
 import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.apache.iceberg.rest.responses.ConfigResponse;
@@ -191,15 +190,20 @@ public class IrcMetricsRouteTest {
   }
 
   /**
-   * The config no longer tells clients not to report: the route is served, so {@code RESTCatalog}'s
-   * own default (report) stands, and a client that does not want to report sets {@code
-   * rest-metrics-reporting-enabled=false} itself.
+   * The config lists the route and still sends {@code rest-metrics-reporting-enabled=false}, as a
+   * default: a client reports only when its own configuration says so, which wins over a default.
    */
   @Test
-  void theConfigListsTheRouteAndLeavesReportingToTheClient() throws Exception {
+  void theConfigListsTheRouteAndKeepsReportingOffUnlessTheClientAsks() throws Exception {
     String config = body(IrcHttp.get(mvc, "/v1/config"));
-    Map<String, String> defaults = IrcClientParsers.parse(config, ConfigResponse.class).defaults();
-    assertFalse(defaults.containsKey("rest-metrics-reporting-enabled"), defaults.toString());
+    ConfigResponse parsed = IrcClientParsers.parse(config, ConfigResponse.class);
+    assertEquals("false", parsed.defaults().get("rest-metrics-reporting-enabled"));
+    assertFalse(parsed.overrides().containsKey("rest-metrics-reporting-enabled"));
+    assertEquals(
+        "true",
+        parsed
+            .merge(java.util.Collections.singletonMap("rest-metrics-reporting-enabled", "true"))
+            .get("rest-metrics-reporting-enabled"));
     List<String> endpoints = JsonPath.read(config, "$.endpoints");
     assertTrue(
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics"),

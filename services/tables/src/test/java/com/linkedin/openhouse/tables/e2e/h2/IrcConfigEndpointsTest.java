@@ -265,9 +265,7 @@ public class IrcConfigEndpointsTest {
     MvcResult result = IrcHttp.get(mvc, "/v1/config");
     ConfigResponse parsed = IrcClientParsers.parse(body(result), ConfigResponse.class);
     assertEquals("policies,grants,unlock", parsed.overrides().get("openhouse.capabilities"));
-    assertEquals(
-        Collections.singletonMap("io-impl", "org.apache.iceberg.hadoop.HadoopFileIO"),
-        parsed.defaults());
+    assertEquals(2, parsed.defaults().size());
     java.lang.reflect.Method endpoints;
     try {
       endpoints = ConfigResponse.class.getMethod("endpoints");

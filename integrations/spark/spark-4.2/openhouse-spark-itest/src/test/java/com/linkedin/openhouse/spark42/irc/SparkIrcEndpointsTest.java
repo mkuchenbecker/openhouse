@@ -258,17 +258,32 @@ public class SparkIrcEndpointsTest {
   }
 
   /**
-   * The metrics route is listed (V6) and the config no longer turns reporting off, so the 1.12
-   * client posts the scan report of a SELECT, from a background thread, and the service takes it.
+   * The metrics route is listed (V6). The config still turns reporting off by default, so Spark's
+   * own catalog posts nothing; a 1.12 client that turns it on posts the report of a scan, from a
+   * background thread, and the service takes it.
    */
   @Test
-  void aSelectPostsItsScanReport() throws Exception {
+  void aClientThatAsksToReportPostsItsScanReportAndSparkByDefaultPostsNone() throws Exception {
     Assertions.assertFalse(rows("SELECT * FROM irc." + DB + ".flat").isEmpty());
-    awaitRequest("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204");
+    Map<String, String> properties = new HashMap<>();
+    properties.put("uri", IrcSpark.service().uri() + "/iceberg");
+    properties.put("token", IrcSpark.service().token(READER));
+    properties.put("rest-metrics-reporting-enabled", "true");
+    try (RESTCatalog catalog = new RESTCatalog()) {
+      catalog.initialize("reporting_probe", properties);
+      org.apache.iceberg.Table table = catalog.loadTable(TableIdentifier.of(DB, "flat"));
+      try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.FileScanTask> tasks =
+          table.newScan().planFiles()) {
+        Assertions.assertTrue(tasks.iterator().hasNext());
+      }
+      awaitRequest("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204");
+    }
+    // Nothing else posted a report: not Spark's SELECT above, nor any other test's statements.
     Assertions.assertEquals(
-        Collections.emptyList(),
+        Collections.singletonList("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204"),
         requests().stream()
-            .filter(line -> line.contains("/metrics ") && !line.endsWith(" 204"))
+            .filter(line -> line.contains("/metrics "))
+            .distinct()
             .collect(Collectors.toList()));
   }
 

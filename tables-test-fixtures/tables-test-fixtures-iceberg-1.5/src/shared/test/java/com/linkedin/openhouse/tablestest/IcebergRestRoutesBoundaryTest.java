@@ -130,8 +130,8 @@ public class IcebergRestRoutesBoundaryTest {
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
    * registered: under Iceberg 1.2 the reads and the metrics report only, and no policy patch (it
-   * rides the write routes); under 1.5 those, the table writes and the views. Clients are not told
-   * to keep their metrics reports to themselves on either: the route is served on both.
+   * rides the write routes); under 1.5 those, the table writes and the views. On both, reporting
+   * stays off unless the client's own configuration turns it on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -139,8 +139,10 @@ public class IcebergRestRoutesBoundaryTest {
     List<String> endpoints = new ArrayList<>();
     config.path("endpoints").forEach(endpoint -> endpoints.add(endpoint.asText()));
     String capabilities = config.path("overrides").path("openhouse.capabilities").asText();
-    Assertions.assertFalse(
-        config.path("defaults").has("rest-metrics-reporting-enabled"), config.toString());
+    Assertions.assertEquals(
+        "false",
+        config.path("defaults").path("rest-metrics-reporting-enabled").asText(),
+        config.toString());
     if (!icebergWriteApiPresent()) {
       Assertions.assertEquals(READ_ROUTES, endpoints);
       Assertions.assertEquals("grants,unlock", capabilities);
