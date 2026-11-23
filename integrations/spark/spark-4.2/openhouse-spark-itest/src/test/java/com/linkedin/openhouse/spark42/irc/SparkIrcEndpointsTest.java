@@ -42,7 +42,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Before the list, a 1.12 client assumed its default set (read: {@code RESTSessionCatalog}
  * {@code DEFAULT_ENDPOINTS}): existence checks loaded the table or namespace, views were refused
- * locally, and namespace writes, register and transactions were sent and answered 406.
+ * locally, and namespace writes, register and transactions were sent and answered 406. Register and
+ * metrics reports are served and listed since V6 and V7.
  */
 public class SparkIrcEndpointsTest {
 
@@ -221,22 +222,52 @@ public class SparkIrcEndpointsTest {
       assertRefusedLocally(
           Assertions.assertThrows(
               UnsupportedOperationException.class,
-              () ->
-                  catalog.registerTable(
-                      TableIdentifier.of(DB, "registered"), "/tmp/nowhere/metadata.json")),
-          "POST /v1/{prefix}/namespaces/{namespace}/register");
-      assertRefusedLocally(
-          Assertions.assertThrows(
-              UnsupportedOperationException.class,
               () -> catalog.commitTransaction(Collections.emptyList())),
           "POST /v1/{prefix}/transactions/commit");
     }
     for (String path :
-        new String[] {
-          "POST /iceberg/v1/namespaces ", "/properties ", "/register ", "/transactions/commit "
-        }) {
+        new String[] {"POST /iceberg/v1/namespaces ", "/properties ", "/transactions/commit "}) {
       Assertions.assertEquals(Collections.emptyList(), requestsFor(path), path);
     }
+  }
+
+  // ---------------------------------------------------------------- newly served routes
+
+  /**
+   * Register is listed (V7), so the 1.12 client sends it (it used to refuse it locally). The server
+   * owns locations: metadata that does not lie in the directory OpenHouse assigned to a table of
+   * that name is refused, as Iceberg's {@link BadRequestException} with the server's message.
+   */
+  @Test
+  void registerReachesTheServerWhichRefusesAMetadataLocationItDidNotAssign() throws Exception {
+    try (RESTCatalog catalog = rest(READER)) {
+      BadRequestException refused =
+          Assertions.assertThrows(
+              BadRequestException.class,
+              () ->
+                  catalog.registerTable(
+                      TableIdentifier.of(DB, "registered"), "/tmp/nowhere/metadata.json"));
+      Assertions.assertTrue(
+          refused.getMessage().contains("OpenHouse assigns the location of a table"),
+          refused.getMessage());
+      Assertions.assertFalse(catalog.tableExists(TableIdentifier.of(DB, "registered")));
+    }
+    awaitRequest("POST /iceberg/v1/namespaces/irc42/register 400");
+  }
+
+  /**
+   * The metrics route is listed (V6) and the config no longer turns reporting off, so the 1.12
+   * client posts the scan report of a SELECT, from a background thread, and the service takes it.
+   */
+  @Test
+  void aSelectPostsItsScanReport() throws Exception {
+    Assertions.assertFalse(rows("SELECT * FROM irc." + DB + ".flat").isEmpty());
+    awaitRequest("POST /iceberg/v1/namespaces/irc42/tables/flat/metrics 204");
+    Assertions.assertEquals(
+        Collections.emptyList(),
+        requests().stream()
+            .filter(line -> line.contains("/metrics ") && !line.endsWith(" 204"))
+            .collect(Collectors.toList()));
   }
 
   // ---------------------------------------------------------------- the OpenHouse routes
