@@ -5,6 +5,7 @@ import static com.linkedin.openhouse.common.security.AuthenticationUtils.extract
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import org.apache.iceberg.rest.requests.CommitTransactionRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
@@ -90,6 +91,25 @@ public class IcebergRestWriteController {
     return IcebergRestJson.loadTable(
         writeHandler.commitTable(
             databaseId, tableId, request, extractAuthenticatedUserPrincipal()));
+  }
+
+  /**
+   * Commits a transaction: the commit of its one table change, answered with no content as the spec
+   * has it. A transaction with more than one table change is refused (400) and writes nothing:
+   * OpenHouse cannot commit several tables atomically ({@link
+   * IcebergRestWriteHandler#commitTransaction}). The route is listed among the served endpoints
+   * nonetheless, since a client that does not find it listed refuses every transaction locally,
+   * those of one table included, and has no per-table fallback to lose.
+   */
+  @ApiResponses(
+      @ApiResponse(responseCode = "204", description = "IRC commit transaction: NO_CONTENT"))
+  @IcebergRestCapability(IcebergRestCapability.POLICIES)
+  @PostMapping(V1 + "/transactions/commit")
+  public ResponseEntity<byte[]> commitTransaction(@RequestBody(required = false) byte[] body) {
+    writeHandler.commitTransaction(
+        IcebergRestJson.read(body, CommitTransactionRequest.class),
+        extractAuthenticatedUserPrincipal());
+    return IcebergRestJson.noContent();
   }
 
   /**

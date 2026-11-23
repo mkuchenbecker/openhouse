@@ -37,7 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * Iceberg line, in the spec's format ({@code "<METHOD> /v1/{prefix}/<path>"}, the strings of
  * Iceberg 1.12's {@code Endpoint}). An Iceberg 1.12 client uses only the routes listed once a list
  * is sent; with none it assumes a fixed default set that this server does not match (namespace
- * writes and transactions it does not serve; HEAD and views it does).
+ * writes it does not serve; HEAD, views and transactions it does).
  *
  * <p>Three checks keep the list and the routes from drifting: the list equals a fixed expectation
  * (so adding or removing a route changes this test); every listed route is served (a request does
@@ -53,7 +53,11 @@ public class IrcConfigEndpointsTest {
 
   /**
    * What this service serves on Iceberg 1.5 (its test classpath): reads, metrics reports, table
-   * writes (register among them), views.
+   * writes (register among them), views, and the multi-table commit route. That route commits a
+   * transaction of one table and refuses one of several (IrcTransactionRouteTest). It is listed all
+   * the same: an Iceberg 1.12 client refuses {@code commitTransaction} locally when it is not
+   * listed and has no fallback to per-table commits, so leaving it out would only take the
+   * one-table transaction away (SparkIrcEndpointsTest, on Spark 4.2).
    */
   static final List<String> SERVED_ON_ICEBERG_1_5 =
       Arrays.asList(
@@ -74,7 +78,8 @@ public class IrcConfigEndpointsTest {
           "HEAD /v1/{prefix}/namespaces/{namespace}/views/{view}",
           "POST /v1/{prefix}/namespaces/{namespace}/views/{view}",
           "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
-          "POST /v1/{prefix}/tables/rename");
+          "POST /v1/{prefix}/tables/rename",
+          "POST /v1/{prefix}/transactions/commit");
 
   /** Every route of Iceberg 1.12's {@code Endpoint} (its public constants, as strings). */
   static final List<String> SPEC_ENDPOINTS_OF_ICEBERG_1_12 =

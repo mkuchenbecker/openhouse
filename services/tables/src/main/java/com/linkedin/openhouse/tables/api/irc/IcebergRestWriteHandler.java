@@ -50,9 +50,11 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NotFoundException;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.rest.requests.CommitTransactionRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
@@ -84,6 +86,9 @@ import org.springframework.stereotype.Component;
  *       a replace; a set-location among its changes, which is how a client's replace that names a
  *       location arrives, is ignored (D30). An ordinary commit that changes the location is
  *       refused.
+ *   <li>A transaction ({@code POST /v1/transactions/commit}) with one table change is that commit,
+ *       and never a create; with more than one it is refused whole and nothing is written, since
+ *       two tables cannot be committed atomically ({@link #commitTransaction}).
  *   <li>A commit that completes a staged create ({@code assert-create}) is spelled as the native
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
@@ -137,6 +142,9 @@ public class IcebergRestWriteHandler {
   private static final String CREATE = "create";
 
   private static final String REGISTER = "register";
+
+  /** How many of a refused transaction's tables its refusal names. */
+  private static final int REFUSAL_NAMES = 5;
 
   @Autowired private TablesApiValidator tablesApiValidator;
 
@@ -252,11 +260,87 @@ public class IcebergRestWriteHandler {
       return commitCreate(identifier, request, actingPrincipal);
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
+    return commitOn(identifier, base, request, actingPrincipal)
+        ? loaded(identifier)
+        : new IcebergRestLoadedTable(
+            base.getTableDto().getTableLocation(),
+            base.getMetadata(),
+            Collections.emptyMap(),
+            false);
+  }
+
+  /**
+   * A transaction ({@code POST /v1/transactions/commit}), which the spec has commit its table
+   * changes atomically: all of them or none.
+   *
+   * <p>OpenHouse commits one table per transaction. A table's commit is a compare-and-set of its
+   * own House Tables row, and House Tables has no write that changes several rows together, so no
+   * two tables can be committed atomically: a failure, or the end of this process, after the first
+   * row is set would leave one table changed and the others not, and setting the first row back is
+   * a second compare-and-set that a commit landing in between defeats. A transaction with more than
+   * one table change is therefore refused whole (400), on its shape alone: before any table is
+   * read, any privilege is asked for and anything is written, so the answer is the same whatever
+   * the tables are and nothing can be half done. Two changes to one table are refused alike (the
+   * spec does not say which of them the second's requirements would be checked against).
+   *
+   * <p>A transaction with one table change is the ordinary commit of that change ({@link
+   * #commitTable}): the same requirements checked against the stored table, the same rules, the
+   * same commit core and guards, the same audit. One difference, which is the spec's: the route
+   * changes tables that exist and does not create one, so a table that does not exist is a missing
+   * table (404) even for a change that asserts it does not exist, which on the table's own commit
+   * route completes a staged create. On a table that exists that assertion fails, as it does there.
+   * A table in a namespace of more than one level cannot exist (404), as on the other table routes.
+   */
+  public void commitTransaction(CommitTransactionRequest request, String actingPrincipal) {
+    List<UpdateTableRequest> changes = request.tableChanges();
+    if (changes.size() != 1) {
+      throw new BadRequestException(
+          "Cannot commit a transaction with %s table changes (%s): OpenHouse commits one table per"
+              + " transaction, because it cannot commit several tables atomically. Nothing was"
+              + " committed. Commit each table in a transaction, or a commit, of its own.",
+          changes.size(), named(changes));
+    }
+    UpdateTableRequest change = changes.get(0);
+    String tableId = change.identifier().name();
+    String databaseId =
+        IcebergRestApiHandler.tableDatabaseId(namespace(change.identifier()), tableId);
+    tablesApiValidator.validateGetTable(databaseId, tableId);
+    TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
+    commitOn(identifier, tableCommitService.loadBase(identifier), change, actingPrincipal);
+  }
+
+  /** The tables {@code changes} name, for a refusal: the first few, and how many more. */
+  private static String named(List<UpdateTableRequest> changes) {
+    String first =
+        changes.stream()
+            .limit(REFUSAL_NAMES)
+            .map(change -> String.valueOf(change.identifier()))
+            .collect(Collectors.joining(", "));
+    return changes.size() > REFUSAL_NAMES
+        ? first + " and " + (changes.size() - REFUSAL_NAMES) + " more"
+        : first;
+  }
+
+  /**
+   * Commits {@code request}, a replace or an update, on the stored table {@code base}: its
+   * requirements are checked against {@code base}, its updates applied to it, and the result handed
+   * to the commit core with {@code base}'s version, so a commit that landed since {@code base} was
+   * loaded is refused by the core's guards.
+   *
+   * @return whether anything was committed: {@code false} for a request that changes nothing, which
+   *     writes nothing
+   */
+  private boolean commitOn(
+      TableIdentifier identifier,
+      TableDtoWithMetadata base,
+      UpdateTableRequest request,
+      String actingPrincipal) {
+    String databaseId = identifier.namespace().toString();
+    String tableId = identifier.name();
     TableMetadata baseMetadata = base.getMetadata();
     IcebergRestRequirements.validate(request, baseMetadata);
     if (request.updates().isEmpty()) {
-      return new IcebergRestLoadedTable(
-          base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
+      return false;
     }
     boolean replace = IcebergRestRequirements.isReplace(request);
     // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
@@ -272,8 +356,7 @@ public class IcebergRestWriteHandler {
     Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
-      return new IcebergRestLoadedTable(
-          base.getTableDto().getTableLocation(), baseMetadata, Collections.emptyMap(), false);
+      return false;
     }
     // The policies the OpenHouse client would send: the stored ones, or a patch merged onto them.
     Policies requestedPolicies =
@@ -316,7 +399,7 @@ public class IcebergRestWriteHandler {
                                 : base.getTableDto().getPolicies(),
                             partitionSpecMapper)))
             .build());
-    return loaded(identifier);
+    return true;
   }
 
   /**
