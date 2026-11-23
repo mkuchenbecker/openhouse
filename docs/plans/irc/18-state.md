@@ -16,18 +16,24 @@ design, evidence and decisions. Dated 2026-11-23.
   `38-c2-3-rest-capability-client-result.md`). Failures keep the native message but arrive as Iceberg exception types.
 - The server tells newer clients exactly which routes it serves, so they use HEAD checks and views and do not send
   routes that are not served.
+- An IRC create ignores a location the client names and uses the server's (D30). A rename across databases answers
+  404 or 406, a create asking for a format version other than the cluster's answers 400, and a rename onto a view's
+  name answers 409 (`42-v13b-spec-deviations-result.md`).
 - Not yet over IRC: metrics reports, register table, multi-table commits, scan planning, credential vending, and view
   rename (OpenHouse has none).
 - Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line.
 
 ## How far from the goal
 
-- Conformance: Apache's compatibility kit passes 31 of 160 tests. 84 of the rest are OpenHouse's own rules, which
-  the specification permits. 11 are routes not yet served. What "conforming" should mean is a question put to Mike
-  (D32). The measurement is `39-v13-compat-kit-result.md`.
+- Conformance: Apache's compatibility kit passes 38 of 160 tests (was 31). Of the 122 that do not, 78 are OpenHouse's own
+  rules or one known gap, 11 are routes not yet served, 22 are skipped by capability flags and 11 assert the
+  reference server's messages. What "conforming" should mean is a question put to Mike
+  (D32). The measurements are `39-v13-compat-kit-result.md` and
+  `42-v13b-spec-deviations-result.md`.
 - Iceberg 1.12 as the default: the whole build passes under the opt-in switch, and the Spark SQL harness differs
-  from the baseline in 6 of 2574 cases (one real problem being fixed, the rest accepted or internal). What remains
-  is listed as V9a to V9e. The measurement is `40-i6f-full-regression-result.md`.
+  from the baseline in 6 of 2574 cases. The one real problem, time travel with a write-audit-publish branch set, is
+  fixed in the Iceberg fork (I11); the rest are accepted or internal. OpenHouse still pins the older fork commit
+  `28742df3e538`, and the bump is part of V9a. What remains is listed as V9a to V9e. The measurement is `40-i6f-full-regression-result.md`.
 - Format v3: not started in the service. It follows V9e.
 
 ## Integration branches
@@ -63,6 +69,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 103 | C2-3, N3-x2: the grants and unlock client (`38-c2-3-rest-capability-client-result.md`) | c174e388 |
 | 104 | V13a: Apache's compatibility kit (`39-v13-compat-kit-result.md`) | fb8c1240 |
 | 105 | I6f: full regression of the opt-in build (`40-i6f-full-regression-result.md`) | 7ddc5bb4 |
+| 106 | V13b: the IRC routes follow the specification in four places (`42-v13b-spec-deviations-result.md`) | bfdcf266 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -72,30 +79,33 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 9 | Publishing group and version can be overridden | 984904f02 |
 | 10 | I5: the patches applied to Spark 4.2 | 7cf3a1040 |
 | 11 | W1 and W2: native-default tests and the ORC change | 28742df3e |
+| 12 | I11: time-travel reads ignore the session write-audit-publish branch on Spark 3.5 | a88f556c |
 
 Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, V13b, I11, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- V13b (the IRC routes follow the specification where the kit found deviations), on branch
-  `irc/v13b-spec-deviations`.
-- I11 (time travel with a write-audit-publish branch set), on branch `irc/wap-time-travel`.
+- V9a and V9b (the fork's artifacts survive `clean`; `iceberg-aws` from the fork; the pin bump), on branch
+  `irc/v9a-flip-prep`.
+- V9c (sources reused from the Iceberg 1.2 / Spark 3.1 projects move into the newer projects), on branch
+  `irc/v9c-move-shared-sources`.
 
 ## Next
 
-V9a to V9e, then the v3 items. N3b, V6, V7, V8, V11, V12, V3b and V3c can go alongside. The order of the large work
+V9d (Docker images), V9e (make 1.12 the default), then format v3 starting at X1. New from V13b: N4 (native
+rename onto a view answers 409) and V14 (create transaction history). N3b, V6, V7, V8, V11, V12, V3b and V3c can go alongside. The order of the large work
 is D29.
 
 ## Known red on `irc-integration`
 
-- Default build: green at 6015e111 (the last full run read). Pull requests 103 to 105 since then passed targeted
+- Default build: green at 6015e111 (the last full run read). Pull requests 103 to 106 since then passed targeted
   suites only.
-- Opt-in build: the whole build passes locally on the head of pull request 105; no run of the opt-in post-merge CI
+- Opt-in build: the whole build passes locally on the head of pull request 105 (pull request 106 ran its compile, kit and Spark 4.2 suites); no run of the opt-in post-merge CI
   job has been read.
 
 ## How work is tested

@@ -28,3 +28,16 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
   opt-in build (`32-optin-green-ci-result.md`).
 - The post-merge workflow first cancelled a running build when a newer merge arrived. Run 2 was cancelled that
   way. Pull request 93 changed it so a running build finishes.
+
+## Eighth round (found while making the IRC routes follow the specification)
+
+- Finding 3, a native defect, not fixed: renaming a table onto a view's name answers 500 on the native API. The
+  house tables store refuses it with a key violation, which the native path turns into an unmapped
+  `CommitFailedException`, so the client gets a 500 instead of a 409. The rename retries the commit four times and
+  leaves five orphan metadata files (with their checksum files) in the source table's directory, and takes about
+  1.8 s. The IRC rename goes through the same path and leaves the same files, though it now answers 409. Under D9 it
+  is pinned by a test as it is, not fixed silently. Work item N4. This is the native side of defect 2 in
+  `39-v13-compat-kit-result.md`. Detail in `42-v13b-spec-deviations-result.md`.
+- The in-memory stand-ins for the house table store overwrote a view's row on a rename onto its key, which the real
+  store never does, so tests reported a success that production refuses. Both stand-ins now refuse (pull request
+  106). The same kind of gap as T5.

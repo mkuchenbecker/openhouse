@@ -1,5 +1,8 @@
 # Apache's compatibility kit against the service (V13a): result
 
+Note: the counts below were superseded by `42-v13b-spec-deviations-result.md` (38 passed, 99 failed, 23 skipped, after
+pull request 106). This file is left as written on the day of the first measurement.
+
 Bottom line: Apache's REST compatibility kit, 160 tests, now runs against the tables service under the opt-in
 build, and 31 pass. Of the 129 that do not, 84 are OpenHouse's own rules that the specification permits, 11 are
 routes the service does not serve yet, 22 are skipped by capability flags, 11 assert the reference

@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 88 items in two repos, counted across this file, `30-work-defaults.md` and
+Bottom line: 90 items in two repos, counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
@@ -110,8 +110,9 @@ Rows W1 to W13 are in `30-work-defaults.md`. They are part of the total in the b
 | I10 | oh | **Done 2026-11-22 (pull request 97).** A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
 | N3a | oh | **Done 2026-11-22 (pull request 92).** Result in `26-n3a-spark42-read-result.md`. Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
 | V13a | oh | **Done 2026-11-23 (pull request 104).** Result in `39-v13-compat-kit-result.md`. Apache's compatibility kit runs against the service under the opt-in build with a reviewed list of expected outcomes. | V3, V4, I6a | The kit task passes exactly when the outcome matches the list in both directions. |
-| V13b | oh | The IRC routes follow the specification where the kit found deviations: cross-database rename status, format version on staged create, rename onto a view's name; a requested location is overridden (D30). | V13a | The kit's list shrinks by the tests that now pass; in progress on `irc/v13b-spec-deviations`. |
-| I11 | ib | An explicit time-travel read works while a write-audit-publish branch is set, as on LinkedIn's line. | I8 | The harness case `interact.branch.ttBeforeBranchPoint` passes on the 1.12 line; in progress on `irc/wap-time-travel`. |
+| V13b | oh | **Done 2026-11-23 (pull request 106).** Result in `42-v13b-spec-deviations-result.md`. The IRC routes follow the specification where the kit found deviations: cross-database rename status, format version on staged create, rename onto a view's name; a requested location is overridden (D30). | V13a | The kit's list shrinks by the tests that now pass. Done: 38 of 160 pass, up from 31. |
+| I11 | ib | **Done 2026-11-23 (iceberg pull request 12, merge commit `a88f556c`).** An explicit time-travel read works while a write-audit-publish branch is set, on Spark 3.5 (Spark 4.2 needed no change). The OpenHouse pin still names the older fork commit `28742df3e538`; the bump is part of V9a. | I8 | The harness case `interact.branch.ttBeforeBranchPoint` passes on the 1.12 line. Proven so far by new Spark 3.5 and 4.2 tests in the fork; the harness was not re-run. |
+| V14 | oh | A create transaction through IRC keeps its schema, partition spec and sort order history, not only the final ones with id 0 (kit group CREATEHIST). Found by V13b. | V13b | The kit test `testCompleteCreateTransactionMultipleSchemas` passes and leaves the expected-outcomes list. |
 | V9a | oh | The fork's published artifacts survive `clean` and the opt-in build passes `clean build`. | I6a | `./gradlew -PicebergFork clean build` passes. |
 | V9b | oh | `iceberg-aws` comes from the fork's line under the switch. | I6a | No LinkedIn 1.2 Iceberg artifact is on any classpath under the switch. |
 | V9c | oh | Sources the 1.5 projects reuse from the Iceberg 1.2 / Spark 3.1 projects live in the 1.5 projects. | I6g | The 1.2 projects can be removed from the build without touching the 1.5 projects. |

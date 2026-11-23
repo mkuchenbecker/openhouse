@@ -13,7 +13,8 @@ entry cites a statement. Claude wrote every entry.
 - Date: 2026-11-23.
 - Decision: on IRC create, staged create and replace, a location named by the client is ignored, and the server's
   location is used and returned. A commit that changes the location of an existing table or view is still refused.
-  This replaces the refusal chosen in D20 for creates. In progress on branch `irc/v13b-spec-deviations`.
+  This replaces the refusal chosen in D20 for creates. Carried out 2026-11-23 by pull request 106 (merge commit
+  `bfdcf266e6f1`, `42-v13b-spec-deviations-result.md`).
 - Why: Apache's compatibility kit has a switch for servers that own locations and expects them to override, which
   moves 13 kit tests. The response tells the client the real location, so no client is misled.
 - References: `39-v13-compat-kit-result.md` (location group, work item 3); D20 in `16-decisions-continued.md`.
@@ -28,7 +29,8 @@ entry cites a statement. Claude wrote every entry.
   - After repeated DELETEs on one data file there is one live position delete file, where LinkedIn's line has
     three, because 1.12 replaces earlier delete files. The rows returned are the same.
 - NOT accepted: an explicit time-travel read fails while a write-audit-publish branch is set in the session. That
-  is being fixed in the Iceberg fork, on branch `irc/wap-time-travel` (item I11).
+  was fixed on 2026-11-23 in the Iceberg fork by pull request 12, merged into `openhouse-1.12.0` as `a88f556c`
+  (item I11). It was fixed on Spark 3.5; Spark 4.2 needed no change. OpenHouse still pins the older fork commit until V9a.
 - Why: the first two are upstream behavior with no loss of data or of rows, and they keep the line free of fork
   patches. The third makes a working read fail for a user who stages writes.
 - References: `40-i6f-full-regression-result.md`, "The delta-harness on 1.12" and "The three failures that were
