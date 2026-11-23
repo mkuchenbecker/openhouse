@@ -13,12 +13,6 @@ sourceSets {
   test {
     java {
       srcDirs += 'src/shared/test/java'
-      // What is left of the list that kept the Spark 3.1-only tests out while this project took the
-      // Spark 3.1 itest's whole directory; those tests stayed in that project. These two patterns
-      // also match this project's own AlterTable*Spark3_5 and CreateTable*Spark3_5 classes (five
-      // files), which are therefore not compiled or run, as before the move. Kept so that the set
-      // of tests does not change with the move.
-      exclude '**/AlterTable*.java', '**/CreateTable*.java'
     }
   }
 }
