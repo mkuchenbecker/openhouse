@@ -26,7 +26,9 @@ scripts/iceberg-fork/publish-local.sh  # once per pinned commit; FORCE=1 republi
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
 `build/iceberg-fork/repo` (never `~/.m2`). A second Iceberg build publishes the shaded
 `iceberg-spark-runtime-4.2_2.13` (one Iceberg build has one Scala version); it has its own marker
-file, so a repository published before it existed gains only that jar. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
+file, so a repository published before it existed gains only that jar. A third build, with its own
+marker too, publishes `iceberg-open-api`'s tests and test-fixtures jars: Apache's REST compatibility
+kit. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
 support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes several minutes; once the
 version is published it is a no-op. `./gradlew clean` deletes `build/`, so publish again after it.
 
@@ -89,7 +91,9 @@ is not detectable and it declares the capability as before, with a warning.
 `-PicebergFork assemble testClasses`, then the opt-in suites: `:services:tables:test`,
 `:iceberg:openhouse:internalcatalog:test`, `:iceberg:openhouse:htscatalog:test`, the 1.5 Java itest,
 the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
-the Spark 4.2 itest (`test`, `extensionsTest`). It does not block or wait for the default build job.
+the Spark 4.2 itest (`test`, `extensionsTest`), and last, in a step of its own that runs even when a
+suite failed, Apache Iceberg's REST compatibility kit (`restCompatKitTest`). It does not block or
+wait for the default build job.
 
 ## Spark 4.2 over the IRC read routes
 
@@ -144,3 +148,32 @@ and authentication, and gives the outcomes Spark 3.5 gives over `RESTCatalog`. T
 transport is the one per-line part: the module compiles `src/iceberg-1.5/java` by default and
 `src/iceberg-1.12/java` (Iceberg's `AuthManager`) under `-PicebergFork`. `extensionsTest` runs in its
 own JVM and service JVM, because Spark fixes a session's extensions when the session is built.
+
+## Apache Iceberg's REST compatibility kit
+
+`:integrations:java:openhouse-rest-compat-kit` (only under the switch) runs Apache Iceberg's REST
+compatibility kit (RCK), the fork's `iceberg-open-api` tests, against the tables service's IRC
+routes with Iceberg 1.12's own `RESTCatalog`: the kit's table suite (`CatalogTests`) and view suite
+(`ViewCatalogTests`), every test of both.
+
+```bash
+scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's tests and test fixtures
+./gradlew -PicebergFork :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
+```
+
+The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory
+H2, local storage, the dummy token interceptor, an authorization handler that allows everything,
+views enabled for the namespaces the kit uses). A JUnit session listener in the test JVM starts it
+and points the kit at `<service>/iceberg` (`rck.local=false`, `uri`, `token`). Its log, access log
+and warehouse are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`.
+
+The kit runs through two subclasses, `OpenHouseRestCompatibilityKitCatalogTests` and
+`OpenHouseRestCompatibilityKitViewCatalogTests`, that only answer the kit's capability flags with
+what OpenHouse is (no namespace create, no namespace properties, one-level namespaces, no empty
+namespaces, server-owned locations). The tests that still do not pass are listed, each with its
+outcome, a class and a reason, in `expected-outcomes.txt` in the module: (a) a model difference the
+kit has a flag for, (b) a model difference it has none for, (c) a route or feature not served yet,
+(d) a defect, (e) an assumption that holds only for Iceberg's reference implementation.
+`restCompatKitTest` passes exactly when the tests that do not pass, and their outcomes, are the
+listed ones: a test that newly passes must be removed from the list, and one that newly fails is a
+regression until it is listed. No kit test is skipped or excluded to get there.
