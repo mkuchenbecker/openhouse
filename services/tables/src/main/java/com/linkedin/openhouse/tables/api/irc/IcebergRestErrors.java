@@ -14,6 +14,8 @@ import com.linkedin.openhouse.common.exception.StorageDependencyUnavailableExcep
 import com.linkedin.openhouse.common.exception.SystemOnlyLockAccessDeniedException;
 import com.linkedin.openhouse.common.exception.UnprocessableEntityException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.common.exception.handler.OpenHouseExceptionHandler;
+import java.util.Arrays;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
@@ -27,8 +29,11 @@ import org.apache.iceberg.exceptions.ServiceUnavailableException;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.AuthorizationServiceException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * Maps a failure on an IRC route to the spec's {@code ErrorResponse}. The status is the one the
@@ -131,6 +136,21 @@ public final class IcebergRestErrors {
     if (failure instanceof UnsupportedClientOperationException) {
       return error(HttpStatus.BAD_REQUEST, BadRequestException.class, message);
     }
+    if (failure instanceof HttpMessageNotReadableException) {
+      // A native request body (the OpenHouse routes) that does not parse: the native message.
+      return error(
+          HttpStatus.BAD_REQUEST,
+          BadRequestException.class,
+          OpenHouseExceptionHandler.unreadableMessage((HttpMessageNotReadableException) failure));
+    }
+    if (failure instanceof MethodArgumentTypeMismatchException) {
+      // A path variable of the OpenHouse routes that does not convert (the native 400 has no body).
+      return error(HttpStatus.BAD_REQUEST, BadRequestException.class, mismatch(failure));
+    }
+    if (failure instanceof HttpMediaTypeNotSupportedException) {
+      // A native request body sent as something other than JSON: the native 415.
+      return error(HttpStatus.UNSUPPORTED_MEDIA_TYPE, failure.getClass(), message);
+    }
     if (failure instanceof CodedApiException) {
       HttpStatus status = ((CodedApiException) failure).getHttpStatus();
       return error(status, typeFor(status, failure.getClass()), message);
@@ -146,6 +166,16 @@ public final class IcebergRestErrors {
    */
   private static ErrorResponse commitStateUnknown(String message) {
     return error(HttpStatus.INTERNAL_SERVER_ERROR, CommitStateUnknownException.class, message);
+  }
+
+  private static String mismatch(Throwable failure) {
+    MethodArgumentTypeMismatchException mismatch = (MethodArgumentTypeMismatchException) failure;
+    Class<?> required = mismatch.getRequiredType();
+    return required != null && required.isEnum()
+        ? String.format(
+            "Invalid %s: %s; expected one of %s",
+            mismatch.getName(), mismatch.getValue(), Arrays.toString(required.getEnumConstants()))
+        : String.format("Invalid %s: %s", mismatch.getName(), mismatch.getValue());
   }
 
   /** The error for a request the token interceptor turned away with {@code status}. */
