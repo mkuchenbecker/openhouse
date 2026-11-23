@@ -6,7 +6,7 @@ On the target platform (Spark 4.2 with Iceberg 1.12 over IRC, no OpenHouse class
 SQL statements behave as on the baseline (after N6, 166 of 177); the other 11 are listed and are accepted or
 Spark 4's own (D37, `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). Of the five items needed to make 1.12
 the default (V9a to V9e), four are done (V9a to V9d) and V9e is running; T10, N6 and most of C9 are done. V6, V7,
-V16, N5, T13, N3 and N3b are done. One data-loss risk remains, natively only: a create naming a renamed-away table's directory is
+V8, V16, N5, T13, N3 and N3b are done. One data-loss risk remains, natively only: a create naming a renamed-away table's directory is
 closed over IRC and pinned natively, and the fix is put to Mike (D35). This is the single place for current state; other files record
 design, evidence and decisions. Dated 2026-11-23.
 
@@ -32,8 +32,13 @@ design, evidence and decisions. Dated 2026-11-23.
   overwrite, MERGE, UPDATE, DELETE, CTAS, RTAS, column and property changes, branch and write-audit-publish
   writes), all storing what they should (pull request 117). Renaming to a target that names the catalog works as
   on the baseline since N6 (pull request 119). 11 differences are declared and accepted (D37).
-- Not yet over IRC: multi-table commits, scan planning, credential vending, and view
-  rename (OpenHouse has none). V8 is investigating multi-table commits.
+- Served over IRC now: config with the endpoint list (19 routes), namespace reads, table create, staged create,
+  load, commit, rename, drop, register, metrics report, one-table transactions, views except rename, and the
+  OpenHouse capability routes (policies, grants, unlock).
+- Not served: scan planning (V11), credential vending and signing (V12), view rename (OpenHouse has none), and
+  namespace create, alter and drop (OpenHouse refuses them natively too, D20).
+- Not atomic: multi-table transactions. A transaction of one table commits; several tables are refused whole with
+  400 (D39, pull request 120, `53-v8-multi-table-commit-result.md`). Real atomicity is put to Mike (D40).
 - Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line by default.
 
 ## How far from the goal
@@ -58,31 +63,32 @@ design, evidence and decisions. Dated 2026-11-23.
 
 ## Merged pull requests
 
-39 pull requests are merged into `irc-integration` (the last is 119, merge commit 92c5e117) and 10 into the Iceberg
+40 pull requests are merged into `irc-integration` (the last is 120, merge commit a217cce9) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest three: 117 (N3b, in `50-n3b-spark42-smoke-result.md`), 114 (C9 in part) and 119 (N6), both in
-`52-c9-n6-result.md`.
+The latest three: 114 (C9 in part) and 119 (N6), both in `52-c9-n6-result.md`, and 120 (V8, in
+`53-v8-multi-table-commit-result.md`).
 Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, C6, T9, V6, V7, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, C6, T9, V6, V7, V8, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
 - V9e (make 1.12 the default and delete the Iceberg 1.2 and Spark 3.1 projects), branch
   `irc/v9e-iceberg-1.12-default`, draft pull request 118. The orchestrator waits for green CI before merging it
   (D38). It also corrects three wrong sentences from C9 and adds a guard to the release workflow.
-- V8 (the IRC multi-table commit route; investigate first), branch `irc/v8-multi-table-commit`. An unsafe
-  multi-table commit is not acceptable, so the likely outcome is one table per transaction and a design proposal
-  for real atomicity put to Mike.
+- A bundle of three small service items on branch `irc/v15-v3b-v3c-service-followups`: V15 (a create whose
+  metadata location will not fit House Tables' 255 characters is refused with 400 before anything is written, on
+  both APIs, D41), V3b (the IRC config route's FileIO default follows the cluster's storage) and V3c (failed IRC
+  requests appear in the service audit like native ones).
 
 ## Next
 
 After those: C10 (the Spark image and dataloader tests in CI, after V9e), then format v3 starting at X1. V9e includes C8. New from V13b: N4 and V14. N5 is pinned and waits for Mike
 (D35). New small items: C7, C8, T12, V17, and T11 (real S3, needs an environment with S3). N7 (one list of smoke
-scenarios for Spark 3.5 and 4.2) follows V9e. V8, V11, V12, V3b and V3c can go alongside. The order of the large work
+scenarios for Spark 3.5 and 4.2) follows V9e. V11 and V12 can go alongside. The order of the large work
 is D29.
 
 ## Known red on `irc-integration`
@@ -94,7 +100,7 @@ test results from the previous run on identical inputs; no step was skipped. Une
 `test` task failed once in six runs (T8). `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading
 the access log early; pull request 112 made it wait for the last line and that may be T8, which stays open until a
 CI failure names its test. And the build is not reproducible bit
-for bit (`21-findings-continued.md`). Open product defect: V15.
+for bit (`21-findings-continued.md`). Open product defect: V15, being fixed (D41).
 
 ## How work is tested
 
@@ -117,6 +123,9 @@ now requires, after the red build (`21-findings-continued.md`). D33 tightens it:
   become user-visible behaviour at release. It does not block work.
 - Publishing the fork's Iceberg jars anywhere is a one-way door, and the 1.12 default makes it needed before any
   release. It does not block work (D38 addendum).
+- D40: whether to build real atomic multi-table commit. It needs a new House Tables endpoint, a regenerated
+  client and a split of the commit core, and is a one-way door. No engine sends the route, so leaving it as built
+  is a reasonable choice. It does not block work.
 - Worker sessions on separate machines, because a bigger container is not available (D21). The diagnosis is in
   `20-iteration-friction.md`.
 
@@ -126,6 +135,6 @@ Nothing blocks work.
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37, D38, with dated addenda).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D41, with dated addenda).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

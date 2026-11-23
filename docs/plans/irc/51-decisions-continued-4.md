@@ -2,10 +2,12 @@
 
 Continues `37-decisions-continued-3.md`, which is full.
 
-Bottom line: two more decisions, both dated 2026-11-23 and both the orchestrator's, each with a dated addendum. D37
-settles the 16 statements where Spark 4.2 over IRC differs from the baseline: one problem is fixed (the rename
-target, N6, done) and the rest are accepted. D38 records how V9e makes Iceberg 1.12 the default. None is agreed by Mike unless the entry cites a
-statement. Claude wrote every entry.
+Bottom line: five decisions, all dated 2026-11-23. D37 to D39 and D41 are the orchestrator's, and D40 is put to Mike.
+D37 settles the 16 statements where Spark 4.2 over IRC differs from the baseline: one problem is fixed (the rename
+target, N6, done) and the rest are accepted. D38 records how V9e makes Iceberg 1.12 the default. D39 makes the IRC
+multi-table commit route serve one table and refuse several whole. D40 asks Mike whether to build real atomic
+multi-table commit. D41 refuses an over-long metadata location on both APIs. None is agreed by Mike unless the entry
+cites a statement. Claude wrote every entry.
 
 ## D37. The differences of Spark 4.2 over IRC: rename target fixed, the rest accepted
 
@@ -74,3 +76,51 @@ statement. Claude wrote every entry.
   - Publishing the fork's Iceberg jars anywhere is a one-way door and stays Mike's decision. It does not block work.
   - C9 is merged in part (pull request 114). The orchestrator still waits for green CI before merging V9e. The
     Spark image checks it did not get are C10, after V9e.
+
+## D39. The IRC multi-table commit route serves one table and refuses several whole
+
+- Date: 2026-11-23. The orchestrator's decision, a two-way door. Done by V8 (pull request 120, merge commit
+  `a217cce94f9592c088a4193dad87a06969c0fd4c`; result in `53-v8-multi-table-commit-result.md`).
+- Decision: a commit that can half-apply is not acceptable. `POST /iceberg/v1/transactions/commit` commits a
+  transaction that changes one table as that table's ordinary commit (204) and refuses a transaction that changes
+  several tables whole, with 400, before anything is read or written.
+- Why: House Tables only offers a compare-and-set of one row per call, so two tables cannot be committed
+  atomically, and committing table by table with an undo is unsafe under a concurrent writer or a crash between two
+  tables. Nothing sends the route: Spark 3.5 and 4.2 never do and the compatibility kit has no test for it (kit
+  unchanged at 39 passed, 98 failed, 23 skipped).
+- Sub-choices adopted from the report's list of ten:
+  - The refusal is 400, decided on the request's shape alone, so a caller with no rights and a missing table get the
+    same answer. Not 409 (invites a retry), not 5xx (the 1.12 client reads it as commit state unknown).
+  - Two changes to one table count as several and are refused.
+  - The route never creates a table: an unknown table or a view's name is 404.
+  - The route is listed in the advertised endpoints (now 19), because the 1.12 client refuses locally when it is
+    not listed and has no fallback.
+  - `Idempotency-Key` is not honoured, as on every other route.
+  - On the Iceberg 1.2 runtime the route stays 406.
+  - The route carries the policies capability annotation like the ordinary commit; the response is 204 with no body.
+- References: D14, D32; `53-v8-multi-table-commit-result.md`.
+- Reverse by: removing the route's mapping and its line in the endpoint list returns it to 406. A refusal turned
+  into real atomicity is D40.
+
+## D40. Put to Mike: whether to build real atomic multi-table commit
+
+- Date: 2026-11-23. Put to Mike by the orchestrator. Not blocking.
+- Question: should OpenHouse make a multi-table transaction truly all-or-nothing?
+- What it takes: a new House Tables endpoint that updates several rows in one database transaction (no DDL change),
+  a regenerated House Tables client, and the commit core split into prepare and publish. Roughly 300 to 400 lines in
+  House Tables, 150 in the commit core plus the stand-ins, and 100 in the route. House Tables deploys first. The
+  design is in `53-v8-multi-table-commit-result.md`.
+- One-way door: it is a new House Tables API.
+- Recommendation: since no engine sends the route, leaving it as built (D39) is a reasonable choice. Build it only
+  if a client that needs multi-table transactions appears.
+- Reverse by: not applicable until built.
+
+## D41. A create whose metadata location will not fit 255 characters is refused with 400 on both APIs
+
+- Date: 2026-11-23. The orchestrator's decision, a two-way door. Work item V15, running in the bundle on branch
+  `irc/v15-v3b-v3c-service-followups` with V3b and V3c.
+- Decision: the service refuses a create whose metadata location will not fit House Tables' 255-character column,
+  before anything is written, on both the native and the IRC API.
+- Why: today such a request ends in 503 with commit state unknown and leaves an orphan metadata file
+  (`21-findings-continued.md`, ninth round). A clean 400 takes nothing away from any client that works today.
+- Reverse by: removing the check restores the 503.
