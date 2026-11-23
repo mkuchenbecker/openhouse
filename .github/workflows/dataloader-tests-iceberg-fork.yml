@@ -1,0 +1,35 @@
+name: Dataloader Tests on the Iceberg Fork
+
+# The Dataloader job (dataloader-tests.yml) on a -PicebergFork build (docs/development/iceberg-fork.md):
+# the oh-hadoop-spark recipe with the Spark 3.5 / Java 17 image, whose build compiles Livy, and the
+# dataloader's integration tests against it. It is the only place that image is built and run.
+#
+# Like the Dataloader job on the default build, a pull request runs it only when it touches the
+# files below: the dataloader, as there, plus what defines the recipe and its images on this line.
+# Every merge to irc-integration runs it too (post-merge-build.yml), because the image is built from
+# the uber jars of the whole build.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+      - irc-integration
+    paths:
+      - 'integrations/python/dataloader/**'
+      - 'infra/recipes/docker-compose/common/**'
+      - 'infra/recipes/docker-compose/oh-hadoop-spark/**'
+      - 'infra/recipes/docker-compose/iceberg-fork.env'
+      - '*.Dockerfile'
+      - '.github/workflows/dataloader-tests.yml'
+      - '.github/workflows/dataloader-tests-iceberg-fork.yml'
+      - '.github/actions/iceberg-fork/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dataloader-tests:
+    uses: ./.github/workflows/dataloader-tests.yml
+    with:
+      iceberg-fork: true
