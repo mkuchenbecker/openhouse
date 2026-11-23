@@ -7,7 +7,8 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 
 | File | What it is | Whose voice |
 | --- | --- | --- |
-| `18-state.md` | Start here. Current state: what is merged where, what is in progress, and how to audit | Claude |
+| `18-state.md` | Start here. Current state: how far from the goal, what is known red, what is running, and how to audit | Claude |
+| `45-merged-pull-requests.md` | The tables of merged pull requests on both integration branches, with merge commits | Claude |
 | `01-stated.md` | What Mike said | Mike |
 | `02-facts.md` | What was checked in the repos, with what was not verified | Observation |
 | `03-inferred.md` | Claude's judgements and three questions for Mike | Claude |
@@ -18,7 +19,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `10-v2-defaults.md` | Whether column defaults on v2 tables survive the 1.12 line | Observation by a delegated agent |
 | `11-harness-via-seam.md` | Delta-harness counts through the REST-shaped path, and the differences it showed | Observation by a delegated agent |
 | `12-openhouse-on-1.12-scout.md` | Local scouting of OpenHouse on the fork's Iceberg 1.12 line: what compiles, what fails, and how the fork could be resolved | Observation by a delegated agent |
-| `13-decisions.md` | Decisions Claude made on two-way doors, each with reason, references and how to reverse it | Claude, not agreed unless it cites a statement |
+| `13-decisions.md` | Decisions Claude made on two-way doors, each with reason, references and how to reverse it (D7 carries a dated note on where the fork now lives) | Claude, not agreed unless it cites a statement |
 | `14-native-defaults-design.md` | Design for native column defaults on the new Iceberg line, with work items W1 to W11 | Observation by a delegated agent, adopted with changes in D11 |
 | `15-optin-build-result.md` | Result of building OpenHouse's Iceberg 1.5 variant against the fork's 1.12 line behind an opt-in switch | Observation by a delegated agent |
 | `16-decisions-continued.md` | Decisions D13 to D21, continuing `13-decisions.md` | Claude, not agreed unless it cites a statement |
@@ -42,8 +43,9 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `40-i6f-full-regression-result.md` | Result of I6f: the whole opt-in build and the Spark SQL harness on Iceberg 1.12, what blocks making it the default, and what the flip would take | Observation by a delegated agent |
 | `43-optin-ci-red-result.md` | Result of pull requests 107 and 108: the opt-in Iceberg 1.12 job was red in CI on five runs, the two causes, why local runs missed them, and the first green run | Observation by delegated agents |
 | `42-v13b-spec-deviations-result.md` | Result of V13b: the four IRC route changes before and after, the kit now at 38 of 160, which tests moved, what was not run, and the native rename defect | Observation by a delegated agent |
+| `44-v9abc-flip-prep-result.md` | Result of V9a to V9c, C6 and T9 (pull requests 109 to 111): the fork outside the checkout, `iceberg-aws` from the fork, 193 files moved, the opt-in build on every pull request, and the 11 blockers to deleting the old projects | Observation by delegated agents |
 | `41-work-platforms-v3.md` | Work items for the native path, platforms and v3 functions, moved out of `04-work.md` | Claude |
-| `21-findings-continued.md` | The seventh to ninth rounds of findings: what selective testing missed, the native rename defect, and the red opt-in job | Observation by delegated agents and from CI |
+| `21-findings-continued.md` | The seventh to tenth rounds of findings: what selective testing missed, the native rename defect, the red opt-in job, and the flip-preparation findings | Observation by delegated agents and from CI |
 | `28-capabilities-over-irc-design.md` | Design for OpenHouse capabilities (policies, grants, unlock) over IRC, with the Spark 4.2 extension build and the one-way doors | Delegated agent from reading code, adopted in D23 |
 | `29-capabilities-over-irc-work.md` | The design's work items and what is not verified | Delegated agent from reading code |
 | `30-work-defaults.md` | Work items W1 to W12 for column defaults, moved out of `04-work.md` | Claude |

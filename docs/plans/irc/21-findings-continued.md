@@ -54,3 +54,11 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
   and path length is ruled out. The job now prints failed tests, so the next occurrence will name it. Work item T8.
 - Test: the compatibility kit's service builds its warehouse under the checkout too, and is green on the runner with
   about 23 characters to spare. Work item T9.
+
+## Tenth round (the flip preparation, 2026-11-23)
+
+- Test, possibly the same thing as T8: `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once locally on
+  an empty access log and passed on two reruns. The cause is not known. If it recurs in CI, treat it with T8.
+- Build, no work item: two generated OpenAPI client classes in `:client:hts` (`PageJob` and `PageUserTable`) and
+  `META-INF/spring-configuration-metadata.json` of `services:tables` differ between two builds of the same sources,
+  so the build is not reproducible bit for bit. The cause was not determined (`44-v9abc-flip-prep-result.md`).

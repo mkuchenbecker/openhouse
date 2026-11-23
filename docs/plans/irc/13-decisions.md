@@ -1,19 +1,17 @@
 # Decision log
 
 Bottom line: decisions Claude made on two-way doors (S41, S43). Each has its reason, the evidence it rests
-on, and how to reverse it. None is agreed by Mike unless the entry cites a statement.
-
-Dates are all 2026-11-22. Claude wrote every entry; "Claude's reading" marks judgement Mike did not state.
+on, and how to reverse it. None is agreed by Mike unless the entry cites a statement. Dates are 2026-11-22
+unless an entry says otherwise. Claude wrote every entry; "Claude's reading" marks judgement Mike did not state.
 
 ## D1. Catalog path selection and the seam as built
 
 - Date: 2026-11-22.
 - Decision: the catalog path is selected by `catalog-impl`. The in-process REST-shaped adapter rethrows
-  original exceptions and handles replace itself. The seam as built in pull request 84 is adopted.
+  original exceptions and handles replace itself. The seam as built (pull request 84) is adopted.
 - Why: no existing production file changes, so today's path cannot regress. The smoke and contract suites
   pass on both paths, and the full delta-harness gives equal counts on both paths in both modes.
-- References: `07-seam-design.md` sections 1 and 3; `09-seam-result.md`; `11-harness-via-seam.md`;
-  openhouse pull requests 84 and 86.
+- References: `07-seam-design.md` sections 1 and 3; `09-seam-result.md`; `11-harness-via-seam.md`; pull requests 84, 86.
 - Reverse by: deleting the three added classes.
 
 ## D2. Remaining differences between the two paths
@@ -84,6 +82,8 @@ Dates are all 2026-11-22. Claude wrote every entry; "Claude's reading" marks jud
 - Why: the proxy refuses JitPack and GitHub Packages here, and a source pin is auditable.
 - References: `12-openhouse-on-1.12-scout.md`, "Hosting options for the fork's artifacts"; items I6a and I6d in `04-work.md`.
 - Reverse by: pointing the switch at a hosted repository (item I6d).
+- Note, 2026-11-23: the fork is still built from pinned source and published nowhere, but now lives outside the
+  checkout, in `<Gradle user home>/iceberg-fork/<version>`, shared by all worktrees (pull request 109, V9a).
 
 ## D8. LinkedIn's line is the behavior reference
 
