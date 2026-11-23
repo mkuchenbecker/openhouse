@@ -100,8 +100,11 @@ public class IcebergRestRoutesBoundaryTest {
       // Register, whose request class Iceberg 1.2 lacks, is one of the write routes.
       Assertions.assertEquals(
           400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
+      // So is the multi-table commit route, whose request class Iceberg 1.2 lacks as well.
+      Assertions.assertEquals(400, call("POST", "/iceberg/v1/transactions/commit", "{}"));
       return;
     }
+    Assertions.assertEquals(406, call("POST", "/iceberg/v1/transactions/commit", "{}"));
     Assertions.assertEquals(
         406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
     Assertions.assertEquals(
@@ -158,7 +161,9 @@ public class IcebergRestRoutesBoundaryTest {
     Assertions.assertTrue(
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register"),
         endpoints.toString());
-    Assertions.assertEquals(18, endpoints.size(), endpoints.toString());
+    Assertions.assertTrue(
+        endpoints.contains("POST /v1/{prefix}/transactions/commit"), endpoints.toString());
+    Assertions.assertEquals(19, endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 
