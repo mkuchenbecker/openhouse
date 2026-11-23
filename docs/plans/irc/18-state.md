@@ -2,8 +2,11 @@
 
 Bottom line: all work is on two integration branches in Mike's forks, nothing is merged into either fork's main or
 LinkedIn's repositories, and nothing is known red: post-merge runs for pull requests 109 and 110 passed on both builds.
-Of the five items needed to make 1.12 the default (V9a to V9e), four are done (V9a to V9d); V9e waits on T10 and C9. V6, V7, V16, N5
-and T13 are done. One data-loss risk remains, natively only: a create naming a renamed-away table's directory is
+On the target platform (Spark 4.2 with Iceberg 1.12 over IRC, no OpenHouse class in the engine), 161 of 177 Spark
+SQL statements behave as on the baseline and 5 more will after N6; the other 11 are listed and are accepted or
+Spark 4's own (D37, `50-n3b-spark42-smoke-result.md`). Of the five items needed to make 1.12 the default (V9a to
+V9e), four are done (V9a to V9d) and V9e is running; T10 is done and C9 is still running. V6, V7, V16, N5, T13, N3
+and N3b are done. One data-loss risk remains, natively only: a create naming a renamed-away table's directory is
 closed over IRC and pinned natively, and the fix is put to Mike (D35). This is the single place for current state; other files record
 design, evidence and decisions. Dated 2026-11-23.
 
@@ -25,6 +28,10 @@ design, evidence and decisions. Dated 2026-11-23.
 - Metrics reports and register table are served (pull request 112, D34).
 - An IRC create can no longer be given another table's directory: a completion naming a directory in use is refused
   with 400, and `openhouse.tableUUID` in a create is ignored (D36, `48-v16-directory-reuse-result.md`).
+- Spark 4.2 over IRC passes the Spark SQL smoke suite (177 statements) and 18 write statements (inserts,
+  overwrite, MERGE, UPDATE, DELETE, CTAS, RTAS, column and property changes, branch and write-audit-publish
+  writes), all storing what they should (pull request 117). One working statement is refused: renaming to a
+  target that names the catalog. N6 fixes it (D37).
 - Not yet over IRC: multi-table commits, scan planning, credential vending, and view
   rename (OpenHouse has none).
 - Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line by default.
@@ -36,9 +43,10 @@ design, evidence and decisions. Dated 2026-11-23.
   reference server's messages. What "conforming" should mean is a question put to Mike
   (D32). The measurements are `39-v13-compat-kit-result.md` and
   `42-v13b-spec-deviations-result.md`.
-- Iceberg 1.12 as the default: of the five items needed (V9a to V9e), four are done (V9a to V9d). V9e is not started;
-  it waits on T10 (the five Spark 3.5 test classes that are never compiled) and uses the result of C9 (the Docker
-  checks for the 1.12 line in CI). The list of what V9e flips and deletes is in `47-v9d-deployables-result.md`. Under the
+- Iceberg 1.12 as the default: of the five items needed (V9a to V9e), four are done (V9a to V9d). V9e is running on
+  branch `irc/v9e-iceberg-1.12-default` (decisions in D38). T10 is done (pull request 115): the five Spark 3.5
+  test classes now run. V9e uses the result of C9 (the Docker checks for the 1.12 line in CI, still running on
+  pull request 114). V9e's first step ports three Spark 3.1 tests to Spark 3.5 (D37). The list of what V9e flips and deletes is in `47-v9d-deployables-result.md`. Under the
   switch the uber jars, scheduler image and Spark image build and start; both builds were green in CI on pull request 113.
   I11 and V13b, which V9e also needed, are done. The opt-in build is green in CI and now runs on every pull request (C6). The fork
   is pinned at `a88f556c` and published under the Gradle user home, outside the checkout. The Spark SQL harness differs
@@ -49,27 +57,30 @@ design, evidence and decisions. Dated 2026-11-23.
 
 ## Merged pull requests
 
-35 pull requests are merged into `irc-integration` (the last is 116, merge commit 0a3bf529) and 10 into the Iceberg
+37 pull requests are merged into `irc-integration` (the last is 117, merge commit c1303849) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest three: 112 (V6, V7), 113 (V9d, in `47-v9d-deployables-result.md`) and 116 (V16, N5, T13, in
-`48-v16-directory-reuse-result.md`).
+The latest three: 115 (T10, in `49-t10-spark35-tests-result.md`), 116 (V16, N5, T13, in
+`48-v16-directory-reuse-result.md`) and 117 (N3b, in `50-n3b-spark42-smoke-result.md`).
 Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, C6, T9, V6, V7, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, T10, C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, C6, T9, V6, V7, V9d, V16, T13, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- C9 (the Docker checks for the 1.12 line in CI, green), branch `irc/c9-docker-steps-1.12-ci`.
-- T10 (the five Spark 3.5 test classes that are never compiled). Interrupted twice by API overload and resumed.
+- C9 (the Docker checks for the 1.12 line in CI, green), branch `irc/c9-docker-steps-1.12-ci`, pull request 114.
+- V9e (make 1.12 the default and delete the Iceberg 1.2 and Spark 3.1 projects), branch
+  `irc/v9e-iceberg-1.12-default`. The orchestrator waits for green CI before merging it (D38).
+- N6 (the rename target on Spark 4.2, and whether the baseline stores `owner=root`), branch
+  `irc/n6-spark42-rename-target`.
 
 ## Next
 
-After those: V9e (make 1.12 the default and delete the old projects, with C8), then format v3 starting at X1. New
-from V13b: N4 and V14. N5 is pinned and waits for Mike (D35). New small items: C7, C8, T12, V17, and T11
-(real S3, needs an environment with S3). N3b, V8, V11, V12, V3b and V3c can go alongside. The order of the large work
+After those: format v3 starting at X1. V9e includes C8. New from V13b: N4 and V14. N5 is pinned and waits for Mike
+(D35). New small items: C7, C8, T12, V17, and T11 (real S3, needs an environment with S3). N7 (one list of smoke
+scenarios for Spark 3.5 and 4.2) follows V9e. V8, V11, V12, V3b and V3c can go alongside. The order of the large work
 is D29.
 
 ## Known red on `irc-integration`
@@ -100,6 +111,8 @@ now requires, after the red build (`21-findings-continued.md`). D33 tightens it:
   route semantics become a public contract at release. It does not block work.
 - D35: whether to fix the native directory-reuse defect (N5), because the fix changes native behavior. Four native
   requests can still delete a renamed table's files. It does not block work.
+- A veto, if wanted, of the accepted Spark 4.2 differences in D37 (list in `50-n3b-spark42-smoke-result.md`). They
+  become user-visible behaviour at release. It does not block work.
 - Worker sessions on separate machines, because a bigger container is not available (D21). The diagnosis is in
   `20-iteration-friction.md`.
 
@@ -109,6 +122,6 @@ Nothing blocks work.
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37, D38).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

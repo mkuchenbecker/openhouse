@@ -2,7 +2,7 @@
 
 Continues `08-findings.md`, which is near its length limit.
 
-Bottom line: the eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5), now confirmed by running it and closed over IRC. Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
+Bottom line: the twelfth round is the smoke suite on Spark 4.2 (one rename difference to fix, the rest accepted) and five test classes that never ran. The eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5), now confirmed by running it and closed over IRC. Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
 and two wrong claims through in the seventh round. Each was cheap to catch. Briefs now require the cheap checks
 (D26). All items are observations from delegated agents and from reading CI.
 
@@ -81,3 +81,19 @@ and two wrong claims through in the seventh round. Each was cheap to catch. Brie
   before its last line was written. Pull request 112 made the test wait for that line. T8 stays open until a CI
   failure names its test.
 - Environment: the shared disk filled twice during runs; reruns passed (`20-iteration-friction.md`).
+
+## Twelfth round (T10 and N3b, 2026-11-23)
+
+- Five Spark 3.5 test classes (12 tests) were never compiled from the day LinkedIn added them, because exclude
+  patterns copied from the Spark 3.1 project hid them. Seven failed at first, all for two stale expectations that
+  LinkedIn had fixed in the Spark 3.1 copies. No Spark 3.5 defect and no Iceberg 1.12 difference
+  (`49-t10-spark35-tests-result.md`).
+- Three Spark 3.1 tests have no Spark 3.5 equivalent: two on bucket partitioning, one on blocking the `policies`
+  property. They are ported first in V9e (D37).
+- Over IRC on Spark 4.2, `ALTER TABLE ... RENAME TO <catalog>.<db>.<t>` is refused where the baseline worked. It is
+  fixed in the SQL extensions (N6, D37). The other 11 differences are accepted or Spark 4's own
+  (`50-n3b-spark42-smoke-result.md`).
+- Open, being investigated by N6: tables that Spark 4.2 creates over IRC store a property `owner=root`. Whether the
+  baseline stores it is unknown, because `SHOW TBLPROPERTIES` hides it.
+- Follow-up N7: the Spark 4.2 smoke scenarios are a guarded copy of the Spark 3.5 suite's. After V9e the Spark 3.5
+  suite should extend the shared scenarios and the copy check should be deleted.
