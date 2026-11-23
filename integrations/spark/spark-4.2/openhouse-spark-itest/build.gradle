@@ -2,7 +2,8 @@
 // REST Catalog (IRC) routes of the tables service, with Iceberg's own SparkCatalog and RESTCatalog
 // and no OpenHouse catalog or client class in the Spark JVM; with the OpenHouse SQL extensions
 // (extensionsTest), the OpenHouse statements run the same way, and so does the Spark SQL smoke suite
-// (smokeTest). Only under -PicebergFork (settings.gradle); see docs/development/iceberg-fork.md.
+// (smokeTest). Not in the -PicebergLinkedIn reference build (settings.gradle), which has no
+// Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs:
 // - test: Spark 4.2, the fork's shaded iceberg-spark-runtime-4.2_2.13 and the OpenHouse SQL
@@ -25,7 +26,7 @@ def icebergVersion = rootProject.ext.iceberg_1_5_version
 def forkRepo = rootProject.ext.icebergForkRepo
 if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
   throw new GradleException(
-      "-PicebergFork: iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
           + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
 }
 

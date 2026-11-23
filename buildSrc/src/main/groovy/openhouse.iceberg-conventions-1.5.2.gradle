@@ -7,8 +7,8 @@ dependencies {
   api('com.linkedin.iceberg:iceberg-data:' + icebergVersion)
   api('com.linkedin.iceberg:iceberg-core:' + icebergVersion)
   api('com.linkedin.iceberg:iceberg-common:' + icebergVersion)
-  if (rootProject.hasProperty('icebergFork')) {
-    // -PicebergFork: newer iceberg-data registers its generic Avro, Parquet and ORC readers/writers
+  if (!rootProject.hasProperty('icebergLinkedIn')) {
+    // The Iceberg 1.12 line: newer iceberg-data registers its generic Avro, Parquet and ORC readers/writers
     // together, so without these jars (compileOnly in iceberg-data) even Avro is unregistered.
     runtimeOnly('com.linkedin.iceberg:iceberg-parquet:' + icebergVersion)
     runtimeOnly('com.linkedin.iceberg:iceberg-orc:' + icebergVersion)

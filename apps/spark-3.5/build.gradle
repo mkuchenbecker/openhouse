@@ -18,8 +18,8 @@ ext {
 
 configurations.all {
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
-    if (rootProject.hasProperty('icebergFork')) {
-        // The -PicebergFork build adds these thin jars (openhouse.iceberg-conventions-1.5.2); the
+    if (!rootProject.hasProperty('icebergLinkedIn')) {
+        // The Iceberg 1.12 line adds these thin jars (openhouse.iceberg-conventions-1.5.2); the
         // shaded iceberg-spark-runtime already carries them, as it does iceberg-data.
         exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
         exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
@@ -71,9 +71,9 @@ sourceSets {
         }
         // log4j2.properties: without it the scheduler (JobsScheduler, started from the uber jar in
         // the jobs-scheduler image) logs errors only. The Iceberg 1.2 / Spark 3.1 apps jar has always
-        // carried it and this jar has not, so until that jar is gone it is packaged here only under
-        // -PicebergFork, where this is the apps jar the image runs.
-        if (rootProject.hasProperty('icebergFork')) {
+        // carried it and this jar has not, so until that jar is gone it is packaged here only on
+        // the Iceberg 1.12 line, where this is the apps jar the image runs.
+        if (!rootProject.hasProperty('icebergLinkedIn')) {
             resources {
                 srcDirs += 'src/shared/main/resources'
             }

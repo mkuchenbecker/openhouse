@@ -36,9 +36,12 @@ ext {
   otel_annotations_version = "2.12.0" // Match agent version
 }
 
-// Opt-in: -PicebergFork builds the Iceberg 1.5 variant against a locally published Iceberg fork
-// (docs/development/iceberg-fork.md). Absent, nothing below changes.
-def icebergFork = hasProperty('icebergFork')
+// The default build is the Iceberg 1.12 line: the Iceberg 1.5 variant is built against the Iceberg
+// fork commit pinned in scripts/iceberg-fork/iceberg-fork.properties, published on this machine by
+// scripts/iceberg-fork/publish-local.sh (gradle/iceberg-fork.gradle, docs/development/iceberg-fork.md).
+// -PicebergLinkedIn builds the reference line instead, LinkedIn's Iceberg 1.5.2 releases, as set
+// above; settings.gradle explains both and the deprecated -PicebergFork.
+def icebergFork = !hasProperty('icebergLinkedIn')
 if (icebergFork) {
   apply from: 'gradle/iceberg-fork.gradle'
 }

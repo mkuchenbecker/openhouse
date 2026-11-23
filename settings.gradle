@@ -22,13 +22,32 @@ pluginManagement {
   }
 }
 
-// -PicebergFork (docs/development/iceberg-fork.md) builds the Iceberg 1.5 variant against the fork's
-// Iceberg 1.12 line. Under it the Iceberg 1.2 / Spark 3.1 projects below are left out of the build
-// (decision D15): the single-copy server modules compile against 1.12 there, so those projects could
-// only be a hybrid of 1.2 and 1.12 artifacts. The sources they share with the 1.5 projects live in
-// the 1.5 projects (src/shared), so no included project reads a directory of a left-out one.
-// Without the property every project is included exactly as before.
-def icebergFork = providers.gradleProperty('icebergFork').present
+// The default build is the Iceberg 1.12 line (docs/development/iceberg-fork.md): the Iceberg 1.5
+// variant (Spark 3.5), the Spark 4.2 modules and the REST compatibility kit, against the fork's
+// Iceberg 1.12 built from the commit pinned in scripts/iceberg-fork/iceberg-fork.properties.
+//
+// -PicebergLinkedIn builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
+// com.linkedin.iceberg 1.5.2 releases, the behavior the 1.12 line is measured against (decision
+// D8). The modules that need Iceberg 1.12 are not in that build.
+//
+// The Iceberg 1.2 / Spark 3.1 projects below are in the reference build only (decision D15): the
+// single-copy server modules compile against 1.12 on the default build, so there those projects
+// could only be a hybrid of 1.2 and 1.12 artifacts. The sources they share with the 1.5 projects
+// live in the 1.5 projects (src/shared), so no included project reads a directory of a left-out one.
+def icebergLinkedIn = providers.gradleProperty('icebergLinkedIn').present
+// -PicebergFork selected the 1.12 line while it was opt-in. It is accepted for one more cycle so
+// that commands and branches written before the flip do not break, and does nothing.
+if (providers.gradleProperty('icebergFork').present) {
+  if (icebergLinkedIn) {
+    throw new GradleException(
+        '-PicebergFork and -PicebergLinkedIn contradict each other: the Iceberg 1.12 line is the '
+            + 'default build, and -PicebergLinkedIn alone selects LinkedIn\'s Iceberg 1.5.2 line.')
+  }
+  logger.warn('WARNING: -PicebergFork is deprecated and does nothing: the Iceberg 1.12 line is now '
+      + 'the default build. Remove the property; it will be rejected in a later release. '
+      + '-PicebergLinkedIn selects LinkedIn\'s Iceberg 1.5.2 reference line.')
+}
+def icebergFork = !icebergLinkedIn
 def iceberg12LineProjects = [
     ':apps:spark',
     ':integrations:java:iceberg-1.2:openhouse-java-runtime',
@@ -65,7 +84,7 @@ includeUnlessForkExcluded ':integrations:spark:spark-3.1:openhouse-spark-itest'
 include ':integrations:spark:spark-3.5:openhouse-spark-runtime'
 include ':integrations:spark:spark-3.5:openhouse-spark-itest'
 // Spark 4.2 on the fork's Iceberg 1.12 runtime (N3): the OpenHouse SQL extensions ported to Spark 4.2
-// / Scala 2.13 and the IRC itest. Both exist only under the switch.
+// / Scala 2.13 and the IRC itest. Both need Iceberg 1.12, so they are not in the reference build.
 if (icebergFork) {
   include ':integrations:spark:spark-4.2:openhouse-spark-runtime'
   include ':integrations:spark:spark-4.2:openhouse-spark-itest'

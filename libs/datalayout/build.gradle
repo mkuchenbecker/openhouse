@@ -5,7 +5,7 @@ plugins {
 }
 
 // Built on the line of its consumers that stay, the Spark 3.5 apps (apps/spark-3.5): Spark 3.5, the
-// Iceberg 1.5 variant's Iceberg and the Iceberg 1.5 fixtures, with and without -PicebergFork.
+// Iceberg 1.5 variant's Iceberg and the Iceberg 1.5 fixtures, on both Iceberg lines.
 ext {
     icebergVersion = rootProject.ext.iceberg_1_5_version
     sparkVersion = '3.5.2'
@@ -16,8 +16,8 @@ ext {
     tablesTestFixturesModule = ":tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12"
 }
 
-if (rootProject.hasProperty('icebergFork')) {
-    // The 1.5 fixtures bring the thin iceberg-orc/iceberg-parquet jars the -PicebergFork build adds
+if (!rootProject.hasProperty('icebergLinkedIn')) {
+    // The 1.5 fixtures bring the thin iceberg-orc/iceberg-parquet jars the Iceberg 1.12 line adds
     // (openhouse.iceberg-conventions-1.5.2). Next to the shaded iceberg-spark-runtime they break ORC
     // reads (shaded TypeDescription cannot be cast to org.apache.orc.TypeDescription), so they are
     // kept off the test classpath here as in the Spark 3.5 apps and itest.

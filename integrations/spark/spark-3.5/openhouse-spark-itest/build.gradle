@@ -23,8 +23,8 @@ sourceSets {
 // it the same way and its merge-on-read tests read tables back.
 configurations.testRuntimeClasspath {
   exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
-  if (rootProject.hasProperty('icebergFork')) {
-    // Same clash for the thin jars the -PicebergFork build adds (openhouse.iceberg-conventions-1.5.2).
+  if (!rootProject.hasProperty('icebergLinkedIn')) {
+    // Same clash for the thin jars the Iceberg 1.12 line adds (openhouse.iceberg-conventions-1.5.2).
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
   }

@@ -1,9 +1,19 @@
-# Opt-in build against an Iceberg fork (`-PicebergFork`)
+# The Iceberg lines of the build: 1.12 by default, LinkedIn's 1.5.2 as the reference (`-PicebergLinkedIn`)
 
-The default build compiles and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12) against
-LinkedIn's `com.linkedin.iceberg` 1.5.2 releases from Maven Central. `-PicebergFork` builds that
-same variant against a newer Iceberg built from source instead, so work on that line can be proven
-here without touching the default build. Without the property nothing changes.
+The default build compiles and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12), the Spark 4.2
+modules and Apache Iceberg's REST compatibility kit against Iceberg 1.12, built from a pinned commit
+of the Iceberg fork. `./gradlew build` with no property is that build, on Java 17.
+
+`-PicebergLinkedIn` builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
+`com.linkedin.iceberg` 1.5.2 releases from Maven Central. It exists for one purpose: LinkedIn's
+line is the behavior the 1.12 line is measured against (decision D8), so its suites and the
+delta-harness can still be run on it. The modules that need Iceberg 1.12 (Spark 4.2, the
+compatibility kit) are not in that build, and it builds no deployables.
+
+`-PicebergFork` selected the 1.12 line while it was opt-in. It is accepted for one more cycle and
+does nothing: Gradle prints a deprecation warning and builds the default. Together with
+`-PicebergLinkedIn` it is an error. `HARNESS_ICEBERG_FORK=1` is treated the same way by the
+delta-harness.
 
 ## What is pinned
 
@@ -18,10 +28,15 @@ committed as a binary and nothing is published remotely; bump the commit to move
 ```bash
 export JAVA_HOME=/path/to/jdk17        # the fork's Iceberg is Java 17 bytecode
 scripts/iceberg-fork/publish-local.sh  # once per pinned commit per machine; FORCE=1 republishes
-./gradlew -PicebergFork clean build    # clean keeps the published fork
-./gradlew -PicebergFork :services:tables:test
-./gradlew -PicebergFork :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+./gradlew clean build                  # clean keeps the published fork
+./gradlew :services:tables:test
+./gradlew :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
+
+./gradlew -PicebergLinkedIn build      # the reference line; needs no publish-local.sh
 ```
+
+Every Gradle command on the default build, `help` and the git hooks' `spotlessCheck` included,
+needs the fork published first: until then it stops with a message that names the script.
 
 `publish-local.sh` fetches the pinned commit into `~/.gradle/iceberg-fork/src`, then runs the fork's
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
@@ -39,42 +54,39 @@ kit. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
 support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes a few minutes (about two
 with Gradle's build cache warm); once the version is published it is a no-op.
 
-## What the switch changes
+## What differs between the two lines
 
-All in [`gradle/iceberg-fork.gradle`](../../gradle/iceberg-fork.gradle) or guarded by the same
-property:
+All in [`gradle/iceberg-fork.gradle`](../../gradle/iceberg-fork.gradle), which the default build
+applies and the reference build does not, or guarded by the same property (`icebergLinkedIn`):
 
-- `iceberg_1_5_version` becomes the fork version for every module on the 1.5 line.
-- A repository limited to `com.linkedin.iceberg` at exactly that version, served only from
+- `iceberg_1_5_version` is the fork version for every module of the Iceberg 1.5 variant; on the
+  reference line it is the `1.5.2.x` release named in the root `build.gradle`.
+- A repository limited to `com.linkedin.iceberg` at exactly the fork version, served only from
   `~/.gradle/iceberg-fork/<version>`.
 - `iceberg-aws` (the service's `S3FileIO` and `AwsClientFactories`, in `openhouse.iceberg-aws-conventions`)
   is the fork's too, with the AWS SDK at the pin file's `awsSdkVersion` plus `kms`, which it
   needs; `s3` brings `apache5-client`, its default HTTP client. The SDK's `netty-nio-client` is
   excluded: OpenHouse builds no async S3 client, and that SDK's Netty would split the service's
   Netty between 4.1.138 and 4.1.86 and break its WebClient. So no Iceberg jar of another line is
-  on any classpath, and snapshot summaries name the fork's version. The default build keeps
+  on any classpath, and snapshot summaries name the fork's version. The reference line keeps
   LinkedIn's `iceberg-aws` 1.2.0.6 and SDK 2.20.18; there its `iceberg-build.properties` can come
   before core's on a classpath, and `IcebergBuild.version()` then says 1.2.0.6 (seen on the Spark 3.5
   apps test classpath; LinkedIn's 1.5.2 does not record the version in snapshot summaries).
-- Every module compiles to Java 17 (`openhouse.java-minimal-conventions`).
-- The root ORC/Avro forces are replaced by the pinned versions, and Caffeine is pinned.
-- `iceberg-parquet`/`iceberg-orc` are added at runtime on the 1.5 line and kept off the Spark 3.5
-  test classpaths, where the shaded `iceberg-spark-runtime` already carries them.
+- Every module compiles to Java 17 (`openhouse.java-minimal-conventions`); on the reference line
+  to Java 8, as LinkedIn's line always has.
+- The root ORC/Avro forces are the pinned versions, and Caffeine is pinned; the reference line
+  keeps ORC 1.8.3 and Avro 1.11.4.
+- `iceberg-parquet`/`iceberg-orc` are added at runtime on the Iceberg 1.5 variant and kept off the
+  Spark 3.5 test classpaths, where the shaded `iceberg-spark-runtime` already carries them.
+- The Spark 4.2 modules and the REST compatibility kit are in the default build only
+  (`settings.gradle`), and the capabilities module compiles the REST transport of its line.
 
-The Iceberg 1.2 / Spark 3.1 projects are left out of the build under the switch (decision D15,
-`settings.gradle`): `apps/spark`, `integrations/java/iceberg-1.2/*`, `integrations/spark/spark-3.1/*`
-and `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`. The single-copy server modules compile
-against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The
-sources they share with the 1.5 projects live in the 1.5 projects, under `src/shared`, and the 1.2
-projects name those directories, so nothing in the build under the switch reads a directory of a
-left-out project. `services:tables` tests
-use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
-share, is built on the Spark 3.5 / fork line. There it skips the root dependency forces and keeps
-the thin `iceberg-orc`/`iceberg-parquet` jars off its test classpath, as the Spark 3.5 apps do.
-The deployables are built from the projects that are in the build: see "Docker images" below.
+`libs:datalayout`, which the Spark 3.5 apps share, and the `services:tables` tests are built on
+the Spark 3.5 / Iceberg 1.5 variant on both lines. The Iceberg 1.2 / Spark 3.1 projects are in the
+reference build only (decision D15), until they are deleted.
 
-The delta-harness runs on this build with `HARNESS_ICEBERG_FORK=1`
-(`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
+The delta-harness runs on the default build; `HARNESS_ICEBERG_LINKEDIN=1` runs it on the reference
+line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
 
 ## Docker images
 

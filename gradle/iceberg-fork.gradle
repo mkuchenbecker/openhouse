@@ -1,12 +1,13 @@
-// Opt-in build: -PicebergFork builds and tests the Iceberg 1.5 variant (Spark 3.5, Scala 2.12)
-// against the Iceberg commit pinned in scripts/iceberg-fork/iceberg-fork.properties, published by
+// The default build: the Iceberg 1.5 variant (Spark 3.5, Scala 2.12) is built and tested against
+// the Iceberg commit pinned in scripts/iceberg-fork/iceberg-fork.properties, published by
 // scripts/iceberg-fork/publish-local.sh into <ICEBERG_FORK_HOME>/<version>, by default
 // <Gradle user home>/iceberg-fork/<version>: outside build/, so `clean` keeps it, and shared by every
 // worktree on the machine.
 //
-// build.gradle applies this file only when -PicebergFork is set; the other switch-guarded spots
-// (root forces, Java target, iceberg-parquet/orc runtime jars, Spark classpath excludes) check the
-// same property. Without it the default build is unchanged. See docs/development/iceberg-fork.md.
+// build.gradle applies this file unless -PicebergLinkedIn selects the reference line (LinkedIn's
+// Iceberg 1.5.2 releases); the other spots that differ by line (root forces, Java target,
+// iceberg-parquet/orc runtime jars, Spark classpath excludes) check the same property. See
+// docs/development/iceberg-fork.md.
 
 def pin = new Properties()
 file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
@@ -20,10 +21,12 @@ def forkRepo = new File(forkHome, forkVersion)
 
 if (!file("${forkRepo}/.published-${forkVersion}").exists()) {
   throw new GradleException(
-      "-PicebergFork: Iceberg ${forkGroup}:${forkVersion} is not published in ${forkRepo}. "
-          + "Run scripts/iceberg-fork/publish-local.sh first.")
+      "The build uses Iceberg ${forkGroup}:${forkVersion}, built from the pinned fork commit, and it "
+          + "is not published in ${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first (once "
+          + "per pinned commit per machine; docs/development/iceberg-fork.md). -PicebergLinkedIn "
+          + "builds LinkedIn's Iceberg 1.5.2 reference line instead, which needs no local publish.")
 }
-logger.lifecycle("-PicebergFork: Iceberg 1.5 variant uses ${forkGroup}:${forkVersion} from ${forkRepo}")
+logger.lifecycle("Iceberg 1.12 line: ${forkGroup}:${forkVersion} from ${forkRepo}")
 
 // Every iceberg_1_5_version consumer (conventions and module build files) picks this up.
 ext.iceberg_1_5_version = forkVersion
