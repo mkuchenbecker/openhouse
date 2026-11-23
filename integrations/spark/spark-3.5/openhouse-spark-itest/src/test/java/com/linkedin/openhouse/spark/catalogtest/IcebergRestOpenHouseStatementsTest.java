@@ -22,8 +22,10 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Two catalogs point at the same server: {@code irc}, configured as a user would, and {@code
  * irc_adv}, which also sets {@code openhouse.capabilities=policies,grants,unlock} on the client
- * side. The server's own config override ({@code policies}) wins over that client value, so the two
- * must behave the same: grants and unlock stay unavailable whatever is claimed.
+ * side. The server's own config override ({@code policies,grants,unlock} since V5-3) wins over that
+ * client value, so the two behave the same. Grants and unlock stay unavailable on both: the
+ * resolver offers them over REST only through the capability client (C2-3), whatever the server
+ * advertises.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
@@ -158,7 +160,7 @@ public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {
 
   @Test
   void policyStatementsApplyWhereTheServerAdvertisesPolicies() {
-    // This server advertises openhouse.capabilities=policies in its config response, which
+    // This server advertises openhouse.capabilities=policies,grants,unlock in its config, which
     // overrides the client-side value of irc_adv: on both catalogs the resolver offers policies,
     // the statement sends its patch, and the server applies it as a policy change. A server that
     // does not advertise policies is refused in the client before anything is sent
