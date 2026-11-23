@@ -14,8 +14,8 @@ import org.junit.jupiter.api.Test;
  * {@link IcebergLine} detects the Iceberg line this client runs on. The expectation comes from an
  * independent source, the version Iceberg's own build stamped into {@code iceberg-build.properties}
  * ({@link IcebergBuild#version()}): LinkedIn's 1.2 and 1.5 releases are the legacy line, the fork's
- * 1.12 builds are the v3 line. This test runs in both Java itest modules, so it checks the 1.2
- * line, the default build's 1.12 line and the {@code -PicebergLinkedIn} build's 1.5 line.
+ * 1.12 builds are the v3 line. This test checks the default build's 1.12 line and the {@code
+ * -PicebergLinkedIn} build's 1.5 line; it also ran on the 1.2 line until that module was deleted.
  */
 class IcebergLineTest {
 

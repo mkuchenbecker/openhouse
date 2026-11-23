@@ -94,8 +94,8 @@ OpenHouse is built with the following versions of the open-source projects:
 
 | Project | Version |
 | --- | --- |
-| [Apache Iceberg](https://iceberg.apache.org/releases/#120-release) | 1.2.0 |
-| [Apache Spark](https://spark.apache.org/releases/) | 3.1.2 |
+| [Apache Iceberg](https://iceberg.apache.org/releases/) | 1.12.0, from a pinned commit of the Iceberg fork ([details](docs/development/iceberg-fork.md)); LinkedIn's 1.5.2 releases as the reference line |
+| [Apache Spark](https://spark.apache.org/releases/) | 3.5.2 (4.2.0 for the Spark 4.2 modules) |
 | [Apache Livy](https://livy.apache.org/) | 0.7.0-incubating |
 | [Apache Hadoop Client](https://hadoop.apache.org/releases.html) | 2.10.0 |
 | [Springboot Framework](https://spring.io/projects/spring-boot) | 2.6.6 |

@@ -27,10 +27,8 @@ buildscript {
 
 ext {
   spring_web_version = "2.7.8"
-  spark_version = "3.1.1"
   ok_http3_version = "4.11.0"
   junit_version = "5.11.0"
-  iceberg_1_2_version = "1.2.0.25"
   iceberg_1_5_version = "1.5.2.24"
   otel_agent_version = "2.12.0" // Bundles OTel SDK 1.47.0
   otel_annotations_version = "2.12.0" // Match agent version
@@ -207,30 +205,31 @@ tasks.register('CopyGitHooksTask', Copy) {
 //   optimizer-service.Dockerfile   -> :services:optimizer:bootJar
 //                                 -> :apps:optimizer:analyzerapp:bootJar (APP_NAME=analyzerapp)
 //                                 -> :apps:optimizer:schedulerapp:bootJar (APP_NAME=schedulerapp)
-//   jobs-scheduler.Dockerfile      -> :apps:openhouse-spark-apps_2.12:shadowJar (uber JAR)
-//   spark-base-hadoop2.8.dockerfile ->
-//       :integrations:spark:spark-3.1:openhouse-spark-runtime_2.12:shadowJar (uber JAR)
-//       :apps:openhouse-spark-apps_2.12:shadowJar (uber JAR)
-//       :scripts:java:tools:dummytokens:jar
-//   spark-3.5-base-hadoop3.2.dockerfile ->
-//       :integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar (uber JAR)
-//       :apps:openhouse-spark-apps_2.12:shadowJar (uber JAR)
-//       :scripts:java:tools:dummytokens:jar
-//
-// Under -PicebergFork the Iceberg 1.2 / Spark 3.1 projects are not in the build, so the images
-// are built from the Spark 3.5 jars instead (docs/development/iceberg-fork.md, "Docker images"):
 //   jobs-scheduler.Dockerfile      -> :apps:openhouse-spark-apps-1.5_2.12:shadowJar (uber JAR)
 //   spark-3.5-base-hadoop3.2.dockerfile ->
 //       :integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar (uber JAR)
 //       :apps:openhouse-spark-apps-1.5_2.12:shadowJar (uber JAR)
 //       stageIcebergSparkRuntime (the fork's iceberg-spark-runtime, which no public repository has)
 //       :scripts:java:tools:dummytokens:jar
-// The docker* tasks below then pass infra/recipes/docker-compose/iceberg-fork.env to docker
-// compose, which selects those jars, that Spark image and Java 17 in it.
+//
+// The images are built from the default build only (docs/development/iceberg-fork.md, "Docker
+// images"). The reference build (-PicebergLinkedIn) exists to run LinkedIn's Iceberg 1.5.2 line's
+// suites, not to be deployed, so there these tasks stop with a message.
 // =============================================================================
 
 // The Spark apps uber JAR the jobs-scheduler and Spark images are built from.
-def dockerSparkAppsName = icebergFork ? 'openhouse-spark-apps-1.5_2.12' : 'openhouse-spark-apps_2.12'
+def dockerSparkAppsName = 'openhouse-spark-apps-1.5_2.12'
+
+def refuseOnReferenceLine = { Task task ->
+  if (!icebergFork) {
+    task.doFirst {
+      throw new GradleException(
+          "${task.name}: the Docker images are built from the default build (Iceberg 1.12) only. "
+              + "-PicebergLinkedIn builds the reference line, which has no deployables: run "
+              + "this task without the property.")
+    }
+  }
+}
 
 if (icebergFork) {
   configurations {
@@ -254,41 +253,36 @@ if (icebergFork) {
 
 // docker compose with the variables that select the images of this build.
 def dockerCompose = { String... args ->
-  def command = ['docker', 'compose']
-  if (icebergFork) {
-    command += ['--env-file', "${rootDir}/infra/recipes/docker-compose/iceberg-fork.env".toString()]
-  }
-  command + args.toList()
+  ['docker', 'compose', '--env-file', "${rootDir}/infra/recipes/docker-compose/iceberg-fork.env".toString()] + args.toList()
 }
 
 tasks.register('dockerPrereqs') {
   description = 'Builds all JAR files required by Docker images'
   group = 'docker'
+  refuseOnReferenceLine(it)
 
-  // Service bootJars (Spring Boot fat JARs)
-  dependsOn ':services:tables:bootJar'
-  dependsOn ':services:housetables:bootJar'
-  dependsOn ':services:jobs:bootJar'
-  dependsOn ':services:optimizer:bootJar'
-  dependsOn ':apps:optimizer:analyzerapp:bootJar'
-  dependsOn ':apps:optimizer:schedulerapp:bootJar'
-
-  // Spark runtime uber JARs (shadowJar)
   if (icebergFork) {
+    // Service bootJars (Spring Boot fat JARs)
+    dependsOn ':services:tables:bootJar'
+    dependsOn ':services:housetables:bootJar'
+    dependsOn ':services:jobs:bootJar'
+    dependsOn ':services:optimizer:bootJar'
+    dependsOn ':apps:optimizer:analyzerapp:bootJar'
+    dependsOn ':apps:optimizer:schedulerapp:bootJar'
+
+    // The fork's Iceberg runtime and the Spark runtime uber JAR (shadowJar)
     dependsOn 'stageIcebergSparkRuntime'
-  } else {
-    dependsOn ':integrations:spark:spark-3.1:openhouse-spark-runtime_2.12:shadowJar'
+    dependsOn ':integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar'
+
+    // Spark apps uber JAR (shadowJar)
+    dependsOn ":apps:${dockerSparkAppsName}:shadowJar"
+
+    // Utility JAR
+    dependsOn ':scripts:java:tools:dummytokens:jar'
+
+    // OpenTelemetry Java Agent
+    dependsOn 'downloadOtelAgent'
   }
-  dependsOn ':integrations:spark:spark-3.5:openhouse-spark-3.5-runtime_2.12:shadowJar'
-
-  // Spark apps uber JAR (shadowJar)
-  dependsOn ":apps:${dockerSparkAppsName}:shadowJar"
-
-  // Utility JAR
-  dependsOn ':scripts:java:tools:dummytokens:jar'
-
-  // OpenTelemetry Java Agent
-  dependsOn 'downloadOtelAgent'
 
   doLast {
     println ''
@@ -302,11 +296,7 @@ tasks.register('dockerPrereqs') {
     println '  build/optimizer/libs/optimizer.jar'
     println '  build/analyzerapp/libs/analyzerapp.jar'
     println '  build/schedulerapp/libs/schedulerapp.jar'
-    if (icebergFork) {
-      println '  build/iceberg-spark-runtime/iceberg-spark-runtime-3.5_2.12-*.jar'
-    } else {
-      println '  build/openhouse-spark-runtime_2.12/libs/openhouse-spark-runtime_2.12-uber.jar'
-    }
+    println '  build/iceberg-spark-runtime/iceberg-spark-runtime-3.5_2.12-*.jar'
     println '  build/openhouse-spark-3.5-runtime_2.12/libs/openhouse-spark-3.5-runtime_2.12-uber.jar'
     println "  build/${dockerSparkAppsName}/libs/${dockerSparkAppsName}-uber.jar"
     println '  build/dummytokens/libs/dummytokens*.jar'
@@ -320,6 +310,7 @@ tasks.register('dockerPrereqs') {
 tasks.register('dockerBuild', Exec) {
   description = 'Builds Docker images after ensuring all JAR prerequisites are built'
   group = 'docker'
+  refuseOnReferenceLine(it)
 
   dependsOn 'dockerPrereqs'
 
@@ -348,6 +339,7 @@ tasks.register('dockerBuild', Exec) {
 tasks.register('dockerUp', Exec) {
   description = 'Builds JARs, Docker images, and starts containers'
   group = 'docker'
+  refuseOnReferenceLine(it)
 
   dependsOn 'dockerBuild'
 

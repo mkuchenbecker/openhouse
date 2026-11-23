@@ -62,21 +62,18 @@ dependencies {
     }
 }
 
-// src/shared holds the sources the Iceberg 1.2 / Spark 3.1 apps (apps/spark) compile as well: that
-// project names these directories. src/main and src/test hold what only this project compiles.
+// src/shared holds the sources the Iceberg 1.2 / Spark 3.1 apps compiled as well, until that
+// project was deleted. It is an ordinary second source root now and can be folded into src/main
+// and src/test.
 sourceSets {
     main {
         java {
             srcDirs += 'src/shared/main/java'
         }
         // log4j2.properties: without it the scheduler (JobsScheduler, started from the uber jar in
-        // the jobs-scheduler image) logs errors only. The Iceberg 1.2 / Spark 3.1 apps jar has always
-        // carried it and this jar has not, so until that jar is gone it is packaged here only on
-        // the Iceberg 1.12 line, where this is the apps jar the image runs.
-        if (!rootProject.hasProperty('icebergLinkedIn')) {
-            resources {
-                srcDirs += 'src/shared/main/resources'
-            }
+        // the jobs-scheduler image) logs errors only.
+        resources {
+            srcDirs += 'src/shared/main/resources'
         }
     }
     test {

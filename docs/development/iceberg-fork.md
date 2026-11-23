@@ -81,9 +81,10 @@ applies and the reference build does not, or guarded by the same property (`iceb
 - The Spark 4.2 modules and the REST compatibility kit are in the default build only
   (`settings.gradle`), and the capabilities module compiles the REST transport of its line.
 
-`libs:datalayout`, which the Spark 3.5 apps share, and the `services:tables` tests are built on
-the Spark 3.5 / Iceberg 1.5 variant on both lines. The Iceberg 1.2 / Spark 3.1 projects are in the
-reference build only (decision D15), until they are deleted.
+The Iceberg 1.2 / Spark 3.1 projects (`apps/spark`, `integrations/java/iceberg-1.2`,
+`integrations/spark/spark-3.1`, `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`) are
+deleted (decision D3). The sources they shared with the 1.5 projects are those projects'
+`src/shared` directories, ordinary source roots now.
 
 The delta-harness runs on the default build; `HARNESS_ICEBERG_LINKEDIN=1` runs it on the reference
 line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).

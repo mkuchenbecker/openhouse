@@ -7,8 +7,8 @@ ext {
   icebergVersion = rootProject.ext.iceberg_1_5_version
 }
 
-// src/shared/test holds the tests the iceberg-1.2 itest compiles and runs as well: that project
-// names the directory. src/test holds the tests only this project runs.
+// src/shared/test holds the tests the iceberg-1.2 itest compiled and ran as well, until that
+// project was deleted. It is an ordinary second test root now and can be folded into src/test.
 sourceSets {
   test {
     java {

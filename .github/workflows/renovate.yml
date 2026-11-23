@@ -1,8 +1,8 @@
 # Self-hosted Renovate that constantly syncs the linkedin/iceberg fork
-# (com.linkedin.iceberg) within its 1.2.x and 1.5.x lines.
+# (com.linkedin.iceberg) within its 1.5.x line, the reference line of the build
+# (-PicebergLinkedIn, docs/development/iceberg-fork.md).
 #
 # Behavior is defined in .github/renovate.json:
-#   - iceberg_1_2_version  (root build.gradle)                  -> capped to 1.2.x
 #   - iceberg_1_5_version  (root build.gradle)                  -> capped to 1.5.x
 # Only the custom regex manager is enabled, so Renovate touches nothing else.
 #

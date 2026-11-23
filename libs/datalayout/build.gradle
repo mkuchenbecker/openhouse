@@ -4,8 +4,8 @@ plugins {
     id 'openhouse.maven-publish'
 }
 
-// Built on the line of its consumers that stay, the Spark 3.5 apps (apps/spark-3.5): Spark 3.5, the
-// Iceberg 1.5 variant's Iceberg and the Iceberg 1.5 fixtures, on both Iceberg lines.
+// Built on the line of its consumer, the Spark 3.5 apps (apps/spark-3.5): Spark 3.5, the Iceberg
+// 1.5 variant's Iceberg and the Iceberg 1.5 fixtures, on both Iceberg lines.
 ext {
     icebergVersion = rootProject.ext.iceberg_1_5_version
     sparkVersion = '3.5.2'

@@ -41,7 +41,7 @@ sourceSets {
   }
   // The Spark SQL smoke suite. src/shared/test holds its statements and baseline outcomes, which
   // need only spark.sql and JUnit, so that another Spark line's itest can name the directory and
-  // run the same list (as the Spark 3.1 itest names the Spark 3.5 itest's src/shared/test).
+  // run the same list (as the Spark 3.1 itest named the Spark 3.5 itest's src/shared/test).
   // src/smoke holds what runs them on Spark 4.2 over IRC. Its own source set, so that the other
   // tests' JVMs, which assert what is on their classpath, do not get these classes.
   smoke {
