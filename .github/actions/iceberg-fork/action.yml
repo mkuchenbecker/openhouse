@@ -1,0 +1,68 @@
+name: Restore or publish the Iceberg fork
+description: >-
+  Puts the pinned Iceberg fork (scripts/iceberg-fork/iceberg-fork.properties) into
+  ~/.gradle/iceberg-fork/<version> for a -PicebergFork build: from the cache when it is there, else
+  by building it (scripts/iceberg-fork/publish-local.sh). Needs the checkout and a JDK 17. One
+  definition for every job that builds under the switch, so they share one cache entry.
+
+runs:
+  using: composite
+  steps:
+    # The published fork depends only on the pinned commit and on what the script publishes, so
+    # the cache key is the commit plus the script's hash: the fork is rebuilt only when either
+    # changes. On a hit the script finds its markers and does nothing. The script publishes into
+    # ~/.gradle/iceberg-fork/<version> (outside build/, so a clean keeps it); the version is
+    # <baseVersion>-ohfork.<first 12 characters of the commit>, as in gradle/iceberg-fork.gradle.
+    - name: Read the pinned Iceberg commit
+      id: pin
+      shell: bash
+      run: |
+        commit="$(sed -n 's/^commit=//p' scripts/iceberg-fork/iceberg-fork.properties)"
+        base="$(sed -n 's/^baseVersion=//p' scripts/iceberg-fork/iceberg-fork.properties)"
+        echo "commit=$commit" >> "$GITHUB_OUTPUT"
+        echo "version=$base-ohfork.${commit:0:12}" >> "$GITHUB_OUTPUT"
+
+    # Whether a pull request itself changes what is published, the pin or the script: it decides
+    # below whether the pull request may save the fork it publishes.
+    - name: See whether the pull request changes the pin or the publish script
+      id: fork-change
+      if: github.event_name == 'pull_request'
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      run: |
+        git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        if git diff --quiet "$BASE_SHA" HEAD -- \
+            scripts/iceberg-fork/iceberg-fork.properties scripts/iceberg-fork/publish-local.sh; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    # Every run restores. A pull request can read what its base branch saved, so one that
+    # leaves the pin and the script alone gets the fork irc-integration published.
+    - name: Restore the published Iceberg fork
+      id: fork-cache
+      uses: actions/cache/restore@v5
+      with:
+        path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
+        key: iceberg-fork-home-${{ runner.os }}-${{ steps.pin.outputs.commit }}-${{ hashFiles('scripts/iceberg-fork/publish-local.sh') }}
+
+    - name: Publish the Iceberg fork to ~/.gradle/iceberg-fork
+      shell: bash
+      run: scripts/iceberg-fork/publish-local.sh
+
+    # Saved right after publishing, so a red step later in the job still keeps the fork for the
+    # next run. A run on a branch saves whenever it had to publish. A pull request saves only when
+    # it changes the pin or the script: GitHub keeps that cache in the pull request's own scope, so
+    # the pull request's later pushes restore it and no other pull request or branch can read it.
+    # A pull request that misses without such a change (the base's cache was evicted, or its
+    # post-merge run has not saved yet) publishes and saves nothing; irc-integration's run saves.
+    - name: Save the published Iceberg fork
+      if: >-
+        steps.fork-cache.outputs.cache-hit != 'true'
+        && (github.event_name != 'pull_request' || steps.fork-change.outputs.changed == 'true')
+      uses: actions/cache/save@v5
+      with:
+        path: ~/.gradle/iceberg-fork/${{ steps.pin.outputs.version }}
+        key: ${{ steps.fork-cache.outputs.cache-primary-key }}
