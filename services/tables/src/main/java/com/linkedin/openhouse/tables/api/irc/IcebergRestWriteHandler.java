@@ -69,7 +69,10 @@ import org.springframework.stereotype.Component;
  *       create the OpenHouse Java client sends for a create transaction: the native create when it
  *       carries no snapshot, the native create-with-data (snapshots PUT on the initial version)
  *       when it does.
- *   <li>Drop and rename are the native drop and rename.
+ *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
+ *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
+ *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
+ *       supported) with the native message.
  *   <li>A policy patch ({@value PolicyPatch#KEY} in the properties of a create, a staged create's
  *       completion or a commit, as OpenHouse's policy statements write it) is what the OpenHouse
  *       Java client makes of it before it sends the native request: the key is taken out of the
@@ -112,6 +115,8 @@ public class IcebergRestWriteHandler {
   @Autowired private StorageSelector storageSelector;
 
   @Autowired private ClusterProperties clusterProperties;
+
+  @Autowired private IcebergRestApiHandler readHandler;
 
   // ---------------------------------------------------------------- create
 
@@ -423,7 +428,14 @@ public class IcebergRestWriteHandler {
     tablesApiHandler.deleteTable(databaseId, tableId, actingPrincipal);
   }
 
-  /** The native rename, with its rules (same database, not a case-only change, target absent). */
+  /**
+   * The native rename, with its rules (same database, not a case-only change, target absent). A
+   * rename across databases, which the native rename refuses with 400 before it looks at the
+   * target, is answered as the spec lists for renameTable: 404 {@code NoSuchNamespaceException}
+   * when the target namespace does not exist, and otherwise 406, the spec's "the server does not
+   * support this operation", with the native refusal's message. The ids are checked first, as
+   * natively.
+   */
   public void renameTable(RenameTableRequest request, String actingPrincipal) {
     request.validate();
     // The source is a table (none exists in a multi-level namespace: 404), the destination's
@@ -431,6 +443,17 @@ public class IcebergRestWriteHandler {
     String fromDatabaseId =
         IcebergRestApiHandler.tableDatabaseId(namespace(request.source()), request.source().name());
     String toDatabaseId = IcebergRestApiHandler.databaseId(namespace(request.destination()));
+    if (!fromDatabaseId.equalsIgnoreCase(toDatabaseId)) {
+      tablesApiValidator.validateGetTable(fromDatabaseId, request.source().name());
+      tablesApiValidator.validateGetTable(toDatabaseId, request.destination().name());
+      readHandler.requireNamespace(toDatabaseId);
+      try {
+        tablesApiValidator.validateRenameTable(
+            fromDatabaseId, request.source().name(), toDatabaseId, request.destination().name());
+      } catch (RequestValidationFailureException e) {
+        throw new IcebergRestRouteException(e.getMessage(), true);
+      }
+    }
     tablesApiHandler.renameTable(
         fromDatabaseId,
         request.source().name(),
