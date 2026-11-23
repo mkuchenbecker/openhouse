@@ -51,8 +51,10 @@ import org.springframework.test.context.ContextConfiguration;
  * The grants and unlock routes through Iceberg's own {@link HTTPClient}, the client the planned
  * capability client is built on (it reuses the {@code RESTCatalog}'s URI and bearer token), over a
  * real port: what the client can send, what it parses from the native bodies, and how each refusal
- * surfaces as an exception with each of Iceberg's error handlers. Iceberg 1.5.2, the service's
- * line; the Spark 4.2 module repeats the client half on Iceberg 1.12.
+ * surfaces as an exception with each of Iceberg's error handlers. On the service's Iceberg line:
+ * 1.5.2, or 1.12 under the opt-in build, where the client needs an auth session to send anything
+ * ({@link #AUTH_SESSION_SETTER}) and the default handler's message names the status and type
+ * ({@link #unableToProcess}); the Spark 4.2 module repeats the client half on Iceberg 1.12.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
@@ -136,7 +138,39 @@ class IrcGrantsUnlockHttpClientTest {
     if (bearer != null) {
       builder.withHeader("Authorization", "Bearer " + bearer);
     }
+    if (AUTH_SESSION_SETTER != null) {
+      try {
+        AUTH_SESSION_SETTER.invoke(
+            builder, AUTH_SESSION_SETTER.getParameterTypes()[0].getField("EMPTY").get(null));
+      } catch (ReflectiveOperationException e) {
+        throw new IllegalStateException("HTTPClient.Builder.withAuthSession(EMPTY)", e);
+      }
+    }
     return builder.build();
+  }
+
+  /**
+   * {@code HTTPClient.Builder.withAuthSession}, which Iceberg 1.12 (the opt-in build) has and
+   * Iceberg 1.5.2 has not; null on 1.5.2. Iceberg 1.12's client refuses to send a request without
+   * an {@code AuthSession} ("Invalid auth session: null"), so there the builder gets that type's
+   * {@code EMPTY}, which sends the request as built: the bearer token is the header set in {@link
+   * #client(String)} on both lines. By reflection, since this class compiles against either line.
+   */
+  private static final Method AUTH_SESSION_SETTER =
+      Arrays.stream(HTTPClient.Builder.class.getMethods())
+          .filter(m -> m.getName().equals("withAuthSession") && m.getParameterCount() == 1)
+          .findFirst()
+          .orElse(null);
+
+  /**
+   * The message of the {@code RESTException} that the default error handler raises for a status it
+   * has no case for (404 and 409 here): Iceberg 1.5.2 writes {@code Unable to process: <message>};
+   * Iceberg 1.12 adds the status and the error type the server sent.
+   */
+  private static String unableToProcess(int status, String type, String message) {
+    return AUTH_SESSION_SETTER == null
+        ? "Unable to process: " + message
+        : "Unable to process (code: " + status + ", type: " + type + "): " + message;
   }
 
   private static String sharedTable(String table) {
@@ -310,7 +344,7 @@ class IrcGrantsUnlockHttpClientTest {
             () -> client.get(tableAcl("nope"), AclPolicies.class, NO_HEADERS, TABLE));
     assertEquals("User table " + DB + ".nope cannot be found", missing.getMessage());
     assertEquals(
-        "Unable to process: User table " + DB + ".nope cannot be found",
+        unableToProcess(404, "NoSuchTableException", "User table " + DB + ".nope cannot be found"),
         assertThrows(
                 RESTException.class,
                 () -> client.get(tableAcl("nope"), AclPolicies.class, NO_HEADERS, DEFAULT))
@@ -332,7 +366,7 @@ class IrcGrantsUnlockHttpClientTest {
                 () -> client.delete(lock("u"), AclPolicies.class, NO_HEADERS, TABLE))
             .getMessage());
     assertEquals(
-        "Unable to process: " + conflict,
+        unableToProcess(409, "LockConflictException", conflict),
         assertThrows(
                 RESTException.class,
                 () -> client.delete(lock("u"), AclPolicies.class, NO_HEADERS, DEFAULT))
