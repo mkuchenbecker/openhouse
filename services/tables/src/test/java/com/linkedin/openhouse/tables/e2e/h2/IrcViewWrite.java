@@ -112,6 +112,32 @@ final class IrcViewWrite {
         .build();
   }
 
+  /** What {@code RESTViewBuilder.replace} builds on {@code base} with {@code withLocation}. */
+  static ViewMetadata replacement(
+      ViewMetadata base,
+      Schema schema,
+      String sql,
+      Map<String, String> properties,
+      String location) {
+    int maxVersionId =
+        base.versions().stream()
+            .map(ViewVersion::versionId)
+            .max(Integer::compareTo)
+            .orElseGet(base::currentVersionId);
+    return ViewMetadata.buildFrom(base)
+        .setProperties(properties)
+        .setCurrentVersion(
+            version(
+                maxVersionId + 1,
+                schema,
+                sql,
+                base.currentVersion().defaultCatalog(),
+                base.currentVersion().defaultNamespace()),
+            schema)
+        .setLocation(location)
+        .build();
+  }
+
   /** What {@code PropertiesUpdate} commits on {@code base}. */
   static ViewMetadata properties(ViewMetadata base, Map<String, String> set, Set<String> remove) {
     return ViewMetadata.buildFrom(base).setProperties(set).removeProperties(remove).build();

@@ -278,20 +278,42 @@ public class IrcWriteRoutesTest {
     assertEquals(before, stored("irc_w_exists"));
   }
 
-  @Test
-  void createThatNamesALocationIsRefusedAndNamesTheField() throws Exception {
-    CreateTableRequest request =
+  /**
+   * {@link #ircCreate} naming {@code location}, as {@code RESTCatalog} sends {@code withLocation}.
+   */
+  private static CreateTableRequest ircCreateAt(String table, String location, boolean staged) {
+    CreateTableRequest plain = ircCreate(table);
+    CreateTableRequest.Builder builder =
         CreateTableRequest.builder()
-            .withName("t")
-            .withSchema(SCHEMA)
-            .withLocation("/tmp/elsewhere")
-            .build();
-    String message =
-        assertIrcError(IrcWrite.create(mvc, "irc_w_loc", request), 400, "BadRequestException")
-            .message();
-    assertTrue(message.contains("location"), message);
-    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_loc", "t")));
-    assertTrue(filesUnder("irc_w_loc").isEmpty());
+            .withName(table)
+            .withSchema(plain.schema())
+            .withPartitionSpec(plain.spec())
+            .setProperties(plain.properties())
+            .withLocation(location);
+    return staged ? builder.stageCreate().build() : builder.build();
+  }
+
+  /**
+   * The server owns table locations (D30): a create that names a location is created where the
+   * server puts the table, exactly as the same create without one, and the response says where.
+   * Nothing is written at the requested location. Before, such a create was refused with 400.
+   */
+  @Test
+  void createThatNamesALocationIsCreatedAtTheServersLocation() throws Exception {
+    track("irc_w_loc_a", "t");
+    IrcWrite.parsed(IrcWrite.create(mvc, "irc_w_loc_a", ircCreate("t")));
+    track("irc_w_loc_b", "t");
+    TableMetadata response =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc, "irc_w_loc_b", ircCreateAt("t", "/tmp/irc_w_loc_elsewhere/t", false)));
+    String nativeView = json(get(mvc, "irc_w_loc_b", "t"));
+    assertTrue(
+        response.location().endsWith("/irc_w_loc_b/t-" + str(nativeView, "$.tableUUID")),
+        response.location());
+    assertEquals(response.location(), IrcWrite.load(mvc, "irc_w_loc_b", "t").location());
+    assertSameStored("irc_w_loc_a", "irc_w_loc_b");
+    assertTrue(filesUnder("irc_w_loc_elsewhere").isEmpty());
   }
 
   @Test
@@ -390,6 +412,29 @@ public class IrcWriteRoutesTest {
     // create, as for every native create (a native staged create's file has its own UUID too).
     assertEquals(staged.location(), committed.location());
     assertSameStored("irc_w_n_sc", "irc_w_i_sc");
+  }
+
+  /**
+   * A staged create that names a location (D30) is staged at the server's location, which its
+   * completion then sets, as {@code RESTCatalog} sends the staged location back: the table is what
+   * the native create stores, and nothing is written at the requested location.
+   */
+  @Test
+  void stagedCreateThatNamesALocationIsStagedAndCreatedAtTheServersLocation() throws Exception {
+    createNative(nativeBody("irc_w_n_sloc"));
+    track("irc_w_i_sloc", "t");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc, "irc_w_i_sloc", ircCreateAt("t", "/tmp/irc_w_sloc_elsewhere/t", true)));
+    assertTrue(staged.location().contains("/irc_w_i_sloc/t-"), staged.location());
+    TableMetadata committed =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc, "irc_w_i_sloc", "t", IrcWrite.createCommit(staged, Collections.emptyList())));
+    assertEquals(staged.location(), committed.location());
+    assertSameStored("irc_w_n_sloc", "irc_w_i_sloc");
+    assertTrue(filesUnder("irc_w_sloc_elsewhere").isEmpty());
   }
 
   @Test
@@ -938,6 +983,51 @@ public class IrcWriteRoutesTest {
                 mvc, "irc_w_i_rtas", "t", IrcWrite.replace(base, replacement, then.changes())));
     assertEquals(snap.snapshotId(), after.currentSnapshot().snapshotId());
     assertSameStored("irc_w_n_rtas", "irc_w_i_rtas");
+  }
+
+  /**
+   * A replace that names a location (D30; {@code RESTSessionCatalog.replaceTransaction} then sends
+   * a set-location among the replace's changes) keeps the table where it is: it stores what the
+   * same replace without a location stores. An ordinary commit that sets the location is still
+   * refused ({@link #locationUuidAndFormatVersionChangesAreRefusedAndNamed}).
+   */
+  @Test
+  void replaceThatNamesALocationKeepsTheTablesLocation() throws Exception {
+    rtasTable("irc_w_rloc_a");
+    rtasTable("irc_w_rloc_b");
+    TableMetadata baseA = IrcWrite.load(mvc, "irc_w_rloc_a", "t");
+    IrcWrite.parsed(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_rloc_a",
+            "t",
+            IrcWrite.replace(
+                baseA,
+                IrcWrite.replacement(
+                    baseA, replacementSchema(baseA), baseA.spec(), Collections.emptyMap()),
+                Collections.emptyList())));
+
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_rloc_b", "t");
+    TableMetadata replacement =
+        base.buildReplacement(
+            replacementSchema(base),
+            base.spec(),
+            SortOrder.unsorted(),
+            "/tmp/irc_w_rloc_elsewhere/t",
+            Collections.emptyMap());
+    assertTrue(
+        replacement.changes().stream().anyMatch(MetadataUpdate.SetLocation.class::isInstance));
+    TableMetadata after =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_rloc_b",
+                "t",
+                IrcWrite.replace(base, replacement, Collections.emptyList())));
+    assertEquals(base.location(), after.location());
+    assertEquals(base.location(), IrcWrite.load(mvc, "irc_w_rloc_b", "t").location());
+    assertSameStored("irc_w_rloc_a", "irc_w_rloc_b");
+    assertTrue(filesUnder("irc_w_rloc_elsewhere").isEmpty());
   }
 
   @Test
