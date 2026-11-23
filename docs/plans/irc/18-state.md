@@ -7,18 +7,28 @@ design, evidence and decisions. Dated 2026-11-23.
 ## What works today
 
 - The native API and Spark 3.5 with the OpenHouse catalog are unchanged.
-- Over the Iceberg REST Catalog, an unmodified Iceberg client and Spark 3.5 can read and write tables and views and
-  set OpenHouse policies (`27-v3-irc-write-result.md`, `31-v4-irc-views-result.md`, `33-v5-policies-over-irc-result.md`).
-  Views cannot be renamed.
-- The server serves grants and unlock routes (`36-v5-3-grants-unlock-endpoints-result.md`). The client for them is in
-  progress, so GRANT, REVOKE, SHOW GRANTS and UNLOCK do not yet work over plain IRC.
-- Spark 4.2 on the fork's Iceberg 1.12, with no OpenHouse catalog or client class, can read and write tables, use
-  views, and run every OpenHouse policy statement (`35-n3x1-spark42-extensions-result.md`). This is the opt-in build only.
+- Over the Iceberg REST Catalog, an unmodified Iceberg client and Spark 3.5 can read and write tables and views
+  (`27-v3-irc-write-result.md`, `31-v4-irc-views-result.md`). Views cannot be renamed.
+- Every OpenHouse statement (policies, column tags, grants, unlock) now works through an unmodified Iceberg
+  `RESTCatalog` on Spark 3.5, and on Spark 4.2 with the fork's Iceberg 1.12 under the opt-in build, where the
+  engine holds no OpenHouse catalog or client class (`33-v5-policies-over-irc-result.md`,
+  `35-n3x1-spark42-extensions-result.md`, `36-v5-3-grants-unlock-endpoints-result.md`,
+  `38-c2-3-rest-capability-client-result.md`). Failures keep the native message but arrive as Iceberg exception types.
 - The server tells newer clients exactly which routes it serves, so they use HEAD checks and views and do not send
   routes that are not served.
 - Not yet over IRC: metrics reports, register table, multi-table commits, scan planning, credential vending, and view
   rename (OpenHouse has none).
 - Format v3 tables are not yet supported by the service, which still runs on the older Iceberg line.
+
+## How far from the goal
+
+- Conformance: Apache's compatibility kit passes 31 of 160 tests. 84 of the rest are OpenHouse's own rules, which
+  the specification permits. 11 are routes not yet served. What "conforming" should mean is a question put to Mike
+  (D32). The measurement is `39-v13-compat-kit-result.md`.
+- Iceberg 1.12 as the default: the whole build passes under the opt-in switch, and the Spark SQL harness differs
+  from the baseline in 6 of 2574 cases (one real problem being fixed, the rest accepted or internal). What remains
+  is listed as V9a to V9e. The measurement is `40-i6f-full-regression-result.md`.
+- Format v3: not started in the service. It follows V9e.
 
 ## Integration branches
 
@@ -50,6 +60,9 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 100 | C2-1, C2-2: the capabilities module and resolver (`34-c2-capabilities-resolver-result.md`) | 19605614 |
 | 101 | N3-x1: OpenHouse SQL extensions for Spark 4.2 (`35-n3x1-spark42-extensions-result.md`) | b07613f9 |
 | 102 | V5-3, V10a: grants and unlock routes; the config advertises served endpoints (`36-v5-3-grants-unlock-endpoints-result.md`) | 6015e111 |
+| 103 | C2-3, N3-x2: the grants and unlock client (`38-c2-3-rest-capability-client-result.md`) | c174e388 |
+| 104 | V13a: Apache's compatibility kit (`39-v13-compat-kit-result.md`) | fb8c1240 |
+| 105 | I6f: full regression of the opt-in build (`40-i6f-full-regression-result.md`) | 7ddc5bb4 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
@@ -65,25 +78,25 @@ Nothing is merged into either fork's main or into LinkedIn's repositories.
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, N3-x1, N3a, C5, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, C5, I6f, V13a, W1 to W4, W12, I10, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## In progress (delegated)
 
-- C2-3 (the REST capability client, with the rest of N3-x2), on branch `irc/c2-3-rest-capability-client`.
-- I6f (full regression on the opt-in build), on branch `irc/i6f-optin-full-regression`.
+- V13b (the IRC routes follow the specification where the kit found deviations), on branch
+  `irc/v13b-spec-deviations`.
+- I11 (time travel with a write-audit-publish branch set), on branch `irc/wap-time-travel`.
 
 ## Next
 
-V9, then the v3 items. N3b, V6, V7, V8, V11, V12, V13, V3b and V3c can go in parallel. The order of the large work is
-D29.
+V9a to V9e, then the v3 items. N3b, V6, V7, V8, V11, V12, V3b and V3c can go alongside. The order of the large work
+is D29.
 
 ## Known red on `irc-integration`
 
-- Default build: the last full run read was on cc76d485 and passed. Pull requests 99 to 102 since then passed
-  targeted suites only.
-- Opt-in Iceberg 1.12 build: the 8 failing view tests from pull request 95 are fixed by pull request 102 (verified
-  locally: Spark 3.5 catalog tests 255, 0 failed under the switch). No run of the opt-in post-merge CI job has been
-  read yet.
+- Default build: green at 6015e111 (the last full run read). Pull requests 103 to 105 since then passed targeted
+  suites only.
+- Opt-in build: the whole build passes locally on the head of pull request 105; no run of the opt-in post-merge CI
+  job has been read.
 
 ## How work is tested
 
@@ -96,13 +109,17 @@ now requires, after the red build (`21-findings-continued.md`).
 
 ## Waiting on Mike
 
-Nothing blocks work. His to decide: the one-way doors in D12 and D24 before any release outside the forks, and worker
-sessions on separate machines, because a bigger container is not available (D21). The diagnosis behind the second is
-in `20-iteration-friction.md`.
+- D32: what "conforming Iceberg REST Catalog server" means.
+- The one-way doors in D12 and D24, before any release outside the forks.
+- Worker sessions on separate machines, because a bigger container is not available (D21). The diagnosis is in
+  `20-iteration-friction.md`.
+
+Nothing blocks work.
 
 ## How to audit
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
-- Decisions are in `13-decisions.md`, `16-decisions-continued.md` and `22-decisions-continued-2.md`.
+- Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
+  `37-decisions-continued-3.md`.
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

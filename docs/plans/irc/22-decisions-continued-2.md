@@ -115,3 +115,5 @@ Dates are 2026-11-22 for D22 to D28 and 2026-11-23 for D29. Claude wrote every e
   ordering of independent work items by dependency, not a schedule.
 - References: `04-work.md` items I6f, V9, X1 and V13; D3.
 - Reverse by: choosing a different order. Nothing is built on the order itself.
+
+Continued in `37-decisions-continued-3.md` (D30 to D32).

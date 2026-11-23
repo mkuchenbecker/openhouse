@@ -1,8 +1,9 @@
 # Work and dependencies
 
-Bottom line: 81 items in two repos, counted across this file and `30-work-defaults.md`. Each names what it
-needs and how it is proven. There is no order beyond the "Needs" column: an item can land whenever its needs are
-in, and landing it leaves a valid state. All of it is Claude's judgement, built on `03-inferred.md`.
+Bottom line: 88 items in two repos, counted across this file, `30-work-defaults.md` and
+`41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
+is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
+state. All of it is Claude's judgement, built on `03-inferred.md`.
 
 Reading the tables: `oh` is the openhouse fork, `ib` is the iceberg fork. `J`, `Q` refer to
 `03-inferred.md`. "Paths" means the catalog paths selectable by config: legacy, REST-shaped over legacy,
@@ -45,8 +46,8 @@ native REST.
 | I6b | oh | Done 2026-11-22, merged (pull request 87). Source ports for removed Iceberg APIs (`addSchema(Schema,int)`, `GenericAppenderFactory`) and the Java 17 test import. | I6a | The opt-in build compiles all test sources on Java 17. |
 | I6c | oh | Done 2026-11-22, merged (pull request 87). Client fixes for 1.12 runtime changes: null table location (D13), and `HadoopFileIO` with a null configuration. | I6a | The opt-in build passes the catalog and SmokeTest suites that these changes affect. |
 | I6d | oh | **Not started.** Remote resolution of the fork's artifacts for CI and other developers. Options are recorded in `12-openhouse-on-1.12-scout.md`. | I6a | A clean checkout builds the opt-in variant with no local publish step. |
-| I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9 lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
-| I6f | oh | **In progress on `irc/i6f-optin-full-regression`.** Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
+| I6e | oh | **Decided (D3): the 1.2 / Spark 3.1 line is removed from the integration branch's build when V9e lands.** | a decision | The decision is recorded in `13-decisions.md`. The 1.2 line is retired from the integration build. |
+| I6f | oh | **Done 2026-11-23 (pull request 105).** Result in `40-i6f-full-regression-result.md`. Full regression on the opt-in build: housetables, jobs, apps, Docker-backed suites, and Spark 3.5.2 versus 3.5.9 runtime. | I6b, I6c, X0 | The whole existing suite passes on the opt-in build, and every difference is listed. |
 | I6g | oh | **Done 2026-11-22 (pull request 91).** Under the opt-in switch the Iceberg 1.2 / Spark 3.1 projects are excluded from the build (D15). | I6a | The opt-in build resolves and compiles every remaining project, and the default build is unchanged. |
 | I6h | oh | **Done 2026-11-22 (pull request 91).** Tests whose expected result differs by Iceberg line state both expectations (D14): the RTAS partition-column case and the `CREATE NAMESPACE` message. | I6a | Those two tests pass on both builds. |
 
@@ -57,7 +58,7 @@ native REST.
 | C1 | oh | A config value runs the plugin as `RESTCatalog` over the legacy client. Default unchanged. **Done 2026-11-22** on the Spark 3.5 line (pull request 84); differences listed in `09-seam-result.md`. | T1, T3 | T1 and T3 pass on both paths. Differences listed. |
 | C2-1 | oh | **Done 2026-11-22 (pull request 100).** Result in `34-c2-capabilities-resolver-result.md`. The `openhouse-catalog-capabilities` module (names, interfaces, `UnlockReason`, `Privileges`, `Principal`). The Java runtime's catalogs implement it through adapters. Old `javaclient.api` types are kept. | none | Unit tests. Spark 3.5 `statementTest` and `catalogTest` unchanged. |
 | C2-2 | oh | **Done 2026-11-22 (pull request 100).** The resolver in the 3.5 extensions replaces `IcebergCatalogMapper` at all 5 call sites. Policy execs check `policies`. `HasIcebergCatalog` is used where present. | C1, C2-1 | Resolver unit tests (legacy, shim and fake-`RESTCatalog` properties). Smoke tests s16, s17 and s27 green on legacy and rest-shim. |
-| C2-3 | oh | **In progress on `irc/c2-3-rest-capability-client`.** `OpenHouseRestCapabilityClient` (`HTTPClient`, `AuthManager`, `ResourcePaths`), used by the resolver. | C2-2, V5-3 | Spark 3.5 itest: GRANT, REVOKE, SHOW GRANTS and UNLOCK on `type=rest`. |
+| C2-3 | oh | **Done 2026-11-23 (pull request 103).** Result in `38-c2-3-rest-capability-client-result.md`. `RestCapabilityClient` with a per-line transport over `HTTPClient` and `AuthManager`, used by the resolver. | C2-2, V5-3 | Spark 3.5 itest: GRANT, REVOKE, SHOW GRANTS and UNLOCK on `type=rest`. |
 
 ## Service
 
@@ -77,38 +78,16 @@ native REST.
 | V6 | oh | IRC metrics report. | V2 | A report arrives where today's reports go. |
 | V7 | oh | IRC register table. | V3 | A registered table loads and commits. |
 | V8 | oh | Multi-table commit. Investigate first (J24). | V3 | Two tables commit together or neither does, under injected failure. |
-| V9 | oh | The service links the new Iceberg line. Service modules on JDK 17. Existing clients unchanged. | I3, I6, T1, T4 | Whole existing suite. T1 on legacy paths. T2 full run. |
+| V9 | oh | Replaced by V9a to V9e, which make the 1.12 line the default build. The order is in `40-i6f-full-regression-result.md`. Other rows that need V9 need V9e. | none | See V9a to V9e. |
 | V10a | oh | **Done 2026-11-22 (pull request 102).** The service's IRC config route advertises exactly the endpoints it serves, including view support, so Iceberg 1.12 clients use HEAD existence checks and views and do not assume routes that are not served. | V4 | A 1.12 `RESTCatalog` creates and loads a view and uses HEAD for existence against the service. |
 | V10 | oh | IRC endpoint list advertised. View registration. Spec revision of the new line. | V9, V4 | A current `RESTCatalog` negotiates against it. |
 | V11 | oh | IRC scan planning. | V9, V2 | Planned scans return the same files as client-side planning. |
 | V12 | oh | IRC credentials and signing. Investigate first (J24). | V9, V2 | Defined by the investigation. |
-| V13 | oh | Apache's REST compatibility kit passes against the service. | V9, V3, V4 | Kit green. Every exclusion listed with its reason. |
+| V13 | oh | Apache's REST compatibility kit passes against the service. What counts as passing is D32. The first measurement is V13a (`39-v13-compat-kit-result.md`). | V9, V3, V4 | Kit green. Every exclusion listed with its reason. |
 
-## Native path and platforms
+## Native path, platforms and v3 functions
 
-| ID | Repo | Leaves true | Needs | Proven by |
-| --- | --- | --- | --- | --- |
-| N1 | oh | The same config value selects native REST over HTTP on Spark 3.5. | C2-3, V3, V4, V5-3 | T1 identical on all three paths. Differences priced. |
-| N2 | oh | A Spark 3.5 runtime built on the new Iceberg line. | I4, I6, N1 | T1 and T2 pass on it. |
-| N1-c | oh | `SparkSqlSmokeTest` gains a third path, `rest-http` (`SparkCatalog type=rest`). Policy, grant and unlock cases pass. Differences are listed. | C2-3 | s16, s17 and s27 plus a test per SET POLICY form, on all three paths. |
-| N3 | oh | A Spark 4.2 runtime, IRC only, with capabilities and SQL extensions. | I5, I6, V3, V4, V5-1, V5-2, V5-3 | T1 ported to Spark 4.2 passes. |
-| N3-x1 | oh | **Done 2026-11-22 (pull request 101).** Result in `35-n3x1-spark42-extensions-result.md`. A Spark 4.2 and Scala 2.13 extensions module: ANTLR 4.13.1, the new parser methods, the resolver, `SQLConf.get`. It depends only on C2-1. | C2-2 | Ported parser and statement unit tests. |
-| N3-x2 | oh | **The policy part is done with N3-x1 (pull request 101); the rest is in progress with C2-3.** A Spark 4.2 itest: every OpenHouse statement over IRC, with no OpenHouse catalog class on the classpath. | N3-x1, V5-3 | A 4.2 itest beside the read itest, asserting stored state through the OpenHouse Java client. |
-| N3b | oh | Spark 4.2 on Iceberg 1.12 writes OpenHouse tables over IRC. | V3, N3a, C5 | The Spark SQL write statements pass in the Spark 4.2 module under the opt-in build. |
-
-## v3 functions
-
-Each exists on the native path only (J3).
-
-| ID | Repo | Leaves true | Needs | Proven by |
-| --- | --- | --- | --- | --- |
-| X1 | oh | Tables can be created at v3 or upgraded from v2, gated per table. The service returns v3 metadata exactly as committed. | V9, V3 | Round-trip test. v2 tables untouched. |
-| X2 | oh | Deletion vectors written and read through Spark SQL. | X1, N2 or N3 | Delete, update and merge scenarios on a v3 table. |
-| X3 | oh | Row lineage maintained across writes and compaction. | X1, N2 or N3 | Row ids stable across a rewrite. |
-| X4 | oh | Native default values on v3 tables. The v2 read bridge is untouched. See W7. | X1, N2 or N3 | Add a defaulted column, read old files. |
-| X5 | oh | New v3 types pass schema validation and column policies. | X1 | Create and evolve with each type. |
-| X6 | oh | Maintenance jobs run on the new line and are correct for X2 to X5. | V9, I4, X2 | Each job on a v3 table loses no live data. |
-| X7 | oh | Replication of v3 tables. Investigate first (J24). | X1 | Defined by the investigation. |
+These rows are in `41-work-platforms-v3.md`. They are part of the total in the bottom line.
 
 ## Column defaults on the new line
 
@@ -130,6 +109,14 @@ Rows W1 to W13 are in `30-work-defaults.md`. They are part of the total in the b
 | C5 | oh | **Done 2026-11-22 (pull request 97).** The in-process REST-shaped path advertises its endpoints, so view statements work on Iceberg 1.12. | C1, I6a | The two rest-shim view scenarios pass under the opt-in build. |
 | I10 | oh | **Done 2026-11-22 (pull request 97).** A CI job builds and tests the opt-in Iceberg 1.12 build. | I6a | A run on `irc-integration` passes or lists its known failures. |
 | N3a | oh | **Done 2026-11-22 (pull request 92).** Result in `26-n3a-spark42-read-result.md`. Spark 4.2 on the fork's Iceberg 1.12 reads OpenHouse tables through an unmodified `RESTCatalog`, under the opt-in build only. | V2, I5, I6a | A committed Spark 4.2 test runs the read statements against the service. |
+| V13a | oh | **Done 2026-11-23 (pull request 104).** Result in `39-v13-compat-kit-result.md`. Apache's compatibility kit runs against the service under the opt-in build with a reviewed list of expected outcomes. | V3, V4, I6a | The kit task passes exactly when the outcome matches the list in both directions. |
+| V13b | oh | The IRC routes follow the specification where the kit found deviations: cross-database rename status, format version on staged create, rename onto a view's name; a requested location is overridden (D30). | V13a | The kit's list shrinks by the tests that now pass; in progress on `irc/v13b-spec-deviations`. |
+| I11 | ib | An explicit time-travel read works while a write-audit-publish branch is set, as on LinkedIn's line. | I8 | The harness case `interact.branch.ttBeforeBranchPoint` passes on the 1.12 line; in progress on `irc/wap-time-travel`. |
+| V9a | oh | The fork's published artifacts survive `clean` and the opt-in build passes `clean build`. | I6a | `./gradlew -PicebergFork clean build` passes. |
+| V9b | oh | `iceberg-aws` comes from the fork's line under the switch. | I6a | No LinkedIn 1.2 Iceberg artifact is on any classpath under the switch. |
+| V9c | oh | Sources the 1.5 projects reuse from the Iceberg 1.2 / Spark 3.1 projects live in the 1.5 projects. | I6g | The 1.2 projects can be removed from the build without touching the 1.5 projects. |
+| V9d | oh | Docker images and deployables use the Spark 3.5 apps jar and a Java 17 base. | V9c | The image builds and the Docker integration step pass under the switch. |
+| V9e | oh | The 1.12 line is the default build and the Iceberg 1.2 / Spark 3.1 projects are removed (D3). | V9a to V9d, I11, V13b | Default CI builds and tests the 1.12 line. |
 
 The scouting run confirmed X0 from the OpenHouse side: 8 OpenHouse tests fail on 1.12 because non-null column defaults are rejected on v2 tables.
 

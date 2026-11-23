@@ -97,3 +97,4 @@ transcription error and should be fixed here.
 - S48. Asked for a smart subagent to diagnose and speed up the testing iteration loops, because there seems to be iteration friction seen from the outside; this was not a directive to fix anything, and a fast answer on whether it is needed is useful.
 - S49. Mike is fine with a bigger container if that is available.
 - S50. Selective testing is important if the build cycle is long. The full suite is only needed on merge, and that can be asynchronous with fix-forward.
+- S51. Asked for status with respect to the global task, avoiding implementation details.
