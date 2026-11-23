@@ -6,6 +6,9 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.api.handler.IcebergSnapshotsApiHandler;
 import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
@@ -38,6 +41,8 @@ import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -72,7 +77,9 @@ import org.springframework.stereotype.Component;
  *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
  *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
  *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
- *       supported) with the native message.
+ *       supported) with the native message. A rename House Tables refuses because the target's key
+ *       is taken (a view of that name), which the native route answers 500, is 409 {@code
+ *       AlreadyExistsException}.
  *   <li>A policy patch ({@value PolicyPatch#KEY} in the properties of a create, a staged create's
  *       completion or a commit, as OpenHouse's policy statements write it) is what the OpenHouse
  *       Java client makes of it before it sends the native request: the key is taken out of the
@@ -120,6 +127,8 @@ public class IcebergRestWriteHandler {
   @Autowired private ClusterProperties clusterProperties;
 
   @Autowired private IcebergRestApiHandler readHandler;
+
+  @Autowired private HouseTableRepository houseTableRepository;
 
   // ---------------------------------------------------------------- create
 
@@ -458,12 +467,36 @@ public class IcebergRestWriteHandler {
         throw new IcebergRestRouteException(e.getMessage(), true);
       }
     }
-    tablesApiHandler.renameTable(
-        fromDatabaseId,
-        request.source().name(),
-        toDatabaseId,
-        request.destination().name(),
-        actingPrincipal);
+    try {
+      tablesApiHandler.renameTable(
+          fromDatabaseId,
+          request.source().name(),
+          toDatabaseId,
+          request.destination().name(),
+          actingPrincipal);
+    } catch (CommitFailedException e) {
+      if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
+        throw e;
+      }
+      // House Tables refused the rename: tables and views share its key, and the target's is
+      // taken. The native rename checks only for a table there, so this is a view (or a table
+      // created meanwhile). The native API answers the unmapped commit failure 500; the spec's
+      // answer is 409 AlreadyExists.
+      boolean view =
+          houseTableRepository
+              .findViewById(
+                  HouseTablePrimaryKey.builder()
+                      .databaseId(toDatabaseId)
+                      .tableId(request.destination().name())
+                      .build())
+              .isPresent();
+      throw new AlreadyExistsException(
+          e,
+          "Cannot rename %s to %s. %s already exists",
+          request.source(),
+          request.destination(),
+          view ? "View" : "Table");
+    }
   }
 
   private static String namespace(TableIdentifier identifier) {
