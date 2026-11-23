@@ -136,17 +136,24 @@ The images are built from the default build only. Under `-PicebergLinkedIn`, `do
 - The build argument `OH_SPARK_BUILDER` selects where the Spark image's Livy and Spark come from.
   Its default, `dockerhub`, builds Livy (the pinned commit with the repository's patch) in Maven's
   Docker image, without its `integration-test` and `coverage` modules, and copies `/opt/spark`
-  from Apache's Docker image of the same release (`apache/spark:3.5.2-...`).
+  from Apache's Docker image of the same release (`apache/spark:3.5.2-...`). It needs Docker Hub,
+  GitHub and Maven Central only, and on a GitHub runner the images of the `oh-hadoop-spark` recipe
+  build in about 6 minutes, of which Livy's build is three and a half.
   `OH_SPARK_BUILDER=default docker compose ... build` uses the dockerfile's older builder stage,
   which installs some 200 Ubuntu packages and downloads Spark and Maven from
   `archive.apache.org`; on GitHub's runners that host served 46 kB/s (two and a half hours for one
-  tarball) and `apt-get` took 9 and 42 minutes. Neither has finished on a GitHub runner yet: the
-  `dockerhub` stages avoid Ubuntu's archive and those two tarballs, but Livy's `thriftserver`
-  module still downloads a Spark release (228 MB) from `archive.apache.org`, and the build stopped
-  there. The untried next step is `-Ddownload.skip=true` on that stage's `mvn` line. So the Spark
-  image, and with it the `oh-hadoop-spark` recipe and the dataloader's integration tests, are
-  proven only by a build with a stand-in builder stage on a developer machine (Spark 3.5.2 and
-  Apache's released Livy 0.8.0: `spark-sql`, a Livy session and `spark-submit` passed), not in CI.
+  tarball) and `apt-get` took 9 and 42 minutes, so that stage has never finished there.
+- Livy's own build would download one more Spark release (228 MB) from `archive.apache.org`, in
+  its `thriftserver` and `integration-test` modules, for tests that are skipped. Both builder
+  stages pass `-Ddownload.plugin.skip=true`, the skip property of the `download-maven-plugin`
+  version Livy's pom pins (1.3.0; later versions of the plugin call it `download.skip`).
+- What the image is known to do, from the Dataloader workflow's runs ("CI" below): the pinned Livy,
+  compiled against Spark 3.1.1, runs SQL sessions on Spark 3.5.2 and Java 17 (Livy warns that it
+  has not been verified with Spark 3.5); Spark's Hadoop 3.3.4 client reads and writes the recipe's
+  HDFS 2.8; `/opt/spark` from Apache's image has no `conf` directory (the tarball's holds only
+  templates) and nothing in the recipes needs one. The image has no Python interpreter, as the
+  Spark 3.1 image had none, so Livy's `pyspark` sessions are not available in it. Not run in CI:
+  a job submitted through the jobs service (a Livy batch from the apps jar).
 
 ## Behavior that differs by Iceberg line
 
@@ -226,32 +233,29 @@ build, the end of the Spark 4.2 tests' service logs) and upload the test reports
 `default-build-test-reports` or `reference-build-test-reports` (kept 7 days). The failed tests are
 therefore at the end of the job's log, not only where they ran.
 
-**The Dataloader workflow**, `dataloader-tests.yml`, has two jobs. The dataloader's own checks and
-unit tests (`make sync verify`) run on pull requests into `main` that touch
-`integrations/python/dataloader/**`, as before. The integration tests run by hand only
-(`workflow_dispatch`, on any branch): the job restores the fork, runs `./gradlew shadowJar
-dockerPrereqs`, starts the `oh-hadoop-spark` recipe (which builds the Spark image, Livy included)
-and runs the dataloader's integration tests against it. No pull request and no merge runs it,
-because the Spark image has not finished building on a runner ("Docker images" above), so the job
-has never been green on this line. Once a run by hand is green, the trigger that corresponds to
-the one the integration tests had before, widened by the files that define the recipe and its
-images, is (with the job's `if:` removed):
+**The Dataloader workflow**, `dataloader-tests.yml`, has two jobs: the dataloader's own checks and
+unit tests (`make sync verify`), and the integration tests. The integration job restores the fork,
+runs `./gradlew shadowJar dockerPrereqs`, builds the images of the `oh-hadoop-spark` recipe (the
+Spark image, Livy included), starts the recipe, waits until the tables and house tables services,
+Livy, HDFS (out of safe mode, with its datanode) and the Spark master (with its worker) answer,
+prints what the Spark image holds, and runs the dataloader's integration tests
+(`make integration-tests`), which create and fill tables with Spark SQL through Livy and read them
+back from HDFS. It runs:
 
-```yaml
-  pull_request:
-    types: [opened, synchronize, reopened]
-    branches: [main, irc-integration]
-    paths:
-      - 'integrations/python/dataloader/**'
-      - 'infra/recipes/docker-compose/common/**'
-      - 'infra/recipes/docker-compose/oh-hadoop-spark/**'
-      - '*.Dockerfile'
-      - '.github/workflows/dataloader-tests.yml'
-      - '.github/actions/iceberg-fork/**'
-```
+- on a pull request into `main` or `irc-integration` that touches the dataloader
+  (`integrations/python/dataloader/**`, the scope it had before), the recipe and what its images
+  are built from (`infra/recipes/docker-compose/common/**`,
+  `infra/recipes/docker-compose/oh-hadoop-spark/**`, the service Dockerfiles), the pinned fork
+  (`scripts/iceberg-fork/**`), or the workflow and the fork action themselves;
+- after each merge to `irc-integration`, beside `post-merge-build.yml` and never cancelled, because
+  a change to the jars the Spark image carries (the Spark runtime, the apps) reaches the image on
+  no pull request the paths above select;
+- by hand (`workflow_dispatch`) on any branch.
+
+A run takes about 16 minutes, and about 22 when it has to publish the fork first.
 
 The published `~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the
-script, so the fork is built (60 to 75 minutes on a runner) only when either changes:
+script, so the fork is built (about 6 minutes on a runner) only when either changes:
 
 - Every run restores the cache. A pull request can read what its base branch saved, so it normally
   gets the fork `irc-integration` published and builds nothing.

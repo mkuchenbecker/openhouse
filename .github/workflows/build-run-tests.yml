@@ -78,8 +78,8 @@ jobs:
       # built from, the jobs-scheduler image, and the oh-only recipe with the integration tests.
       # After the build and whatever its tests' outcome, so that they report first and a red image
       # never hides or blocks them; not after a failed compile, which leaves nothing to build
-      # images from. The Spark image and the oh-hadoop-spark recipe are the Dataloader job's
-      # (dataloader-tests.yml, by hand).
+      # images from. The Spark image and the oh-hadoop-spark recipe are the Dataloader workflow's
+      # (dataloader-tests.yml).
       - name: Build the uber jars and the Docker prerequisites
         id: docker-prereqs
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
