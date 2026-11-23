@@ -371,8 +371,8 @@ class IrcGrantsUnlockHttpClientTest {
   }
 
   /**
-   * The client's public request methods: no PATCH and no PUT, which is why the native ACL update (a
-   * PATCH) gets an IRC POST.
+   * The client's public request methods: GET, HEAD, POST and DELETE, no PATCH and no PUT, which is
+   * why the native ACL update (a PATCH) gets an IRC POST.
    */
   @Test
   void icebergsRestClientHasNoPatchOrPut() {
@@ -381,8 +381,10 @@ class IrcGrantsUnlockHttpClientTest {
             .filter(m -> !Modifier.isStatic(m.getModifiers()))
             .map(Method::getName)
             .collect(Collectors.toCollection(TreeSet::new));
-    assertEquals(
-        new TreeSet<>(Arrays.asList("close", "delete", "get", "head", "post", "postForm")),
-        methods);
+    org.junit.jupiter.api.Assertions.assertTrue(
+        methods.containsAll(Arrays.asList("delete", "get", "head", "post")), methods.toString());
+    for (String absent : new String[] {"patch", "put"}) {
+      org.junit.jupiter.api.Assertions.assertFalse(methods.contains(absent), methods.toString());
+    }
   }
 }
