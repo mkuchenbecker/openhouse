@@ -9,7 +9,7 @@ here without touching the default build. Without the property nothing changes.
 
 [`scripts/iceberg-fork/iceberg-fork.properties`](../../scripts/iceberg-fork/iceberg-fork.properties)
 holds the fork URL, the exact commit, and the runtime versions that commit needs (Avro, ORC,
-Caffeine). The published version is `<baseVersion>-ohfork.<12-char commit>`, which cannot collide
+Caffeine, and the AWS SDK its `iceberg-aws` is compiled against). The published version is `<baseVersion>-ohfork.<12-char commit>`, which cannot collide
 with a `com.linkedin.iceberg` release (those are four numeric parts, e.g. `1.5.2.24`). Nothing is
 committed as a binary and nothing is published remotely; bump the commit to move the line.
 
@@ -17,20 +17,27 @@ committed as a binary and nothing is published remotely; bump the commit to move
 
 ```bash
 export JAVA_HOME=/path/to/jdk17        # the fork's Iceberg is Java 17 bytecode
-scripts/iceberg-fork/publish-local.sh  # once per pinned commit; FORCE=1 republishes
+scripts/iceberg-fork/publish-local.sh  # once per pinned commit per machine; FORCE=1 republishes
+./gradlew -PicebergFork clean build    # clean keeps the published fork
 ./gradlew -PicebergFork :services:tables:test
 ./gradlew -PicebergFork :integrations:spark:spark-3.5:openhouse-spark-3.5-itest:test
 ```
 
-`publish-local.sh` fetches the pinned commit into `build/iceberg-fork/src`, then runs the fork's
+`publish-local.sh` fetches the pinned commit into `~/.gradle/iceberg-fork/src`, then runs the fork's
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
-`build/iceberg-fork/repo` (never `~/.m2`). A second Iceberg build publishes the shaded
+`~/.gradle/iceberg-fork/<version>` (never `~/.m2`). The directory is under the Gradle user home
+(`$GRADLE_USER_HOME` when set) and keyed by the published version, which carries the commit:
+`./gradlew clean` does not touch it, git does not see it, and every worktree of this repository on
+the machine shares one copy per pin instead of rebuilding Iceberg in each. `ICEBERG_FORK_HOME`
+moves it elsewhere; set it the same way for the script and for Gradle. Because the checkout is
+shared, the script holds a lock (`flock`, where available) while it fetches and publishes. A pin you
+no longer use can be deleted by removing its `<version>` directory. A second Iceberg build publishes the shaded
 `iceberg-spark-runtime-4.2_2.13` (one Iceberg build has one Scala version); it has its own marker
 file, so a repository published before it existed gains only that jar. A third build, with its own
 marker too, publishes `iceberg-open-api`'s tests and test-fixtures jars: Apache's REST compatibility
 kit. It needs the fork's `-PpublishGroup`/`-PpublishVersion`
-support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes several minutes; once the
-version is published it is a no-op. `./gradlew clean` deletes `build/`, so publish again after it.
+support. A cold run builds Iceberg's core and Spark 3.5 runtime and takes a few minutes (about two
+with Gradle's build cache warm); once the version is published it is a no-op.
 
 ## What the switch changes
 
@@ -39,7 +46,16 @@ property:
 
 - `iceberg_1_5_version` becomes the fork version for every module on the 1.5 line.
 - A repository limited to `com.linkedin.iceberg` at exactly that version, served only from
-  `build/iceberg-fork/repo`.
+  `~/.gradle/iceberg-fork/<version>`.
+- `iceberg-aws` (the service's `S3FileIO` and `AwsClientFactories`, in `openhouse.iceberg-aws-conventions`)
+  is the fork's too, with the AWS SDK at the pin file's `awsSdkVersion` plus `kms`, which it
+  needs; `s3` brings `apache5-client`, its default HTTP client. The SDK's `netty-nio-client` is
+  excluded: OpenHouse builds no async S3 client, and that SDK's Netty would split the service's
+  Netty between 4.1.138 and 4.1.86 and break its WebClient. So no Iceberg jar of another line is
+  on any classpath, and snapshot summaries name the fork's version. The default build keeps
+  LinkedIn's `iceberg-aws` 1.2.0.6 and SDK 2.20.18; there its `iceberg-build.properties` can come
+  before core's on a classpath, and `IcebergBuild.version()` then says 1.2.0.6 (seen on the Spark 3.5
+  apps test classpath; LinkedIn's 1.5.2 does not record the version in snapshot summaries).
 - Every module compiles to Java 17 (`openhouse.java-minimal-conventions`).
 - The root ORC/Avro forces are replaced by the pinned versions, and Caffeine is pinned.
 - `iceberg-parquet`/`iceberg-orc` are added at runtime on the 1.5 line and kept off the Spark 3.5
@@ -77,14 +93,16 @@ same class.
   (decision D14b, apache/iceberg#14507).
 - After several merge-on-read `DELETE`s on one data file, 1.12 keeps one live position delete file
   for it (Spark's delete granularity defaults to `file` and the earlier file is replaced), where
-  1.5.2 keeps one per `DELETE` (`SparkMoRFunctionalTest`).
+  1.5.2 keeps one per `DELETE` (`SparkMoRFunctionalTest`, decision D31).
+- `ALTER TABLE ... ADD COLUMN c int DEFAULT 5` is refused ("setting default values in Spark is
+  currently unsupported") instead of being accepted with the default dropped (decision D31).
 
-Measured on 1.12 by the delta-harness and not yet accepted by a decision: with
-`write.wap.enabled=true` and `spark.wap.branch` set, an explicit `TIMESTAMP AS OF` read fails with
-"Cannot override ref, already set snapshot id" instead of reading main's history (the scan gets both
-the time-travel snapshot and the WAP branch; `VERSION AS OF` takes the same path in the code); and
-`ALTER TABLE ... ADD COLUMN c int DEFAULT 5` is refused ("setting default values in Spark is
-currently unsupported") instead of being accepted with the default dropped.
+With `write.wap.enabled=true` and `spark.wap.branch` set, an explicit `TIMESTAMP AS OF` or
+`VERSION AS OF` read reads main's history on both lines (delta-harness
+`interact.branch.ttBeforeBranchPoint`). Apache Iceberg 1.12 refuses it ("Cannot override ref,
+already set snapshot id"); D31 does not accept that, and the fork's Spark 3.5 time-travel reads
+ignore the session WAP branch from the pinned commit a88f556c on (fork pull request 12, item I11;
+its tests pin the same on Spark 4.2).
 
 On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client calls only
 the endpoints a server advertises, and with none advertised assumes a default set without views. So
@@ -101,7 +119,7 @@ is not detectable and it declares the capability as before, with a warning.
 
 `post-merge-build.yml` has a second job, `iceberg-fork-build`, that runs after each merge to
 `irc-integration` and by hand (`workflow_dispatch`): `publish-local.sh` (the published
-`build/iceberg-fork/repo` is cached, keyed on the pinned commit and the script), then
+`~/.gradle/iceberg-fork/<version>` is cached, keyed on the pinned commit and the script), then
 `-PicebergFork assemble testClasses`, then the opt-in suites: `:services:tables:test`,
 `:iceberg:openhouse:internalcatalog:test`, `:iceberg:openhouse:htscatalog:test`, the 1.5 Java itest,
 the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests and
