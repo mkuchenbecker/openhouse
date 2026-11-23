@@ -10,8 +10,10 @@ import org.apache.spark.sql.SparkSession;
 /**
  * One Spark 4.2 session for every test in this JVM, with Iceberg's own {@code SparkCatalog} over
  * Iceberg's own {@code RESTCatalog} ({@code type=rest}) pointed at the service's IRC base path.
- * Nothing of OpenHouse is configured or on the classpath. The catalogs differ only in the bearer
- * token they send:
+ * No OpenHouse catalog or client class is configured or on the classpath. The OpenHouse SQL
+ * extensions jar is on the classpath (for the extensions tests, which build their own session in
+ * their own JVM), but this session does not load it. The catalogs differ only in the bearer token
+ * they send:
  *
  * <ul>
  *   <li>{@code irc}: a principal the service allows ({@value #READER}).
