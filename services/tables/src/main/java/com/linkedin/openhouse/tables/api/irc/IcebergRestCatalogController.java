@@ -48,7 +48,7 @@ public class IcebergRestCatalogController {
   @GetMapping(V1 + "/config")
   public ResponseEntity<byte[]> getConfig(
       @RequestParam(value = "warehouse", required = false) String warehouse) {
-    return IcebergRestJson.ok(handler.config());
+    return IcebergRestJson.config(handler.config(), handler.endpoints());
   }
 
   @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC list namespaces: OK"))
