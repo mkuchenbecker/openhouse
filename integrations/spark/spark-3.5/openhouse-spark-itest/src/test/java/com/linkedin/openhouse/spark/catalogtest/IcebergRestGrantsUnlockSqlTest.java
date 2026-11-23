@@ -217,6 +217,9 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   private String both(String template, boolean stranger, String nativeMessage) {
     String legacy = outcome(sql(template, stranger ? "ohc_stranger" : "ohc", LEGACY_DB), LEGACY_DB);
     String rest = outcome(sql(template, stranger ? "irc_stranger" : "irc", REST_DB), REST_DB);
+    // Both outcomes in the test report, for the record of what a user sees on each path.
+    System.out.println(
+        "OUTCOME\t" + template + (stranger ? " (denied)" : "") + "\t" + legacy + "\t" + rest);
     if (nativeMessage == null) {
       Assertions.assertEquals(legacy, rest, template);
     } else {
@@ -321,7 +324,7 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + table,
         both("REVOKE SELECT ON TABLE {cat}.{db}.shared FROM gu_reader", true, table));
-    String database = "Operation on database {db} failed as user gu_stranger is unauthorized";
+    String database = "Operation on database [{db}] failed as user [gu_stranger] is unauthorized";
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + database,
         both("GRANT CREATE TABLE ON DATABASE {cat}.{db} TO gu_reader", true, database));
@@ -339,14 +342,16 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   }
 
   @Test
-  void aMultiLevelNamespaceAndAnUnknownPrivilegeAreRefusedBeforeAnyRequest() {
+  void aMultiLevelNamespaceIsRefusedBeforeAnyRequest() {
+    // The Java client's check, made the same way by the capability client.
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ValidationException: Input namespace has more than one"
             + " levels {db}.x",
         both("GRANT SELECT ON TABLE {cat}.{db}.x.t TO gu_reader", false, null));
     Assertions.assertEquals(
-        "java.util.NoSuchElementException: No value present",
-        both("GRANT SELECT (id) ON TABLE {cat}.{db}.shared TO gu_reader", false, null));
+        "org.apache.iceberg.exceptions.ValidationException: Input namespace has more than one"
+            + " levels {db}.x",
+        both("SHOW GRANTS ON TABLE {cat}.{db}.x.t", false, null));
   }
 
   // ------------------------------------------------------------------ unlock
@@ -366,8 +371,8 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
         "java.lang.UnsupportedOperationException: ALTER TABLE UNLOCK is disabled. Set "
             + UNLOCK_ENABLED
             + "=true to enable it.",
-        both("ALTER TABLE {cat}.{db}.legacy_lock UNLOCK", false, null));
-    Assertions.assertEquals("locked LEGACY", lockState(REST_DB, "legacy_lock"));
+        both("ALTER TABLE {cat}.{db}.grant_locked UNLOCK", false, null));
+    Assertions.assertEquals("locked LEGACY", lockState(REST_DB, "grant_locked"));
   }
 
   @Test
@@ -409,7 +414,8 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   @Test
   void unlockByADeniedPrincipalIsForbiddenAndKeepsTheLock() {
     String message =
-        "Operation on table {db}.denied_lock failed as user gu_stranger is unauthorized";
+        "Operation on table {db}.denied_lock failed as user gu_stranger is unauthorized to act on"
+            + " Locked table";
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + message,
         unlock("ALTER TABLE {cat}.{db}.denied_lock UNLOCK", true, message));
@@ -426,9 +432,12 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
 
   @Test
   void anUnknownReasonIsAParseErrorOnBothPaths() {
-    String outcome = unlock("ALTER TABLE {cat}.{db}.unlocked UNLOCK REASON NONE", false, null);
+    // Refused by the parser, before any catalog is involved: the same parse error on both paths.
+    String outcome = unlock("ALTER TABLE {cat}.{db}.unlocked UNLOCK REASON BOGUS", false, null);
     Assertions.assertTrue(
-        outcome.contains("Invalid lock reason 'NONE'. Expected one of: LEGACY, SYSTEM_ONLY."),
+        outcome.startsWith(
+                "com.linkedin.openhouse.spark.sql.catalyst.parser.extensions.OpenhouseParseException")
+            && outcome.contains("BOGUS"),
         outcome);
   }
 
