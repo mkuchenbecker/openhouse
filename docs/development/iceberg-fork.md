@@ -48,8 +48,10 @@ property:
 The Iceberg 1.2 / Spark 3.1 projects are left out of the build under the switch (decision D15,
 `settings.gradle`): `apps/spark`, `integrations/java/iceberg-1.2/*`, `integrations/spark/spark-3.1/*`
 and `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`. The single-copy server modules compile
-against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The 1.5
-projects that reuse their source directories name the directories instead, `services:tables` tests
+against the fork there, so those projects could only be a hybrid of 1.2 and 1.12 artifacts. The
+sources they share with the 1.5 projects live in the 1.5 projects, under `src/shared`, and the 1.2
+projects name those directories, so nothing in the build under the switch reads a directory of a
+left-out project. `services:tables` tests
 use the 1.5 fixtures (built from the same sources), and `libs:datalayout`, which the Spark 3.5 apps
 share, is built on the Spark 3.5 / fork line. There it skips the root dependency forces and keeps
 the thin `iceberg-orc`/`iceberg-parquet` jars off its test classpath, as the Spark 3.5 apps do.
