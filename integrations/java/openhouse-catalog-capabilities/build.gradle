@@ -16,6 +16,18 @@ def javaTarget = rootProject.hasProperty('icebergFork') ? JavaVersion.VERSION_17
 sourceCompatibility = javaTarget
 targetCompatibility = javaTarget
 
+// The REST capability client's transport (HTTP client and authentication) is the one part that
+// differs between Iceberg lines: 1.5.2 has OAuth2Util only, 1.12 has AuthManager. A build uses one
+// Iceberg line for every module (1.5.2 by default, 1.12 under -PicebergFork), so the module compiles
+// the transport for that line.
+sourceSets {
+  main {
+    java {
+      srcDir rootProject.hasProperty('icebergFork') ? 'src/iceberg-1.12/java' : 'src/iceberg-1.5/java'
+    }
+  }
+}
+
 checkstyle {
   configFile = rootProject.file('gradle/checkstyle/checkstyle.xml')
   configDirectory = rootProject.file('gradle/checkstyle')
@@ -23,5 +35,11 @@ checkstyle {
 
 dependencies {
   compileOnly "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
+  // The REST capability client (package rest, C2-3) uses the HTTP client, authentication, resource
+  // paths and JSON mapper of the engine's own Iceberg runtime, so it is compileOnly too. It never
+  // names a Jackson or Apache HTTP type, which the shaded Iceberg runtimes relocate.
+  compileOnly "com.linkedin.iceberg:iceberg-core:${rootProject.ext.iceberg_1_5_version}"
   testImplementation "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
+  // The REST capability client's tests call a stub server through Iceberg's own HTTP client.
+  testImplementation "com.linkedin.iceberg:iceberg-core:${rootProject.ext.iceberg_1_5_version}"
 }

@@ -9,7 +9,6 @@ import static com.linkedin.openhouse.spark42.extensions.ExtensionsTestService.DB
 import com.linkedin.openhouse.spark.capabilities.CatalogCapabilities;
 import com.linkedin.openhouse.spark.capabilities.OpenHouseCapabilities;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -25,11 +24,10 @@ import org.junit.jupiter.api.TestInstance;
  * Spark 3.5 itest's {@code IcebergRestOpenHouseStatementsTest} pins from Spark 3.5 over the same
  * kind of catalog.
  *
- * <p>GRANT, REVOKE, SHOW GRANTS and UNLOCK parse and analyze, resolve the catalog's capabilities,
- * and fail with "does not support": a plain {@code RESTCatalog} has no client for the OpenHouse
- * grant and lock routes yet (work item C2-3), and the server does not serve them yet (V5-3). These
- * pins are meant to fail when the capability client lands; they then become the cases that show the
- * statements working.
+ * <p>GRANT, REVOKE, SHOW GRANTS and UNLOCK reach the server through the REST capability client
+ * (C2-3), as on Spark 3.5: these cases flipped from the "does not support" pins they were until the
+ * client landed. {@code SparkIrcGrantsUnlockTest} pins every outcome and the stored grants and
+ * locks.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class SparkIrcOpenHouseStatementsTest {
@@ -62,21 +60,20 @@ public class SparkIrcOpenHouseStatementsTest {
   }
 
   @Test
-  void grantStatementsAreUnsupportedUntilTheCapabilityClientLands() throws Exception {
+  void grantStatementsReachTheServerThroughTheCapabilityClient() throws Exception {
+    // A grant needs a shared table; sharing is set through the Java client so this case does not
+    // depend on the policy case's order.
+    Assertions.assertNull(ExtensionsTestService.get().patch(TABLE, "{\"sharingEnabled\": true}"));
     for (String catalog : Arrays.asList(IRC, IRC_ADVERTISED)) {
       for (Map.Entry<String, String> statement : grantStatements(catalog).entrySet()) {
         Assertions.assertEquals(
-            "java.lang.UnsupportedOperationException: Catalog '"
-                + catalog
-                + "' does not support Grant Revoke Statements",
-            outcome(statement.getValue()),
-            statement.getKey() + " on " + catalog);
+            "ok", outcome(statement.getValue()), statement.getKey() + " on " + catalog);
       }
     }
   }
 
   @Test
-  void unlockIsUnsupportedUntilTheCapabilityClientLands() throws Exception {
+  void unlockReachesTheServerThroughTheCapabilityClient() throws Exception {
     for (String catalog : Arrays.asList(IRC, IRC_ADVERTISED)) {
       ExtensionsSpark.session().conf().unset(UNLOCK_ENABLED);
       Assertions.assertEquals(
@@ -86,13 +83,10 @@ public class SparkIrcOpenHouseStatementsTest {
           outcome("ALTER TABLE " + t(catalog) + " UNLOCK"));
       ExtensionsSpark.session().conf().set(UNLOCK_ENABLED, "true");
       try {
+        // The table holds no lock: the server removes nothing, with either reason.
         for (String suffix : Arrays.asList("", " REASON SYSTEM_ONLY")) {
           Assertions.assertEquals(
-              "java.lang.UnsupportedOperationException: Catalog '"
-                  + catalog
-                  + "' does not support UNLOCK",
-              outcome("ALTER TABLE " + t(catalog) + " UNLOCK" + suffix),
-              catalog + suffix);
+              "ok", outcome("ALTER TABLE " + t(catalog) + " UNLOCK" + suffix), catalog + suffix);
         }
       } finally {
         ExtensionsSpark.session().conf().unset(UNLOCK_ENABLED);
@@ -102,8 +96,9 @@ public class SparkIrcOpenHouseStatementsTest {
 
   /**
    * What the resolver finds on the session's IRC catalogs: Iceberg's REST path, the server's
-   * advertised {@code policies} (its config override wins over {@code irc_adv}'s client-side
-   * claim), and policies the only usable capability.
+   * advertised {@code policies,grants,unlock} (its config override wins over {@code irc_adv}'s
+   * client-side claim; grants and unlock since V5-3), and all three usable: grants and unlock
+   * through the capability client (C2-3).
    */
   @Test
   void theResolverReadsTheServersAdvertisedCapabilities() throws Exception {
@@ -113,11 +108,11 @@ public class SparkIrcOpenHouseStatementsTest {
               ExtensionsSpark.session().sessionState().catalogManager().catalog(catalog));
       Assertions.assertEquals(CatalogCapabilities.Path.ICEBERG_REST, capabilities.path(), catalog);
       Assertions.assertEquals(
-          new LinkedHashSet<>(Collections.singletonList("policies")),
+          new LinkedHashSet<>(Arrays.asList("policies", "grants", "unlock")),
           capabilities.advertised(),
           catalog);
       Assertions.assertEquals(
-          new LinkedHashSet<>(Collections.singletonList("policies")),
+          new LinkedHashSet<>(Arrays.asList("policies", "grants", "unlock")),
           capabilities.offered(),
           catalog);
     }

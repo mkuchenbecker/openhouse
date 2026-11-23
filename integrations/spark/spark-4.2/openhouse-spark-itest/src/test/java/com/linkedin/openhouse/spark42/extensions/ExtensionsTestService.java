@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ final class ExtensionsTestService {
 
   static final String DB = "irc42x";
   static final String WRITER = "irc_writer";
+  static final String STRANGER = "irc_stranger";
   static final String POLICY_PATCH = "updated.openhouse.policy";
 
   private static final long START_TIMEOUT_SECONDS = 300;
@@ -167,6 +169,45 @@ final class ExtensionsTestService {
         .fields()
         .forEachRemaining(e -> properties.put(e.getKey(), e.getValue().asText()));
     return properties;
+  }
+
+  /** The grants the service stored for {@code resource} ({@code db} or {@code db.table}). */
+  List<String> acls(String resource) throws Exception {
+    JsonNode result = get("/acls?resource=" + URLEncoder.encode(resource, StandardCharsets.UTF_8));
+    List<String> acls = new ArrayList<>();
+    result.get("acls").forEach(acl -> acls.add(acl.asText()));
+    return acls;
+  }
+
+  /** Locks {@code irc42x.<table>} through the native lock route; null reason: a LEGACY lock. */
+  void lock(String table, String reason) throws Exception {
+    ObjectNode body = JSON.createObjectNode().put("table", table);
+    if (reason != null) {
+      body.put("reason", reason);
+    }
+    String error = post("/lock", body);
+    if (error != null) {
+      throw new IllegalStateException("lock " + table + ": " + error);
+    }
+  }
+
+  /** {@code unlocked}, {@code locked <reason>} or {@code missing}, from the service's store. */
+  String lockState(String table) throws Exception {
+    return get("/lockState?table=" + URLEncoder.encode(table, StandardCharsets.UTF_8))
+        .get("lock")
+        .asText();
+  }
+
+  private JsonNode get(String pathAndQuery) throws Exception {
+    HttpResponse<String> response =
+        http.send(
+            HttpRequest.newBuilder(control(pathAndQuery)).GET().build(),
+            HttpResponse.BodyHandlers.ofString());
+    JsonNode result = JSON.readTree(response.body());
+    if (response.statusCode() != 200) {
+      throw new IllegalStateException(pathAndQuery + ": " + result.path("error").asText());
+    }
+    return result;
   }
 
   private String post(String path, JsonNode body) throws Exception {

@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.tablestest;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -7,8 +9,10 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -102,6 +106,64 @@ public class IcebergRestRoutesBoundaryTest {
     Assertions.assertEquals(
         406, call("DELETE", "/iceberg/v1/namespaces/irc_boundary_db/tables/t", null));
     Assertions.assertEquals(406, call("POST", "/iceberg/v1/tables/rename", "{}"));
+  }
+
+  /** The spec routes served on every Iceberg runtime: the reads. */
+  private static final List<String> READ_ROUTES =
+      Arrays.asList(
+          "GET /v1/{prefix}/namespaces",
+          "GET /v1/{prefix}/namespaces/{namespace}",
+          "HEAD /v1/{prefix}/namespaces/{namespace}",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}");
+
+  /**
+   * The config lists the spec routes served under this runtime and the OpenHouse capabilities
+   * registered: under Iceberg 1.2 the reads only, and no policy patch (it rides the write routes);
+   * under 1.5 the reads, the table writes and the views.
+   */
+  @Test
+  public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
+    JsonNode config = new ObjectMapper().readTree(get("/iceberg/v1/config"));
+    List<String> endpoints = new ArrayList<>();
+    config.path("endpoints").forEach(endpoint -> endpoints.add(endpoint.asText()));
+    String capabilities = config.path("overrides").path("openhouse.capabilities").asText();
+    if (!icebergWriteApiPresent()) {
+      Assertions.assertEquals(READ_ROUTES, endpoints);
+      Assertions.assertEquals("grants,unlock", capabilities);
+      return;
+    }
+    Assertions.assertTrue(endpoints.containsAll(READ_ROUTES), endpoints.toString());
+    Assertions.assertTrue(
+        endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}"),
+        endpoints.toString());
+    Assertions.assertTrue(
+        endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/views/{view}"),
+        endpoints.toString());
+    Assertions.assertEquals(16, endpoints.size(), endpoints.toString());
+    Assertions.assertEquals("policies,grants,unlock", capabilities);
+  }
+
+  /** The OpenHouse grants and unlock routes use no Iceberg API and are served everywhere. */
+  @Test
+  public void theGrantsAndUnlockRoutesAreServedOnEveryIcebergRuntime() throws IOException {
+    String table = "/iceberg/v1/namespaces/irc_boundary_db/tables/no_such_table/openhouse";
+    Assertions.assertEquals(404, call("GET", table + "/acl-policies", null));
+    Assertions.assertEquals(404, call("DELETE", table + "/lock", null));
+    Assertions.assertEquals(404, call("DELETE", table + "/lock/SYSTEM_ONLY", null));
+  }
+
+  private static String get(String path) throws IOException {
+    HttpURLConnection connection =
+        (HttpURLConnection) new URL("http://localhost:" + port + path).openConnection();
+    connection.setRequestProperty("Authorization", "Bearer " + token);
+    try (InputStream in = connection.getInputStream()) {
+      Assertions.assertEquals(200, connection.getResponseCode());
+      return new String(readAll(in), StandardCharsets.UTF_8);
+    } finally {
+      connection.disconnect();
+    }
   }
 
   private static int call(String method, String path, String body) throws IOException {

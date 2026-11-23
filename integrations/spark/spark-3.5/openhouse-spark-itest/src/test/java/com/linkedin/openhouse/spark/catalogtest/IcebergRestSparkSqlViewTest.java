@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
+import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Arrays;
 import java.util.Collections;
@@ -118,10 +119,16 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
     Assertions.assertEquals(
         Arrays.asList("[2]", "[4]"), rows("SELECT * FROM " + t("vv") + " ORDER BY twice"));
 
-    // The native view API has no rename.
+    // The native view API has no rename: the server's 406 on Iceberg 1.5.2; on 1.12 the client
+    // refuses first, since the config's endpoint list omits the route.
     Throwable rename = thrown(() -> spark.sql("ALTER VIEW " + t("vv") + " RENAME TO " + t("vv2")));
     Assertions.assertTrue(
-        String.valueOf(rename.getMessage()).contains("do not support rename"), rename.toString());
+        String.valueOf(rename.getMessage())
+            .contains(
+                IcebergLine.current() == IcebergLine.LEGACY
+                    ? "do not support rename"
+                    : "Server does not support endpoint: POST /v1/{prefix}/views/rename"),
+        rename.toString());
     Assertions.assertEquals(
         Arrays.asList("[2]", "[4]"), rows("SELECT * FROM " + t("vv") + " ORDER BY twice"));
 
@@ -152,7 +159,8 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
 
   /**
    * With views off for a database (the default), tables read as before: Spark's view probe gets
-   * {@code NoSuchViewException} and falls back to the table. View statements there fail.
+   * {@code NoSuchViewException} and falls back to the table. Creating a view there fails, and SHOW
+   * VIEWS shows none.
    */
   @Test
   void withViewsDisabledTablesReadAndViewStatementsFail() {
@@ -162,11 +170,8 @@ public class IcebergRestSparkSqlViewTest extends OpenHouseSparkITest {
     Throwable create = thrown(() -> spark.sql("CREATE VIEW " + off + ".v AS SELECT 1"));
     Assertions.assertTrue(
         String.valueOf(create.getMessage()).contains("SCHEMA_NOT_FOUND"), create.toString());
-    Throwable show = thrown(() -> spark.sql("SHOW VIEWS IN " + off).collectAsList());
-    Assertions.assertTrue(
-        String.valueOf(show.getMessage()).contains("SCHEMA_NOT_FOUND")
-            || String.valueOf(show.getMessage()).contains("Views are disabled"),
-        show.toString());
+    // No views to show: the database holds none while its views are disabled.
+    Assertions.assertEquals(Collections.emptyList(), rows("SHOW VIEWS IN " + off));
     Assertions.assertEquals(
         Collections.singletonList("[" + OFF_DB + ",t,false]"), rows("SHOW TABLES IN " + off));
   }

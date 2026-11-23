@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.SnapshotRef;
@@ -20,6 +21,7 @@ import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.rest.RESTRequest;
 import org.apache.iceberg.rest.RESTResponse;
 import org.apache.iceberg.rest.RESTSerializers;
+import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.ErrorResponseParser;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
@@ -53,6 +55,19 @@ public final class IcebergRestJson {
   /** A 200 response with {@code body} as JSON. */
   public static ResponseEntity<byte[]> ok(RESTResponse body) {
     return respond(HttpStatus.OK, write(MAPPER.valueToTree(body)));
+  }
+
+  /**
+   * A 200 config response: {@code config} and, as its {@code endpoints}, the spec routes served, in
+   * the spec's format. Written at the JSON level because this server's Iceberg lines differ: 1.2
+   * and 1.5.2 have no {@code endpoints} in {@code ConfigResponse} (and their clients ignore the
+   * field), 1.12 has it with an {@code Endpoint} type the other lines lack.
+   */
+  public static ResponseEntity<byte[]> config(ConfigResponse config, List<String> endpoints) {
+    ObjectNode node = MAPPER.valueToTree(config);
+    ArrayNode list = node.putArray("endpoints");
+    endpoints.forEach(list::add);
+    return respond(HttpStatus.OK, write(node));
   }
 
   /** A response with no body. */
