@@ -8,6 +8,7 @@ import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.readbridge.ClientCapabilityGate;
@@ -99,7 +100,10 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
         databaseId, tableId, tableDto, tableDtoToSave.getTableProperties());
     tableDtoToSave = LockPolicyValidator.prepare(null, tableDtoToSave);
     try {
-      tableDtoToSave = readBridgeStripProtection.prepare(tableDtoToSave);
+      // A format v3 table stores its column defaults as committed (see TableCommitCore).
+      if (!FormatVersionRule.writesFormatV3(null, tableDtoToSave)) {
+        tableDtoToSave = readBridgeStripProtection.prepare(tableDtoToSave);
+      }
     } catch (ColumnDefaultException e) {
       throw new UnsupportedClientOperationException(
           UnsupportedClientOperationException.Operation.COLUMN_DEFAULT, e.getMessage(), e);

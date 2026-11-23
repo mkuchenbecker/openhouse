@@ -1,11 +1,13 @@
 package com.linkedin.openhouse.tables.services;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
@@ -39,6 +41,8 @@ public class TableCommitService {
   @Autowired PartitionSpecMapper partitionSpecMapper;
 
   @Autowired PoliciesSpecMapper policiesSpecMapper;
+
+  @Autowired ClusterProperties clusterProperties;
 
   /**
    * Commits {@code candidate} on top of the stored table {@code base}, running every rule the
@@ -75,7 +79,9 @@ public class TableCommitService {
             candidate,
             requested != null ? requested : stored.getPolicies(),
             partitionSpecMapper,
-            context.isReplace());
+            context.isReplace(),
+            new FormatVersionRule(clusterProperties)
+                .isAllowedUpgrade(base.getMetadata().formatVersion(), candidate.formatVersion()));
     Supplier<TableDto> candidateView =
         requested == null
             ? () -> view

@@ -46,6 +46,15 @@ public class ClusterProperties {
   @Value("${cluster.iceberg.format-version:2}")
   private int clusterIcebergFormatVersion;
 
+  /**
+   * Whether tables of Iceberg format version 3 may exist on this cluster. Off by default. It never
+   * makes a table v3 by itself: tables are still created at {@code cluster.iceberg.format-version},
+   * and a table is v3 only when its create asks for format version 3 or an explicit upgrade is
+   * requested for it. Upgrading a table cannot be undone.
+   */
+  @Value("${cluster.iceberg.format-v3.enabled:false}")
+  private boolean clusterIcebergFormatV3Enabled;
+
   @Value("${cluster.iceberg.write.metadata.delete-after-commit.enabled:false}")
   private boolean clusterIcebergWriteMetadataDeleteAfterCommitEnabled;
 

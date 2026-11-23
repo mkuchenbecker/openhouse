@@ -36,6 +36,9 @@ import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.TableTypeMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionCommitPolicy;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
@@ -189,6 +192,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
           writeSchema,
           partitionSpec);
       Map<String, String> tableProps = computePropsForTableCreation(tableDto);
+      keepFormatVersionOnReplace(tableIdentifier, tableDto, tableProps);
       tablePolicyManager.managePoliciesOnCreateIfNeeded(tableDto);
       SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
       String metadataLocation = tableProps.get(getCanonicalFieldName("tableLocation"));
@@ -204,6 +208,11 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       table = catalog.loadTable(tableIdentifier);
       Transaction transaction = table.newTransaction();
       updateEligibilityCheck(table, tableDto);
+      formatVersionRule()
+          .checkUpdate(
+              tableIdentifier.toString(),
+              InternalRepositoryUtils.formatVersion(table),
+              tableDto.getTableProperties());
 
       UpdateProperties updateProperties = transaction.updateProperties();
       boolean schemaUpdated =
@@ -273,8 +282,43 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                 tableDto.getTableCreator(),
                 tableProps);
     SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
-    return TableMetadata.newTableMetadata(
-        writeSchema, partitionSpec, sortOrder, tableLocation, tableProps);
+    TableMetadata staged =
+        TableMetadata.newTableMetadata(
+            writeSchema, partitionSpec, sortOrder, tableLocation, tableProps);
+    // Nothing is committed here, so the catalog's pre-commit checks do not run: check what the
+    // staged metadata may be at its format version, as the create that completes it will.
+    new FormatVersionCommitPolicy(formatVersionRule())
+        .check(tableIdentifier, null, staged, staged.properties());
+    return staged;
+  }
+
+  /** The format version rule, over this cluster's configuration. */
+  private FormatVersionRule formatVersionRule() {
+    return new FormatVersionRule(clusterProperties);
+  }
+
+  /**
+   * A replace keeps the table's format version: {@code tableProps}, computed as for a create, carry
+   * the version a create would get (the cluster's), which on a table of a higher version would be a
+   * downgrade. The version is the one {@link FormatVersionRule#versionOfReplace} gives: the table's
+   * own, or 3 when the replace asks for it and v3 is enabled.
+   *
+   * <p>A table can be above the cluster's version only where Iceberg builds format v3, whether the
+   * cluster's switch is on now or was on when the table was made v3, so only there is the stored
+   * table read for it; elsewhere the properties stay as the create computed them.
+   */
+  private void keepFormatVersionOnReplace(
+      TableIdentifier tableIdentifier, TableDto tableDto, Map<String, String> tableProps) {
+    if (!IcebergV3.supported()) {
+      return;
+    }
+    int stored = InternalRepositoryUtils.formatVersion(catalog.loadTable(tableIdentifier));
+    tableProps.put(
+        TableProperties.FORMAT_VERSION,
+        Integer.toString(
+            formatVersionRule()
+                .versionOfReplace(
+                    tableIdentifier.toString(), stored, tableDto.getTableProperties())));
   }
 
   protected Table createTable(
@@ -798,7 +842,12 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
     propertiesMap.put(
         TableProperties.FORMAT_VERSION,
-        Integer.toString(clusterProperties.getClusterIcebergFormatVersion()));
+        Integer.toString(
+            formatVersionRule()
+                .versionOfCreate(
+                    tableDto.isStageReplace() || tableDto.isReplaceCommit() ? "Replace" : "Create",
+                    tableDto.getDatabaseId() + "." + tableDto.getTableId(),
+                    tableDto.getTableProperties())));
 
     return propertiesMap;
   }

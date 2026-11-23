@@ -197,6 +197,31 @@ The jobs client (`TablesClientFactory`, apps) declares `column-defaults` by the 
 Spark catalogs. The scheduler's own jar carries neither `IcebergLine` nor Iceberg, so there the line
 is not detectable and it declares the capability as before, with a warning.
 
+## Format v3 tables
+
+Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it with one switch,
+`cluster.iceberg.format-v3.enabled` (default `false`), next to `cluster.iceberg.format-version`
+(which stays the version tables are created at, 2).
+
+- A table is v3 only when it is asked for by name: `CREATE TABLE ... TBLPROPERTIES
+  ('format-version'='3')` (a `CREATE OR REPLACE` alike) or `ALTER TABLE ... SET TBLPROPERTIES
+  ('format-version'='3')`, through the OpenHouse catalog on Spark 3.5 or Iceberg's REST catalog on
+  Spark 4.2. Everything else is created at, and stays at, the version it has. Upgrading a table
+  cannot be undone: a lower version is refused, and LinkedIn's Iceberg 1.5.2 clients and services
+  cannot load a v3 table.
+- With the switch off, a request for a version above the cluster's is refused with 400
+  (`FORMAT_VERSION_REFUSED` on the native API). On the reference line the same statements fail in
+  the client's own Iceberg.
+- One rule decides all of it, `FormatVersionRule`, and `FormatVersionCommitPolicy` checks it on
+  every commit path as a catalog pre-commit check, with what a v3 table may carry: column defaults
+  are Iceberg's native `initial-default` and `write-default`, stored as committed (an existing
+  column's `initial-default` never changes, and the read-bridge opt-in
+  `required-capability.column-defaults` is refused on v3; below v3 a `write-default` is refused
+  with `COLUMN_DEFAULT_REQUIRES_V3`).
+- Refused on v3 until their work items: the v3-only types (variant, geometry, geography,
+  nanosecond timestamps, unknown), replica and replicated tables, table encryption, and the
+  register of a v3 metadata file.
+
 ## CI
 
 Two jobs, each one reusable workflow, run beside each other on every pull request
@@ -374,8 +399,10 @@ scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's test
 
 The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory
 H2, local storage, the dummy token interceptor, an authorization handler that allows everything,
-views enabled for the namespaces the kit uses). A JUnit session listener in the test JVM starts it
-and points the kit at `<service>/iceberg` (`rck.local=false`, `uri`, `token`). Its log and access
+views enabled for the namespaces the kit uses, and the cluster switch for format v3 tables,
+`cluster.iceberg.format-v3.enabled`, on, so the kit's format v3 creates are honoured). A JUnit
+session listener in the test JVM starts it and points the kit at `<service>/iceberg`
+(`rck.local=false`, `uri`, `token`). Its log and access
 log are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`. Its warehouse is
 not: as for the Spark 4.2 test services, it is a new directory (`ohrck-*`) under the system's
 temporary directory (`ready.json` names it), removed when the service exits, so that a metadata

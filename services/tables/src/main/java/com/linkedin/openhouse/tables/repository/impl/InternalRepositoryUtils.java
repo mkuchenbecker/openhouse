@@ -19,8 +19,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.UpdateProperties;
 
 /** Utilities used in repository implementation. */
@@ -135,9 +137,19 @@ public final class InternalRepositoryUtils {
             .jsonSnapshots(null)
             .tableProperties(megaProps)
             .sortOrder(SortOrderParser.toJson(table.sortOrder()))
+            .formatVersion(formatVersion(table))
             .build();
 
     return tableDto;
+  }
+
+  /** The table's Iceberg format version; 0 for a table that is not backed by table metadata. */
+  static int formatVersion(Table table) {
+    if (table instanceof HasTableOperations) {
+      TableMetadata current = ((HasTableOperations) table).operations().current();
+      return current == null ? 0 : current.formatVersion();
+    }
+    return 0;
   }
 
   /**

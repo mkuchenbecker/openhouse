@@ -24,6 +24,8 @@ import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
@@ -473,7 +475,9 @@ public class IcebergRestWriteHandler {
     Policies policies =
         patch.map(p -> PolicyPatch.apply(null, p, identifier.toString())).orElse(null);
     refuseRewrittenCreateProperties(identifier, candidate.properties());
-    requireTheClustersFormatVersion("Create", identifier, candidate);
+    if (!createsAtFormatV3(candidate.formatVersion())) {
+      requireTheClustersFormatVersion("Create", identifier, candidate);
+    }
     TableDto ids = TableDto.builder().databaseId(databaseId).tableId(tableId).build();
     UUID tableUUID =
         tableUUID(
@@ -507,6 +511,12 @@ public class IcebergRestWriteHandler {
     }
   }
 
+  /** Whether a create that asks for {@code formatVersion} asks for v3 where v3 is enabled. */
+  private boolean createsAtFormatV3(int formatVersion) {
+    return formatVersion == IcebergV3.VERSION
+        && new FormatVersionRule(clusterProperties).v3Enabled();
+  }
+
   /** {@code properties} without the keys the server sets itself, and without a policy patch. */
   private Map<String, String> creatableProperties(Map<String, String> properties, TableDto ids) {
     Map<String, String> creatable = new HashMap<>();
@@ -538,6 +548,11 @@ public class IcebergRestWriteHandler {
     String tableId = identifier.name();
     TableDto ids = TableDto.builder().databaseId(databaseId).tableId(tableId).build();
     Map<String, String> properties = creatableProperties(candidate.properties(), ids);
+    if (createsAtFormatV3(candidate.formatVersion())) {
+      // A format version is not among metadata's properties; the native create reads the one a
+      // create asks for from this property, as the OpenHouse Java client sends it.
+      properties.put(FORMAT_VERSION_KEY, Integer.toString(candidate.formatVersion()));
+    }
     CreateUpdateTableRequestBody body =
         IcebergCreates.toCreateBody(
             identifier,
@@ -1038,6 +1053,12 @@ public class IcebergRestWriteHandler {
       TableIdentifier identifier, Map<String, String> properties) {
     String asked = properties.get(FORMAT_VERSION_KEY);
     int clusterVersion = clusterProperties.getClusterIcebergFormatVersion();
+    if (asked != null
+        && asked.trim().equals(Integer.toString(IcebergV3.VERSION))
+        && new FormatVersionRule(clusterProperties).v3Enabled()) {
+      // Format v3 where the cluster enables it: the create's own rule stores it.
+      return;
+    }
     if (asked != null && !asked.trim().equals(Integer.toString(clusterVersion))) {
       throw new RequestValidationFailureException(
           String.format(

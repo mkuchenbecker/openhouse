@@ -293,4 +293,53 @@ public class BaseIcebergSchemaValidatorTest {
         thrown.getMessage().contains("Column[id] not found in newSchema"),
         "expected the renamed-away-column error, got: " + thrown.getMessage());
   }
+
+  /**
+   * A field whose name is re-cased, at top level or inside a struct, keeps its column defaults: on
+   * a format v3 table they are the table's native defaults, and a commit that sent the schema back
+   * with other casing would otherwise store the field without them.
+   */
+  @Test
+  void normalizeSchemaCasingToTable_keepsColumnDefaults_ofARecasedField() {
+    Types.NestedField country =
+        Types.NestedField.optional("country")
+            .withId(2)
+            .ofType(Types.StringType.get())
+            .withDoc("where")
+            .withInitialDefault("US")
+            .withWriteDefault("CA")
+            .build();
+    Types.NestedField tier =
+        Types.NestedField.optional("tier")
+            .withId(5)
+            .ofType(Types.IntegerType.get())
+            .withInitialDefault(1)
+            .withWriteDefault(2)
+            .build();
+    Schema tableSchema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.StringType.get()),
+            country,
+            Types.NestedField.optional(3, "info", Types.StructType.of(tier)));
+    Schema writeSchema =
+        new Schema(
+            Types.NestedField.required(1, "ID", Types.StringType.get()),
+            Types.NestedField.from(country).withName("COUNTRY").build(),
+            Types.NestedField.optional(
+                3,
+                "Info",
+                Types.StructType.of(Types.NestedField.from(tier).withName("Tier").build())));
+
+    Schema normalized =
+        BaseIcebergSchemaValidator.normalizeSchemaCasingToTable(writeSchema, tableSchema);
+
+    assertEquals("country", normalized.findField(2).name());
+    assertEquals("where", normalized.findField(2).doc());
+    assertEquals("US", String.valueOf(normalized.findField(2).initialDefault()));
+    assertEquals("CA", String.valueOf(normalized.findField(2).writeDefault()));
+    assertEquals("tier", normalized.findField(5).name());
+    assertEquals(1, normalized.findField(5).initialDefault());
+    assertEquals(2, normalized.findField(5).writeDefault());
+    assertTrue(normalized.sameSchema(tableSchema), normalized.toString());
+  }
 }
