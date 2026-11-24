@@ -1,0 +1,56 @@
+// Gradle init script of the pull request's split build (.github/workflows/split-build.yml,
+// scripts/ci/test-groups.py). Applied with `-I` to `./gradlew clean build --continue`, it cuts that
+// build to one group's share, by project directory:
+//
+//   CI_GROUP_MODE=only    CI_GROUP_DIRS=<dir>...   runs `<project>:check` of each project whose
+//                                                  directory is listed, and nothing else
+//   CI_GROUP_MODE=except  CI_GROUP_DIRS=<dir>...   runs the build with `<project>:check` of each
+//                                                  listed project excluded (-x): everything else
+//
+// The directories are relative to the root, one per line. `check` is where a project's test tasks
+// hang (test, and the itests' catalogTest, statementTest, extensionsTest, smokeTest, ...) with its
+// checkstyle and spotbugs, so `only` for some directories plus `except` for all of them run every
+// task of `build`: a test task added to a project goes with the project, and a project in no
+// group runs in `except`. A directory that holds no project of this build (a Spark 4.2 project on
+// the reference line) leaves `only` with nothing to run, which it says.
+def mode = System.getenv('CI_GROUP_MODE')
+def dirs = (System.getenv('CI_GROUP_DIRS') ?: '').readLines()*.trim().findAll { it }
+
+if (mode != null) {
+  if (!(mode in ['only', 'except'])) {
+    throw new GradleException("CI_GROUP_MODE must be `only` or `except`, not `${mode}`")
+  }
+  settingsEvaluated { settings ->
+    // The main build only, not buildSrc or an included build.
+    if (settings.gradle.parent != null) {
+      return
+    }
+    def root = settings.rootDir.canonicalFile
+    def wanted = dirs.collect { new File(root, it).canonicalFile } as Set
+    def matched = []
+    def walk
+    walk = { descriptor ->
+      descriptor.children.each { child ->
+        if (child.projectDir.canonicalFile in wanted) {
+          matched << child.path
+        }
+        walk(child)
+      }
+    }
+    walk(settings.rootProject)
+    def checks = matched.sort().collect { "${it}:check".toString() }
+    def start = settings.gradle.startParameter
+    if (mode == 'only') {
+      if (checks.isEmpty()) {
+        println "CI group: no project of this build is in ${dirs}; nothing to run"
+        start.taskNames = ['help']
+      } else {
+        println "CI group: running ${checks}"
+        start.taskNames = checks
+      }
+    } else {
+      println "CI group: running ${start.taskNames} without ${checks}"
+      start.excludedTaskNames = start.excludedTaskNames + checks
+    }
+  }
+}

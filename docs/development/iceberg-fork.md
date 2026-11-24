@@ -236,11 +236,12 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
 
 ## CI
 
-Two jobs, each one reusable workflow, run beside each other on every pull request
+Two builds, the default and the reference, run beside each other on every pull request
 (`pr-validations.yml`, decision D33) and after each merge to `irc-integration`
 (`post-merge-build.yml`, also by hand with `workflow_dispatch`). Neither blocks nor waits for the
 other. A newer push to a pull request cancels the pull request's older run; a running post-merge
-run is never cancelled.
+run is never cancelled. After a merge each build is one job; on a pull request each is cut into
+parallel jobs that run the same tasks (below).
 
 **The default build**, `build-run-tests.yml` (job `build-and-run-tests`):
 
@@ -248,15 +249,17 @@ run is never cancelled.
   `.github/actions/iceberg-fork`);
 - `./gradlew clean assemble testClasses`, then `./gradlew build --continue`: every project's tests,
   the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests
-  and the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`), and Apache Iceberg's REST
+  and the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`, and `testServerPlanning` and
+  `smokeTestServerPlanning` with server-side scan planning), and Apache Iceberg's REST
   compatibility kit (`restCompatKitTest`, part of `check`);
 - after the tests, whatever their outcome (but not after a failed compile), the deployables
-  ("Docker images" above): `./gradlew shadowJar dockerPrereqs`; the jobs-scheduler image, built
-  through docker compose, in which the scheduler is started without arguments and must log its
-  first line at INFO (which needs the image's Java to run the jar and the jar to carry its
-  `log4j2.properties`); the `oh-only` recipe, then `scripts/python/integration_test.py` against
-  it. The tables container's jar must hold the fork's `iceberg-core` and no other. The containers
-  are stopped in every case, and their logs are printed when one of these steps failed.
+  ("Docker images" above, the composite action `.github/actions/default-build-deployables`):
+  `./gradlew shadowJar dockerPrereqs`; the jobs-scheduler image, built through docker compose, in
+  which the scheduler is started without arguments and must log its first line at INFO (which
+  needs the image's Java to run the jar and the jar to carry its `log4j2.properties`); the
+  `oh-only` recipe, then `scripts/python/integration_test.py` against it. The tables container's
+  jar must hold the fork's `iceberg-core` and no other. The containers are stopped in every case,
+  and their logs are printed when one of these steps failed.
 
 `build-tag-publish.yml` calls the same workflow before a release.
 
@@ -270,6 +273,25 @@ failure (`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, pl
 build, the end of the Spark 4.2 tests' service logs) and upload the test reports as the artifact
 `default-build-test-reports` or `reference-build-test-reports` (kept 7 days). The failed tests are
 therefore at the end of the job's log, not only where they ran.
+
+**On a pull request**, `split-build.yml` runs each build as parallel jobs, so that the pull
+request waits for its slowest job instead of one runner running every suite. The jobs are cut by
+project: `scripts/ci/test-groups.py` makes a job of each project directory that matches its
+patterns (`apps/spark-*`, `integrations/spark/spark-*/openhouse-spark-itest`), which runs that
+project's `check` (its test tasks, checkstyle and spotbugs), and a job `rest`, which runs
+`./gradlew clean build` with the `check` of each of those projects excluded. The init script
+`scripts/ci/test-groups.gradle` does the cutting inside Gradle. The jobs together therefore run
+every task of `build`: a new test task goes with its project, a new Spark apps or itest project
+gets a job of its own, and any other new project runs in `rest`, without a change to the
+workflow. On the reference line a matched project that is not in that build (Spark 4.2) is a job
+that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Gradle dry runs, that
+the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
+reads the list (and on the default line checks the merged optimizer migrations); a last one of the
+default line runs the Docker steps above, after `./gradlew clean assemble`. Each job restores the
+fork and the Gradle cache the line's single job saved on `irc-integration`
+(`GRADLE_BUILD_ACTION_CACHE_KEY_JOB` names that job) and writes no cache. A red job cancels no
+other; each prints its failed tests and uploads its reports as
+`default-build-test-reports-<group>` or `reference-build-test-reports-<group>`.
 
 **The Dataloader workflow**, `dataloader-tests.yml`, has two jobs: the dataloader's own checks and
 unit tests (`make sync verify`), and the integration tests. The integration job restores the fork,

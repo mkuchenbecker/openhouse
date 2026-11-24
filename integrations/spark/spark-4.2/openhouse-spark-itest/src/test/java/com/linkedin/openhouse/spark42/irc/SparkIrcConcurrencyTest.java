@@ -68,10 +68,12 @@ public class SparkIrcConcurrencyTest {
     catalog(spark, "x10_v2_loser", v2, true);
     catalog(spark, "x10_v3", v3, false);
     catalog(spark, "x10_v3_loser", v3, true);
+    // In the server-planning run, the v3 catalogs keep client planning (declared in catalog()).
   }
 
   private static void catalog(
-      SparkSession spark, String name, IrcReadTestServiceProcess service, boolean hooked) {
+      SparkSession spark, String name, IrcReadTestServiceProcess service, boolean hooked)
+      throws Exception {
     String prefix = "spark.sql.catalog." + name;
     spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");
     if (hooked) {
@@ -82,7 +84,11 @@ public class SparkIrcConcurrencyTest {
     spark.conf().set(prefix + ".uri", service.uri() + "/iceberg");
     spark.conf().set(prefix + ".token", service.token(IrcSpark.READER));
     spark.conf().set(prefix + ".cache-enabled", "false");
-    ServerPlanning.apply(prefix, spark.conf()::set);
+    if (service == IrcReadTestServiceProcess.getWithFormatV3()) {
+      ServerPlanning.notApplied(prefix, ServerPlanning.FORMAT_V3);
+    } else {
+      ServerPlanning.apply(prefix, spark.conf()::set);
+    }
   }
 
   @AfterAll

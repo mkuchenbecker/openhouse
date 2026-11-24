@@ -331,47 +331,67 @@ public class SparkIrcServerPlanningReadsTest {
     }
   }
 
+  /** What a statement gives: its rows, or the class of its failure, as one comparable value. */
+  private static String outcome(String sql) {
+    try {
+      return "rows " + rows(sql);
+    } catch (Throwable t) {
+      return "fails " + t.getClass().getSimpleName();
+    }
+  }
+
+  private static String assertSameOutcome(String query, String table) {
+    String onClient = outcome(String.format(query, CLIENT + "." + table));
+    Assertions.assertEquals(onClient, outcome(String.format(query, SERVER + "." + table)), query);
+    return onClient;
+  }
+
   /**
-   * Pins the one read that differs (V11b): a filter on a column added after the table's current
-   * snapshot was written. Spark 4.2 pins a read of main to the current snapshot ({@code
-   * useSnapshot}), so Iceberg 1.12's {@code RESTTableScan} sends {@code use-snapshot-schema=true}
-   * with the names and the filter of the table's current schema. The service, as Iceberg's own
-   * reference handler ({@code CatalogHandlers.planTableScan}) does, scans with the snapshot's
-   * schema, and the filter does not bind: a 400, visible, never fewer rows. Client planning binds
-   * the filter to the table's schema. Selecting the column without filtering on it reads the same,
-   * and once a snapshot is written with the new schema (and the catalog's cached table refreshed)
-   * the filter plans.
+   * A column added after the snapshot a read pins (V11e). Spark 4.2 pins a read of main to the
+   * current snapshot and projects the table's current schema, so Iceberg 1.12's {@code
+   * RESTTableScan} sends {@code use-snapshot-schema=true} with names the snapshot's schema lacks.
+   * The service now projects the current schema's columns there, as client planning does, so each
+   * statement gives what client planning gives: with no snapshot since the column was added (a
+   * filter true for nulls, one false for nulls, a projection only), with one snapshot written
+   * since, and time travel to the older snapshot naming the newer column. Until V11e the filters
+   * with no snapshot since were a 400 with server planning.
    */
   @Test
-  void aFilterOnAColumnAddedAfterTheCurrentSnapshotFails() throws Exception {
+  void aColumnAddedAfterTheCurrentSnapshotReadsTheSameAsClientPlanning() throws Exception {
     String table = DB + ".r_evolve";
     rows("DROP TABLE IF EXISTS " + CLIENT + "." + table);
     rows("CREATE TABLE " + CLIENT + "." + table + " (id bigint) USING iceberg");
     rows("INSERT INTO " + CLIENT + "." + table + " VALUES (1), (2)");
+    long first =
+        (Long) rows("SELECT snapshot_id FROM " + CLIENT + "." + table + ".snapshots").get(0).get(0);
     rows("ALTER TABLE " + CLIENT + "." + table + " ADD COLUMN extra int");
+    rows("REFRESH TABLE " + SERVER + "." + table);
     try {
-      String filtered = "SELECT id FROM %s WHERE extra IS NULL ORDER BY id";
+      String trueForNulls = "SELECT id, extra FROM %s WHERE extra IS NULL ORDER BY id";
+      String falseForNulls = "SELECT id FROM %s WHERE extra = 7 ORDER BY id";
+      String projection = "SELECT id, extra FROM %s ORDER BY id";
+      // No snapshot since the column was added.
       Assertions.assertEquals(
-          Arrays.asList(Arrays.asList((Object) 1L), Arrays.asList((Object) 2L)),
-          rows(String.format(filtered, CLIENT + "." + table)));
-      Throwable failure =
-          Assertions.assertThrows(
-              Throwable.class, () -> rows(String.format(filtered, SERVER + "." + table)));
-      StringBuilder chain = new StringBuilder();
-      for (Throwable t = failure; t != null; t = t.getCause()) {
-        chain.append(t.getClass().getName()).append(": ").append(t.getMessage()).append(" <- ");
-      }
-      Assertions.assertTrue(
-          chain.toString().contains("org.apache.iceberg.exceptions.BadRequestException")
-              && chain.toString().contains("Cannot find field 'extra'"),
-          chain.toString());
-      assertSame("SELECT id, extra FROM %s ORDER BY id", table);
+          "rows [[1, null], [2, null]]", assertSameOutcome(trueForNulls, table));
+      Assertions.assertEquals("rows []", assertSameOutcome(falseForNulls, table));
+      Assertions.assertEquals("rows [[1, null], [2, null]]", assertSameOutcome(projection, table));
+      // One snapshot written since.
       rows("INSERT INTO " + CLIENT + "." + table + " VALUES (3, 7)");
-      // The server catalog's cached table is still pinned to the old snapshot: refreshed, it reads
-      // the snapshot written with the new schema.
       rows("REFRESH TABLE " + SERVER + "." + table);
-      assertSame(filtered, table);
-      assertSame("SELECT id FROM %s WHERE extra = 7", table);
+      Assertions.assertEquals(
+          "rows [[1, null], [2, null]]", assertSameOutcome(trueForNulls, table));
+      Assertions.assertEquals("rows [[3]]", assertSameOutcome(falseForNulls, table));
+      Assertions.assertEquals(
+          "rows [[1, null], [2, null], [3, 7]]", assertSameOutcome(projection, table));
+      // Time travel to the snapshot before the column: client planning's answer is the reference.
+      for (String query :
+          new String[] {
+            "SELECT id, extra FROM %s VERSION AS OF " + first + " ORDER BY id",
+            "SELECT id FROM %s VERSION AS OF " + first + " WHERE extra IS NULL ORDER BY id",
+            "SELECT id FROM %s VERSION AS OF " + first + " ORDER BY id"
+          }) {
+        System.out.println("TIME-TRAVEL " + query + ": " + assertSameOutcome(query, table));
+      }
     } finally {
       rows("DROP TABLE IF EXISTS " + CLIENT + "." + table);
     }
