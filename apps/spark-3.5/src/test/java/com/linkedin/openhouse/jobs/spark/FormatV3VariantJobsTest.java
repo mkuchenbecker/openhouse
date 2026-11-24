@@ -43,11 +43,16 @@ import org.junit.jupiter.api.function.Executable;
 
 /**
  * Every maintenance job's real app code on a format v3 table with a variant column that holds data
- * (work item X5), on a tables service with the cluster switch on. The jobs run on Spark 3.5, which
- * has no variant type, so the data is written and read with Iceberg's own generic writers and
- * readers ({@link VariantData}): Parquet data files in four daily partitions, two per partition,
+ * (work item X5), on a tables service with the cluster switch and the variant property on. The data
+ * is written and read with Iceberg's own generic writers and readers ({@link VariantData}), since
+ * Spark 3.5 has no variant type: Parquet data files in four daily partitions, two per partition,
  * with object, array, string and null variant values, and deletion vectors in two Puffin files on
  * six of the eight data files; every commit goes through the tables service.
+ *
+ * <p>The outcome differs by line ({@link JobsLine#sparkReadsVariant()}), and each test states both:
+ * on Spark 3.5, which cannot read a variant column, the jobs that read the table through Spark fail
+ * and every closing validation fails; on Spark 4.2 every job completes and is correct, and every
+ * closing validation passes.
  *
  * <p>Each job has exactly one acceptable outcome, asserted here: it completes and the table is
  * correct (every live row, variant values and row lineage included, equal before and after; deleted
@@ -92,7 +97,8 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     conf = new HashMap<>();
     spark.conf().getAll().foreach(entry -> conf.put(entry._1(), entry._2()));
     Map<String, String> properties = new HashMap<>();
-    for (String key : Arrays.asList("uri", "cluster", "auth-token")) {
+    // auth-token for the OpenHouse catalog (Spark 3.5 line), token for RESTCatalog (Spark 4.2).
+    for (String key : Arrays.asList("uri", "cluster", "auth-token", "token")) {
       if (conf.containsKey(CATALOG_PREFIX + "." + key)) {
         properties.put(key, conf.get(CATALOG_PREFIX + "." + key));
       }
@@ -309,12 +315,25 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   }
 
   /**
+   * The closing validation reads the table through Spark: on Spark 4.2 it passes; on Spark 3.5,
+   * which has no variant type, it fails visibly.
+   */
+  private static void assertClosingValidation(Throwable validation) {
+    if (JobsLine.sparkReadsVariant()) {
+      Assertions.assertNull(validation, () -> "the post-job validation: " + chain(validation));
+    } else {
+      assertPostJobValidationFails(validation);
+    }
+  }
+
+  /**
    * Data compaction with the scheduler's production arguments (table name only): the job plans no
-   * file group on this table and commits nothing; its post-job validation then fails, because Spark
-   * 3.5 cannot read the table. The table is exactly as it was.
+   * file group on this table and commits nothing, on both lines. Its post-job validation then fails
+   * on Spark 3.5, which cannot read the table, and passes on Spark 4.2. The table is exactly as it
+   * was.
    */
   @Test
-  void compactionWithProductionArgumentsFailsCleanly() throws Exception {
+  void compactionWithProductionArguments() throws Exception {
     requireFormatV3();
     String fqtn = createTable("compact_table_only");
     State before = new State(fqtn);
@@ -323,18 +342,29 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
             new String[] {"--storageURL", "http://localhost:1", "--tableName", fqtn}, otelEmitter);
     Assertions.assertNull(run(() -> app.runInner(ops())), "the job's own work");
     Throwable validation = run(() -> app.runValidations(ops()));
-    assertPostJobValidationFails(validation);
-    assertFailedCleanly(validation, fqtn, before);
+    assertClosingValidation(validation);
+    if (JobsLine.sparkReadsVariant()) {
+      assertCompletedCorrectly(null, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
+      Assertions.assertEquals(before.current, new State(fqtn).current, "nothing planned");
+    } else {
+      assertFailedCleanly(validation, fqtn, before);
+    }
   }
 
   /**
-   * Strict data compaction (minInputFiles 2, deleteFileThreshold 1, every file group due): every
-   * file group fails to read in Spark 3.5 and the rewrite action commits nothing (it logs each
-   * group's failure and reports 0 files rewritten, without throwing); the post-job validation then
-   * fails. The table is exactly as it was.
+   * Strict data compaction (minInputFiles 2, deleteFileThreshold 1, every file group due).
+   *
+   * <p>Spark 3.5: every file group fails to read and the rewrite action commits nothing (it logs
+   * each group's failure and reports 0 files rewritten, without throwing); the post-job validation
+   * then fails. The table is exactly as it was.
+   *
+   * <p>Spark 4.2: the rewrite commits a {@code replace} snapshot; every data file is rewritten into
+   * fewer files and the deletion vectors are applied; every live row reads as before, variant
+   * value, row id and last-updated sequence number included; deleted rows stay deleted; every
+   * earlier snapshot reads as before; every referenced file exists; the post-job validation passes.
    */
   @Test
-  void strictCompactionFailsCleanly() throws Exception {
+  void strictCompaction() throws Exception {
     requireFormatV3();
     String fqtn = createTable("compact_strict");
     State before = new State(fqtn);
@@ -345,20 +375,57 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
             fqtn,
             DataCompactionConfig.builder().minInputFiles(2).deleteFileThreshold(1).build(),
             otelEmitter);
+    Table beforeTable = ops().getTable(fqtn);
+    List<String> dataFilesBefore = dataFiles(beforeTable);
+    Assertions.assertEquals(8, dataFilesBefore.size());
+    Assertions.assertFalse(
+        FormatV3Tables.liveDeleteFiles(beforeTable, beforeTable.currentSnapshot()).isEmpty());
     Assertions.assertNull(run(() -> app.runInner(ops())), "the job's own work");
     Throwable validation = run(() -> app.runValidations(ops()));
-    assertPostJobValidationFails(validation);
-    assertFailedCleanly(validation, fqtn, before);
+    assertClosingValidation(validation);
+    if (!JobsLine.sparkReadsVariant()) {
+      assertFailedCleanly(validation, fqtn, before);
+      return;
+    }
+    assertCompletedCorrectly(null, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
+    Table table = ops().getTable(fqtn);
+    Assertions.assertNotEquals(before.current, table.currentSnapshot().snapshotId(), "committed");
+    Assertions.assertEquals("replace", table.currentSnapshot().operation());
+    List<String> dataFilesAfter = dataFiles(table);
+    Assertions.assertTrue(
+        Collections.disjoint(dataFilesBefore, dataFilesAfter), "every data file rewritten");
+    Assertions.assertTrue(
+        dataFilesAfter.size() < dataFilesBefore.size(), "fewer files: " + dataFilesAfter);
+    Assertions.assertEquals(
+        Collections.emptyList(),
+        FormatV3Tables.liveDeleteFiles(table, table.currentSnapshot()),
+        "deletion vectors applied");
+    Assertions.assertTrue(
+        new State(fqtn).rows.stream().noneMatch(r -> r.endsWith("null")), "row lineage kept");
+  }
+
+  private static Set<String> withoutMetadataFiles(Set<String> files) {
+    return files.stream()
+        .filter(f -> !f.endsWith(".metadata.json"))
+        .collect(Collectors.toCollection(TreeSet::new));
+  }
+
+  private static List<String> dataFiles(Table table) {
+    return FormatV3Tables.liveDataFiles(table, table.currentSnapshot()).stream()
+        .map(f -> f.path().toString())
+        .sorted()
+        .collect(Collectors.toList());
   }
 
   /**
    * Snapshot expiry with file deletion (the oldest partition deleted from the table first, so its
    * files belong to expired snapshots only): the expiry is done and correct (the last 2 snapshots
-   * remain and read as before, the expired-only files are gone, every referenced file exists); the
-   * post-job validation then fails visibly, because Spark 3.5 cannot read the table.
+   * remain and read as before, the expired-only files are gone, every referenced file exists), on
+   * both lines. The post-job validation then fails visibly on Spark 3.5, which cannot read the
+   * table, and passes on Spark 4.2.
    */
   @Test
-  void snapshotExpiryWithFileDeletionIsCorrectThenItsValidationFails() throws Exception {
+  void snapshotExpiryWithFileDeletion() throws Exception {
     requireFormatV3();
     String fqtn = createTable("expire");
     ops()
@@ -386,16 +453,17 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     Assertions.assertTrue(
         expiredOnly.stream().noneMatch(f -> table.io().newInputFile(f).exists()),
         "expired-only data files were deleted");
-    assertPostJobValidationFails(run(() -> app.runValidations(ops())));
+    assertClosingValidation(run(() -> app.runValidations(ops())));
   }
 
   /**
    * Orphan file deletion, single and batched, with a planted orphan next to a live Puffin file: the
-   * orphan is removed and the table is correct; then the post-job validation fails visibly (the
-   * batched app runs it inside and reports the batch failed).
+   * orphan is removed and the table is correct, on both lines. The post-job validation then fails
+   * visibly on Spark 3.5 (the batched app runs it inside and reports the batch failed) and passes
+   * on Spark 4.2 (the batch succeeds).
    */
   @Test
-  void orphanFileDeletionIsCorrectThenItsValidationFails() throws Exception {
+  void orphanFileDeletion() throws Exception {
     requireFormatV3();
     for (boolean batched : new boolean[] {false, true}) {
       String fqtn = createTable("ofd" + (batched ? "_batch" : ""));
@@ -432,16 +500,20 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
                             true,
                             1000)
                         .runInner(ops()));
-        Assertions.assertNotNull(failure, "the batch reports its table failed");
-        Assertions.assertTrue(
-            chain(failure).contains("All 1 operations in batch failed"), chain(failure));
+        if (JobsLine.sparkReadsVariant()) {
+          Assertions.assertNull(failure, () -> "the batch: " + chain(failure));
+        } else {
+          Assertions.assertNotNull(failure, "the batch reports its table failed");
+          Assertions.assertTrue(
+              chain(failure).contains("All 1 operations in batch failed"), chain(failure));
+        }
       } else {
         OrphanFilesDeletionSparkApp app =
             new OrphanFilesDeletionSparkApp(
                 "x5-ofd", null, fqtn, 0, otelEmitter, ".backup", 2, false, 1000);
         Assertions.assertNull(run(() -> app.runInner(ops())), "the job's own work");
         failure = run(() -> app.runValidations(ops()));
-        assertPostJobValidationFails(failure);
+        assertClosingValidation(failure);
       }
       Assertions.assertFalse(ops().fs().exists(orphan), "planted orphan removed");
       assertCompletedCorrectly(null, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
@@ -455,10 +527,11 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
 
   /**
    * Staged files deletion: the two-day-old file in {@code .trash} is removed and the table is
-   * correct; then the post-job validation fails visibly.
+   * correct, on both lines; then the post-job validation fails visibly on Spark 3.5 and passes on
+   * Spark 4.2.
    */
   @Test
-  void stagedFilesDeletionIsCorrectThenItsValidationFails() throws Exception {
+  void stagedFilesDeletion() throws Exception {
     requireFormatV3();
     String fqtn = createTable("staged");
     Path staged =
@@ -472,15 +545,16 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     Assertions.assertNull(run(() -> app.runInner(ops())), "the job's own work");
     Assertions.assertFalse(ops().fs().exists(staged), "staged file removed");
     assertCompletedCorrectly(null, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
-    assertPostJobValidationFails(run(() -> app.runValidations(ops())));
+    assertClosingValidation(run(() -> app.runValidations(ops())));
   }
 
   /**
    * Table stats collection: the stats are collected from metadata (the variant column has no
-   * metrics) and nothing changes; then the post-job validation fails visibly.
+   * metrics) and nothing changes, on both lines; then the post-job validation fails visibly on
+   * Spark 3.5 and passes on Spark 4.2.
    */
   @Test
-  void tableStatsCollectionChangesNothingThenItsValidationFails() throws Exception {
+  void tableStatsCollectionChangesNothing() throws Exception {
     requireFormatV3();
     String fqtn = createTable("stats");
     State before = new State(fqtn);
@@ -490,16 +564,22 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
         new TableStatsCollectionSparkApp("x5-stats", null, fqtn, otelEmitter);
     Assertions.assertNull(run(() -> app.runInner(ops())), "the job's own work");
     Throwable validation = run(() -> app.runValidations(ops()));
-    assertPostJobValidationFails(validation);
-    assertFailedCleanly(validation, fqtn, before);
+    assertClosingValidation(validation);
+    if (JobsLine.sparkReadsVariant()) {
+      assertCompletedCorrectly(null, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
+      Assertions.assertEquals(before.current, new State(fqtn).current, "nothing committed");
+    } else {
+      assertFailedCleanly(validation, fqtn, before);
+    }
   }
 
   /**
-   * Data layout strategy generation fails in its own work (it reads the table through Spark 3.5),
-   * before it writes its strategy property; the table is exactly as it was.
+   * Data layout strategy generation. Spark 3.5: it fails in its own work (it reads the table
+   * through Spark), before it writes its strategy property; the table is exactly as it was. Spark
+   * 4.2: it completes and writes its strategy property; no snapshot, row or file changes.
    */
   @Test
-  void layoutStrategyGenerationFailsCleanly() throws Exception {
+  void layoutStrategyGeneration() throws Exception {
     requireFormatV3();
     String fqtn = createTable("dlo");
     spark.sql("DROP TABLE IF EXISTS openhouse." + DB + ".dlo_out");
@@ -509,6 +589,13 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
         new DataLayoutStrategyGeneratorSparkApp(
             "x5-dlo", null, fqtn, DB + ".dlo_out", DB + ".dlo_out_p", otelEmitter);
     Throwable failure = run(() -> app.runInner(ops()));
+    if (JobsLine.sparkReadsVariant()) {
+      assertCompletedCorrectly(failure, fqtn, before, new ArrayList<>(before.perSnapshot.keySet()));
+      Assertions.assertEquals(before.current, new State(fqtn).current, "no snapshot committed");
+      Assertions.assertNotNull(
+          ops().getTable(fqtn).properties().get("write.data-layout.strategies"), "a strategy");
+      return;
+    }
     Assertions.assertTrue(chain(failure).contains(SPARK_HAS_NO_VARIANT), chain(failure));
     assertFailedCleanly(failure, fqtn, before);
     Assertions.assertNull(
@@ -517,11 +604,12 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
 
   /**
    * Sort stats collection, through {@code spark_catalog} as X6 runs it, on a v3 table with the
-   * columns the app sorts by and a variant column: it fails in its own work (it copies a partition
-   * through Spark 3.5) and the table is exactly as it was.
+   * columns the app sorts by and a variant column. Spark 3.5: it fails in its own work (it copies a
+   * partition through Spark) and the table is exactly as it was. Spark 4.2: it completes, sets its
+   * compression rate property and changes no snapshot or row; its temporary copy is dropped.
    */
   @Test
-  void sortStatsCollectionFailsCleanly() throws Exception {
+  void sortStatsCollection() throws Exception {
     requireFormatV3();
     SparkSession sortSpark = FormatV3Tables.copyCatalogs(spark, spark.newSession());
     for (Map.Entry<String, String> entry : conf.entrySet()) {
@@ -572,6 +660,27 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     SortStatsCollectionSparkApp app =
         new SortStatsCollectionSparkApp("x5-sort-stats", null, fqtn, otelEmitter);
     Throwable failure = run(() -> app.runInner(sortOps));
+    if (JobsLine.sparkReadsVariant()) {
+      Assertions.assertNull(failure, () -> "the job's own work: " + chain(failure));
+      State after = new State(fqtn);
+      Assertions.assertEquals(before.current, after.current, "current snapshot");
+      Assertions.assertEquals(before.rows, after.rows, "live rows");
+      // The property commit writes a new metadata file; every other referenced file is the same.
+      Assertions.assertEquals(
+          withoutMetadataFiles(before.referenced),
+          withoutMetadataFiles(after.referenced),
+          "referenced files");
+      Assertions.assertNotNull(
+          ops().getTable(fqtn).properties().get("sort-compression-rate"), "property set");
+      Assertions.assertEquals(
+          Collections.singletonList(name),
+          catalog.listTables(org.apache.iceberg.catalog.Namespace.of(DB)).stream()
+              .map(TableIdentifier::name)
+              .filter(n -> n.startsWith(name))
+              .collect(Collectors.toList()),
+          "the temporary copy is dropped");
+      return;
+    }
     Assertions.assertTrue(chain(failure).contains(SPARK_HAS_NO_VARIANT), chain(failure));
     State after = new State(fqtn);
     Assertions.assertEquals(before.current, after.current, "current snapshot");

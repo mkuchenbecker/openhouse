@@ -39,6 +39,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
@@ -56,6 +57,7 @@ import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.spark.actions.SparkActions;
 import org.apache.spark.sql.SparkSession;
 import scala.collection.JavaConverters;
@@ -741,12 +743,41 @@ public final class Operations implements AutoCloseable {
             entry.getKey().substring(catalogPropertyPrefix.length()), entry.getValue());
       }
     }
+    String catalogImpl = catalogProperties.get(CatalogProperties.CATALOG_IMPL);
+    if (catalogImpl == null && catalogProperties.get(CatalogUtil.ICEBERG_CATALOG_TYPE) != null) {
+      // A catalog named by type only, as Iceberg's SparkCatalog allows (e.g. type=rest, for a
+      // platform that reaches OpenHouse through the tables service's Iceberg REST routes).
+      return CatalogUtil.buildIcebergCatalog(
+          CATALOG, catalogProperties, spark.sparkContext().hadoopConfiguration());
+    }
     // this initializes the catalog based on runtime Catalog class passed in catalog-impl conf.
     return CatalogUtil.loadCatalog(
         sparkProperties.get("spark.sql.catalog.openhouse.catalog-impl"),
         CATALOG,
         catalogProperties,
         spark.sparkContext().hadoopConfiguration());
+  }
+
+  /**
+   * Whether {@code spark}'s {@code openhouse} catalog is Iceberg's RESTCatalog ({@code type=rest},
+   * or a {@code catalog-impl} that is a RESTCatalog) rather than the OpenHouse catalog.
+   */
+  static boolean isRestCatalog(SparkSession spark) {
+    String prefix = String.format("spark.sql.catalog.%s.", CATALOG);
+    if (CatalogUtil.ICEBERG_CATALOG_TYPE_REST.equals(
+        spark.conf().get(prefix + CatalogUtil.ICEBERG_CATALOG_TYPE, null))) {
+      return true;
+    }
+    String impl = spark.conf().get(prefix + CatalogProperties.CATALOG_IMPL, null);
+    if (impl == null) {
+      return false;
+    }
+    try {
+      return RESTCatalog.class.isAssignableFrom(
+          Class.forName(impl, false, Operations.class.getClassLoader()));
+    } catch (ClassNotFoundException | LinkageError e) {
+      return false;
+    }
   }
 
   private void useCatalog() {

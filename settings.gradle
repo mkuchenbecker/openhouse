@@ -65,6 +65,8 @@ include ':integrations:spark:spark-3.5:openhouse-spark-itest'
 if (icebergFork) {
   include ':integrations:spark:spark-4.2:openhouse-spark-runtime'
   include ':integrations:spark:spark-4.2:openhouse-spark-itest'
+  // The maintenance jobs on Spark 4.2: apps/spark-3.5's sources built for Spark 4.2 / Scala 2.13.
+  include ':apps:spark-4.2'
   // Apache Iceberg's REST compatibility kit against the tables service's IRC routes (V13).
   include ':integrations:java:openhouse-rest-compat-kit'
 }
@@ -105,5 +107,6 @@ project(':integrations:spark:spark-3.5:openhouse-spark-itest').name = 'openhouse
 if (icebergFork) {
   project(':integrations:spark:spark-4.2:openhouse-spark-runtime').name = 'openhouse-spark-4.2-runtime_2.13'
   project(':integrations:spark:spark-4.2:openhouse-spark-itest').name = 'openhouse-spark-4.2-itest'
+  project(':apps:spark-4.2').name = 'openhouse-spark-apps-4.2_2.13'
 }
 project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5').name = 'tables-test-fixtures-iceberg-1.5_2.12'

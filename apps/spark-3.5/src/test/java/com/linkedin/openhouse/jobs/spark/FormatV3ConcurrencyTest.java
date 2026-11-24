@@ -347,7 +347,7 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       Race race,
       Outcome expected,
       Set<Long> inserted) {
-    assertSafe(name, formatVersion, fqtn, race, expected, inserted, false);
+    assertSafe(name, formatVersion, fqtn, race, expected, inserted, false, Raced.REFUSED);
   }
 
   private void assertSafe(
@@ -358,6 +358,43 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       Outcome expected,
       Set<Long> inserted,
       boolean danglingDeletionVectorsPinned) {
+    assertSafe(
+        name,
+        formatVersion,
+        fqtn,
+        race,
+        expected,
+        inserted,
+        danglingDeletionVectorsPinned,
+        Raced.REFUSED);
+  }
+
+  /**
+   * What the tables service does with the loser's attempt built on N, sent after the winner
+   * committed N+1.
+   */
+  private enum Raced {
+    /** Refused as a conflict; the loser's commit loop refreshes and retries, or fails. */
+    REFUSED,
+    /**
+     * Accepted as sent, and the result is one of the serial orders. Over the Iceberg REST routes
+     * only (Spark 4.2 line): a REST commit sends its changes and its requirements (the branch's
+     * snapshot id), not whole metadata built on N; a winner that does not move the branch (snapshot
+     * expiry) leaves the requirements true, so the service applies the changes to the current
+     * metadata. The OpenHouse catalog sends metadata built on N, which the service refuses.
+     */
+    ACCEPTED_SERIAL_EQUIVALENT
+  }
+
+  private void assertSafe(
+      String name,
+      int formatVersion,
+      String fqtn,
+      Race race,
+      Outcome expected,
+      Set<Long> inserted,
+      boolean danglingDeletionVectorsPinned,
+      Raced raced) {
     Outcome actual = race.loserFailure == null ? Outcome.SERIAL : Outcome.CONFLICT;
     System.out.println(
         "X10-RACE native v"
@@ -424,15 +461,70 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       }
     }
     // The race went through the service: when the winner committed, the loser's attempt built on
-    // N was refused by the tables service as a conflict (409); otherwise it committed.
+    // N was refused by the tables service as a conflict, or (declared per case) accepted;
+    // otherwise it committed.
     Assertions.assertNotNull(race.racedAttempt, "the raced attempt ended: " + race.attempts);
-    if (!race.winner.metadataLocation.equals(race.base.metadataLocation)) {
-      Assertions.assertTrue(
-          race.racedAttempt.startsWith("CommitFailedException: 409")
-              && race.racedAttempt.contains("Conflict detected"),
-          "the service refused the attempt built on N: " + race.racedAttempt);
-    } else {
+    if (race.winner.metadataLocation.equals(race.base.metadataLocation)) {
       Assertions.assertEquals("committed", race.racedAttempt);
+    } else if (raced == Raced.ACCEPTED_SERIAL_EQUIVALENT) {
+      Assertions.assertEquals(
+          "committed", race.racedAttempt, "the service accepted the attempt built on N");
+    } else {
+      Assertions.assertTrue(
+          isRefusal(race.racedAttempt),
+          "the service refused the attempt built on N: " + race.racedAttempt);
+    }
+  }
+
+  /**
+   * How the tables service's refusal of a commit built on a stale base reads to the loser. The
+   * OpenHouse catalog (Spark 3.5 line) gets the native API's 409 "Conflict detected". Over the
+   * Iceberg REST routes (Spark 4.2 line) the service checks the commit's requirements and answers
+   * the specification's conflict, which Iceberg's RESTCatalog reports as "Commit failed:
+   * Requirement failed: ...": the same refusal, in that route's wording.
+   */
+  private boolean isRefusal(String attempt) {
+    if (JobsLine.restCatalog(loserSession(2))) {
+      return attempt.startsWith("CommitFailedException: Commit failed: Requirement failed: ");
+    }
+    return attempt.startsWith("CommitFailedException: 409")
+        && attempt.contains("Conflict detected");
+  }
+
+  /**
+   * {@link Raced#ACCEPTED_SERIAL_EQUIVALENT} over the Iceberg REST routes, {@link Raced#REFUSED}
+   * with the OpenHouse catalog, for a loser racing a snapshot expiry; see {@link Raced}.
+   */
+  private Raced racedWithExpiry(int formatVersion) {
+    return JobsLine.restCatalog(loserSession(formatVersion))
+        ? Raced.ACCEPTED_SERIAL_EQUIVALENT
+        : Raced.REFUSED;
+  }
+
+  /**
+   * The data, delete and manifest files (and manifest lists) {@code table} references, without the
+   * metadata files, which expiry keeps.
+   */
+  private static Set<String> contentFiles(Table table) {
+    Set<String> files = new TreeSet<>(FormatV3Tables.referencedFiles(table));
+    files.removeIf(f -> f.endsWith(".metadata.json"));
+    return files;
+  }
+
+  /**
+   * The expiry deleted what only the expired snapshots referenced, and nothing brought it back:
+   * those files are gone from storage and no snapshot of the table references them.
+   */
+  private void assertExpiredFilesStayDeleted(
+      int formatVersion, String fqtn, Set<String> before, Set<String> keptByExpiry) {
+    Table table = tables.ops(formatVersion).getTable(fqtn);
+    Set<String> expired = new TreeSet<>(before);
+    expired.removeAll(keptByExpiry);
+    Assertions.assertFalse(expired.isEmpty(), "the expiry had files to delete");
+    Set<String> referenced = contentFiles(table);
+    for (String file : expired) {
+      Assertions.assertFalse(referenced.contains(file), "an expired file is referenced: " + file);
+      Assertions.assertFalse(table.io().newInputFile(file).exists(), "expired file back: " + file);
     }
   }
 
@@ -660,19 +752,34 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
   @CsvSource({"2, delete", "3, delete", "2, update", "3, update"})
   void rowLevelWritePreparedThenSnapshotExpiryRuns(int formatVersion, String op) {
     String fqtn = tables.createTable(formatVersion, "rlw_vs_expiry_" + op, "orc");
+    Set<String> filesAtN = contentFiles(tables.ops(formatVersion).getTable(fqtn));
+    Set<String> filesOfN = new TreeSet<>();
     Race race =
         race(
             formatVersion,
             fqtn,
             () -> loserSession(formatVersion).sql(rowLevelWrite(op, "openhouse." + fqtn)),
-            () -> expiry(tables.ops(formatVersion), fqtn),
+            () -> {
+              expiry(tables.ops(formatVersion), fqtn);
+              filesOfN.addAll(contentFiles(tables.ops(formatVersion).getTable(fqtn)));
+            },
             afterRowLevelWrite(op));
-    assertSafe(op + "-then-expiry", formatVersion, fqtn, race, Outcome.SERIAL, ids());
+    assertSafe(
+        op + "-then-expiry",
+        formatVersion,
+        fqtn,
+        race,
+        Outcome.SERIAL,
+        ids(),
+        false,
+        racedWithExpiry(formatVersion));
     Assertions.assertEquals(
         Collections.singletonList(race.base.snapshotId), race.winner.snapshots, "expiry kept N");
+    // No expired snapshot comes back: N and the write only, on either line.
     Assertions.assertEquals(
         2, race.after.snapshots.size(), "N and the write: " + race.after.snapshots);
     Assertions.assertEquals(race.base.snapshotId, (long) race.after.snapshots.get(0));
+    assertExpiredFilesStayDeleted(formatVersion, fqtn, filesAtN, filesOfN);
   }
 
   /**
@@ -684,6 +791,7 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
   @ValueSource(ints = {2, 3})
   void snapshotExpiryPreparedThenADeleteCommits(int formatVersion) {
     String fqtn = tables.createTable(formatVersion, "expiry_vs_delete", "orc");
+    Set<String> filesAtN = contentFiles(tables.ops(formatVersion).getTable(fqtn));
     Race race =
         race(
             formatVersion,
@@ -693,9 +801,24 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
                 winnerSql(
                     formatVersion, fqtn, "DELETE FROM openhouse." + fqtn + " WHERE id IN (5, 21)"),
             "SELECT * FROM %s WHERE id NOT IN (5, 21)");
-    assertSafe("expiry-then-delete", formatVersion, fqtn, race, Outcome.SERIAL, ids());
+    Raced raced = racedWithExpiry(formatVersion);
+    assertSafe(
+        "expiry-then-delete", formatVersion, fqtn, race, Outcome.SERIAL, ids(), false, raced);
+    // Both lines end in the serial order DELETE-then-expiry: only the DELETE's snapshot is kept.
+    // With the OpenHouse catalog the expiry's attempt built on N is refused and it retries on N+1;
+    // over the REST routes that attempt (the job's age pass) is accepted (see Raced), and the job's
+    // second pass (keep the last version) then runs on the table with the DELETE and expires N.
     Assertions.assertEquals(
         Collections.singletonList(race.winner.snapshotId), race.after.snapshots, "kept the DELETE");
+    // What N's snapshot references is kept on both lines (N, or the DELETE built on it).
+    Table table = tables.ops(formatVersion).getTable(fqtn);
+    Set<String> kept = new TreeSet<>();
+    for (String file : filesAtN) {
+      if (table.io().newInputFile(file).exists()) {
+        kept.add(file);
+      }
+    }
+    assertExpiredFilesStayDeleted(formatVersion, fqtn, filesAtN, kept);
   }
 
   /**

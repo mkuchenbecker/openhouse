@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.jobs.spark;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.spark.state.StateManager;
@@ -15,6 +16,9 @@ import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
+import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.TableProperties;
 import org.apache.spark.sql.SparkSession;
 
 @Slf4j
@@ -71,10 +75,15 @@ public class SortStatsCollectionSparkApp extends BaseTableSparkApp {
           numOfRowsNeeded);
       // create a temporary table with limited rows for the given partition
       // if the partition doesn't provide enough rows, the whole partition will be copied
+      Table source = ops.getTable(fqtn);
       spark.sql(
-          String.format(
-              "create table openhouse.%s as select * from spark_catalog.%s where datepartition = '%s' limit %d",
-              tempTableName, fqtn, datepartition, numOfRowsNeeded));
+          createTempTableStatement(
+              tempTableName,
+              fqtn,
+              datepartition,
+              numOfRowsNeeded,
+              ((HasTableOperations) source).operations().current().formatVersion(),
+              source.properties().get(TableProperties.DEFAULT_FILE_FORMAT)));
       double sizeBefore =
           spark
               .sql(
@@ -113,6 +122,35 @@ public class SortStatsCollectionSparkApp extends BaseTableSparkApp {
     } finally {
       spark.sql(String.format("drop table if exists openhouse.%s", tempTableName));
     }
+  }
+
+  /**
+   * The statement that copies up to {@code rows} rows of {@code datepartition} of {@code fqtn} into
+   * the temporary table. A format v2 (or v1) source gives exactly the statement the app always ran,
+   * so the copy takes the service's defaults. A format v3 source gives a v3 copy, with the source's
+   * write format if it names one: the service refuses v3 column types (variant, for one) in a v2
+   * table, and a v3 type may need the format the source uses (variant is written in Parquet).
+   */
+  @VisibleForTesting
+  static String createTempTableStatement(
+      String tempTableName,
+      String fqtn,
+      String datepartition,
+      int rows,
+      int formatVersion,
+      String writeFormat) {
+    String properties = "";
+    if (formatVersion >= 3) {
+      properties =
+          String.format(" tblproperties ('%s'='%d'", TableProperties.FORMAT_VERSION, formatVersion)
+              + (writeFormat == null
+                  ? ""
+                  : String.format(", '%s'='%s'", TableProperties.DEFAULT_FILE_FORMAT, writeFormat))
+              + ")";
+    }
+    return String.format(
+        "create table openhouse.%s%s as select * from spark_catalog.%s where datepartition = '%s' limit %d",
+        tempTableName, properties, fqtn, datepartition, rows);
   }
 
   private String getTempTableName(String fqtn) {
