@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 57 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 136, merge
-commit 4b696a55) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 59 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 139, merge
+commit e6c52c21) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -67,6 +67,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 134 | V14: a create transaction over the Iceberg REST routes keeps its schema, partition spec and sort order history; the compatibility kit passes 42 of 160 (`72-v14-create-history-result.md`) | d30cb9f628d34b8d1f6ca42968ad201d4a01d2fa |
 | 135 | N11: the maintenance jobs build and pass on Spark 4.2 over the Iceberg REST routes, 395 tests, 0 failed, 5 skipped; the Spark 3.5 jobs unchanged; three changes in shared job code (`73-n11-jobs-spark42-result.md`) | e2823b698825d1c0cc02f5429826fd3e3e8c341d |
 | 136 | C12: Java compile and Javadoc use UTF-8 in the root build, so a build under the `C` locale no longer fails on non-ASCII sources; C8 and T12 needed no change (`dec16c80`, `98328ea2`) | 4b696a5562c27faf268b15908e64d3cfd6b91ad4 |
+| 138 | C16 fix-forward: the step that prints failed tests also reads the build's console log, so a job whose test process died no longer prints zero failures; 62 printed on the real failed log (`75-n8-v18-c15-and-ci-fix-result.md`) | c2c5214482a365ce3aaded99766266793a811724 |
+| 139 | N8, V18, C15: policy tags in one stored order, the Iceberg 1.2 guards removed, byte-stable OpenAPI specs (`75-n8-v18-c15-and-ci-fix-result.md`) | e6c52c21dcb4df4dc037803e35d86450a71656c6 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

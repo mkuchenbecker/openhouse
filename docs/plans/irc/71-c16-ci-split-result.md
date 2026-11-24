@@ -89,6 +89,7 @@ Final run 45377983486 (head `fa5d7df2`), all 11 jobs green; 21.7 and 18.4 minute
   not run through the composite action.
 - No split job has failed yet, so the failure path (print failed tests, upload reports) has not run red in a split
   job; its conditions and script are unchanged.
+- Update 2026-11-24: the gap above was hit on pull request 137 (its test process died and the step printed zero failures) and fixed by pull request 138 (`75-n8-v18-c15-and-ci-fix-result.md`).
 - A pull request that changes the Iceberg fork pin would make five jobs publish the fork at once; only the first
   cache save wins. Not exercised.
 - A measurement commit (`754d6849`, a comment in the tables service) was added and reverted (`fa5d7df2`); the merged

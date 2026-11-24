@@ -1,5 +1,7 @@
 # Audit of the open work items against the code
 
+Update 2026-11-24: since this audit, N8, V18 and C15 have closed (pull request 139, merge commit `e6c52c21`; `75-n8-v18-c15-and-ci-fix-result.md`). V22 is new. The counts below are as written at the audit.
+
 Bottom line: 62 rows were open at the start of this audit, and 8 of them were already true in the code. Of the rest, 8 are
 partly done, 16 wait on Mike, 2 cannot be settled by reading, and 28 are still open. The rows come from `04-work.md`,
 `30-work-defaults.md`, `41-work-platforms-v3.md`, and W5 and W10 of `14-native-defaults-design.md` (no other file has rows
