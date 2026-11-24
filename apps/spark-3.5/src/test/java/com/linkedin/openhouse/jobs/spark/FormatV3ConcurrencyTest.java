@@ -909,6 +909,91 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     }
   }
 
+  /** Same rows, full contents, and on v3 the same {@code _row_id} per row. */
+  private static void assertSameRows(State expected, State actual, String step) {
+    Assertions.assertEquals(expected.live, actual.live, "rows after " + step);
+    Assertions.assertEquals(expected.rowIds, actual.rowIds, "row ids after " + step);
+  }
+
+  /** On v3: the live deletion vectors whose data file is not live, as their data files' paths. */
+  private static List<String> danglingDeletionVectors(Table table) {
+    Set<String> live =
+        FormatV3Tables.liveDataFiles(table, table.currentSnapshot()).stream()
+            .map(d -> d.path().toString())
+            .collect(Collectors.toSet());
+    return liveDeleteFiles(table, table.currentSnapshot()).stream()
+        .map(FormatV3Tables::referencedDataFile)
+        .filter(f -> f != null && !live.contains(f))
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Work item X13: what happens after the race above leaves a dangling deletion vector (v3), as the
+   * jobs that own the table run next. Compaction (every data file with deletes rewritten) and
+   * snapshot expiry keep it: no rewrite group holds a data file that is gone, and the vector is
+   * live in the current snapshot. Nothing misbehaves meanwhile: rows read the same, every file a
+   * snapshot references exists (the Puffin file is live), and table stats collect. The next
+   * retention run drops it: retention's DELETE removes every delete file whose partition the row
+   * filter covers (Iceberg's MergingSnapshotProducer.deleteByRowFilter), and the vector's partition
+   * is the one retention dropped. Rows stay as they were. The same steps on v2.
+   */
+  @ParameterizedTest(name = "format v{0}")
+  @ValueSource(ints = {2, 3})
+  void aDanglingDeletionVectorFromTheRaceIsDroppedByTheNextRetentionRun(int formatVersion) {
+    String fqtn = tables.createTable(formatVersion, "rlw_vs_retention_next", "orc");
+    String t = "openhouse." + fqtn;
+    Race race =
+        race(
+            formatVersion,
+            fqtn,
+            () -> loserSession(formatVersion).sql("DELETE FROM " + t + " WHERE id IN (1, 25)"),
+            () -> retention(tables.ops(formatVersion), fqtn),
+            "SELECT * FROM %s WHERE id >= 17 AND id <> 25");
+    assertSafe("delete-then-retention", formatVersion, fqtn, race, Outcome.SERIAL, ids(), true);
+    Operations ops = tables.ops(formatVersion);
+    State afterRace = state(formatVersion, fqtn);
+    Assertions.assertEquals(race.after.live, afterRace.live);
+    if (formatVersion == 3) {
+      Assertions.assertEquals(1, danglingDeletionVectors(ops.getTable(fqtn)).size());
+    }
+
+    compaction(ops, fqtn);
+    Table table = ops.getTable(fqtn);
+    System.out.println(
+        "X13 v" + formatVersion + " after compaction: " + table.currentSnapshot().operation());
+    assertSameRows(afterRace, state(formatVersion, fqtn), "compaction");
+    assertEveryReferencedFileExists(table);
+    if (formatVersion == 3) {
+      Assertions.assertEquals(
+          1, danglingDeletionVectors(table).size(), "compaction keeps the dangling vector");
+    }
+
+    expiry(ops, fqtn);
+    table = ops.getTable(fqtn);
+    Assertions.assertEquals(1, snapshotIds(table).size(), "expiry kept the current snapshot");
+    assertSameRows(afterRace, state(formatVersion, fqtn), "expiry");
+    assertEveryReferencedFileExists(table);
+    if (formatVersion == 3) {
+      Assertions.assertEquals(
+          1, danglingDeletionVectors(table).size(), "expiry keeps the dangling vector");
+    }
+    Assertions.assertNotNull(ops.collectTableStats(fqtn), "table stats collect");
+
+    long beforeRetention = table.currentSnapshot().snapshotId();
+    retention(ops, fqtn);
+    table = ops.getTable(fqtn);
+    System.out.println(
+        "X13 v"
+            + formatVersion
+            + " second retention: "
+            + (table.currentSnapshot().snapshotId() == beforeRetention
+                ? "no commit"
+                : table.currentSnapshot().operation() + " " + table.currentSnapshot().summary()));
+    assertSameRows(afterRace, state(formatVersion, fqtn), "retention again");
+    assertEveryReferencedFileExists(table);
+    assertNoDanglingDeletionVectors(formatVersion, table);
+  }
+
   /** Retention prepared at N; the same DELETE commits N+1; then retention commits on its retry. */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
