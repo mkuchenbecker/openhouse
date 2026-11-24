@@ -449,7 +449,7 @@ public class FormatV3NativeApiTest {
     assumeTrue(IcebergV3.supported());
     String db = "fv3_types";
     created.add(db);
-    for (String type : new String[] {"timestamp_ns", "timestamptz_ns", "unknown"}) {
+    for (String type : new String[] {"timestamp_ns", "timestamptz_ns"}) {
       CreateUpdateTableRequestBody body = asking(plain(db), "3");
       String message =
           refused(
@@ -471,8 +471,8 @@ public class FormatV3NativeApiTest {
                 .schema(addColumn(str(v3, "$.schema"), "v", "timestamp_ns", null, null))
                 .build()),
         "FORMAT_V3_TYPE_NOT_SUPPORTED");
-    // A variant column does not get that far: the request validation's schema walk, which runs
-    // before any rule of the table, does not know the type and refuses it as it always has.
+    // A variant column is refused by the same policy on a table that writes ORC, the cluster's
+    // default (FormatV3TypesTest has every type, and the tables that take one).
     for (ResultActions variant :
         new ResultActions[] {
           put(
@@ -489,7 +489,9 @@ public class FormatV3NativeApiTest {
                   .build())
         }) {
       assertEquals(400, status(variant), json(variant));
-      assertTrue(message(variant).contains("Unsupported type: variant"), message(variant));
+      assertTrue(
+          message(variant).startsWith("FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table "),
+          message(variant));
     }
     assertEquals(v3, stored(db));
   }

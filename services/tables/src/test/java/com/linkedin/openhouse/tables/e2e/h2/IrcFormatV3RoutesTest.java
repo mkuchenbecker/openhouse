@@ -423,7 +423,10 @@ public class IrcFormatV3RoutesTest {
     assertFalse(stored(db).properties().containsKey("encryption.key-id"));
   }
 
-  /** A variant column, as Spark 4 would create one, is refused by the create and by a commit. */
+  /**
+   * A nanosecond timestamp is refused by the create and by a commit, and a variant column on a
+   * table that writes ORC (the cluster's default) by the create; FormatV3TypesTest has every type.
+   */
   @Test
   void formatV3TypesAreRefusedOverTheRoutes() throws Exception {
     assumeTrue(IcebergV3.supported());
@@ -455,7 +458,9 @@ public class IrcFormatV3RoutesTest {
                 400,
                 "BadRequestException")
             .message();
-    assertTrue(message.contains("Unsupported type: variant"), message);
+    assertTrue(
+        message.startsWith("FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table "), message);
+    assertTrue(message.contains("cannot write a variant column to ORC"), message);
     assertEquals(404, status(get(mvc, db, "t")));
 
     TableMetadata base = createV3(db);

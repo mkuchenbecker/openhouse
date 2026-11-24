@@ -1,20 +1,14 @@
 package com.linkedin.openhouse.tables.formatversion;
 
 import java.lang.reflect.Method;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.Set;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
-import org.apache.iceberg.types.Type;
-import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
 /**
@@ -24,8 +18,8 @@ import org.apache.iceberg.types.Types;
  *
  * <p>Everything here is a probe or a reflective read, as the Java client's {@code IcebergLine} is:
  * the 1.12-only accessors ({@code TableMetadata.nextRowId()}, {@code
- * TableMetadata.encryptionKeys()}, {@code Snapshot.keyId()}) are looked up once by name, and the
- * v3-only types are recognised by the name of their type id.
+ * TableMetadata.encryptionKeys()}, {@code Snapshot.keyId()}) are looked up once by name. The
+ * v3-only types are {@link FormatV3Types}'.
  */
 public final class IcebergV3 {
 
@@ -39,12 +33,6 @@ public final class IcebergV3 {
   private static final Method ENCRYPTION_KEYS = method(TableMetadata.class, "encryptionKeys");
 
   private static final Method SNAPSHOT_KEY_ID = method(Snapshot.class, "keyId");
-
-  /** Type ids Iceberg allows from format v3 on ({@code Schema.MIN_FORMAT_VERSIONS}). */
-  private static final Set<String> V3_ONLY_TYPE_IDS =
-      Collections.unmodifiableSet(
-          new HashSet<>(
-              Arrays.asList("TIMESTAMP_NANO", "VARIANT", "UNKNOWN", "GEOMETRY", "GEOGRAPHY")));
 
   private IcebergV3() {}
 
@@ -74,22 +62,6 @@ public final class IcebergV3 {
   public static String keyId(Snapshot snapshot) {
     Object value = invoke(SNAPSHOT_KEY_ID, snapshot);
     return value == null ? null : value.toString();
-  }
-
-  /**
-   * The first column of {@code schema}, at any depth, whose type exists only from format v3 on, as
-   * {@code name (type)}.
-   */
-  public static Optional<String> firstV3OnlyType(Schema schema) {
-    return TypeUtil.indexById(schema.asStruct()).values().stream()
-        .filter(field -> isV3Only(field.type()))
-        .sorted((a, b) -> Integer.compare(a.fieldId(), b.fieldId()))
-        .map(field -> schema.findColumnName(field.fieldId()) + " (" + field.type() + ")")
-        .findFirst();
-  }
-
-  private static boolean isV3Only(Type type) {
-    return V3_ONLY_TYPE_IDS.contains(type.typeId().name());
   }
 
   private static boolean probe() {
