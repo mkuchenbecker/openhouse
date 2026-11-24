@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -36,8 +37,9 @@ import org.apache.iceberg.types.Types;
  * <ul>
  *   <li>{@code unknown}: supported. Spark 3.5 and Spark 4 spell it {@code void} (a CTAS of {@code
  *       NULL} makes one) and read it as nulls; no file format stores it.
- *   <li>{@code variant}: supported on a table that writes Parquet or Avro data files. Iceberg's
- *       Spark 4 integration writes and reads it there; it has no ORC writer for it, and ORC is the
+ *   <li>{@code variant}: off by default, behind {@code cluster.iceberg.format-v3.variant.enabled};
+ *       with it on, supported on a table that writes Parquet or Avro data files. Iceberg's Spark 4
+ *       integration writes and reads it there; it has no ORC writer for it, and ORC is the
  *       cluster's default, so a v3 table that writes ORC is refused a variant column; and its ORC
  *       reader cannot read a variant column from older ORC files, so a table that still has ORC
  *       data files is refused one by schema evolution. Spark 3.5 has no variant type and cannot
@@ -168,6 +170,53 @@ public final class FormatV3Types {
   }
 
   /**
+   * Refuses a variant column the table did not have while {@value FormatVersionRule#VARIANT_SWITCH}
+   * is off (the default), on create and on evolution. A table that already has one (made while the
+   * property was on) keeps it and its other commits are not touched.
+   *
+   * @param base the table's current metadata; {@code null} for a create
+   * @param added the schemas the commit adds
+   */
+  public static void refuseNewVariantWhenOff(
+      TableIdentifier table, TableMetadata base, List<Schema> added, boolean variantEnabled) {
+    if (variantEnabled) {
+      return;
+    }
+    Set<Integer> before = variantFieldIds(base);
+    for (Schema schema : added) {
+      fieldsInIdOrder(schema)
+          .filter(f -> isVariant(f.type()) && !before.contains(f.fieldId()))
+          .findFirst()
+          .ifPresent(
+              field -> {
+                throw new CommitRejectedException(
+                    String.format(
+                        "%s: column %s (variant) of table %s: variant columns are off on this"
+                            + " cluster (%s is false): a variant column can never be dropped, and"
+                            + " the maintenance jobs, which run on Spark 3.5, cannot read, compact"
+                            + " or apply retention to a table that has one.",
+                        REFUSED,
+                        schema.findColumnName(field.fieldId()),
+                        table,
+                        FormatVersionRule.VARIANT_SWITCH));
+              });
+    }
+  }
+
+  /** The field ids of every variant column in any schema of {@code metadata}. */
+  private static Set<Integer> variantFieldIds(TableMetadata metadata) {
+    Set<Integer> ids = new HashSet<>();
+    if (metadata != null) {
+      for (Schema schema : metadata.schemas()) {
+        TypeUtil.indexById(schema.asStruct()).values().stream()
+            .filter(f -> isVariant(f.type()))
+            .forEach(f -> ids.add(f.fieldId()));
+      }
+    }
+    return ids;
+  }
+
+  /**
    * Refuses a commit that gives a table with data a variant column it did not have, while a branch
    * or tag of the table still reads ORC data files: Iceberg's Spark ORC reader cannot project a
    * variant column into an ORC file that lacks it (it fails reading every such file), whatever the
@@ -182,12 +231,7 @@ public final class FormatV3Types {
     if (base == null || base.snapshots().isEmpty()) {
       return;
     }
-    Set<Integer> before = new HashSet<>();
-    for (Schema schema : base.schemas()) {
-      TypeUtil.indexById(schema.asStruct()).values().stream()
-          .filter(f -> isVariant(f.type()))
-          .forEach(f -> before.add(f.fieldId()));
-    }
+    Set<Integer> before = variantFieldIds(base);
     Optional<Types.NestedField> added =
         fieldsInIdOrder(committed.schema())
             .filter(f -> isVariant(f.type()) && !before.contains(f.fieldId()))

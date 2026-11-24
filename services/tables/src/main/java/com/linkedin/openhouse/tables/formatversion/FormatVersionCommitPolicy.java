@@ -110,6 +110,7 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
         table.toString(), base == null ? null : base.formatVersion(), committed.formatVersion());
     List<Schema> added = addedSchemas(base, committed);
     if (committed.formatVersion() >= IcebergV3.VERSION) {
+      FormatV3Types.refuseNewVariantWhenOff(table, base, added, rule.variantEnabled());
       refuseWhatV3DoesNotHandleYet(table, committed, properties, added);
       FormatV3Types.refuseVariantOverOrcFiles(table, base, committed, io);
       keepInitialDefaults(table, base, added);

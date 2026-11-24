@@ -218,8 +218,20 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
   column's `initial-default` never changes, and the read-bridge opt-in
   `required-capability.column-defaults` is refused on v3; below v3 a `write-default` is refused
   with `COLUMN_DEFAULT_REQUIRES_V3`).
-- Refused on v3 until their work items: the v3-only types (variant, geometry, geography,
-  nanosecond timestamps, unknown), replica and replicated tables, table encryption, and the
+- The v3-only column types (work item X5, `FormatV3Types`): `unknown` (Spark's `void`) is taken;
+  `timestamp_ns`, `timestamptz_ns`, `geometry` and `geography` are refused
+  (`FORMAT_V3_TYPE_NOT_SUPPORTED`, with the reason); `variant` is off by default, behind its own
+  property, below.
+- `cluster.iceberg.format-v3.variant.enabled` (default `false`; needs the v3 switch) lets a v3
+  table take a variant column. Off, a variant column is refused on create and on evolution, on
+  both APIs. Turning it on costs this, for every table that takes one: the column can never be
+  dropped (OpenHouse refuses dropping columns); the maintenance jobs, which run on Spark 3.5, do
+  not compact such a table and report failure on it on every run (their post-job validation
+  cannot read it); Spark 3.5 cannot read it (SELECT and DESCRIBE fail with `Unsupported type:
+  variant`; SHOW TABLES still lists it); and it cannot carry a retention policy. With it on, a
+  variant column is still refused on a table that writes ORC or still has ORC data files.
+  Turning it off again refuses new variant columns only; tables that have one keep it.
+- Refused on v3 until their work items: replica and replicated tables, table encryption, and the
   register of a v3 metadata file.
 
 ## CI
