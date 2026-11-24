@@ -722,7 +722,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
     String entity = "Table " + tableIdentifier;
     String tableId = properties.get(CatalogConstants.OPENHOUSE_TABLEID_KEY);
     if (tableId != null) {
-      HouseTableRowLimits.requireTableIdFits(entity, tableId);
+      houseTableRowLimits.requireTableNameFits(entity, tableId);
     }
     houseTableRowLimits.requireMetadataLocationFits(entity, newMetadataLocation);
   }

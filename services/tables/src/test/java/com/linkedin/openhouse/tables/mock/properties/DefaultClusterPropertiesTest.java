@@ -35,6 +35,15 @@ public class DefaultClusterPropertiesTest {
         255, new HouseTableRowLimits(clusterProperties).getMetadataLocationMaxLength());
   }
 
+  /** The rename target's limit defaults to the production store's name column (work item V19). */
+  @Test
+  public void testHouseTablesTableIdMaxLengthDefaultsToTheProductionColumn() {
+    Assertions.assertEquals(
+        HouseTableRowLimits.DEFAULT_TABLE_ID_MAX_LENGTH,
+        clusterProperties.getClusterHouseTablesTableIdMaxLength());
+    Assertions.assertEquals(255, new HouseTableRowLimits(clusterProperties).getTableIdMaxLength());
+  }
+
   @AfterAll
   static void unsetSysProp() {
     System.clearProperty("OPENHOUSE_CLUSTER_CONFIG_PATH");

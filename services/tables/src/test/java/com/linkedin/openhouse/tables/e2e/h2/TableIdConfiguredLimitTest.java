@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
@@ -35,7 +36,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.support.TestPropertySourceUtils;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 
 /**
  * A rename's target name on a House Tables store narrower than the production one (work item V19).
@@ -48,8 +49,10 @@ import org.springframework.test.web.servlet.MvcResult;
  * its row.
  *
  * <p>The cluster of this test is such a deployment: the H2 stand-in's {@code TABLE_ID} column is
- * narrowed to 128 for the test, as that store's column is. {@link MetadataLocationLimitTest} shows
- * the default store, where 255 fits and 256 is refused.
+ * narrowed to 128 for the test, as that store's column is, and it states that width ({@code
+ * cluster.housetables.table-id-max-length=128}). A rename to 129 characters is then refused before
+ * anything is written. {@link MetadataLocationLimitTest} shows the default, 255: 255 fits and 256
+ * is refused.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -76,6 +79,7 @@ public class TableIdConfiguredLimitTest {
   @Autowired MockMvc mvc;
   @Autowired HouseTableRepository houseTableRepository;
   @Autowired DataSource dataSource;
+  @Autowired HouseTableRowLimits houseTableRowLimits;
 
   private final List<String[]> created = new ArrayList<>();
 
@@ -159,30 +163,59 @@ public class TableIdConfiguredLimitTest {
 
   // ---------------------------------------------------------------- tests
 
+  /** The cluster states its store's width, and the service reads it. */
+  @Test
+  void theClusterStatesItsStoresWidth() {
+    assertEquals(128, houseTableRowLimits.getTableIdMaxLength());
+    assertEquals(255, houseTableRowLimits.getMetadataLocationMaxLength());
+  }
+
   /**
-   * PINNED, before V19: the cluster's 128 is not read, so a rename to 129 characters is let
-   * through, writes its metadata file and then fails to write its row: the caller is told the
-   * commit's state is unknown (native 500, IRC 500 {@code CommitStateUnknownException}), and the
-   * file stays.
+   * A rename to 129 characters is refused with 400 on the native API and the IRC rename route,
+   * before anything is written: no row of the new name, no new file, the table as it was. A later
+   * rename to 128 characters, which fits, lands.
    */
   @Test
-  void aRenameTo129CharactersOnA128StoreFailsAfterTheMetadataFileIsWritten() throws Exception {
-    String db = "tid_pin";
-    track(db, "a");
-    assertEquals(201, status(post(mvc, plain(db, "a"))));
+  void aRenameTo129CharactersIsRefusedOnBothApisWithNothingWritten() throws Exception {
+    String db = "tid_128";
+    for (String source : new String[] {"a", "b"}) {
+      track(db, source);
+      assertEquals(201, status(post(mvc, plain(db, source))));
+    }
+    String locationA = row(db, "a").getTableLocation();
+    String locationB = row(db, "b").getTableLocation();
     TreeSet<String> before = stored();
 
     String over = name("o", 129);
-    int answer = status(rename(mvc, db, "a", db, over));
-    MvcResult irc = IrcWrite.rename(mvc, TableIdentifier.of(db, "a"), TableIdentifier.of(db, over));
-
-    // Native: a plain 500. IRC: 500 CommitStateUnknownException. Each left a metadata file.
-    assertEquals(500, answer);
-    assertIrcError(irc, 500, "CommitStateUnknownException");
-    assertFalse(hasRow(db, over));
+    ResultActions refused = rename(mvc, db, "a", db, over);
+    assertEquals(400, status(refused), json(refused));
+    assertEquals(tooLong(db + ".a"), message(refused));
     assertEquals(
-        before.size() + 2, stored().size(), "a metadata file is left by each: " + stored());
+        tooLong(db + ".b"),
+        assertIrcError(
+                IrcWrite.rename(mvc, TableIdentifier.of(db, "b"), TableIdentifier.of(db, over)),
+                400,
+                "BadRequestException")
+            .message());
+
+    assertFalse(hasRow(db, over));
+    assertEquals(before, stored());
     assertEquals(200, status(get(mvc, db, "a")));
-    assertEquals("a", row(db, "a").getTableId());
+    assertEquals(200, status(get(mvc, db, "b")));
+    assertEquals(locationA, row(db, "a").getTableLocation());
+    assertEquals(locationB, row(db, "b").getTableLocation());
+
+    String fits = name("f", 128);
+    assertEquals(204, status(rename(mvc, db, "a", db, fits)));
+    track(db, fits);
+    assertEquals(fits, row(db, fits).getTableId());
+    assertFalse(hasRow(db, "a"));
+  }
+
+  private static String tooLong(String table) {
+    return "Table "
+        + table
+        + " cannot be written under a name of 129 characters: House Tables holds at most 128"
+        + " (user_table_row.table_id).";
   }
 }

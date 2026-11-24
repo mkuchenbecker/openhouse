@@ -93,6 +93,22 @@ public class ClusterProperties {
   @Value("${cluster.housetables.metadata-location-max-length:255}")
   private int clusterHouseTablesMetadataLocationMaxLength;
 
+  /**
+   * The width of the House Tables column that holds a table's or view's name ({@code
+   * user_table_row.table_id}). The tables service refuses, before it writes anything, a rename
+   * whose target name would be longer; a create's name is at most 128 characters by request
+   * validation, whatever this says.
+   *
+   * <p>The default, 255, is the column of the production store ({@code
+   * services/housetables/ddl/0000__baseline.sql}). Set it to 128 where the House Tables service
+   * created its own tables from its bootstrap {@code schema.sql}, which declares {@code
+   * VARCHAR(128)}: there a rename to 129 to 255 characters would otherwise fail after its metadata
+   * file is written. Never set it above the column's real width. A value that is not positive means
+   * the default.
+   */
+  @Value("${cluster.housetables.table-id-max-length:255}")
+  private int clusterHouseTablesTableIdMaxLength;
+
   @Value("${cluster.housetables.database.url:jdbc:h2:mem:htsdb;MODE=MYSQL;DB_CLOSE_DELAY=-1}")
   private String clusterHouseTablesDatabaseUrl;
 
