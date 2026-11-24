@@ -23,6 +23,7 @@ import com.linkedin.openhouse.common.exception.UnsupportedClientOperationExcepti
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.CreateHistory;
 import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalTableOperations;
@@ -45,6 +46,7 @@ import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
+import com.linkedin.openhouse.tables.repository.CreateHistoryScope;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.repository.SchemaValidator;
@@ -177,6 +179,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                   tableDto.getTableUUID(),
                   tableDto.getTableCreator(),
                   tableProps);
+      // The history of an IRC create transaction, for the commit to keep (V14); never a request's.
+      tableProps.remove(CreateHistory.KEY);
+      CreateHistoryScope.current().ifPresent(h -> tableProps.put(CreateHistory.KEY, h));
       SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
       table =
           createTable(

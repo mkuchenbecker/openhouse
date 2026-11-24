@@ -432,6 +432,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
   @Override
   protected void doCommit(TableMetadata base, TableMetadata metadata) {
 
+    // A create that keeps the schema, spec and order history its client built (IRC, V14).
+    metadata = CreateHistory.apply(base, metadata);
+
     // Handle all schema-related processing (client schema, evolved schema, intermediate schemas)
     metadata = processSchemas(base, metadata);
 

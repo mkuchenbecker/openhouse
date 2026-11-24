@@ -7,6 +7,7 @@ import com.linkedin.openhouse.cluster.storage.Storage;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.CreateHistory;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
@@ -28,6 +29,7 @@ import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
+import com.linkedin.openhouse.tables.repository.CreateHistoryScope;
 import com.linkedin.openhouse.tables.repository.PreservedKeyChecker;
 import com.linkedin.openhouse.tables.services.IcebergCreates;
 import com.linkedin.openhouse.tables.services.IcebergUpdates;
@@ -456,6 +458,11 @@ public class IcebergRestWriteHandler {
    * soft-deleted, may use that directory ({@link #refuseADirectoryInUse}; a table renamed away
    * keeps the directory of its old name). The rows are looked at only for a principal who may
    * create tables in the database, who is refused first otherwise, as natively.
+   *
+   * <p>The native create is spelled from the final schema, spec and order, and every rule judges
+   * those. When the transaction changed them before it committed, the table keeps the schemas,
+   * specs and orders it went through, with the client's ids, which its snapshots and manifests name
+   * ({@link CreateHistory}, V14); a create without such history is stored as it always was.
    */
   private IcebergRestLoadedTable commitCreate(
       TableIdentifier identifier, UpdateTableRequest request, String actingPrincipal) {
@@ -493,8 +500,15 @@ public class IcebergRestWriteHandler {
           databaseId, actingPrincipal, Privileges.CREATE_TABLE);
       refuseADirectoryInUse(CREATE, identifier, storage, directory, tableUUID);
     }
-    return create(
-        identifier, candidate, candidate.location(), tableUUID, policies, actingPrincipal);
+    // The schemas, specs and sort orders the transaction went through, with the client's ids,
+    // which its snapshots name: the create keeps them (V14). Null when the create stores them
+    // anyway.
+    String history = CreateHistory.of(candidate);
+    return CreateHistoryScope.during(
+        history,
+        () ->
+            create(
+                identifier, candidate, candidate.location(), tableUUID, policies, actingPrincipal));
   }
 
   private void requireTheClustersFormatVersion(
