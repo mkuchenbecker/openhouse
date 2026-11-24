@@ -15,23 +15,25 @@ import com.linkedin.openhouse.jobs.util.SparkJobUtil;
 import com.linkedin.openhouse.jobs.util.TableStatsCollector;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -41,6 +43,8 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileContent;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
@@ -65,7 +69,6 @@ import scala.collection.JavaConverters;
 /**
  * Utility class to hold table maintenance operations using Spark engine, and supporting methods.
  */
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Slf4j
 public final class Operations implements AutoCloseable {
   // assume that catalog name is fixed
@@ -76,6 +79,24 @@ public final class Operations implements AutoCloseable {
   private final SparkSession spark;
 
   private final OtelEmitter otelEmitter;
+
+  /** Catalogs this instance has built (each with its own client); see {@link #catalogsBuilt()}. */
+  private final AtomicInteger catalogsBuilt = new AtomicInteger();
+
+  /**
+   * The catalog every table load and create of this instance goes through: built from the session's
+   * {@code openhouse} catalog properties on first use and reused, closed with this instance. One
+   * per job run rather than one per load: each catalog holds a client (on the OpenHouse catalog a
+   * connection pool that is never disposed; on RESTCatalog a {@code GET /config} when built).
+   * Neither catalog keeps loaded tables (each load asks the service), so reuse serves no older
+   * table state.
+   */
+  private Catalog catalog;
+
+  private Operations(SparkSession spark, OtelEmitter otelEmitter) {
+    this.spark = spark;
+    this.otelEmitter = otelEmitter;
+  }
 
   public static Operations of(SparkSession spark, OtelEmitter otelEmitter) {
     return new Operations(spark, otelEmitter);
@@ -525,6 +546,7 @@ public final class Operations implements AutoCloseable {
                             + "but file %s has residual filter %s, which would require a row-level rewrite.",
                         fqtn, task.file().path(), task.residual()));
               });
+      reportDeleteFilesInBackup(fqtn, filesList);
       return filesList.stream()
           .collect(
               Collectors.groupingBy(
@@ -535,6 +557,68 @@ public final class Operations implements AutoCloseable {
                   Collectors.mapping(task -> task.file().path().toString(), Collectors.toList())));
     } catch (IOException e) {
       throw new RuntimeException("Failed to plan backup files for retention", e);
+    }
+  }
+
+  /**
+   * Signals (work item X9) that the expired partitions of a backup-enabled table carry delete
+   * files: the backup holds their data files and a manifest of data files only, so rows deleted
+   * before retention are in it with nothing recording the deletes (decision D46, not decided). A
+   * WARN log naming the table and the counts, and one metric per kind of delete; what is backed up
+   * and deleted does not change. Counts: position-delete files and equality-delete files (distinct
+   * files), deletion vectors (one per data file: {@code planFiles} gives one task per data file).
+   */
+  private void reportDeleteFilesInBackup(String fqtn, List<FileScanTask> expiredFiles) {
+    Set<String> positionDeleteFiles = new HashSet<>();
+    Set<String> equalityDeleteFiles = new HashSet<>();
+    long deletionVectors = 0;
+    long dataFilesWithDeletes = 0;
+    for (FileScanTask task : expiredFiles) {
+      if (!task.deletes().isEmpty()) {
+        dataFilesWithDeletes++;
+      }
+      for (DeleteFile delete : task.deletes()) {
+        if (delete.content() == FileContent.EQUALITY_DELETES) {
+          equalityDeleteFiles.add(delete.path().toString());
+        } else if ("PUFFIN".equals(delete.format().name())) {
+          deletionVectors++;
+        } else {
+          positionDeleteFiles.add(delete.path().toString());
+        }
+      }
+    }
+    if (dataFilesWithDeletes == 0) {
+      return;
+    }
+    log.warn(
+        "Retention backup of table {}: {} of {} expired data files carry deletes ({} position-delete "
+            + "files, {} equality-delete files, {} deletion vectors); the backup holds the data files "
+            + "only, so it includes rows deleted before retention",
+        fqtn,
+        dataFilesWithDeletes,
+        expiredFiles.size(),
+        positionDeleteFiles.size(),
+        equalityDeleteFiles.size(),
+        deletionVectors);
+    if (otelEmitter == null) {
+      return;
+    }
+    emitBackupDeletes(fqtn, AppConstants.POSITION_DELETES, positionDeleteFiles.size());
+    emitBackupDeletes(fqtn, AppConstants.EQUALITY_DELETES, equalityDeleteFiles.size());
+    emitBackupDeletes(fqtn, AppConstants.DELETION_VECTORS, deletionVectors);
+  }
+
+  private void emitBackupDeletes(String fqtn, String kind, long count) {
+    if (count > 0) {
+      otelEmitter.count(
+          METRICS_SCOPE,
+          AppConstants.RETENTION_BACKUP_DELETE_FILE_COUNT,
+          count,
+          Attributes.of(
+              AttributeKey.stringKey(AppConstants.TABLE_NAME),
+              fqtn,
+              AttributeKey.stringKey(AppConstants.DELETE_KIND),
+              kind));
     }
   }
 
@@ -730,10 +814,52 @@ public final class Operations implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
-    spark.close();
+    try {
+      closeCatalog();
+    } finally {
+      spark.close();
+    }
   }
 
-  private Catalog getCatalog() {
+  /**
+   * Closes the catalog if it is closeable (RESTCatalog: its HTTP client and sessions; the OpenHouse
+   * catalog, where Iceberg makes it closeable: its metrics reporter only, as its client has no
+   * close, so that client's connection pool lives until the JVM exits, one per job run). A failure
+   * is logged, not thrown: the job's work is done by then, and closing never failed a job before.
+   */
+  private synchronized void closeCatalog() {
+    if (catalog instanceof Closeable) {
+      try {
+        ((Closeable) catalog).close();
+      } catch (IOException | RuntimeException e) {
+        log.warn("Failed to close catalog {}: {}", CATALOG, e.getMessage(), e);
+      }
+    }
+    catalog = null;
+  }
+
+  /** How many catalogs this instance has built: each holds a client of its own. */
+  @VisibleForTesting
+  int catalogsBuilt() {
+    return catalogsBuilt.get();
+  }
+
+  /** The catalog this instance holds now: null before first use and after {@link #close()}. */
+  @VisibleForTesting
+  synchronized Catalog currentCatalog() {
+    return catalog;
+  }
+
+  /** This instance's catalog, built on first use; thread-safe (batched apps load in parallel). */
+  private synchronized Catalog getCatalog() {
+    if (catalog == null) {
+      catalog = buildCatalog();
+      catalogsBuilt.incrementAndGet();
+    }
+    return catalog;
+  }
+
+  private Catalog buildCatalog() {
     final Map<String, String> catalogProperties = new HashMap<>();
     final String catalogPropertyPrefix = String.format("spark.sql.catalog.%s.", CATALOG);
     final Map<String, String> sparkProperties = JavaConverters.mapAsJavaMap(spark.conf().getAll());

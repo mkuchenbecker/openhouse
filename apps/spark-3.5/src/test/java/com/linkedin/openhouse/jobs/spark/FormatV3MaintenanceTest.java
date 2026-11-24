@@ -23,6 +23,8 @@ import com.linkedin.openhouse.jobs.spark.FormatV3Tables.Reading;
 import com.linkedin.openhouse.jobs.util.AppConstants;
 import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -50,6 +52,8 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 
 /**
  * Black-box tests of the maintenance jobs on Iceberg format v3 tables (work item X6), each one run
@@ -648,11 +652,28 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
             + sharedAcrossKeptAndExpired);
     Reading before = reading(formatVersion, fqtn);
 
+    // Work item X9: retention signals that the expired partitions carry delete files (a WARN log
+    // and a metric per kind); nothing else about the run changes.
+    OtelEmitter retentionEmitter = Mockito.spy(otelEmitter);
+    Operations retentionOps = Operations.withCatalog(spark, retentionEmitter);
     RetentionSparkApp retention =
         new RetentionSparkApp(
-            "x6-retention-backup", null, fqtn, "ts", "", "day", 3, otelEmitter, ".backup");
-    retention.runInner(ops);
-    retention.runValidations(ops);
+            "x6-retention-backup", null, fqtn, "ts", "", "day", 3, retentionEmitter, ".backup");
+    retention.runInner(retentionOps);
+    retention.runValidations(retentionOps);
+    Mockito.verify(retentionEmitter)
+        .count(
+            ArgumentMatchers.anyString(),
+            ArgumentMatchers.eq(AppConstants.RETENTION_BACKUP_DELETE_FILE_COUNT),
+            ArgumentMatchers.longThat(n -> n > 0),
+            ArgumentMatchers.eq(
+                Attributes.of(
+                    AttributeKey.stringKey(AppConstants.TABLE_NAME),
+                    fqtn,
+                    AttributeKey.stringKey(AppConstants.DELETE_KIND),
+                    formatVersion == 3
+                        ? AppConstants.DELETION_VECTORS
+                        : AppConstants.POSITION_DELETES)));
     if ("expiry".equals(remover)) {
       SnapshotsExpirationSparkApp expiry =
           new SnapshotsExpirationSparkApp(
@@ -789,6 +810,43 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
           Collections.disjoint(backedUpDeleteNames, manifestListedNames),
           "no manifest lists a delete file");
     }
+  }
+
+  /**
+   * Work item X9, the other side: a backup-enabled retention over expired partitions without delete
+   * files signals nothing.
+   */
+  @ParameterizedTest(name = "format v{0}")
+  @ValueSource(ints = {2, 3})
+  void retentionBackupWithoutDeleteFilesSignalsNothing(int formatVersion) throws Exception {
+    String fqtn = tables.createAndInsert(formatVersion, "ret_backup_nodeletes", "orc");
+    SparkSession spark = session(formatVersion);
+    spark.sql(
+        "ALTER TABLE openhouse."
+            + fqtn
+            + " SET TBLPROPERTIES ('"
+            + AppConstants.BACKUP_ENABLED_KEY
+            + "'='true')");
+    Table table = ops(formatVersion).getTable(fqtn);
+    Assertions.assertTrue(
+        liveDeleteFiles(table, table.currentSnapshot()).isEmpty(), "no delete files");
+    long rowsBefore = spark.sql("SELECT * FROM openhouse." + fqtn).count();
+    OtelEmitter retentionEmitter = Mockito.spy(otelEmitter);
+    Operations retentionOps = Operations.withCatalog(spark, retentionEmitter);
+    RetentionSparkApp retention =
+        new RetentionSparkApp(
+            "x9-retention-backup", null, fqtn, "ts", "", "day", 3, retentionEmitter, ".backup");
+    retention.runInner(retentionOps);
+    retention.runValidations(retentionOps);
+    Assertions.assertTrue(
+        spark.sql("SELECT * FROM openhouse." + fqtn).count() < rowsBefore,
+        "retention deleted the expired partitions");
+    Mockito.verify(retentionEmitter, Mockito.never())
+        .count(
+            ArgumentMatchers.anyString(),
+            ArgumentMatchers.eq(AppConstants.RETENTION_BACKUP_DELETE_FILE_COUNT),
+            ArgumentMatchers.anyLong(),
+            ArgumentMatchers.any());
   }
 
   // ---------------------------------------------------------------------------------- retention
