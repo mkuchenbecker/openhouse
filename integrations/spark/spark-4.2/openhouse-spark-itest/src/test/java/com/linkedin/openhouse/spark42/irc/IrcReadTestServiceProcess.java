@@ -138,6 +138,18 @@ final class IrcReadTestServiceProcess {
     return work;
   }
 
+  /** The work directories of the services this JVM started so far (each has an access log). */
+  static synchronized List<Path> startedWorkDirectories() {
+    List<Path> started = new ArrayList<>();
+    for (IrcReadTestServiceProcess service :
+        new IrcReadTestServiceProcess[] {instance, formatV3Instance}) {
+      if (service != null) {
+        started.add(service.work);
+      }
+    }
+    return started;
+  }
+
   private void stop() {
     try {
       process.getOutputStream().close();
