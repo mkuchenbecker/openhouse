@@ -90,5 +90,11 @@ sourceSets {
 // FormatV3MaintenanceTest checks that its format v3 cases ran on the default (Iceberg 1.12) line
 // rather than skipping themselves; it needs to know which line this build is.
 tasks.withType(Test).configureEach {
+    // Explicit test heap. Gradle's default is 512 MB, and the suite ended a full run with 296 MB live
+    // after a full collection (369 MB before the fixtures closed their Operations), so an added
+    // test could run it out of memory again (exit value 52). 1 GB leaves about 700 MB. Concurrent
+    // test JVMs on a 16 GB runner (4 workers, 1.5 GB at most each, the Spark 4.2 jobs project
+    // included) stay under 6 GB.
+    maxHeapSize = '1g'
     systemProperty 'openhouse.iceberg.line', rootProject.hasProperty('icebergLinkedIn') ? 'linkedin' : 'default'
 }
