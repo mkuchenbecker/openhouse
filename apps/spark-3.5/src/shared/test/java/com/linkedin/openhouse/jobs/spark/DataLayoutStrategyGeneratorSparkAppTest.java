@@ -16,7 +16,8 @@ public class DataLayoutStrategyGeneratorSparkAppTest extends OpenHouseSparkITest
 
   @Test
   public void testPartitionedTable() throws Exception {
-    try (SparkSession spark = getSparkSession()) {
+    try (SparkSession spark = getSparkSession();
+        Operations ops = Operations.withCatalog(spark, null)) {
       // create table
       String fqtn = "dlo_partitioned.test_table";
       String outputFqtn = "dlo_partitioned.dlo_strategies";
@@ -26,7 +27,6 @@ public class DataLayoutStrategyGeneratorSparkAppTest extends OpenHouseSparkITest
               "create table openhouse.%s (id int, name string) partitioned by (id)", fqtn));
       spark.sql(String.format("insert into openhouse.%s values (1, 'a'), (2, 'b')", fqtn));
       // run app
-      Operations ops = Operations.withCatalog(spark, null);
       DataLayoutStrategyGeneratorSparkApp app =
           new DataLayoutStrategyGeneratorSparkApp(
               "test-job-id", null, fqtn, outputFqtn, partitionLevelOutputFqtn, otelEmitter);
@@ -49,7 +49,8 @@ public class DataLayoutStrategyGeneratorSparkAppTest extends OpenHouseSparkITest
 
   @Test
   public void testUnpartitionedTable() throws Exception {
-    try (SparkSession spark = getSparkSession()) {
+    try (SparkSession spark = getSparkSession();
+        Operations ops = Operations.withCatalog(spark, null)) {
       // create table
       String fqtn = "dlo_unpartitioned.test_table";
       String outputFqtn = "dlo_unpartitioned.dlo_strategies";
@@ -57,7 +58,6 @@ public class DataLayoutStrategyGeneratorSparkAppTest extends OpenHouseSparkITest
       spark.sql(String.format("create table openhouse.%s (id int, name string)", fqtn));
       spark.sql(String.format("insert into openhouse.%s values (1, 'a'), (2, 'b')", fqtn));
       // run app
-      Operations ops = Operations.withCatalog(spark, null);
       DataLayoutStrategyGeneratorSparkApp app =
           new DataLayoutStrategyGeneratorSparkApp(
               "test-job-id", null, fqtn, outputFqtn, partitionLevelOutputFqtn, otelEmitter);

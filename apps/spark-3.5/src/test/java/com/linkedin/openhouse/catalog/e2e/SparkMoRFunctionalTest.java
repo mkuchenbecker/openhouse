@@ -65,7 +65,11 @@ public class SparkMoRFunctionalTest extends OpenHouseSparkITest {
 
   @AfterEach
   public void cleanUp() throws Exception {
-    sql("DROP TABLE IF EXISTS %s", tableName);
+    try {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    } finally {
+      ops.close();
+    }
   }
 
   protected void initTable() {

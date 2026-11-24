@@ -14,6 +14,7 @@ import org.apache.iceberg.Table;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
@@ -32,6 +33,23 @@ import org.junit.jupiter.api.Test;
  */
 @Slf4j
 public class BucketBehaviorTest extends OpenHouseSparkITest {
+  /**
+   * The {@link Operations} this test built, one per session and closed after each test: each holds
+   * a catalog whose client keeps a connection pool until it is closed.
+   */
+  private final Map<SparkSession, Operations> opened = new HashMap<>();
+
+  private Operations operations(SparkSession spark) {
+    return opened.computeIfAbsent(spark, s -> Operations.withCatalog(s, null));
+  }
+
+  @AfterEach
+  void closeOperations() throws Exception {
+    for (Operations operations : opened.values()) {
+      operations.close();
+    }
+    opened.clear();
+  }
 
   /**
    * Test separate bucketing for multiple keys. This test validates that we can create separate
@@ -67,7 +85,7 @@ public class BucketBehaviorTest extends OpenHouseSparkITest {
       log.info("Created table with separate bucketing: {}", tableName);
 
       // Verify partition specification using Iceberg API
-      Operations operations = Operations.withCatalog(spark, null);
+      Operations operations = operations(spark);
       Table table = operations.getTable("d1.separate_bucket_test");
       PartitionSpec partitionSpec = table.spec();
 
@@ -327,7 +345,7 @@ public class BucketBehaviorTest extends OpenHouseSparkITest {
       log.info("Created table with bucket validation: {}", tableName);
 
       // Verify partition specification using Iceberg API
-      Operations operations = Operations.withCatalog(spark, null);
+      Operations operations = operations(spark);
       Table table = operations.getTable("d1.bucket_validation_test");
       PartitionSpec partitionSpec = table.spec();
 
@@ -714,7 +732,7 @@ public class BucketBehaviorTest extends OpenHouseSparkITest {
   /** Common utility to validate bucket specifications across all test scenarios. */
   private void validateBucketSpecification(SparkSession spark, BucketSpec bucketSpec) {
     // Verify partition specification using Iceberg API
-    Operations operations = Operations.withCatalog(spark, null);
+    Operations operations = operations(spark);
     Table table = operations.getTable(bucketSpec.tableId);
     PartitionSpec partitionSpec = table.spec();
 
@@ -785,7 +803,7 @@ public class BucketBehaviorTest extends OpenHouseSparkITest {
   private void validateIcebergBucketDistribution(
       SparkSession spark, String tableName, String description, List<Row> sqlResults) {
     try {
-      Operations operations = Operations.withCatalog(spark, null);
+      Operations operations = operations(spark);
       String tableId = extractTableId(tableName);
       Table table = operations.getTable(tableId);
 
@@ -919,7 +937,7 @@ public class BucketBehaviorTest extends OpenHouseSparkITest {
   /** Common utility to validate partition field names. */
   private void validatePartitionFieldName(
       SparkSession spark, String tableId, String expectedFieldName) {
-    Operations operations = Operations.withCatalog(spark, null);
+    Operations operations = operations(spark);
     Table table = operations.getTable(tableId);
     PartitionSpec partitionSpec = table.spec();
 
