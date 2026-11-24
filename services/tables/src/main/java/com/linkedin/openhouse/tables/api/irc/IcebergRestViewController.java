@@ -10,7 +10,6 @@ import org.apache.iceberg.rest.requests.CreateViewRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,14 +27,9 @@ import org.springframework.web.bind.annotation.RestController;
  * IcebergRestCatalogController} (whose catch-all they take precedence over, being more specific).
  * Each route is secured as the native view routes are; the work is {@link
  * IcebergRestViewHandler}'s. Hidden from the generated OpenAPI spec, like the other IRC routes.
- *
- * <p>A separate controller, registered only where the Iceberg view API exists (as {@link
- * IcebergRestViewHandler} is), so the IRC table routes still start where it does not. There the
- * view routes keep the catch-all's 406.
  */
 @Hidden
 @RestController
-@ConditionalOnClass(name = "org.apache.iceberg.view.ViewMetadata")
 public class IcebergRestViewController {
 
   private static final String V1 = IcebergRestCatalogController.BASE_PATH + "/v1";

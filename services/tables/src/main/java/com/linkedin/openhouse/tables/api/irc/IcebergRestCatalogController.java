@@ -31,10 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
  * from the service's generated OpenAPI spec, from which the native clients are generated.
  *
  * <p>The write routes (create, staged create, commit, register, drop, rename) are {@link
- * IcebergRestWriteController}'s, registered only where their Iceberg API exists; where it does not
- * (Iceberg 1.2), they are answered 406 here, as before they existed. Every other request under the
- * base path is answered in the spec's error shape: 406 for a route of the specification this server
- * does not serve yet, 400 for a path that is not an IRC route.
+ * IcebergRestWriteController}'s and the view routes {@link IcebergRestViewController}'s. Every
+ * other request under the base path is answered in the spec's error shape: 406 for a route of the
+ * specification this server does not serve (yet, or on this Iceberg line), 400 for a path that is
+ * not an IRC route.
  */
 @Hidden
 @RestController
@@ -141,13 +141,6 @@ public class IcebergRestCatalogController {
       Arrays.asList(
           new String[] {"POST", "/v1/oauth/tokens"},
           new String[] {"POST", "/v1/namespaces"},
-          // The write routes, served by IcebergRestWriteController where it is registered.
-          new String[] {"POST", "/v1/namespaces/*/tables"},
-          new String[] {"POST", "/v1/namespaces/*/tables/*"},
-          new String[] {"DELETE", "/v1/namespaces/*/tables/*"},
-          new String[] {"POST", "/v1/tables/rename"},
-          new String[] {"POST", "/v1/namespaces/*/register"},
-          new String[] {"POST", "/v1/transactions/commit"},
           new String[] {"DELETE", "/v1/namespaces/*"},
           new String[] {"POST", "/v1/namespaces/*/properties"},
           new String[] {"POST", "/v1/namespaces/*/register-view"},
@@ -160,13 +153,6 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/tables/*/tasks"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/credentials"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/sign"},
-          new String[] {"GET", "/v1/namespaces/*/views"},
-          new String[] {"POST", "/v1/namespaces/*/views"},
-          new String[] {"GET", "/v1/namespaces/*/views/*"},
-          new String[] {"HEAD", "/v1/namespaces/*/views/*"},
-          new String[] {"POST", "/v1/namespaces/*/views/*"},
-          new String[] {"DELETE", "/v1/namespaces/*/views/*"},
-          new String[] {"POST", "/v1/views/rename"},
           new String[] {"GET", "/v1/namespaces/*/functions"},
           new String[] {"GET", "/v1/namespaces/*/functions/*"});
 

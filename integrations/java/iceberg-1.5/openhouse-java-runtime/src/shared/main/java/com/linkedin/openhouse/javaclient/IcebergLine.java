@@ -13,8 +13,8 @@ import org.apache.iceberg.types.Types;
  * D11 of the IRC plan).
  *
  * <ul>
- *   <li>{@link #LEGACY}: LinkedIn's Iceberg 1.2 and 1.5.2 releases. Tables are format v2 at most,
- *       and OpenHouse supplies column defaults through the read bridge: the server stamps {@code
+ *   <li>{@link #LEGACY}: LinkedIn's Iceberg 1.5.2 release. Tables are format v2 at most, and
+ *       OpenHouse supplies column defaults through the read bridge: the server stamps {@code
  *       openhouse.read-bridge.column-default.*} into the table config, the client overlays them,
  *       and engine catalogs declare the {@code column-defaults} capability.
  *   <li>{@link #V3}: the fork's Iceberg 1.12 line. Column defaults are native format v3 defaults,
@@ -30,7 +30,7 @@ import org.apache.iceberg.types.Types;
  * change it. Nothing is written anywhere.
  */
 public enum IcebergLine {
-  /** LinkedIn's Iceberg 1.2 / 1.5.2 releases: format v2 at most, OpenHouse read bridge. */
+  /** LinkedIn's Iceberg 1.5.2 release: format v2 at most, OpenHouse read bridge. */
   LEGACY,
   /** An Iceberg that builds format v3 metadata (the fork's 1.12 line): native column defaults. */
   V3;

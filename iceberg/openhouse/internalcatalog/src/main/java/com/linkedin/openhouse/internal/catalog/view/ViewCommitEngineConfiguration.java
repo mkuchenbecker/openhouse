@@ -10,16 +10,11 @@ import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Collections;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/**
- * Registers the view commit engine and codec only when the Iceberg view API is present. The string
- * form of {@link ConditionalOnClass} lets Spring evaluate it without resolving a 1.2-absent type.
- */
+/** Registers the view commit engine and codec. */
 @Configuration
-@ConditionalOnClass(name = "org.apache.iceberg.view.ViewMetadata")
 public class ViewCommitEngineConfiguration {
 
   @Bean

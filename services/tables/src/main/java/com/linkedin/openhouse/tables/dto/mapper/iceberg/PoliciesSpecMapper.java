@@ -2,8 +2,13 @@ package com.linkedin.openhouse.tables.dto.mapper.iceberg;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.PolicyTag;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Replication;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ReplicationConfig;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Retention;
@@ -11,7 +16,10 @@ import com.linkedin.openhouse.tables.common.DefaultColumnPattern;
 import com.linkedin.openhouse.tables.common.ReplicationInterval;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.utils.IntervalToCronConverter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.mapstruct.Mapper;
@@ -142,6 +150,64 @@ public class PoliciesSpecMapper {
       return replicationPolicy.toBuilder().config(replicationConfig).build();
     }
     return replicationPolicy;
+  }
+
+  /**
+   * The stored {@code policies} text with the tags of each column in the declaration order of
+   * {@link PolicyTag.Tag}, the order this mapper writes them in ({@link PolicyTag}), and nothing
+   * else changed. Text written before the order was fixed holds them in whatever order its service
+   * process had (work item N8); comparing a request's policies with this, too, keeps the same tags
+   * in another order from counting as a change. Returns {@code stored} itself when anything other
+   * than the tag order would differ, that is when the text is not exactly what this mapper writes
+   * for its own parse, or cannot be parsed.
+   *
+   * @param stored the stored {@code policies} text
+   * @return the same text with the tags in declaration order, or {@code stored}
+   */
+  @Named("withTagsInDeclarationOrder")
+  public String withTagsInDeclarationOrder(String stored) {
+    JsonElement tree;
+    try {
+      tree = JsonParser.parseString(stored);
+    } catch (JsonParseException e) {
+      return stored;
+    }
+    if (!tree.isJsonObject() || !gson.toJson(tree).equals(stored)) {
+      return stored;
+    }
+    JsonElement columnTags = tree.getAsJsonObject().get("columnTags");
+    if (columnTags == null || !columnTags.isJsonObject()) {
+      return stored;
+    }
+    for (Map.Entry<String, JsonElement> column : columnTags.getAsJsonObject().entrySet()) {
+      if (!column.getValue().isJsonObject()) {
+        continue;
+      }
+      JsonObject policyTag = column.getValue().getAsJsonObject();
+      JsonElement tags = policyTag.get("tags");
+      if (tags == null || !tags.isJsonArray()) {
+        continue;
+      }
+      List<JsonElement> sorted = new ArrayList<>();
+      tags.getAsJsonArray().forEach(sorted::add);
+      sorted.sort(Comparator.comparingInt(PoliciesSpecMapper::declarationIndex));
+      JsonArray inOrder = new JsonArray();
+      sorted.forEach(inOrder::add);
+      policyTag.add("tags", inOrder);
+    }
+    return gson.toJson(tree);
+  }
+
+  /** A tag's place in the declaration order; anything that is not a tag's name comes last. */
+  private static int declarationIndex(JsonElement tag) {
+    if (tag.isJsonPrimitive() && tag.getAsJsonPrimitive().isString()) {
+      for (PolicyTag.Tag known : PolicyTag.Tag.values()) {
+        if (known.name().equals(tag.getAsString())) {
+          return known.ordinal();
+        }
+      }
+    }
+    return PolicyTag.Tag.values().length;
   }
 
   private static Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();

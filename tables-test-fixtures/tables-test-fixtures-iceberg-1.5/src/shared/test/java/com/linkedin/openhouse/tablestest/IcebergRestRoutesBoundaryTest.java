@@ -22,23 +22,15 @@ import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * Guards the Iceberg 1.2 / 1.5 boundary of the Iceberg REST Catalog (IRC) routes. Both fixtures
- * compile and run this, so the expectation is chosen at runtime from the classpath.
- *
- * <p>The IRC write routes need {@code org.apache.iceberg.UpdateRequirement}, a top-level class only
- * from Iceberg 1.4 on. Under Iceberg 1.2 the embedded server must still start and serve the read
- * routes, and answer the write routes 406 (not served), as it did before they existed; under 1.5
- * the write routes are served.
+ * The Iceberg REST Catalog (IRC) routes of the embedded server, on the Iceberg line of the build
+ * (the fork's 1.12 or LinkedIn's 1.5.2): the reads, writes and views are served on both, the scan
+ * planning and credentials routes only where Iceberg has their classes (1.12). The expectation is
+ * chosen at runtime from the classpath.
  */
 public class IcebergRestRoutesBoundaryTest {
 
-  private static final String WRITE_API_CLASS = "org.apache.iceberg.UpdateRequirement";
-
   private static final String SCAN_API_CLASS =
       "org.apache.iceberg.rest.requests.PlanTableScanRequest";
-
-  private static final String WRITE_HANDLER_CLASS =
-      "com.linkedin.openhouse.tables.api.irc.IcebergRestWriteHandler";
 
   private static ConfigurableApplicationContext context;
 
@@ -68,10 +60,6 @@ public class IcebergRestRoutesBoundaryTest {
     context.close();
   }
 
-  private static boolean icebergWriteApiPresent() {
-    return classPresent(WRITE_API_CLASS);
-  }
-
   private static boolean classPresent(String name) {
     try {
       Class.forName(name);
@@ -82,16 +70,6 @@ public class IcebergRestRoutesBoundaryTest {
   }
 
   @Test
-  public void theWriteHandlerExistsOnlyWhereItsIcebergApiDoes() throws Exception {
-    Class<?> handler = Class.forName(WRITE_HANDLER_CLASS, false, getClass().getClassLoader());
-    String[] beans = context.getBeanNamesForType(handler, false, false);
-    Assertions.assertEquals(
-        icebergWriteApiPresent() ? 1 : 0,
-        beans.length,
-        "IRC write handler beans under this Iceberg runtime: " + Arrays.toString(beans));
-  }
-
-  @Test
   public void theReadRoutesAreServedOnEveryIcebergRuntime() throws IOException {
     Assertions.assertEquals(200, call("GET", "/iceberg/v1/config", null));
     Assertions.assertEquals(
@@ -99,34 +77,16 @@ public class IcebergRestRoutesBoundaryTest {
   }
 
   @Test
-  public void theWriteRoutesAreNotServedUnderIceberg12() throws IOException {
-    if (icebergWriteApiPresent()) {
-      // Served: an empty create body is refused by the route itself (400), not as unserved (406).
-      Assertions.assertEquals(
-          400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
-      // Register, whose request class Iceberg 1.2 lacks, is one of the write routes.
-      Assertions.assertEquals(
-          400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
-      // So is the multi-table commit route, whose request class Iceberg 1.2 lacks as well.
-      Assertions.assertEquals(400, call("POST", "/iceberg/v1/transactions/commit", "{}"));
-      return;
-    }
-    Assertions.assertEquals(406, call("POST", "/iceberg/v1/transactions/commit", "{}"));
+  public void theWriteRoutesAreServed() throws IOException {
+    // Served: an empty create body is refused by the route itself (400), not as unserved (406).
     Assertions.assertEquals(
-        406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
+        400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
     Assertions.assertEquals(
-        406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables", "{}"));
-    Assertions.assertEquals(
-        406, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/tables/t", "{}"));
-    Assertions.assertEquals(
-        406, call("DELETE", "/iceberg/v1/namespaces/irc_boundary_db/tables/t", null));
-    Assertions.assertEquals(406, call("POST", "/iceberg/v1/tables/rename", "{}"));
+        400, call("POST", "/iceberg/v1/namespaces/irc_boundary_db/register", "{}"));
+    Assertions.assertEquals(400, call("POST", "/iceberg/v1/transactions/commit", "{}"));
   }
 
-  /**
-   * The spec routes served on every Iceberg runtime: the reads and the metrics report, whose
-   * request class every runtime has.
-   */
+  /** Spec routes served on every Iceberg line: the reads and the metrics report. */
   private static final List<String> READ_ROUTES =
       Arrays.asList(
           "GET /v1/{prefix}/namespaces",
@@ -139,9 +99,9 @@ public class IcebergRestRoutesBoundaryTest {
 
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
-   * registered: under Iceberg 1.2 the reads and the metrics report only, and no policy patch (it
-   * rides the write routes); under 1.5 those, the table writes and the views. On both, reporting
-   * stays off unless the client's own configuration turns it on.
+   * registered: the reads, the metrics report, the table writes and the views on every line, scan
+   * planning and credentials on 1.12. Reporting stays off unless the client's own configuration
+   * turns it on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -153,11 +113,6 @@ public class IcebergRestRoutesBoundaryTest {
         "false",
         config.path("defaults").path("rest-metrics-reporting-enabled").asText(),
         config.toString());
-    if (!icebergWriteApiPresent()) {
-      Assertions.assertEquals(READ_ROUTES, endpoints);
-      Assertions.assertEquals("grants,unlock", capabilities);
-      return;
-    }
     Assertions.assertTrue(endpoints.containsAll(READ_ROUTES), endpoints.toString());
     Assertions.assertTrue(
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}"),
@@ -186,9 +141,9 @@ public class IcebergRestRoutesBoundaryTest {
   }
 
   /**
-   * The metrics report route is served on every Iceberg runtime (its request class and parser exist
-   * from Iceberg 1.2 on): a report for a missing table is the route's own 404, not the 406 of a
-   * route that is not served, and a body that is not a report is its 400.
+   * The metrics report route is served on every Iceberg runtime: a report for a missing table is
+   * the route's own 404, not the 406 of a route that is not served, and a body that is not a report
+   * is its 400.
    */
   @Test
   public void theMetricsRouteIsServedOnEveryIcebergRuntime() throws IOException {
