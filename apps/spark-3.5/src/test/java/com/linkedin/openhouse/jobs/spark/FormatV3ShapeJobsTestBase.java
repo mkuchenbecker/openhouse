@@ -10,7 +10,6 @@ import static com.linkedin.openhouse.jobs.spark.FormatV3Tables.snapshotIds;
 
 import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
-import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.common.stats.model.IcebergTableStats;
 import com.linkedin.openhouse.datalayout.config.DataCompactionConfig;
 import com.linkedin.openhouse.jobs.spark.FormatV3Tables.Reading;
@@ -135,11 +134,8 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     }
     Map<String, String> properties = new HashMap<>();
     properties.put("uri", uri);
-    try {
-      properties.put("token", new DummyTokenInterceptor.DummySecurityJWT("x10b").buildNoopJWT());
-    } catch (Exception e) {
-      throw new IllegalStateException(e);
-    }
+    // The session catalog's own token (both lines' sessions carry it as auth-token).
+    properties.put("token", spark.conf().get(FormatV3Tables.CATALOG_PREFIX + ".auth-token").trim());
     RESTCatalog rest =
         (RESTCatalog)
             CatalogUtil.loadCatalog(
@@ -336,8 +332,8 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
 
   /**
    * DATA_COMPACTION as the scheduler launches it: {@code --tableName} only, so every default
-   * applies (TableDataCompactionTask.getArgs). Whether it plans a rewrite depends on the shape's
-   * file counts; the test prints what it did and requires only that nothing is lost.
+   * applies (TableDataCompactionTask.getArgs). On the 1.12 line it commits a rewrite on every
+   * shape; on the reference line it may plan none.
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
@@ -359,6 +355,13 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
             + formatVersion
             + " committed="
             + (table.currentSnapshot().snapshotId() != current));
+    if (FormatV3Tables.icebergCanWriteV3()) {
+      // Observed on the Iceberg 1.12 line on every shape: the defaults plan a rewrite (each shape
+      // has 8 or more small files with deletes). The reference line (1.5.2) plans none on the base
+      // fixture (FormatV3MaintenanceTest), so there it may do nothing.
+      Assertions.assertNotEquals(
+          current, table.currentSnapshot().snapshotId(), "compaction committed (1.12 line)");
+    }
     assertNoLiveDataLost(formatVersion, shape, before);
   }
 
