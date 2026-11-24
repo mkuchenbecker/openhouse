@@ -21,8 +21,10 @@ import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,6 +43,8 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.DeleteFile;
+import org.apache.iceberg.FileContent;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.StructLike;
@@ -542,6 +546,7 @@ public final class Operations implements AutoCloseable {
                             + "but file %s has residual filter %s, which would require a row-level rewrite.",
                         fqtn, task.file().path(), task.residual()));
               });
+      reportDeleteFilesInBackup(fqtn, filesList);
       return filesList.stream()
           .collect(
               Collectors.groupingBy(
@@ -552,6 +557,68 @@ public final class Operations implements AutoCloseable {
                   Collectors.mapping(task -> task.file().path().toString(), Collectors.toList())));
     } catch (IOException e) {
       throw new RuntimeException("Failed to plan backup files for retention", e);
+    }
+  }
+
+  /**
+   * Signals (work item X9) that the expired partitions of a backup-enabled table carry delete
+   * files: the backup holds their data files and a manifest of data files only, so rows deleted
+   * before retention are in it with nothing recording the deletes (decision D46, not decided). A
+   * WARN log naming the table and the counts, and one metric per kind of delete; what is backed up
+   * and deleted does not change. Counts: position-delete files and equality-delete files (distinct
+   * files), deletion vectors (one per data file: {@code planFiles} gives one task per data file).
+   */
+  private void reportDeleteFilesInBackup(String fqtn, List<FileScanTask> expiredFiles) {
+    Set<String> positionDeleteFiles = new HashSet<>();
+    Set<String> equalityDeleteFiles = new HashSet<>();
+    long deletionVectors = 0;
+    long dataFilesWithDeletes = 0;
+    for (FileScanTask task : expiredFiles) {
+      if (!task.deletes().isEmpty()) {
+        dataFilesWithDeletes++;
+      }
+      for (DeleteFile delete : task.deletes()) {
+        if (delete.content() == FileContent.EQUALITY_DELETES) {
+          equalityDeleteFiles.add(delete.path().toString());
+        } else if ("PUFFIN".equals(delete.format().name())) {
+          deletionVectors++;
+        } else {
+          positionDeleteFiles.add(delete.path().toString());
+        }
+      }
+    }
+    if (dataFilesWithDeletes == 0) {
+      return;
+    }
+    log.warn(
+        "Retention backup of table {}: {} of {} expired data files carry deletes ({} position-delete "
+            + "files, {} equality-delete files, {} deletion vectors); the backup holds the data files "
+            + "only, so it includes rows deleted before retention",
+        fqtn,
+        dataFilesWithDeletes,
+        expiredFiles.size(),
+        positionDeleteFiles.size(),
+        equalityDeleteFiles.size(),
+        deletionVectors);
+    if (otelEmitter == null) {
+      return;
+    }
+    emitBackupDeletes(fqtn, AppConstants.POSITION_DELETES, positionDeleteFiles.size());
+    emitBackupDeletes(fqtn, AppConstants.EQUALITY_DELETES, equalityDeleteFiles.size());
+    emitBackupDeletes(fqtn, AppConstants.DELETION_VECTORS, deletionVectors);
+  }
+
+  private void emitBackupDeletes(String fqtn, String kind, long count) {
+    if (count > 0) {
+      otelEmitter.count(
+          METRICS_SCOPE,
+          AppConstants.RETENTION_BACKUP_DELETE_FILE_COUNT,
+          count,
+          Attributes.of(
+              AttributeKey.stringKey(AppConstants.TABLE_NAME),
+              fqtn,
+              AttributeKey.stringKey(AppConstants.DELETE_KIND),
+              kind));
     }
   }
 

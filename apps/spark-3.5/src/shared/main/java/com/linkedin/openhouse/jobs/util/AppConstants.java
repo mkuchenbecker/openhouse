@@ -22,6 +22,13 @@ public final class AppConstants {
   public static final String REWRITTEN_DATA_FILE_GROUP_COUNT = "rewritten_data_file_group_count";
   public static final String RETENTION_POLICY_MISCONFIGURED_TABLE_COUNT =
       "retention_policy_misconfigured_table_count";
+  // Delete files in the expired partitions a retention backup covers (work item X9, decision D46)
+  public static final String RETENTION_BACKUP_DELETE_FILE_COUNT =
+      "retention_backup_delete_file_count";
+  public static final String DELETE_KIND = "delete_kind";
+  public static final String POSITION_DELETES = "position_deletes";
+  public static final String EQUALITY_DELETES = "equality_deletes";
+  public static final String DELETION_VECTORS = "deletion_vectors";
 
   // Snapshot Expiration metrics
   public static final String SNAPSHOTS_EXPIRATION_DURATION = "snapshots_expiration_duration";
