@@ -361,8 +361,10 @@ public class NativeColumnDefaultsSparkTest extends OpenHouseSparkITest {
   }
 
   /**
-   * After a rename, a type widening, a drop of another column and a new column, old rows still read
-   * the defaults; a defaulted column added after that fills every row written before it.
+   * After a type widening, a comment change and new columns (one without a default, one with), old
+   * rows still read the defaults, and a defaulted column added later fills every row written before
+   * it. Renaming or dropping a column is refused by OpenHouse's schema-evolution rule on any table,
+   * as before, and the refusal leaves the defaults as they were.
    */
   @ParameterizedTest(name = "{0}, vectorized={1}")
   @CsvSource({"parquet,false", "parquet,true", "orc,false", "orc,true"})
@@ -371,30 +373,39 @@ public class NativeColumnDefaultsSparkTest extends OpenHouseSparkITest {
     String table = "evolve_" + format + "_" + vectorized;
     createDefaultedTable(table, format, vectorized, "");
 
-    spark.sql("ALTER TABLE " + t(table) + " RENAME COLUMN c_str TO country");
     spark.sql("ALTER TABLE " + t(table) + " ALTER COLUMN c_int TYPE bigint");
-    spark.sql("ALTER TABLE " + t(table) + " DROP COLUMN c_bool");
+    spark.sql("ALTER TABLE " + t(table) + " ALTER COLUMN c_str COMMENT 'country code'");
     spark.sql("ALTER TABLE " + t(table) + " ADD COLUMN later string");
     UpdateSchema update = table(table).updateSchema();
     addColumn(update, null, "c_late", Types.IntegerType.get(), Literal.of(9));
     update.commit();
     spark.sql("REFRESH TABLE " + t(table));
+    for (String refused : Arrays.asList("RENAME COLUMN c_str TO country", "DROP COLUMN c_bool")) {
+      Throwable thrown = thrown(() -> spark.sql("ALTER TABLE " + t(table) + " " + refused));
+      Assertions.assertTrue(
+          chain(thrown).contains("invalid schema evolution"), refused + ": " + chain(thrown));
+    }
+    spark.sql("REFRESH TABLE " + t(table));
 
     Assertions.assertEquals(
         Arrays.asList(
-            "[1,7,US,null,9,5]",
-            "[2,7,US,null,9,5]",
-            "[3,8,CA,null,9,30]",
-            "[4,null,null,null,9,null]"),
-        rows("SELECT id, c_int, country, later, c_late, s.b FROM %s ORDER BY id", table));
-    assertIds(table, "country = 'US'", 1, 2);
+            "[1,7,US,true,null,9,5]",
+            "[2,7,US,true,null,9,5]",
+            "[3,8,CA,false,null,9,30]",
+            "[4,null,null,null,null,9,null]"),
+        rows("SELECT id, c_int, c_str, c_bool, later, c_late, s.b FROM %s ORDER BY id", table));
+    assertIds(table, "c_str = 'US'", 1, 2);
     assertIds(table, "c_int = 7", 1, 2);
     assertIds(table, "c_late = 9", 1, 2, 3, 4);
     Assertions.assertEquals(
-        Collections.singletonList("[3,22]"),
-        rows("SELECT count(c_int), sum(c_int) FROM %s", table));
-    Assertions.assertEquals("US", storedField(table, "country").get("initial-default").asText());
-    Assertions.assertEquals(7L, storedField(table, "c_int").get("initial-default").asLong());
+        Collections.singletonList("[3,22,7,8]"),
+        rows("SELECT count(c_int), sum(c_int), min(c_int), max(c_int) FROM %s", table));
+    JsonNode cInt = storedField(table, "c_int");
+    Assertions.assertEquals("long", cInt.get("type").asText(), cInt.toString());
+    Assertions.assertEquals(7L, cInt.get("initial-default").asLong(), cInt.toString());
+    JsonNode cStr = storedField(table, "c_str");
+    Assertions.assertEquals("country code", cStr.get("doc").asText(), cStr.toString());
+    Assertions.assertEquals("US", cStr.get("initial-default").asText(), cStr.toString());
   }
 
   /**
