@@ -1,6 +1,6 @@
 # Audit of the open work items against the code
 
-Update 2026-11-24: since this audit, N8, V18 and C15 have closed (pull request 139, merge commit `e6c52c21`; `75-n8-v18-c15-and-ci-fix-result.md`). X10 (rest) and X15 have also closed (pull request 137, merge commit `461ae437`; `76-x10-shapes-result.md`). T6 and N10 have also closed (pull request 140, merge commit `dfcd15a0`; `77-t6-n10-result.md`). V22 is new. V19, V20, V22, N16 and X9 have also closed (pull requests 142 and 141, merge commits `af210f1b` and `3079859d`; `78-v19-v20-v22-n16-x9-result.md`). The counts below are as written at the audit.
+Update 2026-11-24: since this audit, N8, V18 and C15 have closed (pull request 139, merge commit `e6c52c21`; `75-n8-v18-c15-and-ci-fix-result.md`). X10 (rest) and X15 have also closed (pull request 137, merge commit `461ae437`; `76-x10-shapes-result.md`). T6 and N10 have also closed (pull request 140, merge commit `dfcd15a0`; `77-t6-n10-result.md`). V22 is new. V19, V20, V22, N16 and X9 have also closed (pull requests 142 and 141, merge commits `af210f1b` and `3079859d`; `78-v19-v20-v22-n16-x9-result.md`). C19 has also closed (pull request 143, merge commit `f07a92e1`); it was opened after the audit. The counts below are as written at the audit.
 
 Bottom line: 62 rows were open at the start of this audit, and 8 of them were already true in the code. Of the rest, 8 are
 partly done, 16 wait on Mike, 2 cannot be settled by reading, and 28 are still open. The rows come from `04-work.md`,

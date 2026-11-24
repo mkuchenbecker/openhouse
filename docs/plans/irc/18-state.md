@@ -2,12 +2,12 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 142 are merged (141 is N16 and X9, one catalog per job run in the jobs and a signal for delete
-files in retention backups; 142 is V19, V20 and V22, a rename limit property and the FileIO class per storage type; 140 is
-T6 and N10). One piece of work is in flight: the jobs test heap margin (C19). View rename stopped on D47. Nothing is
-merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for 134 to
-140 was read and passed, and for 141 and 142 it is not read yet. An audit of the open work items found 8 of 62 already
-true and 8 partly done (`74-work-table-audit.md`; 13 of the open items have closed since).
+checks pass in CI. Pull requests 121 and 124 to 143 are merged (143 is C19, the jobs tests close what their fixtures build and the Spark 3.5
+jobs tests have a 1 GB heap; 142 is V19, V20 and V22; 141 is N16 and X9). Two pieces of work are in flight: the post-merge
+build (C20) and one batch of jobs work (X11, X12, X13). View rename stopped on D47. Nothing is merged into either fork's
+main or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for every merge up to and including
+141 was read and passed, and for 143 it is not read yet. An audit of the open work items found 8 of 62 already true and
+8 partly done (`74-work-table-audit.md`; 14 of the open items have closed since).
 This is the single place for current state. Dated 2026-11-24.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
@@ -67,38 +67,40 @@ This is the single place for current state. Dated 2026-11-24.
 
 ## Merged pull requests
 
-63 pull requests are merged into `irc-integration` (the last is 141, merge commit 3079859d) and 10 into the Iceberg
+64 pull requests are merged into `irc-integration` (the last is 143, merge commit f07a92e1) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 142 and 141 in `78-v19-v20-v22-n16-x9-result.md`; 140 in `77-t6-n10-result.md`; 137 in `76-x10-shapes-result.md`.
+The latest: 143, 142 and 141 in `78-v19-v20-v22-n16-x9-result.md`; 140 in `77-t6-n10-result.md`; 137 in `76-x10-shapes-result.md`.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6e, N1, N2, C8, C12, T12, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 to 142 are merged, and `irc-integration` is at `3079859d`. One piece of
-work is in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
+Bottom line: pull requests 121 and 124 to 143 are merged, and `irc-integration` is at `f07a92e1`. Two pieces of
+work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- The jobs test heap margin (C19): the jobs test suite ends a full run with about 140 MB of its 512 MB heap free; give it
-  room (fixtures that build a new `Operations` per call reuse one; an explicit test heap). Worktree `/home/user/oh-heap`,
-  branch `irc/jobs-test-heap-margin`, record `jobs-test-heap-margin.md` in the reports directory.
+- In flight, the post-merge build (C20): split it or bring it under about 30 minutes. Worktree `/home/user/oh-c20`, branch
+  `irc/ci-post-merge-split`, record `ci-post-merge-split.md` in the reports directory.
+- In flight, one batch of jobs work (X11 sort stats collection on the Iceberg 1.5.2 line, X12 delete-file stats on format
+  v3, X13 dangling deletion vectors after retention). Worktree `/home/user/oh-jobs3`, branch
+  `irc/jobs-batch-x11-x12-x13`, record `jobs-batch-x11-x12-x13.md` in the reports directory.
 - View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
-- Post-merge CI [read 2026-11-24]: passed for the merges of 134 to 140. The one of 140 ran in a single build job of 67
-  minutes (36 minutes that morning), because that job runs every suite. Not read yet for 142 and 141: read them first
-  (D33). Post-merge runs queue one behind another, so the result can lag by hours (C20).
-- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 13 items closed since). Read it before
+- Post-merge CI [read 2026-11-24]: passed for the merges of 142 and 141, so every merge up to and including 141 is
+  confirmed green after landing. Not read yet for 143: read it first (D33). The post-merge job takes 67 minutes and runs
+  queue one behind another, so the result can lag by hours (C20).
+- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 items closed since). Read it before
   launching any small item.
 - Hazard: orphaned test processes from a finished agent (a Gradle test worker and three test service processes of the
   format v3 types work, started about 07:10 UTC on 2026-11-24) hold about 3 GB of the machine's 15 GB. The orchestrator's
   attempt to stop them was denied by the permission system and Mike was told; builds have less headroom until they are
   gone or the container restarts.
-- Hazard: N16 landed and removed the leak per table load, but the jobs test suite's margin is unchanged at about 140 MB
-  of 512, so new jobs tests can still run it out of memory until the heap margin item (C19) lands.
+- The jobs test heap hazard is resolved by pull request 143 (about 728 MB of margin under a 1 GB heap, computed). A future
+  author should watch the heap after a full collection at the end of the suite and how many `Operations` a fixture builds.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
@@ -108,8 +110,8 @@ What comes next, after the work in flight:
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for pull requests 121 and 124 to 140 was read on 2026-11-24 and every
-job passed; those of 141 and 142 are not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+Nothing known red at this time. Post-merge CI for every merge up to and including 141 was read on 2026-11-24 and every
+job passed; that of 143 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). V19 and V20, found by pull request 121, are fixed (pull request 142).
 
