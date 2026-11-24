@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 50 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 130, merge
-commit adc28470) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 51 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 131, merge
+commit 1dd485d3) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -60,6 +60,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 125 | X6: every maintenance job that opens a table runs on a format v3 table with deletion vectors and loses no live data; tests only, no job changed; the retention backup's handling of deletes is pinned and put to Mike (D46) (`63-x6-maintenance-v3-result.md`) | 262a1416b982ec99694713cfdc8ed8d26fa3e344 |
 | 128 | N1-c, N7: Spark 3.5 on Iceberg's plain REST catalog gives the baseline outcome on 168 of 177 smoke statements, 9 declared differences; the Spark 3.5 and Spark 4.2 suites share one scenario list (`64-n1c-n7-result.md`) | ca94d82e0c833d513db0eadf6007627c7840ccd3 |
 | 130 | X10, concurrency part: row-level writes racing compaction, expiry, retention and orphan removal on format v3 tables are refused by the service on the old base and re-checked by Iceberg, natively and over REST; tests only; two Iceberg behaviors pinned (`65-x10-concurrency-result.md`) | adc28470278fe2c762ab37fbbe57c16bc7872a99 |
+| 131 | V11b, V11c: with server planning Spark 4.2 writes store the same tables and reads return the same rows; one plan holds at most 10,000 file scan tasks and a larger scan is answered `failed`; two differences pinned (`66-v11b-v11c-result.md`) | 1dd485d37140f91a0bcbe469b933762085f968a4 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
