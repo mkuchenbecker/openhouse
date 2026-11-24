@@ -93,9 +93,9 @@ Bottom line: pull requests 121, 124, 126 and 127 are merged, and `irc-integratio
 work are in flight: X6 and X5. If the session stops, a future session reads each record below and the branch's log,
 and resumes from what they say.
 
-- The container restarted on 2026-11-24 at about 00:01 UTC; files survived. Agents now push work in progress early.
-- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC. Code agents run on the next
-  model down meanwhile.
+- The container restarted on 2026-11-24 at about 00:01 UTC; files survived. Agents push work early.
+- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next model
+  down meanwhile.
 - X6, maintenance jobs on format v3 tables: pull request 125 is open as a draft, tests only so far, held back from
   merging while its author closes the gaps an independent review found: retention with backup does not carry deletion
   vectors, compaction was not tested with the scheduler's real arguments, and several checks that the job did real
@@ -104,8 +104,8 @@ and resumes from what they say.
 - X5, the column types format v3 adds, each supported or refused type by type: worktree `/home/user/oh-x5`, branch
   `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory.
 - Post-merge CI for the merges of pull requests 126 and 127 has not been read yet; read it first (D33).
-- Finished: V11a with V12a (pull request 127, `62-v11a-v12a-result.md`), W7 with X4 (pull request 126,
-  `61-w7-x4-result.md`), and the V11 and V12 investigation (`60-v11-v12-investigation-result.md`; D44 and D45).
+- Finished: V11a with V12a (`62-v11a-v12a-result.md`), W7 with X4 (`61-w7-x4-result.md`), and the V11 and V12
+  investigation (`60-v11-v12-investigation-result.md`).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, in order, after these:
