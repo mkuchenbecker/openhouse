@@ -1198,14 +1198,19 @@ public abstract class SparkSqlSmokeScenarios {
         "SHOW TBLPROPERTIES " + t + policies,
         rows("policies,{\n  \"sharingEnabled\": false,\n" + noReplication + history));
     sql(spark, "ALTER TABLE " + t + " MODIFY COLUMN name SET TAG = (PII, HC)");
+    // The service keeps the tags as a HashSet of an enum (PolicyTag.tags), whose order follows the
+    // enum constants' identity hash codes and so can change from one service JVM to the next: one
+    // run stored PII then HC, another HC then PII, the same on every path of a run. Either order
+    // is the baseline's.
     sql(
         spark,
         "SHOW TBLPROPERTIES " + t + policies,
-        rows(
-            "policies,{\n  \"sharingEnabled\": false,\n  \"columnTags\": {\n    \"name\": {\n"
-                + "      \"tags\": [\n        \"HC\",\n        \"PII\"\n      ]\n    }\n  },\n"
-                + noReplication
-                + history));
+        rowsMatching(
+            Pattern.quote(
+                    "policies,{\n  \"sharingEnabled\": false,\n  \"columnTags\": {\n    \"name\": {\n"
+                        + "      \"tags\": [\n        \"")
+                + "(PII\",\n        \"HC|HC\",\n        \"PII)"
+                + Pattern.quote("\"\n      ]\n    }\n  },\n" + noReplication + history)));
     sql(spark, "ALTER TABLE " + t + " MODIFY COLUMN name SET TAG = (NONE)");
     sql(
         spark,

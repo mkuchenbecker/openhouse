@@ -369,7 +369,10 @@ catalog or client class, in its own JVM and service JVM:
 - The statements and their baseline outcomes (Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2)
   are one list, `SparkSqlSmokeScenarios`, in the Spark 3.5 itest's `src/shared/smoke/java`. It needs
   only `spark.sql` and JUnit. The Spark 3.5 itest's `SparkSqlSmokeTest` runs it on each Spark 3.5
-  catalog path, and this module compiles the same directory into its `smoke` source set.
+  catalog path (`legacy`, `rest-shim`, and on the Iceberg 1.12 line `rest-http`: Iceberg's
+  `SparkCatalog` with `type=rest` over the service's IRC routes, `RestHttpPathSparkSqlSmokeTest`),
+  each writing `build/openhouse-spark-3.5-itest/reports/smoke/spark-3.5-<path>-outcomes.tsv`, and
+  this module compiles the same directory into its `smoke` source set.
 - `Spark42IrcSparkSqlSmokeTest` (`src/smoke/java`) runs every statement and lists the statements
   whose outcome is not the baseline's, each with the baseline, what Spark 4.2 does, and the kind of
   difference. A statement that differs without being listed fails, and so does a listed one that
