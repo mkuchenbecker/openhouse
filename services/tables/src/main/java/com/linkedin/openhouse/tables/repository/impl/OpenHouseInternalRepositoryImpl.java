@@ -1053,7 +1053,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
         new TableDtoWithMetadata(
             convertToTableDto(
                 table, fileIOManager, partitionSpecMapper, policiesMapper, tableTypeMapper),
-            ((HasTableOperations) table).operations().current()));
+            ((HasTableOperations) table).operations().current(),
+            table));
   }
 
   @Override

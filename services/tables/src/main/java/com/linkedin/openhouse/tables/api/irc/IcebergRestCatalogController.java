@@ -152,6 +152,8 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/properties"},
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
+          // Scan planning and credentials: served by IcebergRestScanController on the Iceberg 1.12
+          // line; on LinkedIn's 1.5.2 reference line, which lacks their classes, answered here.
           new String[] {"POST", "/v1/namespaces/*/tables/*/plan"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/plan/*"},
           new String[] {"DELETE", "/v1/namespaces/*/tables/*/plan/*"},

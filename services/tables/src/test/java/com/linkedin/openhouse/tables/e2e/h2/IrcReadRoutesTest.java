@@ -163,7 +163,7 @@ public class IrcReadRoutesTest {
         Collections.singletonMap("openhouse.capabilities", "policies,grants,unlock");
     assertEquals(overrides, JsonPath.read(json, "$.overrides"));
     // The served spec routes (IrcConfigEndpointsTest), which this Iceberg line's client ignores.
-    assertEquals(IrcConfigEndpointsTest.SERVED_ON_ICEBERG_1_5, JsonPath.read(json, "$.endpoints"));
+    assertEquals(IrcConfigEndpointsTest.served(), JsonPath.read(json, "$.endpoints"));
     ConfigResponse config = IrcClientParsers.parse(json, ConfigResponse.class);
     assertEquals(expected, config.defaults());
     assertEquals(overrides, config.overrides());
@@ -570,21 +570,27 @@ public class IrcReadRoutesTest {
   /**
    * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
    * report, register and multi-table commit routes were among them until they were served:
-   * IrcMetricsRouteTest, IrcRegisterRouteTest, IrcTransactionRouteTest.)
+   * IrcMetricsRouteTest, IrcRegisterRouteTest, IrcTransactionRouteTest; and, on the Iceberg 1.12
+   * line, the scan planning and credentials routes: IrcPlanCredentialsRoutesTest.)
    */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
-    Object[][] routes = {
-      {HttpMethod.POST, "/v1/namespaces"},
-      {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
-      {HttpMethod.POST, "/v1/oauth/tokens"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"},
-      {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/plan/p1"},
-      {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/tasks"},
-      {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"},
-    };
+    List<Object[]> routes =
+        new ArrayList<>(
+            Arrays.asList(
+                new Object[][] {
+                  {HttpMethod.POST, "/v1/namespaces"},
+                  {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
+                  {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
+                  {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
+                  {HttpMethod.POST, "/v1/oauth/tokens"},
+                  {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/plan/p1"},
+                  {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/tasks"},
+                }));
+    if (!IrcPlanCredentialsRoutesTest.served()) {
+      routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"});
+      routes.add(new Object[] {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"});
+    }
     for (Object[] route : routes) {
       MvcResult result =
           IrcHttp.perform(mvc, IrcHttp.request((HttpMethod) route[0], (String) route[1]));

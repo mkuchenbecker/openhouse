@@ -34,6 +34,9 @@ public class IcebergRestRoutesBoundaryTest {
 
   private static final String WRITE_API_CLASS = "org.apache.iceberg.UpdateRequirement";
 
+  private static final String SCAN_API_CLASS =
+      "org.apache.iceberg.rest.requests.PlanTableScanRequest";
+
   private static final String WRITE_HANDLER_CLASS =
       "com.linkedin.openhouse.tables.api.irc.IcebergRestWriteHandler";
 
@@ -66,8 +69,12 @@ public class IcebergRestRoutesBoundaryTest {
   }
 
   private static boolean icebergWriteApiPresent() {
+    return classPresent(WRITE_API_CLASS);
+  }
+
+  private static boolean classPresent(String name) {
     try {
-      Class.forName(WRITE_API_CLASS);
+      Class.forName(name);
       return true;
     } catch (ClassNotFoundException e) {
       return false;
@@ -163,7 +170,18 @@ public class IcebergRestRoutesBoundaryTest {
         endpoints.toString());
     Assertions.assertTrue(
         endpoints.contains("POST /v1/{prefix}/transactions/commit"), endpoints.toString());
-    Assertions.assertEquals(19, endpoints.size(), endpoints.toString());
+    // The scan planning and credentials routes are served where Iceberg has their classes (the
+    // 1.12 line), not on LinkedIn's 1.5.2 reference line.
+    boolean planning = classPresent(SCAN_API_CLASS);
+    Assertions.assertEquals(
+        planning,
+        endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan"),
+        endpoints.toString());
+    Assertions.assertEquals(
+        planning,
+        endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials"),
+        endpoints.toString());
+    Assertions.assertEquals(planning ? 21 : 19, endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 
