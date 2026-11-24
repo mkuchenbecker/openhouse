@@ -4,11 +4,11 @@ Bottom line: nothing blocks work. These are the decisions that are Mike's, most 
 before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23. Only
 `01-stated.md` carries Mike's authority.
 
-- D32: what "conforming Iceberg REST Catalog server" means. The compatibility kit's 96 failures, by cause
+- D32: what "conforming Iceberg REST Catalog server" means. The compatibility kit's 95 failures, by cause
   (`60-v11-v12-investigation-result.md`): 33 are the namespace model (a namespace cannot exist on its own, and
   create, alter and drop are not served); 44 are OpenHouse rules the kit does not expect (replace needs
-  `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13); the other 19 are small model
-  differences (7), kit message-text assertions (9), view rename (2) and one kit contradiction (1). None is scan
+  `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13); the other 18 are small model
+  differences (6), kit message-text assertions (9), view rename (2) and one kit contradiction (1). None is scan
   planning or credentials.
 - Whether the server should turn server-side scan planning on for clients (V11d, D44). The route is served either way;
   turning it on changes every client's read path. Nothing waits on this.

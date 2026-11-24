@@ -45,6 +45,7 @@ Each exists on the native path only (J3).
 | X12 | oh | Table stats on v3 count each deletion vector as a delete file and add the whole Puffin file size once per vector, over-reporting sizes. Reporting only; not asserted. | X6 | Stats on a v3 table equal the files and bytes the snapshot holds. |
 | X13 | oh | After retention on a format v3 table, deletion vectors that point at removed data files are cleaned up (Iceberg has a remove-dangling-deletes option). Two-way door. Found by X10, where a DELETE racing retention leaves one (`65-x10-concurrency-result.md`). | X10 | A test: a DELETE prepared before retention and committed after it leaves no dangling deletion vector, rows unchanged. |
 | X14 | oh | **Needs Mike's say (a refusal).** Orphan removal enforces a floor on its age threshold inside the app itself, not only in its argument parsing. Today age 0 through the constructor deletes a writer's in-flight files (`65-x10-concurrency-result.md`). | X10 | A test: constructing the app with age 0 is refused, or floored, as decided; the production arguments behave as before. |
+| X15 | oh | Table stats collection maps partition values by the current spec's positions (`TableStatsCollectorUtil`), so it would mislabel partitions on a table whose current spec dropped a field of an earlier spec. Read in code, not run; tables made by a replace are exposed the same way, and V14 (`72-v14-create-history-result.md`) makes tables with older specs more common. | V14 | A test: a table whose spec dropped a field, with data under the older spec, reports every partition under the right column. |
 
 ## IRC scan planning and credentials (V11, V12)
 
@@ -64,3 +65,12 @@ rows V11 and V12 of `04-work.md`. Decisions: D44 and D45 in `56-decisions-contin
 | V12c | oh | **Mike's decision.** S3 vending: STS credentials scoped to the table prefix in `storage-credentials`, refreshed through `/credentials`. One-way (new dependency, secret, contract). | V12b | A MinIO STS container test: the vended key reads this table's prefix and is refused on another table's. |
 | V12d | oh | **Mike's decision.** S3 remote signing: `/sign` with a prefix check, and `s3.remote-signing-enabled` in the load config when requested. One-way (contract, service in the data path). | V12b | MinIO: a signed GET of this table's file works, another table's is 403. |
 | V12e | oh | **Mike's decision.** ADLS SAS vending through config and the refresh endpoint. One-way. | V12b | Azurite: a SAS limited to the table directory. |
+
+## Build and CI
+
+Bottom line: C16 is done (`71-c16-ci-split-result.md`); two proposals from it are open, both two-way doors.
+
+| ID | Repo | Leaves true | Needs | Proven by |
+| --- | --- | --- | --- | --- |
+| C17 | oh | Gradle's build cache serves the default line's large test tasks when their inputs are unchanged, so unchanged suites are skipped with no false skips. Today they never come from the cache although the reference line's do (9 to 11 tasks), so some input changes from run to run; not investigated (`71-c16-ci-split-result.md`). | C16 | Two runs on the same tree: the large test tasks of the second are `FROM-CACHE`, and a change to code they depend on still runs them. |
+| C18 | oh | Path-based selection for pull requests that touch only documentation or only recipes, with the post-merge full run as the backstop. Needs care: the test fixtures embed the tables service, so a change under `services/tables` must run the apps and Spark suites; a wrong filter skips silently. | C16 | A documentation-only pull request skips the Gradle jobs; a change under `services/tables` runs all of them; the post-merge run still runs everything. |

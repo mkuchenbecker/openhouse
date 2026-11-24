@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 53 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 132, merge
-commit 9f9561e6) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 55 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 134, merge
+commit d30cb9f6) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -63,6 +63,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 131 | V11b, V11c: with server planning Spark 4.2 writes store the same tables and reads return the same rows; one plan holds at most 10,000 file scan tasks and a larger scan is answered `failed`; two differences pinned (`66-v11b-v11c-result.md`) | 1dd485d37140f91a0bcbe469b933762085f968a4 |
 | 129 | X5: each column type format v3 adds is supported or refused with a reason; `unknown` supported, `variant` behind `cluster.iceberg.format-v3.variant.enabled` (default off, D48), `timestamp_ns`, `timestamptz_ns`, `geometry` and `geography` refused (`68-x5-v3-types-result.md`) | 70b35d7a5608ad10db53acbb99a1aa853d18ea45 |
 | 132 | V11e: the plan route refuses format v3 tables with a visible failure (D49); a scan naming a column added after its snapshot is planned as the client plans it (`69-v11e-result.md`) | 9f9561e6987541460d537eb40d7c248b04c68955 |
+| 133 | C16: a pull request's CI is split into parallel jobs, 52.2 minutes before and 21.6 after, with identical test lists; post-merge runs stay single jobs (`71-c16-ci-split-result.md`) | 7e57bd2162489d248da60022d7af434e7e056b01 |
+| 134 | V14: a create transaction over the Iceberg REST routes keeps its schema, partition spec and sort order history; the compatibility kit passes 42 of 160 (`72-v14-create-history-result.md`) | d30cb9f628d34b8d1f6ca42968ad201d4a01d2fa |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
