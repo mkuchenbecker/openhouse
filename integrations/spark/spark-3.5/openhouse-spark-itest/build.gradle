@@ -92,6 +92,8 @@ task catalogTest(type: Test) {
   }
   // One line per smoke statement and catalog path: the statement, the baseline, the outcome.
   systemProperty 'smoke.outcomes.dir', layout.buildDirectory.dir('reports/smoke').get().asFile.path
+  // Which Iceberg line this build is, for RestHttpPathLineTest.
+  systemProperty 'smoke.iceberg.build', rootProject.hasProperty('icebergLinkedIn') ? 'linkedin-1.5.2' : 'iceberg-1.12'
   if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
     jvmArgs \
         '--add-opens=java.base/java.nio=ALL-UNNAMED',

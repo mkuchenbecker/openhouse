@@ -38,6 +38,15 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
    */
   protected static final String REST_SHIM = "rest-shim";
 
+  /**
+   * Iceberg's own {@code SparkCatalog} with {@code type=rest}, over HTTP to the tables service's
+   * Iceberg REST routes, with no OpenHouse catalog class on the catalog: what a platform configures
+   * to reach OpenHouse through plain Iceberg REST (work item N1-c). The OpenHouse SQL extensions
+   * are in the session as on the other paths (the shared session loads them through {@code
+   * spark.sql.extensions}). Iceberg 1.12 line only: see {@code RestHttpPathSparkSqlSmokeTest}.
+   */
+  protected static final String REST_HTTP = "rest-http";
+
   private static final String LEGACY_CATALOG_IMPL = "com.linkedin.openhouse.spark.OpenHouseCatalog";
   private static final String REST_SHIM_CATALOG_IMPL =
       "com.linkedin.openhouse.spark.OpenHouseRestCatalog";
@@ -49,11 +58,16 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     SparkSession session() throws Exception {
       return getSparkSession();
     }
+
+    String uri() {
+      return getOpenHouseLocalServerURI().toString();
+    }
   }
 
   private static final Fixture FIXTURE = new Fixture();
 
   private static SparkSession restShimSession;
+  private static SparkSession restHttpSession;
   private static ConfigurableApplicationContext viewsServer;
 
   /** The catalog path under test. */
@@ -67,6 +81,8 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
         return FIXTURE.session();
       case REST_SHIM:
         return restShimSession();
+      case REST_HTTP:
+        return restHttpSession();
       default:
         throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
     }
@@ -89,6 +105,37 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   }
 
   /**
+   * A session over the shared Spark context whose {@code openhouse} catalog is Iceberg's {@code
+   * SparkCatalog} over Iceberg's {@code RESTCatalog}: the OpenHouse catalog's settings are removed
+   * and the catalog is configured as a user of plain Iceberg REST would, with the same principal's
+   * token. Everything else matches the legacy session, the SQL extensions included.
+   */
+  private SparkSession restHttpSession() throws Exception {
+    SparkSession base = FIXTURE.session();
+    synchronized (SparkSqlSmokeTest.class) {
+      if (restHttpSession == null || restHttpSession.sparkContext() != base.sparkContext()) {
+        SparkSession spark = base.newSession();
+        restCatalog(spark, "openhouse", FIXTURE.uri(), base);
+        restHttpSession = spark;
+      }
+      return restHttpSession;
+    }
+  }
+
+  /** Makes {@code catalog} of {@code spark} Iceberg's REST catalog at {@code uri}'s IRC routes. */
+  private static void restCatalog(
+      SparkSession spark, String catalog, String uri, SparkSession base) {
+    String prefix = "spark.sql.catalog." + catalog;
+    for (String key : new String[] {"catalog-impl", "cluster", "auth-token"}) {
+      spark.conf().unset(prefix + "." + key);
+    }
+    spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");
+    spark.conf().set(prefix + ".type", "rest");
+    spark.conf().set(prefix + ".uri", uri + "/iceberg");
+    spark.conf().set(prefix + ".token", base.conf().get("spark.sql.catalog.openhouse.auth-token"));
+  }
+
+  /**
    * Session for scenarios that need views. Views are off in the default fixture, so these scenarios
    * run against a second embedded tables service with the views feature gate open and a catalog
    * with {@code iceberg-views-enabled} (the setup used by OpenHouseViewEnabledTestSpark3_5). The
@@ -101,6 +148,8 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
         return viewsSession(LEGACY_CATALOG_IMPL);
       case REST_SHIM:
         return viewsSession(REST_SHIM_CATALOG_IMPL);
+      case REST_HTTP:
+        return restHttpViewsSession();
       default:
         throw new IllegalArgumentException("Unknown catalog path: " + catalogPath());
     }
@@ -146,6 +195,17 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     return spark;
   }
 
+  /** The views catalog over the views service's IRC routes; views need no catalog flag there. */
+  private SparkSession restHttpViewsSession() throws Exception {
+    SparkSession base = FIXTURE.session();
+    String uri = viewsServerUri();
+    SparkSession spark = base.newSession();
+    restCatalog(spark, VIEWS_CATALOG, uri, base);
+    spark.conf().set("spark.sql.catalog." + VIEWS_CATALOG + ".cache-enabled", "false");
+    spark.conf().set("spark.sql.iceberg.rewriteViewCommands.enabled", "true");
+    return spark;
+  }
+
   /** One outcomes file per path, in the directory the build names. */
   @Override
   protected String outcomesFile() {
@@ -161,8 +221,11 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   @Override
   protected List<Difference> differences() {
     List<Difference> differences = new ArrayList<>();
-    if (IcebergLine.current() == IcebergLine.V3) {
+    if (IcebergLine.current() == IcebergLine.V3 && !REST_HTTP.equals(catalogPath())) {
       differences.addAll(namespaceExistsCheckOnIceberg112());
+    }
+    if (REST_HTTP.equals(catalogPath())) {
+      differences.addAll(RestHttpPathSparkSqlSmokeTest.restHttpDifferences());
     }
     return differences;
   }
@@ -208,6 +271,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     }
     synchronized (SparkSqlSmokeTest.class) {
       restShimSession = null;
+      restHttpSession = null;
       if (viewsServer != null) {
         viewsServer.close();
         viewsServer = null;
