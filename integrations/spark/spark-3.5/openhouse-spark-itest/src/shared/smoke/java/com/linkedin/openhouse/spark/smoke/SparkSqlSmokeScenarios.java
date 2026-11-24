@@ -13,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -42,12 +43,12 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Every statement of a scenario is run even after one of them gave an unexpected outcome, and
  * the scenario then fails with all of them. With the system property {@code smoke.outcomes.file}
- * set, the run writes one line per statement to that file: the statement, the baseline, this
- * platform's outcome and whether they are the same.
+ * set, or another file named by {@link #outcomesFile()}, the run writes one line per statement to
+ * that file: the statement, the baseline, this platform's outcome and whether they are the same.
  *
- * <p>Today this file is compiled only by the Spark 4.2 itest, and it is a copy of the Spark 3.5
- * suite's scenarios: the Spark 3.5 itest still has its own. {@code SmokeScenariosCopyTest} fails
- * when the two lists of scenarios differ. See that class for the follow-up that leaves one copy.
+ * <p>This is the one list of scenarios (work item N7). It lives in the Spark 3.5 itest ({@code
+ * src/shared/smoke/java}), whose {@code SparkSqlSmokeTest} runs it on each Spark 3.5 catalog path;
+ * the Spark 4.2 itest compiles the same file into its smoke source set and runs it over IRC.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class SparkSqlSmokeScenarios {
@@ -71,6 +72,15 @@ public abstract class SparkSqlSmokeScenarios {
   /** The directory the service keeps tables in. The baseline fixture uses {@code /tmp}. */
   protected String storageRoot() {
     return "/tmp";
+  }
+
+  /**
+   * The file the run writes its outcomes to, or null for none. By default the file the system
+   * property {@code smoke.outcomes.file} names; a platform that runs the suite more than once in a
+   * JVM names one file per run.
+   */
+  protected String outcomesFile() {
+    return System.getProperty("smoke.outcomes.file");
   }
 
   /** The statements on which this platform differs from the baseline. None by default. */
@@ -155,6 +165,28 @@ public abstract class SparkSqlSmokeScenarios {
       @Override
       boolean holds(Outcome outcome) {
         return !outcome.failed() && rows.equals(outcome.rows());
+      }
+    };
+  }
+
+  /**
+   * The statement returns exactly as many rows as {@code regexes}, each matching its regular
+   * expression in full, in this order. For a value the service draws at random.
+   */
+  protected static Expectation rowsMatching(String... regexes) {
+    List<String> patterns = Arrays.asList(regexes);
+    return new Expectation("rows matching " + patterns) {
+      @Override
+      boolean holds(Outcome outcome) {
+        if (outcome.failed() || outcome.rows().size() != patterns.size()) {
+          return false;
+        }
+        for (int i = 0; i < patterns.size(); i++) {
+          if (!outcome.rows().get(i).matches(patterns.get(i))) {
+            return false;
+          }
+        }
+        return true;
       }
     };
   }
@@ -318,7 +350,7 @@ public abstract class SparkSqlSmokeScenarios {
 
   @AfterAll
   public void endSuite() throws IOException {
-    String file = System.getProperty("smoke.outcomes.file");
+    String file = outcomesFile();
     if (file != null) {
       Path path = Paths.get(file);
       Files.createDirectories(path.getParent());
@@ -1117,6 +1149,105 @@ public abstract class SparkSqlSmokeScenarios {
         spark,
         "CALL openhouse.system.expire_snapshots(table => '" + DB + ".s30_meta', retain_last => 1)",
         rows("0,0,0,0,0,0"));
+  }
+
+  // ---------- scenarios added with the plain REST path (work item N1-c) ----------
+
+  /**
+   * Every form of the OpenHouse policy statements that s16 (retention) and s17 (sharing) do not
+   * run, each followed by the stored {@code policies}: the form reaches the service and stores what
+   * it stores on the baseline.
+   */
+  @Test
+  public void s31_policy_everyForm() throws Exception {
+    SparkSession spark = sparkSession();
+    String t = table("s31_policy");
+    String c = table("s31_policy_col");
+    fresh(spark, t, c);
+    sql(
+        spark,
+        "CREATE TABLE " + t + " (id bigint, name string, ts timestamp) PARTITIONED BY (days(ts))");
+    sql(spark, "CREATE TABLE " + c + " (id bigint, name string)");
+    String policies = " ('policies')";
+
+    sql(spark, "ALTER TABLE " + t + " SET POLICY (HISTORY MAX_AGE=3d VERSIONS=5)");
+    String history =
+        "  \"history\": {\n    \"maxAge\": 3,\n    \"granularity\": \"DAY\",\n"
+            + "    \"versions\": 5\n  }\n}";
+    String noReplication = "  \"replication\": {\n    \"config\": []\n  },\n";
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + t + policies,
+        rows("policies,{\n  \"sharingEnabled\": false,\n" + history));
+    sql(spark, "ALTER TABLE " + t + " SET POLICY (REPLICATION=({destination:'a', interval:12h}))");
+    // The service draws the replication schedule's minute at random; the rest is pinned. The
+    // destination is stored as the statement's literal, quotes kept and upper-cased.
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + t + policies,
+        rowsMatching(
+            Pattern.quote(
+                    "policies,{\n  \"sharingEnabled\": false,\n  \"replication\": {\n"
+                        + "    \"config\": [\n      {\n        \"destination\": \"'A'\",\n"
+                        + "        \"interval\": \"12H\",\n        \"cronSchedule\": \"")
+                + "0 [0-9]+ [0-9]+/12 \\? \\* \\* \\*"
+                + Pattern.quote("\"\n      }\n    ]\n  },\n" + history)));
+    sql(spark, "ALTER TABLE " + t + " UNSET POLICY (REPLICATION)");
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + t + policies,
+        rows("policies,{\n  \"sharingEnabled\": false,\n" + noReplication + history));
+    sql(spark, "ALTER TABLE " + t + " MODIFY COLUMN name SET TAG = (PII, HC)");
+    // The service keeps the tags as a HashSet of an enum (PolicyTag.tags), whose order follows the
+    // enum constants' identity hash codes and so can change from one service JVM to the next: one
+    // run stored PII then HC, another HC then PII, the same on every path of a run. Either order
+    // is the baseline's.
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + t + policies,
+        rowsMatching(
+            Pattern.quote(
+                    "policies,{\n  \"sharingEnabled\": false,\n  \"columnTags\": {\n    \"name\": {\n"
+                        + "      \"tags\": [\n        \"")
+                + "(PII\",\n        \"HC|HC\",\n        \"PII)"
+                + Pattern.quote("\"\n      ]\n    }\n  },\n" + noReplication + history)));
+    sql(spark, "ALTER TABLE " + t + " MODIFY COLUMN name SET TAG = (NONE)");
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + t + policies,
+        rows(
+            "policies,{\n  \"sharingEnabled\": false,\n  \"columnTags\": {\n    \"name\": {\n"
+                + "      \"tags\": []\n    }\n  },\n"
+                + noReplication
+                + history));
+
+    // The pattern is stored with its quotes without WITH TIMEZONE, and without them with it.
+    sql(
+        spark,
+        "ALTER TABLE "
+            + c
+            + " SET POLICY (RETENTION=30d ON COLUMN name WHERE PATTERN='yyyy-MM-dd')");
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + c + policies,
+        rows(
+            "policies,{\n  \"retention\": {\n    \"count\": 30,\n    \"granularity\": \"DAY\",\n"
+                + "    \"columnPattern\": {\n      \"columnName\": \"name\",\n"
+                + "      \"pattern\": \"'yyyy-MM-dd'\"\n    }\n  },\n  \"sharingEnabled\": false\n}"));
+    sql(
+        spark,
+        "ALTER TABLE "
+            + c
+            + " SET POLICY (RETENTION=7d WITH TIMEZONE 'America/Los_Angeles' ON COLUMN name"
+            + " WHERE PATTERN='yyyy-MM-dd')");
+    sql(
+        spark,
+        "SHOW TBLPROPERTIES " + c + policies,
+        rows(
+            "policies,{\n  \"retention\": {\n    \"count\": 7,\n    \"granularity\": \"DAY\",\n"
+                + "    \"columnPattern\": {\n      \"columnName\": \"name\",\n"
+                + "      \"pattern\": \"yyyy-MM-dd\"\n    },\n"
+                + "    \"timeZone\": \"America/Los_Angeles\"\n  },\n  \"sharingEnabled\": false\n}"));
   }
 
   @Test
