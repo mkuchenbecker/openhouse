@@ -57,7 +57,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  *   <li>the dummy token interceptor is on, so the catalog's {@code token} names a principal, as for
  *       the other Spark 4.2 test services;
  *   <li>the views feature gate is open for {@value #VIEWS_DB}. The Spark 3.5 suite starts a second
- *       embedded service for that; here one service has both kinds of database.
+ *       embedded service for that; here one service has both kinds of database;
+ *   <li>every request is written to an access log ({@code access} in the work directory), so a test
+ *       can see which routes the suite called.
  * </ul>
  *
  * <p>A control API on a second local port shows what the service stored, through the existing
@@ -97,7 +99,15 @@ public final class IrcSmokeTestService {
                     + DummyTokenInterceptor.class.getName(),
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
-                "--cluster.storages.types.local.rootpath=" + warehouse);
+                "--cluster.storages.types.local.rootpath=" + warehouse,
+                // Every request, unbuffered, so a test can see which routes the suite called.
+                "--server.tomcat.accesslog.enabled=true",
+                "--server.tomcat.accesslog.directory=" + work.resolve("access"),
+                "--server.tomcat.accesslog.prefix=access",
+                "--server.tomcat.accesslog.suffix=.log",
+                "--server.tomcat.accesslog.rotate=false",
+                "--server.tomcat.accesslog.buffered=false",
+                "--server.tomcat.accesslog.pattern=%m %U %s");
     context
         .getBean(ToggleStatusesRepository.class)
         .save(
