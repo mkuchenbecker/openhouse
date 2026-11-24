@@ -2,7 +2,9 @@ package com.linkedin.openhouse.tables.e2e.h2;
 
 import static com.linkedin.openhouse.tables.e2e.h2.IrcHttp.body;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.jayway.jsonpath.JsonPath;
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
@@ -18,8 +20,10 @@ import java.util.Map;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.rest.IrcClientParsers;
 import org.apache.iceberg.rest.RESTCatalog;
@@ -48,7 +52,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * <p>The config route advertises the default storage's class as the catalog's {@code io-impl}
  * ({@link IrcConfigFileIoTest}). The table's own responses (load, create, staged create) can carry
  * per-table {@code config}, which the client lays over the catalog's properties when it builds that
- * table's FileIO.
+ * table's FileIO: a table on a storage whose class is not the default's is given its own class
+ * there ({@code io-impl}, the class name only), and any other table nothing.
  *
  * <p>The clusters here have two storage types: a default one and {@code local}, which the regex
  * storage selector gives every table of {@link #LOCAL_DB}. The object stores are configured but
@@ -191,14 +196,48 @@ public class IrcTableFileIoTest {
     }
 
     /**
-     * PINNED, before V20: a table on local storage is given no {@code io-impl} of its own, so the
-     * client reads and writes it with the catalog's, the default storage's {@code S3FileIO}.
+     * A table on local storage is given its own storage's class, HadoopFileIO, in the create, load
+     * and staged create responses, and nothing else. The client then reads and writes it with that
+     * class, though its catalog's class is S3FileIO. The native API's answer is as it was.
      */
     @Test
-    void aLocalTableOnAnS3ClusterIsGivenTheS3Class() throws Exception {
+    void aLocalTableOnAnS3ClusterIsGivenTheHadoopClass() throws Exception {
       assertEquals(StorageType.S3, storageManager.getDefaultStorage().getType());
-      assertEquals(each(Collections.emptyMap()), tableConfigs());
-      assertEquals(S3, rest.loadTable(TableIdentifier.of(LOCAL_DB, "t")).io().getClass().getName());
+      assertEquals(each(Collections.singletonMap("io-impl", HADOOP)), tableConfigs());
+      assertEquals(S3, rest.properties().get("io-impl"));
+
+      Table table = rest.loadTable(TableIdentifier.of(LOCAL_DB, "t"));
+      assertEquals(HADOOP, table.io().getClass().getName());
+      // The client writes the table through that class: a manifest and a manifest list on local
+      // storage, and a commit.
+      table
+          .newFastAppend()
+          .appendFile(
+              DataFiles.builder(table.spec())
+                  .withPath(table.location() + "/data/a.orc")
+                  .withFileSizeInBytes(10)
+                  .withRecordCount(1)
+                  .build())
+          .commit();
+      assertEquals(
+          1,
+          rest.loadTable(TableIdentifier.of(LOCAL_DB, "t"))
+              .currentSnapshot()
+              .allManifests(table.io())
+              .size());
+
+      // A table the client creates is given the class too.
+      Table created =
+          rest.createTable(
+              TableIdentifier.of(LOCAL_DB, "s"), SCHEMA, PartitionSpec.unpartitioned());
+      assertEquals(HADOOP, created.io().getClass().getName());
+
+      // The native API's per-table config is untouched.
+      String nativeJson = CommitPathHttp.json(CommitPathHttp.get(mvc, LOCAL_DB, "t"));
+      Object nativeConfig = ((Map<?, ?>) JsonPath.read(nativeJson, "$")).get("config");
+      assertTrue(
+          nativeConfig == null || ((Map<?, ?>) nativeConfig).isEmpty(),
+          "native config: " + nativeJson);
     }
   }
 

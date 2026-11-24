@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.iceberg.SnapshotRef;
@@ -124,10 +125,12 @@ public final class IcebergRestJson {
 
   /**
    * A 200 response for a staged create: the metadata the create would store, with no {@code
-   * metadata-location}, since nothing is stored yet (the spec allows none for a staged table).
+   * metadata-location}, since nothing is stored yet (the spec allows none for a staged table), and
+   * the per-table {@code config}.
    */
-  public static ResponseEntity<byte[]> staged(TableMetadata metadata) {
-    LoadTableResponse response = LoadTableResponse.builder().withTableMetadata(metadata).build();
+  public static ResponseEntity<byte[]> staged(TableMetadata metadata, Map<String, String> config) {
+    LoadTableResponse response =
+        LoadTableResponse.builder().withTableMetadata(metadata).addAllConfig(config).build();
     return respond(HttpStatus.OK, write(MAPPER.valueToTree(response)));
   }
 
