@@ -1,4 +1,6 @@
 package com.linkedin.openhouse.tables;
+// CI measurement only (pull request #133): shifts the line numbers so every test that runs the
+// tables service misses the Gradle build cache. Reverted by the next commit.
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
