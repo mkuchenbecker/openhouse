@@ -110,6 +110,25 @@ public class SparkIrcNativeDefaultsTest {
     Assertions.assertTrue(plan.contains(asPushed), plan);
   }
 
+  /**
+   * A Parquet scan of primitive columns, defaulted ones included, runs on the vectorized reader
+   * when the table asks for it, and on the row reader otherwise (Spark's plan reads columnar
+   * batches only from a vectorized scan).
+   */
+  private static void assertParquetReadIsColumnarWhenVectorized(
+      String table, String format, boolean vectorized) {
+    if (!"parquet".equals(format)) {
+      return;
+    }
+    String plan =
+        spark
+            .sql("SELECT id, c_int, c_str FROM " + t(table) + " WHERE c_str = 'US'")
+            .queryExecution()
+            .executedPlan()
+            .toString();
+    Assertions.assertEquals(vectorized, plan.contains("ColumnarToRow"), plan);
+  }
+
   private static Throwable thrown(Executable executable) {
     try {
       executable.execute();
@@ -253,6 +272,7 @@ public class SparkIrcNativeDefaultsTest {
     assertPushedDown(table, "c_str = 'US'", "c_str = 'US'");
     assertPushedDown(table, "c_int = 7", "c_int = 7");
 
+    assertParquetReadIsColumnarWhenVectorized(table, format, vectorized);
     Assertions.assertEquals(
         Arrays.asList("[CA]", "[US]", "[US]", "[null]"),
         rows("SELECT c_str FROM %s ORDER BY c_str NULLS LAST", table));
