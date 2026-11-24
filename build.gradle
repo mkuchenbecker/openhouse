@@ -122,6 +122,14 @@ allprojects {
       testRuntimeOnly "org.junit.jupiter:junit-jupiter-engine:" + junit_version
     }
 
+    // Sources contain non-ASCII characters; compile them as UTF-8 whatever the build machine's locale is.
+    tasks.withType(JavaCompile).configureEach {
+      options.encoding = 'UTF-8'
+    }
+    tasks.withType(Javadoc).configureEach {
+      options.encoding = 'UTF-8'
+    }
+
     tasks.withType(Test).configureEach {
       useJUnitPlatform()
       // Every Testcontainers MySQL in the build uses this one version (gradle.properties).
