@@ -34,10 +34,10 @@ public class OperationsCatalogTest extends OpenHouseSparkITest {
 
   /**
    * A run that loads tables hundreds of times, through {@link Operations#getTable} and through a
-   * job entry point that loads by name, builds the catalogs counted here.
+   * job entry point that loads by name, builds one catalog.
    */
   @Test
-  void manyTableLoadsBuildCatalogs() throws Exception {
+  void manyTableLoadsBuildOneCatalog() throws Exception {
     String fqtn = "db.catalog_reuse_loads";
     try (Operations ops = Operations.withCatalog(getSparkSession(), otelEmitter)) {
       createTable(ops.spark(), fqtn);
@@ -45,8 +45,8 @@ public class OperationsCatalogTest extends OpenHouseSparkITest {
         Assertions.assertNotNull(ops.getTable(fqtn).currentSnapshot());
       }
       ops.expireSnapshots(fqtn, 3, "DAYS", 1, false);
-      // Pinned to today: one catalog (and one never-disposed client) per table load.
-      Assertions.assertEquals(LOADS + 1, ops.catalogsBuilt());
+      // One catalog for the whole run (before N16: 301, one per load, each with its own client).
+      Assertions.assertEquals(1, ops.catalogsBuilt());
     }
   }
 
@@ -89,6 +89,36 @@ public class OperationsCatalogTest extends OpenHouseSparkITest {
         }
       }
     }
+  }
+
+  /**
+   * Closing {@link Operations} (as {@link BaseSparkApp#run} does when the job ends) closes its
+   * catalog where the catalog can be closed: RESTCatalog's HTTP client then refuses requests.
+   */
+  @Test
+  void closeClosesTheCatalog() throws Exception {
+    String fqtn = "db.catalog_reuse_close";
+    SparkSession spark = getSparkSession();
+    boolean rest = JobsLine.restCatalog(spark);
+    Operations ops = Operations.withCatalog(spark, otelEmitter);
+    Catalog used;
+    try {
+      createTable(ops.spark(), fqtn);
+      ops.getTable(fqtn);
+      used = ops.currentCatalog();
+      Assertions.assertNotNull(used);
+    } finally {
+      ops.close();
+    }
+    Assertions.assertNull(ops.currentCatalog());
+    if (rest) {
+      Assertions.assertTrue(used instanceof Closeable);
+      Assertions.assertThrows(
+          RuntimeException.class, () -> used.loadTable(TableIdentifier.parse(fqtn)));
+    }
+    // Spark 3.5, the OpenHouse catalog: closing it (Iceberg's close: its metrics reporter, on lines
+    // where the catalog is closeable) leaves its client's connection pool, which has no close; that
+    // pool lives until the JVM exits, one per job run.
   }
 
   private static void createTable(SparkSession spark, String fqtn) {

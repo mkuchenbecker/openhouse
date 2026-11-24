@@ -15,6 +15,7 @@ import com.linkedin.openhouse.jobs.util.SparkJobUtil;
 import com.linkedin.openhouse.jobs.util.TableStatsCollector;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
+import java.io.Closeable;
 import java.io.IOException;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
@@ -31,8 +32,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
@@ -66,7 +65,6 @@ import scala.collection.JavaConverters;
 /**
  * Utility class to hold table maintenance operations using Spark engine, and supporting methods.
  */
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
 @Slf4j
 public final class Operations implements AutoCloseable {
   // assume that catalog name is fixed
@@ -80,6 +78,21 @@ public final class Operations implements AutoCloseable {
 
   /** Catalogs this instance has built (each with its own client); see {@link #catalogsBuilt()}. */
   private final AtomicInteger catalogsBuilt = new AtomicInteger();
+
+  /**
+   * The catalog every table load and create of this instance goes through: built from the session's
+   * {@code openhouse} catalog properties on first use and reused, closed with this instance. One
+   * per job run rather than one per load: each catalog holds a client (on the OpenHouse catalog a
+   * connection pool that is never disposed; on RESTCatalog a {@code GET /config} when built).
+   * Neither catalog keeps loaded tables (each load asks the service), so reuse serves no older
+   * table state.
+   */
+  private Catalog catalog;
+
+  private Operations(SparkSession spark, OtelEmitter otelEmitter) {
+    this.spark = spark;
+    this.otelEmitter = otelEmitter;
+  }
 
   public static Operations of(SparkSession spark, OtelEmitter otelEmitter) {
     return new Operations(spark, otelEmitter);
@@ -734,7 +747,28 @@ public final class Operations implements AutoCloseable {
 
   @Override
   public void close() throws Exception {
-    spark.close();
+    try {
+      closeCatalog();
+    } finally {
+      spark.close();
+    }
+  }
+
+  /**
+   * Closes the catalog if it is closeable (RESTCatalog: its HTTP client and sessions; the OpenHouse
+   * catalog, where Iceberg makes it closeable: its metrics reporter only, as its client has no
+   * close, so that client's connection pool lives until the JVM exits, one per job run). A failure
+   * is logged, not thrown: the job's work is done by then, and closing never failed a job before.
+   */
+  private synchronized void closeCatalog() {
+    if (catalog instanceof Closeable) {
+      try {
+        ((Closeable) catalog).close();
+      } catch (IOException | RuntimeException e) {
+        log.warn("Failed to close catalog {}: {}", CATALOG, e.getMessage(), e);
+      }
+    }
+    catalog = null;
   }
 
   /** How many catalogs this instance has built: each holds a client of its own. */
@@ -743,9 +777,19 @@ public final class Operations implements AutoCloseable {
     return catalogsBuilt.get();
   }
 
-  private Catalog getCatalog() {
-    catalogsBuilt.incrementAndGet();
-    return buildCatalog();
+  /** The catalog this instance holds now: null before first use and after {@link #close()}. */
+  @VisibleForTesting
+  synchronized Catalog currentCatalog() {
+    return catalog;
+  }
+
+  /** This instance's catalog, built on first use; thread-safe (batched apps load in parallel). */
+  private synchronized Catalog getCatalog() {
+    if (catalog == null) {
+      catalog = buildCatalog();
+      catalogsBuilt.incrementAndGet();
+    }
+    return catalog;
   }
 
   private Catalog buildCatalog() {
