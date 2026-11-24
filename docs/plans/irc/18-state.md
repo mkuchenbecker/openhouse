@@ -2,9 +2,10 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is now
 the default build, and the Spark image and dataloader checks now pass in CI (C10). Pull requests 121 (three service
-follow-ups), 124 (format v3), 126 (Spark reads through native defaults on v3, W7 and X4) and 127 (scan planning and the
-credentials route, V11a and V12a) are merged. Two pieces of work are in flight (X6 and X5), described in "How to
-resume" below. Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red, but post-merge CI for pull requests 126 and 127 is not read yet. This is the
+follow-ups), 124 (format v3), 125 (maintenance jobs on v3, X6), 126 (Spark reads through native defaults on v3, W7 and
+X4) and 127 (scan planning and the credentials route, V11a and V12a) are merged. Two pieces of work are in flight (X5,
+and N1-c with N7), described in "How to resume" below. Nothing is merged into either fork's main or into LinkedIn's or
+Apache's repositories. Nothing is known red, but post-merge CI for pull requests 126, 127 and 125 is not read yet. This is the
 single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
 - Conforming IRC server: every route of the specification is served except the stored-plan routes and credential vending and
@@ -19,8 +20,9 @@ single place for current state; other files record design, evidence and decision
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
-  work on them. Spark 3.5 and 4.2 read old files through native defaults (`61-w7-x4-result.md`). Maintenance jobs,
-  v3 types, replication and the defaults migration remain (`57-x1-format-v3-result.md`, D42, D43).
+  work on them. Spark 3.5 and 4.2 read old files through native defaults (`61-w7-x4-result.md`). Every maintenance job
+  runs on a v3 table without losing live data (`63-x6-maintenance-v3-result.md`); the retention backup's handling of
+  deletes is put to Mike (D46). v3 types, replication and the defaults migration remain (`57-x1-format-v3-result.md`).
 - One data-loss risk remains, natively only: a create naming a renamed-away table's directory is closed over IRC and
   pinned natively, and the fix is put to Mike (D35).
 
@@ -76,46 +78,43 @@ single place for current state; other files record design, evidence and decision
 
 ## Merged pull requests
 
-47 pull requests are merged into `irc-integration` (the last is 127, merge commit 91e175c4) and 10 into the Iceberg
+48 pull requests are merged into `irc-integration` (the last is 125, merge commit 262a1416) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 127 (V11a and V12a, `62-v11a-v12a-result.md`); 126 (W7 and X4, `61-w7-x4-result.md`); 121 (V15, V3b and
+The latest: 125 (X6, `63-x6-maintenance-v3-result.md`); 127 (V11a and V12a, `62-v11a-v12a-result.md`); 126 (W7 and X4, `61-w7-x4-result.md`); 121 (V15, V3b and
 V3c, `59-v15-v3b-v3c-result.md`); 124 (X1 and W6, `57-x1-format-v3-result.md`); 122 (C10) and 123 (C14), both in
 `55-c10-c14-result.md`. The first post-merge run of the flipped layout (head 440249d1) was green on both jobs.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, V15, V3b, V3c, V11a, V12a, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X6, V15, V3b, V3c, V11a, V12a, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121, 124, 126 and 127 are merged, and `irc-integration` is at `91e175c4`. Two pieces of
-work are in flight: X6 and X5. If the session stops, a future session reads each record below and the branch's log,
-and resumes from what they say.
+Bottom line: pull requests 121, 124, 125, 126 and 127 are merged, and `irc-integration` is at `262a1416`. Two pieces of
+work are in flight: X5, and N1-c with N7. If the session stops, a future session reads each record below and the
+branch's log, and resumes from what they say.
 
 - The container restarted on 2026-11-24 at about 00:01 UTC; files survived. Agents push work early.
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next model
   down meanwhile.
-- X6, maintenance jobs on format v3 tables: pull request 125 is open as a draft, tests only so far, held back from
-  merging while its author closes the gaps an independent review found: retention with backup does not carry deletion
-  vectors, compaction was not tested with the scheduler's real arguments, and several checks that the job did real
-  work were not asserted. Worktree `/home/user/oh-x6`, branch `irc/x6-maintenance-v3`, record `x6-maintenance-v3.md`
-  in the reports directory.
 - X5, the column types format v3 adds, supported or refused type by type: worktree `/home/user/oh-x5`, branch
   `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory.
-- Post-merge CI for the merges of pull requests 126 and 127 has not been read yet; read it first (D33).
+- N1-c with N7, the Spark 3.5 smoke suite on the plain Iceberg REST catalog path and one shared scenario list for Spark
+  3.5 and 4.2: worktree `/home/user/oh-n1c`, branch `irc/n1c-n7-spark35-rest-smoke`, record
+  `n1c-n7-spark35-rest-smoke.md` in the reports directory.
+- Post-merge CI for the merges of pull requests 126, 127 and 125 has not been read yet; read it first (D33).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, in order, after these:
 
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, and X7 (refused today; investigated first), after X5 and X6.
+1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X12 from X6, and X8 once D46 is decided, after X5.
 2. The rest of V11 and V12 (V11b, V11c) follows, by the rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
-3. N1-c and N7: the Spark 3.5 smoke suite on the plain REST path, and one shared list of scenarios.
-4. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
+3. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for pull requests 124 and 121 was read on 2026-11-24 and passed; for 126 and 127 it is not read yet.
+Nothing known red at this time. Post-merge CI for pull requests 124 and 121 was read on 2026-11-24 and passed; for 126, 127 and 125 it is not read yet.
 Both builds passed in CI on pull requests 113, 118, 122 and 123, and the post-merge run
 of 118 was green on both jobs. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
@@ -137,13 +136,13 @@ the 1.12 line only if it ran there.
 
 Nothing blocks work. The list is in `58-waiting-on-mike.md`: the meaning of "conforming" (D32), whether the server turns on server-side scan planning (V11d), credential vending (V12b), the one-way doors
 (D12, D24, D34, D38, D40), the native directory-reuse fix (D35), the Spark 4.2 differences (D37), and, new, turning
-the v3 switch on for a real cluster and upgrading a real table. An upgrade is irreversible and LinkedIn 1.5.2 clients
-cannot load the table afterwards.
+the v3 switch on for a real cluster and upgrading a real table, and the retention backup's handling of deletes (D46).
+An upgrade is irreversible and LinkedIn 1.5.2 clients cannot load the table afterwards.
 
 ## How to audit
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D45).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D46).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

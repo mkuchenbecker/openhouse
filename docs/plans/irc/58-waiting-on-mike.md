@@ -31,4 +31,8 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
 - Format v3 (D12, D42, D43): turning the v3 switch on for a real cluster, and upgrading a real table. An upgrade is
   irreversible, and LinkedIn 1.5.2 clients cannot load the table afterwards. The service now supports both behind the
   switch, which is off by default (`57-x1-format-v3-result.md`).
+- D46: how a retention backup should treat deletes on a merge-on-read table. Today the backup holds rows deleted before
+  retention and nothing records the deletes; on v3 no deletion vector is backed up. The author recommends rewriting the
+  expiring partitions with deletes applied first, at the cost of an extra rewrite and a behavior change on v2. It touches
+  an external uploader that reads the manifests. Nothing waits on this; behavior is pinned (X8, X9).
 - Item order: D29.

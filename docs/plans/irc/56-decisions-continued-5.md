@@ -81,3 +81,24 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
   dependency and a new access contract, which are Mike's to decide (V12b to V12e).
 - HDFS cannot be vended to an Iceberg 1.12 client at all, because its FileIO accepts no credentials.
 - Reverse by: removing the route from the endpoint list restores the 406 answer.
+
+## D46. Retention backup and deletes on merge-on-read tables: put to Mike, not decided
+
+- Date: 2026-11-24. Put to Mike; no decision yet. Work items X8 and X9 (`41-work-platforms-v3.md`). Evidence in
+  `63-x6-maintenance-v3-result.md`.
+- Question: how should a retention backup treat deletes on a merge-on-read table?
+- Facts, observed by running the tests of pull request 125: the backup holds the data files of the expired partitions
+  and a manifest listing only data files. It therefore contains rows that were deleted before retention, with nothing
+  recording the deletes. This is true on v2 today. On v3 the deletion vectors are not in the backup at all. No restore
+  code exists in this repository; the history (pull requests 384, 408 and 418) names an external uploader that reads
+  the manifests.
+- Options: the author's recommendation is D, rewrite the expiring partitions with deletes applied before backing up.
+  Its cost is an extra rewrite of those partitions and a behavior change on v2. The record of the work (`x6-maintenance-v3.md`)
+  says the options go to the orchestrator in the author's final report and does not list A to C; they are not
+  reproduced here and are to be added from that report.
+- Why it is Mike's: it changes the behavior of a job on v2 tables and touches a contract with a system outside this
+  repository (the external uploader).
+- Until decided: nothing changes. The behavior is pinned by `retentionBackupOfPartitionsWithDeleteFiles`.
+  The interim step X9 (log and count, no refusal) is a two-way door.
+- Correction by the orchestrator: deletion vectors are the delete mechanism only for merge-on-read writes, and
+  copy-on-write remains Iceberg's default, so format v3 does not widen which tables are exposed.
