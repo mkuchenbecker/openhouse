@@ -188,8 +188,15 @@ public class FormatV3TypesSparkTest extends OpenHouseSparkITest {
           "DESCRIBE " + t("variant_table")
         }) {
       String failure = failure(sql);
-      Assertions.assertTrue(failure.contains("Unsupported type: variant"), failure);
+      // Iceberg's TypeUtil.SchemaVisitor.variant default, reached from SparkTable.schema().
+      Assertions.assertTrue(
+          failure.startsWith("java.lang.UnsupportedOperationException: Unsupported type: variant"),
+          failure);
     }
+    // Listing does not load the table: SHOW TABLES still names it.
+    Assertions.assertTrue(
+        rows("SHOW TABLES IN " + V3 + "." + DB).stream().anyMatch(r -> r.contains("variant_table")),
+        rows("SHOW TABLES IN " + V3 + "." + DB).toString());
   }
 
   /**
