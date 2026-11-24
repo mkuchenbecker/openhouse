@@ -101,11 +101,9 @@ and resumes from what they say.
   vectors, compaction was not tested with the scheduler's real arguments, and several checks that the job did real
   work were not asserted. Worktree `/home/user/oh-x6`, branch `irc/x6-maintenance-v3`, record `x6-maintenance-v3.md`
   in the reports directory.
-- X5, the column types format v3 adds, each supported or refused type by type: worktree `/home/user/oh-x5`, branch
+- X5, the column types format v3 adds, supported or refused type by type: worktree `/home/user/oh-x5`, branch
   `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory.
 - Post-merge CI for the merges of pull requests 126 and 127 has not been read yet; read it first (D33).
-- Finished: V11a with V12a (`62-v11a-v12a-result.md`), W7 with X4 (`61-w7-x4-result.md`), and the V11 and V12
-  investigation (`60-v11-v12-investigation-result.md`).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, in order, after these:
