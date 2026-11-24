@@ -25,6 +25,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -246,6 +247,17 @@ public class IcebergRestApiHandler {
         loaded.getMetadata(),
         readBridgeConfigResolver.resolve(tableDto),
         refsOnly);
+  }
+
+  /**
+   * The Iceberg table {@code databaseId.tableId} as {@link #loadTable} loads it for {@code
+   * actingPrincipal}: the same validation and the same {@link TablesService#loadTable} call, so the
+   * same checks in the same order with the same failures (and the same read audit event). For the
+   * routes that act on a table a caller could load, such as scan planning and credentials.
+   */
+  public Table loadIcebergTable(String databaseId, String tableId, String actingPrincipal) {
+    tablesApiValidator.validateGetTable(databaseId, tableId);
+    return tablesService.loadTable(databaseId, tableId, actingPrincipal).getTable();
   }
 
   /** The counter of metrics reports received, tagged {@value #REPORT_TYPE_TAG}. */

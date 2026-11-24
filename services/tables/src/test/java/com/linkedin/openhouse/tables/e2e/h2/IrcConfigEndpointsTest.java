@@ -52,10 +52,10 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 public class IrcConfigEndpointsTest {
 
   /**
-   * What this service serves on Iceberg 1.5 (its test classpath): reads, metrics reports, table
-   * writes (register among them), views, and the multi-table commit route. That route commits a
-   * transaction of one table and refuses one of several (IrcTransactionRouteTest). It is listed all
-   * the same: an Iceberg 1.12 client refuses {@code commitTransaction} locally when it is not
+   * What this service serves on LinkedIn's Iceberg 1.5.2 reference line: reads, metrics reports,
+   * table writes (register among them), views, and the multi-table commit route. That route commits
+   * a transaction of one table and refuses one of several (IrcTransactionRouteTest). It is listed
+   * all the same: an Iceberg 1.12 client refuses {@code commitTransaction} locally when it is not
    * listed and has no fallback to per-table commits, so leaving it out would only take the
    * one-table transaction away (SparkIrcEndpointsTest, on Spark 4.2).
    */
@@ -80,6 +80,41 @@ public class IrcConfigEndpointsTest {
           "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
           "POST /v1/{prefix}/tables/rename",
           "POST /v1/{prefix}/transactions/commit");
+
+  /**
+   * What this service serves on the Iceberg 1.12 line (the default build): the routes above, and
+   * the scan planning route (synchronous, D44) and the credentials route (an empty list, D45),
+   * which LinkedIn's Iceberg 1.5.2 reference line has no classes for
+   * (IrcPlanCredentialsRoutesTest).
+   */
+  static final List<String> SERVED_ON_ICEBERG_1_12 =
+      Arrays.asList(
+          "GET /v1/{prefix}/namespaces",
+          "GET /v1/{prefix}/namespaces/{namespace}",
+          "HEAD /v1/{prefix}/namespaces/{namespace}",
+          "POST /v1/{prefix}/namespaces/{namespace}/register",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "HEAD /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/metrics",
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan",
+          "GET /v1/{prefix}/namespaces/{namespace}/views",
+          "POST /v1/{prefix}/namespaces/{namespace}/views",
+          "GET /v1/{prefix}/namespaces/{namespace}/views/{view}",
+          "HEAD /v1/{prefix}/namespaces/{namespace}/views/{view}",
+          "POST /v1/{prefix}/namespaces/{namespace}/views/{view}",
+          "DELETE /v1/{prefix}/namespaces/{namespace}/views/{view}",
+          "POST /v1/{prefix}/tables/rename",
+          "POST /v1/{prefix}/transactions/commit");
+
+  /** The routes this server serves on the Iceberg line of this build. */
+  static List<String> served() {
+    return IrcPlanCredentialsRoutesTest.served() ? SERVED_ON_ICEBERG_1_12 : SERVED_ON_ICEBERG_1_5;
+  }
 
   /** Every route of Iceberg 1.12's {@code Endpoint} (its public constants, as strings). */
   static final List<String> SPEC_ENDPOINTS_OF_ICEBERG_1_12 =
@@ -167,7 +202,7 @@ public class IrcConfigEndpointsTest {
 
   @Test
   void theEndpointsAreTheServedSpecRoutesInTheSpecsFormat() throws Exception {
-    assertEquals(SERVED_ON_ICEBERG_1_5, endpoints());
+    assertEquals(served(), endpoints());
     for (String endpoint : endpoints()) {
       assertTrue(endpoint.matches("(GET|HEAD|POST|DELETE) /v1/\\{prefix}/[a-z{}/-]+"), endpoint);
       assertTrue(SPEC_ENDPOINTS_OF_ICEBERG_1_12.contains(endpoint), "a spec route: " + endpoint);
@@ -286,6 +321,6 @@ public class IrcConfigEndpointsTest {
     for (Object endpoint : (List<?>) endpoints.invoke(parsed)) {
       read.add(endpoint.toString());
     }
-    assertEquals(SERVED_ON_ICEBERG_1_5, read);
+    assertEquals(served(), read);
   }
 }

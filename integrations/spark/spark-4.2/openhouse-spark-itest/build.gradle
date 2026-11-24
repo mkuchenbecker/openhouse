@@ -100,10 +100,16 @@ def extraJvmArgs = [
     'sun.nio.ch', 'sun.nio.cs', 'sun.security.action'
 ].collect { "--add-opens=java.base/${it}=ALL-UNNAMED" } + ['--add-opens=java.sql/java.sql=ALL-UNNAMED']
 
+// Test classes run in the order they are found, except that a class annotated @Order runs by its
+// order: the checks that read what the whole suite sent the service (SparkIrcNoPlanRequestTest,
+// SmokeNoPlanRequestTest) run last.
+def classOrder = 'org.junit.jupiter.api.ClassOrderer$OrderAnnotation'
+
 tasks.named('test') {
   dependsOn tasks.named('serviceClasses')
   maxHeapSize = '1536m'
   jvmArgs extraJvmArgs
+  systemProperty 'junit.jupiter.testclass.order.default', classOrder
   def serviceClasspath = sourceSets.service.runtimeClasspath
   inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
   doFirst {
@@ -152,6 +158,7 @@ tasks.register('smokeTest', Test) {
   mustRunAfter tasks.named('test'), tasks.named('extensionsTest')
   maxHeapSize = '1536m'
   jvmArgs extraJvmArgs
+  systemProperty 'junit.jupiter.testclass.order.default', classOrder
   def serviceClasspath = sourceSets.service.runtimeClasspath
   inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
   // The scenarios are a copy of the Spark 3.5 suite's: SmokeScenariosCopyTest compares the sources.
