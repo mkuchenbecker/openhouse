@@ -255,13 +255,16 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   }
 
   private Reading reading(int formatVersion, String fqtn) {
-    SparkSession spark = session(formatVersion);
+    return readingIn(session(formatVersion), formatVersion, fqtn);
+  }
+
+  private Reading readingIn(SparkSession spark, int formatVersion, String fqtn) {
     String t = "openhouse." + fqtn;
     spark.sql("REFRESH TABLE " + t);
-    List<String> live = rows(spark, "SELECT id, data, ts FROM " + t);
+    List<String> live = rows(spark, "SELECT * FROM " + t);
     Map<Long, List<String>> perSnapshot = new LinkedHashMap<>();
     for (long id : snapshotIds(ops(formatVersion).getTable(fqtn))) {
-      perSnapshot.put(id, rows(spark, "SELECT id, data, ts FROM " + t + " VERSION AS OF " + id));
+      perSnapshot.put(id, rows(spark, "SELECT * FROM " + t + " VERSION AS OF " + id));
     }
     List<String> lineage =
         formatVersion == 3
@@ -644,6 +647,153 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
 
     Assertions.assertNotNull(ops.getTable(fqtn).properties().get("write.data-layout.strategies"));
     assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
+  }
+
+  @ParameterizedTest(name = "format v{0}")
+  @ValueSource(ints = {2, 3})
+  void batchedTableStatsCollectionPublishesAV3TableAndChangesNothing(int formatVersion)
+      throws Exception {
+    String fqtn = createTable(formatVersion, "stats_batch", "orc");
+    Reading before = reading(formatVersion, fqtn);
+    Operations ops = ops(formatVersion);
+    long current = ops.getTable(fqtn).currentSnapshot().snapshotId();
+    List<String> published = Collections.synchronizedList(new ArrayList<>());
+    StatsCollectionSink sink =
+        new StatsCollectionSink() {
+          @Override
+          public void publishStats(String table, IcebergTableStats stats) {
+            published.add("stats:" + table + ":" + stats.getNumSnapshots());
+          }
+
+          @Override
+          public void publishCommitEvents(
+              String table,
+              List<com.linkedin.openhouse.common.stats.model.CommitEventTable> events) {
+            published.add("commits:" + table);
+          }
+
+          @Override
+          public void publishPartitionEvents(
+              String table,
+              List<com.linkedin.openhouse.common.stats.model.CommitEventTablePartitions> events) {
+            published.add("partitionEvents:" + table);
+          }
+
+          @Override
+          public void publishPartitionStats(
+              String table,
+              List<com.linkedin.openhouse.common.stats.model.CommitEventTablePartitionStats>
+                  stats) {
+            published.add("partitionStats:" + table);
+          }
+        };
+
+    BatchedTableStatsCollectionSparkApp app =
+        new BatchedTableStatsCollectionSparkApp(
+            "x6-stats-batch",
+            null,
+            otelEmitter,
+            Collections.singletonList(
+                BatchedTableStatsCollectionSparkApp.BatchEntry.builder()
+                    .fqtn(fqtn)
+                    .databaseName(DB)
+                    .tableName(fqtn.substring(DB.length() + 1))
+                    .build()),
+            null,
+            1,
+            sink);
+    app.runInner(ops);
+
+    Assertions.assertTrue(published.contains("stats:" + fqtn + ":12"), published.toString());
+    Assertions.assertTrue(published.contains("commits:" + fqtn), published.toString());
+    Assertions.assertTrue(published.contains("partitionEvents:" + fqtn), published.toString());
+    Assertions.assertTrue(published.contains("partitionStats:" + fqtn), published.toString());
+    Assertions.assertEquals(current, ops.getTable(fqtn).currentSnapshot().snapshotId());
+    assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
+  }
+
+  /**
+   * Sort stats collection reads the table through {@code spark_catalog} (as a deployment that makes
+   * the OpenHouse catalog the session catalog does), copies yesterday's {@code datepartition} into
+   * a temporary table it compacts and drops, and sets one property on the table. The table's own
+   * files and rows must not change.
+   */
+  @ParameterizedTest(name = "format v{0}")
+  @ValueSource(ints = {2, 3})
+  void sortStatsCollectionReadsAV3TableAndChangesNoData(int formatVersion) throws Exception {
+    SparkSession base = session(formatVersion);
+    SparkSession spark = base.newSession();
+    Map<String, String> all = new HashMap<>();
+    base.conf().getAll().foreach(entry -> all.put(entry._1(), entry._2()));
+    for (Map.Entry<String, String> entry : all.entrySet()) {
+      if (entry.getKey().startsWith(CATALOG_PREFIX)
+          || entry.getKey().startsWith(DEFAULT_ICEBERG_PREFIX)) {
+        spark.conf().set(entry.getKey(), entry.getValue());
+      }
+      if (entry.getKey().startsWith(CATALOG_PREFIX + ".")) {
+        String key = entry.getKey().substring(CATALOG_PREFIX.length());
+        spark.conf().set("spark.sql.catalog.spark_catalog" + key, entry.getValue());
+      }
+    }
+    spark.conf().set("spark.sql.catalog.spark_catalog", all.get(CATALOG_PREFIX));
+    String fqtn = DB + ".sortstats_v" + formatVersion;
+    String t = "openhouse." + fqtn;
+    spark.sql("DROP TABLE IF EXISTS " + t);
+    spark.sql("DROP TABLE IF EXISTS " + t + "_sample");
+    String datepartition =
+        LocalDateTime.now()
+            .minusDays(1)
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HH"));
+    spark.sql(
+        "CREATE TABLE "
+            + t
+            + " (id bigint, data string, header struct<memberId: bigint, time: bigint>,"
+            + " datepartition string) TBLPROPERTIES ("
+            + "'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read'"
+            + (formatVersion == 3 ? ", 'format-version'='3'" : "")
+            + ")");
+    for (int k = 0; k < 3; k++) {
+      List<String> values = new ArrayList<>();
+      for (int r = 1; r <= 5; r++) {
+        long id = k * 5L + r;
+        values.add(
+            "("
+                + id
+                + ", 'row-"
+                + id
+                + "', named_struct('memberId', "
+                + (id % 3)
+                + "L, 'time', "
+                + (100 - id)
+                + "L), '"
+                + datepartition
+                + "')");
+      }
+      spark.sql("INSERT INTO " + t + " VALUES " + String.join(", ", values));
+    }
+    spark.sql("DELETE FROM " + t + " WHERE id IN (2, 6, 10, 14, 3)");
+    spark.sql("UPDATE " + t + " SET data = 'updated' WHERE id = 7");
+    Operations ops = Operations.withCatalog(spark, otelEmitter);
+    Assertions.assertEquals(formatVersion, formatVersion(ops.getTable(fqtn)));
+    Reading before = readingIn(spark, formatVersion, fqtn);
+
+    SortStatsCollectionSparkApp app =
+        new SortStatsCollectionSparkApp("x6-sort-stats", null, fqtn, otelEmitter);
+    app.runInner(ops);
+    app.runValidations(ops);
+
+    Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
+    Reading after = readingIn(spark, formatVersion, fqtn);
+    Assertions.assertEquals(before.live, after.live, "live rows, full contents");
+    Assertions.assertEquals(before.lineage, after.lineage, "_row_id and sequence numbers");
+    for (long id : Arrays.asList(2L, 6L, 10L, 14L, 3L)) {
+      Assertions.assertFalse(after.liveIds.contains(id), "deleted row " + id + " stays deleted");
+    }
+    Assertions.assertEquals(before.perSnapshot.keySet(), after.perSnapshot.keySet());
+    for (Map.Entry<Long, List<String>> snapshot : before.perSnapshot.entrySet()) {
+      Assertions.assertEquals(snapshot.getValue(), after.perSnapshot.get(snapshot.getKey()));
+    }
+    assertEveryReferencedFileExists(ops.getTable(fqtn));
   }
 
   // ------------------------------------------------------------------- orphan files, by hand
