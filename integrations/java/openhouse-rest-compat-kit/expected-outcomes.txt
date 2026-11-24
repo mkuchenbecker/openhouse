@@ -53,9 +53,6 @@ OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() 
 OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
 OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
 
-# (b) CREATEHIST: 1 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTransactionMultipleSchemas() | FAILED | b | a create stores the create transaction's final schema, spec and order as the table's first (ids 0); the kit expects the transaction's history (schema id 1)
-
 # (b) DIALECT: 13 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.createAndReplaceViewWithLocation() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
