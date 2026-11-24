@@ -1,12 +1,12 @@
 # Current state
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is the
-default build, and the Spark image and dataloader checks pass in CI. Pull requests 121, 124, 125, 126, 127, 128, 130 and
-131 are merged (131 is V11b and V11c: Spark 4.2 writes and reads under server-side scan planning, and a bound on one
-plan). Two pieces of work are in flight: X5 (pull request 129, draft) and V11e. View rename stopped on D47. Nothing is
-merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for 130
-was read and passed, and for 131 it is not read yet. This is the single place for current state; other files record
-design, evidence and decisions. Dated 2026-11-24.
+default build, and the Spark image and dataloader checks pass in CI. Pull requests 121, 124, 125, 126, 127, 128, 129,
+130 and 131 are merged (129 is X5: each column type of format v3 is supported or refused, and `variant` is off by default
+behind its own cluster property). Two pieces of work are in flight: V11e (pull request 132, draft) and a scout of the
+maintenance jobs on Spark 4.2. View rename stopped on D47. Nothing is merged into either fork's main or into LinkedIn's
+or Apache's repositories. Nothing is known red; post-merge CI for 131 was read and passed, and for 129 it is not read
+yet. This is the single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
 - Conforming IRC server: every route of the specification is served except the stored-plan routes and credential vending and
   signing. View rename and namespace create, alter and drop are refused because OpenHouse has no such operations. Multi-table
@@ -24,7 +24,7 @@ design, evidence and decisions. Dated 2026-11-24.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
   work on them. Spark 3.5 and 4.2 read old files through native defaults (`61-w7-x4-result.md`). Every maintenance job
   runs on a v3 table without losing live data (`63-x6-maintenance-v3-result.md`), and row-level writes racing the jobs lose
-  none either (`65-x10-concurrency-result.md`); the retention backup's handling of deletes is put to Mike (D46). v3 types, replication and the defaults migration remain (`57-x1-format-v3-result.md`).
+  none either (`65-x10-concurrency-result.md`); the retention backup's handling of deletes is put to Mike (D46). Column types are decided type by type (`68-x5-v3-types-result.md`). Replication and the defaults migration remain (`57-x1-format-v3-result.md`).
 - One data-loss risk remains, natively only: a create naming a renamed-away table's directory is closed over IRC and
   pinned natively, and the fix is put to Mike (D35).
 
@@ -77,43 +77,41 @@ design, evidence and decisions. Dated 2026-11-24.
 
 ## Merged pull requests
 
-51 pull requests are merged into `irc-integration` (the last is 131, merge commit 1dd485d3) and 10 into the Iceberg
+52 pull requests are merged into `irc-integration` (the last is 129, merge commit 70b35d7a) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 131 (V11b and V11c, `66-v11b-v11c-result.md`); 130 (X10, `65-x10-concurrency-result.md`); 128 (N1-c and N7,
-`64-n1c-n7-result.md`).
+The latest: 129 (X5, `68-x5-v3-types-result.md`); 131 (V11b and V11c, `66-v11b-v11c-result.md`); 130 (X10,
+`65-x10-concurrency-result.md`).
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X6, V15, V3b, V3c, V11a, V11b, V11c, V12a, N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V12a, N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121, 124, 125, 126, 127, 128, 130 and 131 are merged, and `irc-integration` is at `1dd485d3`.
-Two pieces of work are in flight: X5 and V11e. View rename stopped on D47 with no code written and no branch pushed. If
+Bottom line: pull requests 121, 124, 125, 126, 127, 128, 129, 130 and 131 are merged, and `irc-integration` is at
+`70b35d7a`. Two pieces of work are in flight: V11e and the Spark 4.2 jobs scout. View rename stopped on D47 with no code written and no branch pushed. If
 the session stops, a future session reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- X5, the column types format v3 adds (pull request 129, draft): its author is adding the `variant` property of D48
-  (`cluster.iceberg.format-v3.variant.enabled`, default false) as the last round before merge. Worktree `/home/user/oh-x5`,
-  branch `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory. Questions it raised are in
-  `58-waiting-on-mike.md`.
-- V11e (the plan route refuses format v3 tables, D49; and whether a filter on a late column can equal client planning):
-  worktree `/home/user/oh-v11e`, branch `irc/v11e-plan-v3-and-late-columns`, record `v11e-plan-v3-and-late-columns.md` in
-  the reports directory.
+- V11e (pull request 132, draft: the plan route refuses format v3 tables, D49; and whether a filter on a late column can
+  equal client planning): worktree `/home/user/oh-v11e`, branch `irc/v11e-plan-v3-and-late-columns`, record
+  `v11e-plan-v3-and-late-columns.md` in the reports directory.
+- Scout for N11 (the maintenance jobs on Spark 4.2, Iceberg 1.12, through the OpenHouse catalog and the REST routes):
+  worktree `/home/user/oh-jobs42`, branch `irc/jobs-spark42-scout`, record `jobs-spark42-scout.md` in the reports directory.
 - View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
-- Post-merge CI for 131 has not been read yet; read it first (D33).
+- Post-merge CI for 129 has not been read yet; read it first (D33).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
-What comes next, in order: X5 and V11e are in flight; then:
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6 and X10 (X14 needs Mike's say), the rest of X10, and X8 once D46 is decided, after X5.
+What comes next, in order: V11e and the N11 scout are in flight; then:
+1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6 and X10 (X14 needs Mike's say), the rest of X10, and X8 once D46 is decided, and N11.
 2. V11d and V12b to V12e are Mike's; see `41-work-platforms-v3.md`.
 3. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for pull requests 124, 121, 126, 127, 125, 128 and 130 was read on 2026-11-24 and every job passed; for 131 it is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+Nothing known red at this time. Post-merge CI for pull requests 124, 121, 126, 127, 125, 128, 130 and 131 was read on 2026-11-24 and every job passed; for 129 it is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). The build is not reproducible bit for bit (C15, `21-findings-continued.md`). Open product
 defects found by pull request 121: V19 (rename to 129 to 255 characters) and V20 (FileIO of a table on a
@@ -135,7 +133,7 @@ Nothing blocks work. The list is in `58-waiting-on-mike.md`: the meaning of "con
 (D12, D24, D34, D38, D40), view rename and the House Tables API (D47), the native directory-reuse fix (D35), the Spark 4.2 differences (D37), and, new, turning
 the v3 switch on for a real cluster and upgrading a real table, and the retention backup's handling of deletes (D46).
 An upgrade is irreversible and LinkedIn 1.5.2 clients cannot load the table afterwards.
-Three questions from X5's column types are there too, and X14 (an age floor in orphan removal) needs his say; nothing waits on them.
+Three questions from X5's column types are there too (the third is whether and when to turn on the `variant` property), and X14 (an age floor in orphan removal) needs his say; nothing waits on them.
 
 ## How to audit
 

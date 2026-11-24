@@ -9,7 +9,7 @@ sequence numbers. Neither is agreed by Mike. Claude wrote the entries.
 
 ## D48. The `variant` column type goes behind its own cluster property, off by default
 
-- Date: 2026-11-24. The orchestrator's decision, a two-way door. Work item X5, pull request 129 (still open, not merged).
+- Date: 2026-11-24. The orchestrator's decision, a two-way door. Work item X5, pull request 129 (merged 2026-11-24).
 - Context: X5 decides each column type format v3 adds. Its author ran every maintenance job on a `variant` table holding
   data and deletes. No job loses or changes data. But the jobs run on Spark 3.5, which cannot read `variant`, so on such
   a table: it is never compacted; every scheduled job reports failure on every run (the closing validation step reads the
@@ -21,7 +21,9 @@ sequence numbers. Neither is agreed by Mike. Claude wrote the entries.
 - Why two-way: the property can be turned on per cluster, and its default can change once the jobs run on Spark 4.
 - Rejected: refusing `variant` outright, because it works for a Spark 4.2 platform reading through the Iceberg REST
   routes. Supporting it under the v3 switch alone, because that opens a per-table one-way door with degraded maintenance.
-- Status: being implemented in pull request 129, as the last round before merge (`18-state.md`).
+- Status: implemented by pull request 129, merge commit `70b35d7a` (`68-x5-v3-types-result.md`). One detail was decided
+  during implementation: a table that already has a `variant` column keeps it and is not blocked when the property is
+  turned off again; only new `variant` columns are refused.
 - Related: the three X5 questions in `58-waiting-on-mike.md`; this decision narrows the `variant` one.
 
 ## D49. The scan planning route refuses format v3 tables

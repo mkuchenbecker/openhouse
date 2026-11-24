@@ -35,14 +35,15 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   retention and nothing records the deletes; on v3 no deletion vector is backed up. The author recommends rewriting the
   expiring partitions with deletes applied first, at the cost of an extra rewrite and a behavior change on v2. It touches
   an external uploader that reads the manifests. Nothing waits on this; behavior is pinned (X8, X9).
-- Format v3 column types (X5, pull request 129, open, not merged): on v2 tables a column of a type only format v3 has
+- Format v3 column types (X5, pull request 129, merged 2026-11-24): on v2 tables a column of a type only format v3 has
   answers 500 "Invalid schema for v2". A 400 would be right but changes a v2 answer. Nothing waits on this.
 - Format v3 column types (X5): a default value on a `variant` or `unknown` column answers 500 on every table version, from
   Iceberg's parser. Turning it into a 400 changes v2 answers too. Nothing waits on this.
-- Format v3 column types (X5): a table that takes a `variant` column can never drop it (OpenHouse refuses DROP COLUMN),
-  cannot be read from Spark 3.5, and is refused a retention policy because the retention job runs on Spark 3.5. If every
-  table must be able to carry a retention policy, `variant` should stay refused until the jobs run on Spark 4. Nothing
-  waits on this.
+- Format v3 column types (X5, narrowed by D48): `variant` is now off by default behind
+  `cluster.iceberg.format-v3.variant.enabled`, so nothing opens by turning on the v3 switch. What is left for Mike is
+  whether and when to turn that property on for a real cluster, his call like the v3 switch itself. A table that takes a
+  `variant` column can never drop it, cannot be read from Spark 3.5, is not compacted and cannot carry a retention
+  policy until the jobs run on Spark 4 (N11). Nothing waits on this.
 - D47: whether to add a view-only rename to the House Tables API so the Iceberg REST view rename route can be served.
   Without it a rename is two calls and can leave two names for one view or lose a name. The author recommends a new
   atomic House Tables endpoint, and against a non-atomic version. A new House Tables API is a one-way door. Nothing
