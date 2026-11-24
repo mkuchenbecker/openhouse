@@ -200,7 +200,12 @@ class IrcScanPlanningFormatV3Test {
                 1, "id", org.apache.iceberg.types.Types.LongType.get()),
             org.apache.iceberg.types.Types.NestedField.optional(
                 2, "v", org.apache.iceberg.types.Types.VariantType.get()));
-    Table table = client.buildTable(id, schema).withProperty("format-version", "3").create();
+    Table table =
+        client
+            .buildTable(id, schema)
+            .withProperty("format-version", "3")
+            .withProperty("write.format.default", "parquet")
+            .create();
     table
         .newAppend()
         .appendFile(
