@@ -817,6 +817,12 @@ public abstract class SparkSqlSmokeScenarios {
                 + "  \"sharingEnabled\": false\n}"));
   }
 
+  /**
+   * GRANT, SHOW GRANTS and REVOKE, on a table and on a database. The service of every path stores
+   * grants (work item T6: the test services' authorization backend keeps what GRANT hands it), so
+   * SHOW GRANTS lists exactly what was granted and not revoked: each privilege by its SQL name,
+   * each principal as granted, PUBLIC as PUBLIC.
+   */
   @Test
   public void s17_grants_grantShowRevoke() throws Exception {
     SparkSession spark = sparkSession();
@@ -824,21 +830,49 @@ public abstract class SparkSqlSmokeScenarios {
     fresh(spark, t);
     sql(spark, "CREATE TABLE " + t + " (id bigint)");
 
-    // Without the sharing policy a grant is rejected.
+    // Without the sharing policy a grant is rejected, and nothing is stored.
     sql(
         spark,
         "GRANT SELECT ON TABLE " + t + " TO smoke_user",
         fails("java.lang.IllegalArgumentException", DB + ".s17_grants is not a shared table"));
+    sql(spark, "SHOW GRANTS ON TABLE " + t, rows());
 
     sql(spark, "ALTER TABLE " + t + " SET POLICY (SHARING=TRUE)");
     sql(spark, "GRANT SELECT ON TABLE " + t + " TO smoke_user");
-    // The baseline fixture cannot observe grants: with no OPA base URI configured,
-    // OpaAuthorizationHandler (the AuthorizationHandler the embedded server uses) logs "Skipping
-    // grant role" and its list methods return nothing, so SHOW GRANTS is empty even right after a
-    // successful GRANT.
-    sql(spark, "SHOW GRANTS ON TABLE " + t, rows());
+    sql(spark, "SHOW GRANTS ON TABLE " + t, rows("SELECT,smoke_user"));
+    sql(spark, "GRANT ALTER ON TABLE " + t + " TO PUBLIC");
+    sql(spark, "GRANT MANAGE GRANTS ON TABLE " + t + " TO smoke_admin");
+    sql(
+        spark,
+        "SHOW GRANTS ON TABLE " + t,
+        rows("SELECT,smoke_user", "ALTER,PUBLIC", "MANAGE GRANTS,smoke_admin"));
+    // DESCRIBE is stored as the role SELECT is stored as, so it is listed as SELECT.
+    sql(spark, "GRANT DESCRIBE ON TABLE " + t + " TO smoke_describer");
+    sql(
+        spark,
+        "SHOW GRANTS ON TABLE " + t,
+        rows(
+            "SELECT,smoke_user",
+            "ALTER,PUBLIC",
+            "MANAGE GRANTS,smoke_admin",
+            "SELECT,smoke_describer"));
+
     sql(spark, "REVOKE SELECT ON TABLE " + t + " FROM smoke_user");
+    sql(
+        spark,
+        "SHOW GRANTS ON TABLE " + t,
+        rows("ALTER,PUBLIC", "MANAGE GRANTS,smoke_admin", "SELECT,smoke_describer"));
+    sql(spark, "REVOKE ALTER ON TABLE " + t + " FROM PUBLIC");
+    sql(spark, "REVOKE MANAGE GRANTS ON TABLE " + t + " FROM smoke_admin");
+    sql(spark, "REVOKE DESCRIBE ON TABLE " + t + " FROM smoke_describer");
     sql(spark, "SHOW GRANTS ON TABLE " + t, rows());
+
+    // On the database: listed on the database, not on its tables.
+    sql(spark, "GRANT CREATE TABLE ON DATABASE " + CAT_DB + " TO smoke_creator");
+    sql(spark, "SHOW GRANTS ON DATABASE " + CAT_DB, rows("CREATE TABLE,smoke_creator"));
+    sql(spark, "SHOW GRANTS ON TABLE " + t, rows());
+    sql(spark, "REVOKE CREATE TABLE ON DATABASE " + CAT_DB + " FROM smoke_creator");
+    sql(spark, "SHOW GRANTS ON DATABASE " + CAT_DB, rows());
   }
 
   @Test

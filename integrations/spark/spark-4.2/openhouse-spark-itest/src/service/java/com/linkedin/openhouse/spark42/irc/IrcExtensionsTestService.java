@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.spark.grants.GrantStoringAuthorization;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
@@ -47,7 +48,7 @@ import org.springframework.context.ConfigurableApplicationContext;
  * The tables service for the Spark 4.2 SQL-extensions tests, in its own JVM: the same service as
  * {@link IrcReadTestService} ({@link SpringH2TestApplication}, in-memory H2, local storage, the
  * dummy token interceptor; an authorization handler that denies {@value
- * IrcReadTestService#STRANGER}, here {@link RecordingAuthorization}, which also stores grants),
+ * IrcReadTestService#STRANGER}, here {@link GrantStoringAuthorization}, which also stores grants),
  * without the read test's seeded tables.
  *
  * <p>Instead it serves a small control API on a second local port, so the test can do, through the
@@ -95,7 +96,7 @@ public final class IrcExtensionsTestService {
     // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
     Path warehouse = ServiceWarehouse.create();
     ConfigurableApplicationContext context =
-        new SpringApplication(SpringH2TestApplication.class, RecordingAuthorization.Config.class)
+        new SpringApplication(SpringH2TestApplication.class, GrantStoringAuthorization.Config.class)
             .run(
                 "--server.port=0",
                 "--server.shutdown=immediate",
@@ -133,7 +134,7 @@ public final class IrcExtensionsTestService {
                           openhouse.loadTable(TableIdentifier.of(DB, table)).properties()));
                   return result;
                 }));
-    RecordingAuthorization acls = context.getBean(RecordingAuthorization.class);
+    GrantStoringAuthorization acls = context.getBean(GrantStoringAuthorization.class);
     OpenHouseInternalRepository repository = context.getBean(OpenHouseInternalRepository.class);
     control.createContext(
         "/acls",
