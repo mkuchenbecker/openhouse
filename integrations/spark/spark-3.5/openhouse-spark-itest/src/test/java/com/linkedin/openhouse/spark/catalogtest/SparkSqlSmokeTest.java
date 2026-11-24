@@ -44,7 +44,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
    * Iceberg REST routes, with no OpenHouse catalog class on the catalog: what a platform configures
    * to reach OpenHouse through plain Iceberg REST (work item N1-c). The OpenHouse SQL extensions
    * are in the session as on the other paths (the shared session loads them through {@code
-   * spark.sql.extensions}). Iceberg 1.12 line only: see {@code RestHttpPathSparkSqlSmokeTest}.
+   * spark.sql.extensions}). On both Iceberg lines: see {@code RestHttpPathSparkSqlSmokeTest}.
    */
   protected static final String REST_HTTP = "rest-http";
 
@@ -140,8 +140,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   }
 
   /** Makes {@code catalog} of {@code spark} Iceberg's REST catalog at {@code uri}'s IRC routes. */
-  private static void restCatalog(
-      SparkSession spark, String catalog, String uri, SparkSession base) {
+  static void restCatalog(SparkSession spark, String catalog, String uri, SparkSession base) {
     String prefix = "spark.sql.catalog." + catalog;
     for (String key : new String[] {"catalog-impl", "cluster", "auth-token"}) {
       spark.conf().unset(prefix + "." + key);

@@ -3,8 +3,6 @@ package com.linkedin.openhouse.spark.catalogtest;
 import com.linkedin.openhouse.javaclient.IcebergLine;
 import java.util.ArrayList;
 import java.util.List;
-import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 
 /**
  * Runs the Spark SQL smoke suite on the plain Iceberg REST path (work item N1-c): Spark 3.5 with
@@ -13,28 +11,16 @@ import org.junit.jupiter.api.BeforeAll;
  * the catalog. {@link #restHttpDifferences()} is the complete list of statements whose outcome is
  * not the baseline's.
  *
- * <p>Iceberg 1.12 line only. On {@code -PicebergLinkedIn} every scenario is skipped by the
- * assumption in {@link #onlyOnTheIceberg112Line()}; {@code RestHttpPathLineTest} pins that the
- * assumption holds exactly on the line the build says it is.
+ * <p>On both Iceberg lines (work item N10). The Iceberg 1.5.2 client differs from the 1.12 one on
+ * the three namespace statements that stay refused, and nowhere else: it has no endpoint list, so
+ * it sends the request, and the service's catch-all refuses it ({@link #restHttpDifferences()}).
+ * {@code RestHttpPathLineTest} pins that the line the declarations follow is the build's line.
  */
 public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
 
   @Override
   protected String catalogPath() {
     return REST_HTTP;
-  }
-
-  /** Whether this path runs on the Iceberg on this classpath. */
-  static boolean runsOnThisLine() {
-    return IcebergLine.current() == IcebergLine.V3;
-  }
-
-  @BeforeAll
-  void onlyOnTheIceberg112Line() {
-    Assumptions.assumeTrue(
-        runsOnThisLine(),
-        "The rest-http smoke path runs on the Iceberg 1.12 line only; this is "
-            + IcebergLine.current());
   }
 
   /** The same refusal or failure, with another exception class or another wording. */
@@ -50,6 +36,25 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
       "Decision D20: namespace create, update and drop stay unsupported over IRC. Still an"
           + " UnsupportedOperationException; the wording is the Iceberg 1.12 client's, which"
           + " refuses a route the service's config does not list before sending anything.";
+  private static final String NAMESPACES_STAY_UNSUPPORTED_ON_152 =
+      "Decision D20: namespace create, update and drop stay unsupported over IRC. The Iceberg"
+          + " 1.5.2 client has no endpoint list (it ignores the config's endpoints), so it sends"
+          + " the request and the service's catch-all refuses the route; RESTCatalog raises that"
+          + " as a RESTException. Still refused, and nothing is stored.";
+  private static final String REST_EXCEPTION = "org.apache.iceberg.exceptions.RESTException";
+
+  /** The refusal of a namespace route the service does not serve, on the line of the classpath. */
+  private static Expectation namespaceRouteRefused(String endpoint112, String refused152) {
+    return IcebergLine.current() == IcebergLine.V3
+        ? fails(UNSUPPORTED, "Server does not support endpoint: " + endpoint112)
+        : fails(REST_EXCEPTION, refused152);
+  }
+
+  private static String namespacesStayUnsupported() {
+    return IcebergLine.current() == IcebergLine.V3
+        ? NAMESPACES_STAY_UNSUPPORTED
+        : NAMESPACES_STAY_UNSUPPORTED_ON_152;
+  }
 
   /**
    * The statements on which the rest-http path differs from the baseline: the nine statements on
@@ -63,26 +68,26 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
         Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(
-                fails(
-                    UNSUPPORTED, "Server does not support endpoint: POST /v1/{prefix}/namespaces"))
-            .because(TYPE_OR_WORDING, NAMESPACES_STAY_UNSUPPORTED));
+                namespaceRouteRefused(
+                    "POST /v1/{prefix}/namespaces",
+                    "This server does not support POST /v1/namespaces"))
+            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     differences.add(
         Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
             .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
             .here(
-                fails(
-                    UNSUPPORTED,
-                    "Server does not support endpoint:"
-                        + " POST /v1/{prefix}/namespaces/{namespace}/properties"))
-            .because(TYPE_OR_WORDING, NAMESPACES_STAY_UNSUPPORTED));
+                namespaceRouteRefused(
+                    "POST /v1/{prefix}/namespaces/{namespace}/properties",
+                    "This server does not support POST"))
+            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     differences.add(
         Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(
-                fails(
-                    UNSUPPORTED,
-                    "Server does not support endpoint: DELETE /v1/{prefix}/namespaces/{namespace}"))
-            .because(TYPE_OR_WORDING, NAMESPACES_STAY_UNSUPPORTED));
+                namespaceRouteRefused(
+                    "DELETE /v1/{prefix}/namespaces/{namespace}",
+                    "This server does not support DELETE"))
+            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     // ---- s24: namespace statements the OpenHouse catalog refused and the IRC routes answer.
     differences.add(
         Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
