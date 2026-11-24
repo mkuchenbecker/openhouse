@@ -41,8 +41,7 @@ sequence numbers. Neither is agreed by Mike. Claude wrote the entries.
   lineage change.
 - Bearing on V11d (Mike's decision on turning server planning on from the server): server planning must not be offered
   to writers of format v3 tables. Noted on the V11d row in `41-work-platforms-v3.md`.
-- Undecided, delegated to the implementer with a correctness condition: whether a filter on a column added after the
-  current snapshot, which answers 400 under server planning, can be made to equal client planning. If it cannot be made
-  equal, it stays pinned as it is.
-- Status: being implemented as V11e (worktree `/home/user/oh-v11e`, branch `irc/v11e-plan-v3-and-late-columns`, record
-  `v11e-plan-v3-and-late-columns.md` in the reports directory).
+- Delegated to the implementer with a correctness condition: whether a filter on a column added after the current
+  snapshot, which answered 400 under server planning, can be made to equal client planning. How it ended: the
+  late-added-column case was fixed, because every listed case was shown equal to client planning (`69-v11e-result.md`).
+- Status: implemented by pull request 132, merge commit `9f9561e6` (V11e, `69-v11e-result.md`), 2026-11-24.
