@@ -70,7 +70,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .here(
                 namespaceRouteRefused(
                     "POST /v1/{prefix}/namespaces",
-                    "This server does not support POST /v1/namespaces"))
+                    "Unable to process: This server does not support POST /v1/namespaces yet"))
             .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     differences.add(
         Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
@@ -78,7 +78,9 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .here(
                 namespaceRouteRefused(
                     "POST /v1/{prefix}/namespaces/{namespace}/properties",
-                    "This server does not support POST"))
+                    "Unable to process: This server does not support POST /v1/namespaces/"
+                        + DB
+                        + "/properties yet"))
             .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     differences.add(
         Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
@@ -86,7 +88,9 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .here(
                 namespaceRouteRefused(
                     "DELETE /v1/{prefix}/namespaces/{namespace}",
-                    "This server does not support DELETE"))
+                    "Unable to process: This server does not support DELETE /v1/namespaces/"
+                        + DB
+                        + " yet"))
             .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
     // ---- s24: namespace statements the OpenHouse catalog refused and the IRC routes answer.
     differences.add(
