@@ -82,3 +82,9 @@ sourceSets {
         }
     }
 }
+
+// FormatV3MaintenanceTest checks that its format v3 cases ran on the default (Iceberg 1.12) line
+// rather than skipping themselves; it needs to know which line this build is.
+tasks.withType(Test).configureEach {
+    systemProperty 'openhouse.iceberg.line', rootProject.hasProperty('icebergLinkedIn') ? 'linkedin' : 'default'
+}

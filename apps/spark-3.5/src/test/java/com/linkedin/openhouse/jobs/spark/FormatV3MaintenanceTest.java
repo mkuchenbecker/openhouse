@@ -115,6 +115,26 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     }
   }
 
+  /**
+   * The v3 cases skip themselves by an assumption on the reference line. On the default line
+   * (Iceberg 1.12) that assumption must hold, or every v3 case would be silently skipped: the build
+   * tells the test which line it is ({@code openhouse.iceberg.line}, apps build.gradle).
+   */
+  @org.junit.jupiter.api.Test
+  void v3CasesAreNotSkippedOnTheDefaultLine() {
+    String line = System.getProperty("openhouse.iceberg.line");
+    Assertions.assertNotNull(line, "the build sets openhouse.iceberg.line for this test task");
+    if ("default".equals(line)) {
+      Assertions.assertTrue(
+          icebergCanWriteV3(), "the default line runs Iceberg 1.12, which writes format v3");
+      Table table = ops(3).getTable(createTable(3, "guard", "orc"));
+      Assertions.assertEquals(3, formatVersion(table));
+    } else {
+      Assertions.assertEquals("linkedin", line);
+      Assertions.assertFalse(icebergCanWriteV3(), "the reference line cannot write format v3");
+    }
+  }
+
   // ------------------------------------------------------------------------------------ fixture
 
   /** Row lineage's metadata columns exist only on an Iceberg that writes format v3 (1.12 line). */
@@ -208,8 +228,14 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
       Assertions.assertTrue(
           deletes.stream().map(d -> d.path().toString()).distinct().count() > 1,
           "deletion vectors live in more than one Puffin file");
-      List<Row> lineage = read(spark, "SELECT _row_id FROM " + t + " WHERE _row_id IS NULL");
-      Assertions.assertTrue(lineage.isEmpty(), "every row has a row id");
+      List<Row> lineage =
+          read(
+              spark,
+              "SELECT _row_id FROM "
+                  + t
+                  + " WHERE _row_id IS NULL OR _last_updated_sequence_number IS NULL");
+      Assertions.assertTrue(
+          lineage.isEmpty(), "every row has a row id and a last-updated sequence number");
     } else {
       Assertions.assertTrue(deletes.stream().noneMatch(d -> d.format().name().equals("PUFFIN")));
     }
@@ -365,6 +391,82 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     Assertions.assertEquals(Collections.emptyList(), missing, "files a retained snapshot needs");
   }
 
+  /** Data files of the current snapshot that have delete files applied to them. */
+  private static Set<String> dataFilesWithDeletes(Table table) throws IOException {
+    Set<String> files = new TreeSet<>();
+    try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.FileScanTask> tasks =
+        table.newScan().planFiles()) {
+      for (org.apache.iceberg.FileScanTask task : tasks) {
+        if (!task.deletes().isEmpty()) {
+          files.add(task.file().path().toString());
+        }
+      }
+    }
+    return files;
+  }
+
+  /**
+   * The data file a deletion vector applies to ({@code DeleteFile.referencedDataFile}, Iceberg 1.12
+   * only, so called reflectively; the reference line never builds a v3 table).
+   */
+  private static String referencedDataFile(DeleteFile deleteFile) {
+    try {
+      Object referenced = DeleteFile.class.getMethod("referencedDataFile").invoke(deleteFile);
+      return referenced == null ? null : referenced.toString();
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** On v3: the Puffin file holding each data file's deletion vector in the snapshot. */
+  private static Map<String, String> deletionVectorFiles(Table table, Snapshot snapshot) {
+    Map<String, String> byDataFile = new HashMap<>();
+    for (DeleteFile d : liveDeleteFiles(table, snapshot)) {
+      byDataFile.put(referencedDataFile(d), d.path().toString());
+    }
+    return byDataFile;
+  }
+
+  /**
+   * On v3: Puffin files referenced by a retained snapshot that also held a deletion vector which an
+   * expired snapshot used and a retained snapshot no longer takes from that file (partially live
+   * Puffin files: the case an expiry that worked per file content would get wrong).
+   */
+  private static Set<String> partiallyLivePuffinFiles(
+      Table table, List<Long> expired, List<Long> retained) {
+    Set<String> retainedPuffins = new TreeSet<>();
+    Set<String> retainedPairs = new TreeSet<>();
+    for (long id : retained) {
+      deletionVectorFiles(table, table.snapshot(id))
+          .forEach(
+              (dataFile, puffin) -> {
+                retainedPuffins.add(puffin);
+                retainedPairs.add(puffin + "|" + dataFile);
+              });
+    }
+    Set<String> partial = new TreeSet<>();
+    for (long id : expired) {
+      deletionVectorFiles(table, table.snapshot(id))
+          .forEach(
+              (dataFile, puffin) -> {
+                if (retainedPuffins.contains(puffin)
+                    && !retainedPairs.contains(puffin + "|" + dataFile)) {
+                  partial.add(puffin);
+                }
+              });
+    }
+    return partial;
+  }
+
+  /** Removes the oldest partition by a metadata-only DELETE: its data files leave the table. */
+  private void dropOldestPartition(int formatVersion, String fqtn) {
+    session(formatVersion).sql("DELETE FROM openhouse." + fqtn + " WHERE ts < " + ts(7, 0));
+  }
+
+  private static boolean isDataOrDeleteFile(String path) {
+    return path.endsWith(".orc") || path.endsWith(".parquet") || path.endsWith(".puffin");
+  }
+
   private static Path plant(FileSystem fs, Path path, long ageMillis) throws IOException {
     fs.create(path, true).close();
     long time = System.currentTimeMillis() - ageMillis;
@@ -382,6 +484,8 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     Reading before = reading(formatVersion, fqtn);
     Table table = ops(formatVersion).getTable(fqtn);
     int dataFilesBefore = liveDataFiles(table, table.currentSnapshot()).size();
+    Set<String> withDeletes = dataFilesWithDeletes(table);
+    Assertions.assertFalse(withDeletes.isEmpty());
 
     DataCompactionSparkApp app =
         new DataCompactionSparkApp(
@@ -399,6 +503,163 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     Assertions.assertTrue(
         liveDataFiles(table, table.currentSnapshot()).size() < dataFilesBefore,
         "compaction reduced the data files");
+    Set<String> liveAfter =
+        liveDataFiles(table, table.currentSnapshot()).stream()
+            .map(d -> d.path().toString())
+            .collect(Collectors.toSet());
+    Assertions.assertTrue(
+        Collections.disjoint(withDeletes, liveAfter),
+        "every data file that carried deletes was rewritten");
+    if (formatVersion == 3) {
+      Assertions.assertEquals(
+          Collections.emptyList(),
+          liveDeleteFiles(table, table.currentSnapshot()),
+          "the rewrite dropped the deletion vectors of the files it replaced");
+    }
+    assertNoDanglingDeletionVectors(formatVersion, table);
+    assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
+  }
+
+  /** On v3, every live deletion vector applies to a live data file. */
+  private static void assertNoDanglingDeletionVectors(int formatVersion, Table table) {
+    if (formatVersion != 3) {
+      return;
+    }
+    Set<String> live =
+        liveDataFiles(table, table.currentSnapshot()).stream()
+            .map(d -> d.path().toString())
+            .collect(Collectors.toSet());
+    for (DeleteFile d : liveDeleteFiles(table, table.currentSnapshot())) {
+      Assertions.assertTrue(
+          live.contains(referencedDataFile(d)), "deletion vector of a live data file: " + d.path());
+    }
+  }
+
+  /**
+   * Compaction as production launches it. {@code table-only}: DATA_COMPACTION, whose task passes
+   * only {@code --tableName} (TableDataCompactionTask.getArgs), so every default applies
+   * (minInputFiles 5, deleteFileThreshold Integer.MAX_VALUE, no partial progress). {@code
+   * layout-args}: DATA_LAYOUT_STRATEGY_EXECUTION, whose task passes the generated strategy's sizes,
+   * minInputFiles, concurrency and partial progress, never deleteFileThreshold
+   * (TableDataLayoutStrategyExecutionTask.getArgs). {@code strategy-json}: the app's {@code
+   * --strategy} entry with the strategy the generator stored on the table.
+   */
+  @ParameterizedTest(name = "format v{0}, {1}")
+  @CsvSource({
+    "2, table-only",
+    "3, table-only",
+    "2, layout-args",
+    "3, layout-args",
+    "2, strategy-json",
+    "3, strategy-json"
+  })
+  void compactionWithProductionArgumentsKeepsLiveRowsDeletesAndRowIds(
+      int formatVersion, String launch) throws Exception {
+    String fqtn = createTable(formatVersion, "compact_" + launch.replace('-', '_'), "orc");
+    Operations ops = ops(formatVersion);
+    List<String> args = new ArrayList<>(Arrays.asList("--tableName", fqtn));
+    if (!"table-only".equals(launch)) {
+      String out = DB + ".dlo_" + launch.replace('-', '_') + "_v" + formatVersion;
+      session(formatVersion).sql("DROP TABLE IF EXISTS openhouse." + out);
+      session(formatVersion).sql("DROP TABLE IF EXISTS openhouse." + out + "_p");
+      new DataLayoutStrategyGeneratorSparkApp(
+              "x6-dlo-gen", null, fqtn, out, out + "_p", otelEmitter)
+          .runInner(ops);
+      List<com.linkedin.openhouse.datalayout.strategy.DataLayoutStrategy> strategies =
+          com.linkedin.openhouse.datalayout.persistence.StrategiesDaoTableProps.deserializeList(
+              ops.getTable(fqtn).properties().get("write.data-layout.strategies"));
+      Assertions.assertFalse(strategies.isEmpty());
+      com.linkedin.openhouse.datalayout.strategy.DataLayoutStrategy strategy = strategies.get(0);
+      DataCompactionConfig config = strategy.getConfig();
+      if ("layout-args".equals(launch)) {
+        args.addAll(
+            Arrays.asList(
+                "--targetByteSize",
+                String.valueOf(config.getTargetByteSize()),
+                "--minByteSizeRatio",
+                String.valueOf(config.getMinByteSizeRatio()),
+                "--maxByteSizeRatio",
+                String.valueOf(config.getMaxByteSizeRatio()),
+                "--minInputFiles",
+                String.valueOf(config.getMinInputFiles()),
+                "--maxConcurrentFileGroupRewrites",
+                String.valueOf(config.getMaxConcurrentFileGroupRewrites())));
+        if (config.isPartialProgressEnabled()) {
+          args.addAll(
+              Arrays.asList(
+                  "--partialProgressEnabled",
+                  "--partialProgressMaxCommits",
+                  String.valueOf(config.getPartialProgressMaxCommits())));
+        }
+      } else {
+        args.addAll(
+            Arrays.asList(
+                "--strategy",
+                com.linkedin.openhouse.datalayout.persistence.StrategiesDaoTableProps.serialize(
+                    strategy)));
+      }
+    }
+    Reading before = reading(formatVersion, fqtn);
+    Table table = ops.getTable(fqtn);
+    long snapshotBefore = table.currentSnapshot().snapshotId();
+    Set<String> withDeletes = dataFilesWithDeletes(table);
+    Map<String, String> dvsBefore =
+        formatVersion == 3 ? deletionVectorFiles(table, table.currentSnapshot()) : null;
+
+    List<String> argv = new ArrayList<>(Arrays.asList("--storageURL", "http://localhost:1"));
+    argv.addAll(args);
+    DataCompactionSparkApp app =
+        DataCompactionSparkApp.createApp(argv.toArray(new String[0]), otelEmitter);
+    app.runInner(ops);
+    app.runValidations(ops);
+
+    table = ops(formatVersion).getTable(fqtn);
+    Set<String> liveAfter =
+        liveDataFiles(table, table.currentSnapshot()).stream()
+            .map(d -> d.path().toString())
+            .collect(Collectors.toSet());
+    List<String> rewrittenWithDeletes =
+        withDeletes.stream().filter(f -> !liveAfter.contains(f)).collect(Collectors.toList());
+    System.out.println(
+        "X6-COMPACTION v"
+            + formatVersion
+            + " "
+            + launch
+            + " args="
+            + args.subList(2, args.size()).stream()
+                .map(a -> a.length() > 60 ? a.substring(0, 60) + "..." : a)
+                .collect(Collectors.toList())
+            + " committed="
+            + (table.currentSnapshot().snapshotId() != snapshotBefore)
+            + " rewroteFilesWithDeletes="
+            + rewrittenWithDeletes.size()
+            + "/"
+            + withDeletes.size());
+    if (icebergCanWriteV3()) {
+      Assertions.assertNotEquals(
+          snapshotBefore, table.currentSnapshot().snapshotId(), "compaction committed");
+      Assertions.assertFalse(
+          rewrittenWithDeletes.isEmpty(), "compaction rewrote data files that carried deletes");
+    } else {
+      // LinkedIn's Iceberg 1.5.2 plans nothing for this fixture with production arguments (no
+      // partition reaches 5 files, and its bin-pack has no delete-ratio rule): pinned.
+      Assertions.assertEquals(
+          snapshotBefore, table.currentSnapshot().snapshotId(), "1.5.2 commits no rewrite here");
+    }
+    if (formatVersion == 3) {
+      // The deletion vector of every data file the rewrite replaced is gone with it; the others
+      // are untouched.
+      Map<String, String> dvsAfter = deletionVectorFiles(table, table.currentSnapshot());
+      for (String rewritten : rewrittenWithDeletes) {
+        Assertions.assertFalse(dvsAfter.containsKey(rewritten), "DV of a rewritten file dropped");
+      }
+      for (Map.Entry<String, String> dv : dvsBefore.entrySet()) {
+        if (liveAfter.contains(dv.getKey())) {
+          Assertions.assertEquals(dv.getValue(), dvsAfter.get(dv.getKey()), "DV kept: " + dv);
+        }
+      }
+    }
+    assertNoDanglingDeletionVectors(formatVersion, table);
     assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
   }
 
@@ -409,6 +670,11 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   void snapshotExpiryWithFileDeletionKeepsWhatRetainedSnapshotsNeed(int formatVersion)
       throws Exception {
     String fqtn = createTable(formatVersion, "expire", "orc");
+    // The oldest partition leaves the table and one more INSERT follows, so its data and delete
+    // files are referenced only by snapshots this expiry (keeping the last 2) removes.
+    dropOldestPartition(formatVersion, fqtn);
+    session(formatVersion)
+        .sql("INSERT INTO openhouse." + fqtn + " VALUES (200, 'after-drop', " + ts(0, 59) + ")");
     Reading before = reading(formatVersion, fqtn);
     Table table = ops(formatVersion).getTable(fqtn);
     List<Long> ids = snapshotIds(table);
@@ -416,6 +682,13 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     Map<Long, List<String>> retained = new LinkedHashMap<>();
     for (long id : ids.subList(ids.size() - 2, ids.size())) {
       retained.put(id, before.perSnapshot.get(id));
+    }
+    if (formatVersion == 3) {
+      Assertions.assertFalse(
+          partiallyLivePuffinFiles(
+                  table, ids.subList(0, ids.size() - 2), new ArrayList<>(retained.keySet()))
+              .isEmpty(),
+          "a Puffin file a retained snapshot needs also holds a vector an expired one replaced");
     }
 
     SnapshotsExpirationSparkApp app =
@@ -435,7 +708,9 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
         filesBefore.stream()
             .filter(f -> !filesAfter.contains(f) && !f.endsWith("metadata.json"))
             .collect(Collectors.toList());
-    Assertions.assertFalse(expiredOnly.isEmpty());
+    Assertions.assertTrue(
+        expiredOnly.stream().anyMatch(FormatV3MaintenanceTest::isDataOrDeleteFile),
+        "expiry removes data or delete files, not only manifests: " + expiredOnly);
     Assertions.assertTrue(
         expiredOnly.stream().noneMatch(f -> finalTable.io().newInputFile(f).exists()),
         "files only expired snapshots referenced were deleted");
@@ -446,17 +721,19 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   void metadataOnlyExpiryThenOrphanRemovalKeepsWhatRetainedSnapshotsNeed(int formatVersion)
       throws Exception {
     String fqtn = createTable(formatVersion, "expire_meta", "orc");
+    dropOldestPartition(formatVersion, fqtn);
     Reading before = reading(formatVersion, fqtn);
+    Set<String> filesBefore = referencedFiles(ops(formatVersion).getTable(fqtn));
     List<Long> ids = snapshotIds(ops(formatVersion).getTable(fqtn));
     Map<Long, List<String>> retained = new LinkedHashMap<>();
-    for (long id : ids.subList(ids.size() - 3, ids.size())) {
+    for (long id : ids.subList(ids.size() - 1, ids.size())) {
       retained.put(id, before.perSnapshot.get(id));
     }
 
     Operations ops = ops(formatVersion);
     SnapshotsExpirationSparkApp expiry =
         new SnapshotsExpirationSparkApp(
-            "x6-expiry-meta", null, fqtn, 3, "days", 3, false, ".backup", otelEmitter);
+            "x6-expiry-meta", null, fqtn, 3, "days", 1, false, ".backup", otelEmitter);
     expiry.runInner(ops);
     expiry.runValidations(ops);
     Assertions.assertEquals(
@@ -469,6 +746,18 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     orphans.runInner(ops);
     orphans.runValidations(ops);
     assertNoLiveDataLost(formatVersion, fqtn, before, retained);
+    Table table = ops(formatVersion).getTable(fqtn);
+    Set<String> filesAfter = referencedFiles(table);
+    List<String> removed =
+        filesBefore.stream()
+            .filter(f -> !filesAfter.contains(f) && !f.endsWith("metadata.json"))
+            .collect(Collectors.toList());
+    Assertions.assertTrue(
+        removed.stream().anyMatch(FormatV3MaintenanceTest::isDataOrDeleteFile),
+        "orphan removal had data or delete files to remove: " + removed);
+    Assertions.assertTrue(
+        removed.stream().noneMatch(f -> table.io().newInputFile(f).exists()),
+        "orphan removal removed every file only expired snapshots referenced");
   }
 
   // ---------------------------------------------------------------------- orphan file removal
@@ -525,6 +814,252 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
       Assertions.assertFalse(fs.exists(orphan), "planted orphan removed: " + orphan);
     }
     assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
+  }
+
+  // ------------------------------------------------- retention with backup and delete files
+
+  /** Partition path of every live delete file of the snapshot, by the delete file's path. */
+  private static Map<String, Set<String>> deleteFilePartitions(Table table, Snapshot snapshot) {
+    Map<String, Set<String>> partitions = new java.util.TreeMap<>();
+    for (DeleteFile d : liveDeleteFiles(table, snapshot)) {
+      partitions
+          .computeIfAbsent(d.path().toString(), k -> new TreeSet<>())
+          .add(table.specs().get(d.specId()).partitionToPath(d.partition()));
+    }
+    return partitions;
+  }
+
+  private static List<Path> listRecursively(FileSystem fs, Path dir) throws IOException {
+    List<Path> files = new ArrayList<>();
+    if (!fs.exists(dir)) {
+      return files;
+    }
+    org.apache.hadoop.fs.RemoteIterator<org.apache.hadoop.fs.LocatedFileStatus> it =
+        fs.listFiles(dir, true);
+    while (it.hasNext()) {
+      files.add(it.next().getPath());
+    }
+    Collections.sort(files);
+    return files;
+  }
+
+  /**
+   * Retention with backup enabled on a merge-on-read table whose expired partitions carry delete
+   * files, followed by what physically removes the expired files in production: snapshot expiry
+   * with file deletion, or metadata-only expiry and then orphan removal. Both use the same
+   * backup-or-delete handler. Establishes what lands in the backup directory, and that the
+   * surviving partitions keep their delete files (a Puffin file shared with an expired partition
+   * included) and their deleted rows stay deleted.
+   */
+  @ParameterizedTest(name = "format v{0}, files removed by {1}")
+  @CsvSource({"2, expiry", "3, expiry", "2, orphans", "3, orphans"})
+  void retentionBackupOfPartitionsWithDeleteFiles(int formatVersion, String remover)
+      throws Exception {
+    String fqtn = createTable(formatVersion, "ret_backup_" + remover, "orc");
+    SparkSession spark = session(formatVersion);
+    spark.sql(
+        "ALTER TABLE openhouse."
+            + fqtn
+            + " SET TBLPROPERTIES ('"
+            + AppConstants.BACKUP_ENABLED_KEY
+            + "'='true')");
+    Operations ops = ops(formatVersion);
+    Table table = ops.getTable(fqtn);
+    Snapshot beforeRetention = table.currentSnapshot();
+    Map<String, Set<String>> deletesByPartition = deleteFilePartitions(table, beforeRetention);
+    Set<String> survivingPartitions = new TreeSet<>();
+    Set<String> expiredPartitions = new TreeSet<>();
+    Map<String, String> dataFilePartition = new HashMap<>();
+    for (DataFile d : liveDataFiles(table, beforeRetention)) {
+      String partition = table.spec().partitionToPath(d.partition());
+      dataFilePartition.put(d.path().toString(), partition);
+    }
+    for (int days : PARTITION_DAYS_AGO) {
+      String partition =
+          table
+              .spec()
+              .partitionToPath(
+                  liveDataFiles(table, beforeRetention).stream()
+                      .filter(
+                          d ->
+                              dataFilePartition
+                                  .get(d.path().toString())
+                                  .endsWith(today.minusDays(days).toLocalDate().toString()))
+                      .findFirst()
+                      .get()
+                      .partition());
+      (days >= 5 ? expiredPartitions : survivingPartitions).add(partition);
+    }
+    List<String> sharedAcrossKeptAndExpired =
+        deletesByPartition.entrySet().stream()
+            .filter(
+                e ->
+                    e.getValue().stream().anyMatch(expiredPartitions::contains)
+                        && e.getValue().stream().anyMatch(survivingPartitions::contains))
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+    Set<String> survivingDeleteFiles =
+        deletesByPartition.entrySet().stream()
+            .filter(e -> e.getValue().stream().anyMatch(survivingPartitions::contains))
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toCollection(TreeSet::new));
+    System.out.println(
+        "X6-BACKUP v"
+            + formatVersion
+            + " "
+            + remover
+            + " delete files by partition: "
+            + deletesByPartition);
+    System.out.println(
+        "X6-BACKUP v"
+            + formatVersion
+            + " "
+            + remover
+            + " shared across kept and expired: "
+            + sharedAcrossKeptAndExpired);
+    Reading before = reading(formatVersion, fqtn);
+
+    RetentionSparkApp retention =
+        new RetentionSparkApp(
+            "x6-retention-backup", null, fqtn, "ts", "", "day", 3, otelEmitter, ".backup");
+    retention.runInner(ops);
+    retention.runValidations(ops);
+    if ("expiry".equals(remover)) {
+      SnapshotsExpirationSparkApp expiry =
+          new SnapshotsExpirationSparkApp(
+              "x6-expiry-backup", null, fqtn, 3, "days", 1, true, ".backup", otelEmitter);
+      expiry.runInner(ops);
+      expiry.runValidations(ops);
+    } else {
+      SnapshotsExpirationSparkApp expiry =
+          new SnapshotsExpirationSparkApp(
+              "x6-expiry-meta-backup", null, fqtn, 3, "days", 1, false, ".backup", otelEmitter);
+      expiry.runInner(ops);
+      OrphanFilesDeletionSparkApp orphans =
+          new OrphanFilesDeletionSparkApp(
+              "x6-ofd-backup", null, fqtn, 0, otelEmitter, ".backup", 2, false, 1000);
+      orphans.runInner(ops);
+      orphans.runValidations(ops);
+    }
+
+    // The surviving partitions: rows, deletes, row ids and their delete files are intact.
+    Reading after = reading(formatVersion, fqtn);
+    List<String> expectedLive =
+        before.live.stream()
+            .filter(r -> Long.parseLong(r.substring(1, r.indexOf(','))) >= 17)
+            .collect(Collectors.toList());
+    Assertions.assertEquals(expectedLive, after.live, "live rows inside retention");
+    for (long id : DELETED_IDS) {
+      Assertions.assertFalse(after.liveIds.contains(id), "deleted row " + id + " stays deleted");
+    }
+    if (formatVersion == 3) {
+      List<String> expectedLineage =
+          before.lineage.stream()
+              .filter(r -> Long.parseLong(r.substring(1, r.indexOf(','))) >= 17)
+              .collect(Collectors.toList());
+      Assertions.assertEquals(expectedLineage, after.lineage, "_row_id of surviving rows");
+    }
+    table = ops(formatVersion).getTable(fqtn);
+    Table finalTable = table;
+    for (String deleteFile : survivingDeleteFiles) {
+      Assertions.assertTrue(
+          finalTable.io().newInputFile(deleteFile).exists(),
+          "delete file of a surviving partition exists: " + deleteFile);
+    }
+    assertEveryReferencedFileExists(table);
+
+    // What is in the backup directory, by kind, and which rows the backed-up data files hold.
+    FileSystem fs = ops.fs();
+    Path backupRoot = new Path(table.location(), ".backup");
+    List<String> backedUpData = new ArrayList<>();
+    Set<String> backedUpDataNames = new TreeSet<>();
+    Set<String> backedUpDeleteNames = new TreeSet<>();
+    Set<String> manifestListedNames = new TreeSet<>();
+    for (Path p : listRecursively(fs, backupRoot)) {
+      if (p.getName().startsWith("data_manifest")) {
+        try (java.io.InputStream in = fs.open(p)) {
+          String json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+          System.out.println("X6-BACKUP v" + formatVersion + " " + remover + " manifest: " + json);
+          com.google.gson.JsonObject manifest =
+              com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+          manifest
+              .getAsJsonArray("files")
+              .forEach(e -> manifestListedNames.add(new Path(e.getAsString()).getName()));
+          Assertions.assertEquals(
+              java.util.Set.of("file_count", "files"),
+              manifest.keySet(),
+              "the backup manifest records data files only, and nothing about deletes");
+        }
+      } else if (p.getName().contains("-deletes.")) {
+        backedUpDeleteNames.add(p.getName());
+      } else {
+        backedUpData.add(p.toString());
+        backedUpDataNames.add(p.getName());
+      }
+    }
+    Set<String> expiredDataNames =
+        dataFilePartition.entrySet().stream()
+            .filter(e -> expiredPartitions.contains(e.getValue()))
+            .map(e -> new Path(e.getKey()).getName())
+            .collect(Collectors.toCollection(TreeSet::new));
+    Assertions.assertEquals(
+        expiredDataNames, backedUpDataNames, "every expired data file backed up");
+    Assertions.assertEquals(
+        expiredDataNames, manifestListedNames, "the manifests list exactly those data files");
+
+    // The backed-up data files still hold the rows that were deleted before retention ran, and
+    // nothing the manifest lists records that they were deleted: a restore driven by the
+    // manifests brings them back. Pinned (work item X6, finding 1a), not changed here.
+    Set<Long> idsInBackedUpData = new TreeSet<>();
+    // Iceberg's ORC reader: Spark's own cannot parse Iceberg's ORC timestamp type attribute.
+    org.apache.iceberg.Schema idOnly = table.schema().select("id");
+    for (String file : backedUpData) {
+      try (org.apache.iceberg.io.CloseableIterable<org.apache.iceberg.data.Record> records =
+          org.apache
+              .iceberg
+              .orc
+              .ORC
+              .read(table.io().newInputFile(file))
+              .project(idOnly)
+              .createReaderFunc(
+                  fileSchema ->
+                      org.apache.iceberg.data.orc.GenericOrcReader.buildReader(idOnly, fileSchema))
+              .build()) {
+        records.forEach(r -> idsInBackedUpData.add((Long) r.getField("id")));
+      }
+    }
+    Set<Long> allExpiredIds = new TreeSet<>();
+    for (long id = 1; id <= 16; id++) {
+      allExpiredIds.add(id);
+    }
+    Assertions.assertEquals(
+        allExpiredIds, idsInBackedUpData, "deleted rows 2, 3, 6, 10, 14, 15 are in the backup");
+
+    if (formatVersion == 3) {
+      // Deletion vectors live in Puffin files at the data root, not in partition directories, and
+      // one Puffin file serves partitions on both sides of the cut-off.
+      Assertions.assertFalse(
+          sharedAcrossKeptAndExpired.isEmpty(),
+          "a Puffin file holds deletion vectors for an expired and a kept partition");
+      Assertions.assertEquals(
+          Collections.emptySet(), backedUpDeleteNames, "no deletion vector reaches the backup");
+      for (Map.Entry<String, Set<String>> puffin : deletesByPartition.entrySet()) {
+        boolean onlyExpired = expiredPartitions.containsAll(puffin.getValue());
+        Assertions.assertEquals(
+            !onlyExpired,
+            finalTable.io().newInputFile(puffin.getKey()).exists(),
+            "a Puffin file serving only expired partitions is deleted, any other is kept: "
+                + puffin);
+      }
+    } else {
+      // v2 position delete files live in their partition's directory: one partition each, and
+      // they are moved into the backup with the data files, though no manifest lists them.
+      Assertions.assertEquals(Collections.emptyList(), sharedAcrossKeptAndExpired);
+      Assertions.assertFalse(backedUpDeleteNames.isEmpty(), "v2 delete files are in the backup");
+      Assertions.assertTrue(
+          Collections.disjoint(backedUpDeleteNames, manifestListedNames),
+          "no manifest lists a delete file");
+    }
   }
 
   // ---------------------------------------------------------------------------------- retention
@@ -820,10 +1355,14 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     Operations ops = ops(formatVersion);
     Table table = ops.getTable(fqtn);
     Set<String> referenced = referencedFiles(table);
+    Path planted = plant(ops.fs(), new Path(table.location(), "data/x6-orphan.puffin"), 3_600_000L);
     DeleteOrphanFiles.Result result =
         ops.deleteOrphanFiles(table, System.currentTimeMillis(), ".backup", 1, false, 1000);
     List<String> orphans = new ArrayList<>();
     result.orphanFileLocations().forEach(orphans::add);
+    Assertions.assertTrue(
+        orphans.stream().anyMatch(o -> o.endsWith(planted.toUri().getPath())),
+        "the planted orphan is listed: " + orphans);
     List<String> liveListed =
         orphans.stream()
             .filter(
