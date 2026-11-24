@@ -5,6 +5,7 @@ import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.spark.state.StateManager;
 import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
+import java.lang.reflect.Field;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -17,15 +18,24 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Option;
 import org.apache.iceberg.HasTableOperations;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.spark.ExtendedParser;
+import org.apache.iceberg.spark.Spark3Util;
+import org.apache.iceberg.spark.actions.SparkActions;
+import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.parser.ParserInterface;
 
 @Slf4j
 public class SortStatsCollectionSparkApp extends BaseTableSparkApp {
   private static final int TARGET_FILE_SIZE = 512 * 1024 * 1024; // 512MB
-  private static final String SORT_ORDER =
-      "header.memberId asc nulls last, header.time asc nulls last";
+
+  @VisibleForTesting
+  static final String SORT_ORDER = "header.memberId asc nulls last, header.time asc nulls last";
+
   private static final String COMPRESSION_RATE_KEY = "sort-compression-rate";
 
   public SortStatsCollectionSparkApp(
@@ -93,12 +103,7 @@ public class SortStatsCollectionSparkApp extends BaseTableSparkApp {
               .first()
               .getDouble(0);
       // call rewrite procedure to rewrite data files with sort strategy
-      String rewriteOptions = getRewriteOptions();
-      spark.sql(
-          String.format(
-              "call openhouse.system.rewrite_data_files("
-                  + "table => '%s', options => map(%s), strategy => 'sort', sort_order => '%s')",
-              tempTableName, rewriteOptions, SORT_ORDER));
+      rewriteSorted(spark, tempTableName);
       double sizeAfter =
           spark
               .sql(
@@ -163,11 +168,114 @@ public class SortStatsCollectionSparkApp extends BaseTableSparkApp {
     return yesterday.format(formatter);
   }
 
-  private String getRewriteOptions() {
+  /**
+   * Rewrites the data files of {@code tempTableName} with the sort strategy, {@link #SORT_ORDER}
+   * and the app's options. Where Iceberg's own parse of a sort order works on this session (Iceberg
+   * 1.12, on both Spark lines), this is the {@code rewrite_data_files} call the app always made.
+   *
+   * <p>LinkedIn's Iceberg 1.5.2 parses the procedure's {@code sort_order} with the session's
+   * outermost parser only, and fails unless that is Iceberg's; the OpenHouse SQL extensions wrap
+   * Iceberg's parser when they are listed after Iceberg's, as jobs.yaml lists them. There, and only
+   * there, the order is parsed with Iceberg's parser below OpenHouse's and given to the rewrite
+   * action the procedure runs (same table, options and sort order; no filter, as the call has
+   * none).
+   */
+  @VisibleForTesting
+  static void rewriteSorted(SparkSession spark, String tempTableName) throws Exception {
+    ExtendedParser icebergParser =
+        sessionParsesSortOrder(spark) ? null : icebergParserBelow(spark.sessionState().sqlParser());
+    if (icebergParser == null) {
+      spark.sql(
+          String.format(
+              "call openhouse.system.rewrite_data_files("
+                  + "table => '%s', options => map(%s), strategy => 'sort', sort_order => '%s')",
+              tempTableName, getRewriteOptions(), SORT_ORDER));
+      return;
+    }
+    log.info(
+        "Session parser {} is not Iceberg's and this Iceberg does not look below it; rewriting {}"
+            + " with the sort order parsed by {}",
+        spark.sessionState().sqlParser().getClass().getName(),
+        tempTableName,
+        icebergParser.getClass().getName());
+    Table table = Spark3Util.loadIcebergTable(spark, "openhouse." + tempTableName);
+    SparkActions.get(spark)
+        .rewriteDataFiles(table)
+        .options(rewriteOptions())
+        .sort(sortOrder(icebergParser, table.schema()))
+        .execute();
+  }
+
+  /**
+   * Whether Iceberg's {@code ExtendedParser.parseSortOrder}, the call {@code rewrite_data_files}
+   * makes for {@code sort_order}, finds a parser on this session. Parsing has no side effect.
+   */
+  @VisibleForTesting
+  static boolean sessionParsesSortOrder(SparkSession spark) {
+    try {
+      ExtendedParser.parseSortOrder(spark, SORT_ORDER);
+      return true;
+    } catch (IllegalStateException e) {
+      return false;
+    }
+  }
+
+  /**
+   * The first Iceberg {@link ExtendedParser} in the chain of parsers starting at {@code parser},
+   * following each parser's delegate field (as Iceberg 1.12's {@code parseSortOrder} does), or null
+   * if there is none.
+   */
+  @VisibleForTesting
+  static ExtendedParser icebergParserBelow(ParserInterface parser) {
+    ParserInterface current = parser;
+    while (current != null) {
+      if (current instanceof ExtendedParser) {
+        return (ExtendedParser) current;
+      }
+      ParserInterface next = null;
+      try {
+        for (Class<?> c = current.getClass(); c != null && next == null; c = c.getSuperclass()) {
+          for (Field field : c.getDeclaredFields()) {
+            field.setAccessible(true);
+            Object value = field.get(current);
+            if (value instanceof ParserInterface && value != current) {
+              next = (ParserInterface) value;
+              break;
+            }
+          }
+        }
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        log.warn("Cannot read the delegate of parser {}", current.getClass().getName(), e);
+        return null;
+      }
+      current = next;
+    }
+    return null;
+  }
+
+  /**
+   * {@link #SORT_ORDER} for {@code schema}, built from {@code parser}'s parse as {@code
+   * rewrite_data_files} builds it.
+   */
+  @VisibleForTesting
+  static SortOrder sortOrder(ExtendedParser parser, Schema schema) throws AnalysisException {
+    SortOrder.Builder builder = SortOrder.builderFor(schema);
+    for (ExtendedParser.RawOrderField field : parser.parseSortOrder(SORT_ORDER)) {
+      builder.sortBy(field.term(), field.direction(), field.nullOrder());
+    }
+    return builder.build();
+  }
+
+  private static Map<String, String> rewriteOptions() {
     Map<String, String> options = new HashMap();
     options.put("target-file-size-bytes", String.valueOf(TARGET_FILE_SIZE));
     options.put("rewrite-all", "true");
     options.put("partial-progress.enabled", "true");
+    return options;
+  }
+
+  private static String getRewriteOptions() {
+    Map<String, String> options = rewriteOptions();
 
     return options.entrySet().stream()
         .map(entry -> String.format("'%s', '%s'", entry.getKey(), entry.getValue()))

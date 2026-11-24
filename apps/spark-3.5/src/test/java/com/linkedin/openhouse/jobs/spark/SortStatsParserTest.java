@@ -198,4 +198,106 @@ public class SortStatsParserTest extends OpenHouseSparkITest {
     Assertions.assertNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
     spark.sql("DROP TABLE IF EXISTS " + t);
   }
+
+  /**
+   * Which rewrite the app runs on each line: where Iceberg's own parse works (1.12) the app's
+   * rewrite_data_files call, unchanged; on 1.5.2 the rewrite action with the order parsed by the
+   * Iceberg parser the app finds below OpenHouse's. Either way the order is the one Iceberg parses
+   * from {@code SORT_ORDER}: two fields, ascending, nulls last.
+   */
+  @Test
+  void theAppParsesItsSortOrderWithIcebergsParserOnEitherLine() throws Exception {
+    SparkSession spark = getSparkSession();
+    Assertions.assertEquals(SORT_ORDER, SortStatsCollectionSparkApp.SORT_ORDER);
+    Assertions.assertEquals(
+        FormatV3Tables.icebergCanWriteV3(),
+        SortStatsCollectionSparkApp.sessionParsesSortOrder(spark),
+        "the session's parse works on Iceberg 1.12 only");
+    ExtendedParser below =
+        SortStatsCollectionSparkApp.icebergParserBelow(spark.sessionState().sqlParser());
+    Assertions.assertNotNull(below);
+    Assertions.assertSame(parserChain(spark).get(1), below);
+    org.apache.iceberg.Schema schema =
+        new org.apache.iceberg.Schema(
+            org.apache.iceberg.types.Types.NestedField.optional(
+                1,
+                "header",
+                org.apache.iceberg.types.Types.StructType.of(
+                    org.apache.iceberg.types.Types.NestedField.optional(
+                        2, "memberId", org.apache.iceberg.types.Types.LongType.get()),
+                    org.apache.iceberg.types.Types.NestedField.optional(
+                        3, "time", org.apache.iceberg.types.Types.LongType.get()))));
+    org.apache.iceberg.SortOrder expected =
+        org.apache.iceberg.SortOrder.builderFor(schema)
+            .asc("header.memberId", org.apache.iceberg.NullOrder.NULLS_LAST)
+            .asc("header.time", org.apache.iceberg.NullOrder.NULLS_LAST)
+            .build();
+    Assertions.assertEquals(expected, SortStatsCollectionSparkApp.sortOrder(below, schema));
+    // A parser chain with no Iceberg parser in it gives none (the app then makes its old call).
+    Assertions.assertNull(
+        SortStatsCollectionSparkApp.icebergParserBelow(
+            parserChain(spark).get(parserChain(spark).size() - 1)));
+  }
+
+  /**
+   * The app's rewrite on the line's own path, on a table of three data files: one sorted data file
+   * replaces them in one {@code replace} snapshot, and the rows are unchanged.
+   */
+  @Test
+  void theAppsRewriteSortsTheTableOnEitherLine() throws Exception {
+    SparkSession spark = getSparkSession();
+    String fqtn = DB + ".rewrite_sorted";
+    String t = "openhouse." + fqtn;
+    spark.sql("DROP TABLE IF EXISTS " + t);
+    spark.sql(
+        "CREATE TABLE "
+            + t
+            + " (id bigint, header struct<memberId: bigint, time: bigint>, datepartition string)");
+    for (int k = 0; k < 3; k++) {
+      List<String> values = new ArrayList<>();
+      for (int r = 1; r <= 4; r++) {
+        long id = k * 4L + r;
+        values.add(
+            "("
+                + id
+                + ", named_struct('memberId', "
+                + (id % 3)
+                + "L, 'time', "
+                + (100 - id)
+                + "L), 'p')");
+      }
+      spark.sql("INSERT INTO " + t + " VALUES " + String.join(", ", values));
+    }
+    List<String> before =
+        spark.sql("SELECT * FROM " + t + " ORDER BY id").collectAsList().stream()
+            .map(Object::toString)
+            .collect(java.util.stream.Collectors.toList());
+    Assertions.assertEquals(3L, spark.sql("SELECT * FROM " + t + ".data_files").count());
+
+    SortStatsCollectionSparkApp.rewriteSorted(spark, fqtn);
+
+    org.apache.iceberg.Table table = ops.getTable(fqtn);
+    Assertions.assertEquals("replace", table.currentSnapshot().operation());
+    Assertions.assertEquals(1L, spark.sql("SELECT * FROM " + t + ".data_files").count());
+    List<String> after =
+        spark.sql("SELECT * FROM " + t + " ORDER BY id").collectAsList().stream()
+            .map(Object::toString)
+            .collect(java.util.stream.Collectors.toList());
+    Assertions.assertEquals(before, after);
+    List<String> inFileOrder =
+        spark.sql("SELECT header.memberId, header.time FROM " + t).collectAsList().stream()
+            .map(Object::toString)
+            .collect(java.util.stream.Collectors.toList());
+    List<String> sorted =
+        spark
+            .sql(
+                "SELECT header.memberId, header.time FROM "
+                    + t
+                    + " ORDER BY header.memberId ASC NULLS LAST, header.time ASC NULLS LAST")
+            .collectAsList().stream()
+            .map(Object::toString)
+            .collect(java.util.stream.Collectors.toList());
+    Assertions.assertEquals(sorted, inFileOrder, "the one data file is in the sort order");
+    spark.sql("DROP TABLE IF EXISTS " + t);
+  }
 }

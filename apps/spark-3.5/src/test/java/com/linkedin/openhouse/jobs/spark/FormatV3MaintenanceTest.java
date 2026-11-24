@@ -1101,21 +1101,11 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
 
     SortStatsCollectionSparkApp app =
         new SortStatsCollectionSparkApp("x6-sort-stats", null, fqtn, otelEmitter);
-    if (icebergCanWriteV3()) {
-      app.runInner(ops);
-      app.runValidations(ops);
-      Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
-    } else {
-      // On LinkedIn's Iceberg 1.5.2 the sort strategy of rewrite_data_files needs the session's
-      // outermost parser to be Iceberg's, and the OpenHouse extensions wrap it (the order every
-      // deployment uses, jobs.yaml), so the job fails before it rewrites anything. This exists
-      // before format v3 and is pinned, not changed, here; the table must still be untouched.
-      Throwable failure = Assertions.assertThrows(Exception.class, () -> app.runInner(ops));
-      Assertions.assertTrue(
-          String.valueOf(failure.getMessage()).contains("parser is not an Iceberg ExtendedParser"),
-          String.valueOf(failure));
-      Assertions.assertNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
-    }
+    // On both Iceberg lines (X11): on 1.5.2 the app parses its sort order with Iceberg's parser
+    // below OpenHouse's, where rewrite_data_files would look at the outermost parser only and fail.
+    app.runInner(ops);
+    app.runValidations(ops);
+    Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
     Reading after = readingIn(spark, formatVersion, fqtn);
     Assertions.assertEquals(before.live, after.live, "live rows, full contents");
     Assertions.assertEquals(before.lineage, after.lineage, "_row_id and sequence numbers");
