@@ -40,7 +40,9 @@ jobs:
       # With --continue, so that one red suite does not hide the others.
       - name: Build with Gradle under -PicebergLinkedIn
         id: suites
-        run: ./gradlew -PicebergLinkedIn clean build --continue
+        run: |
+          set -o pipefail
+          ./gradlew -PicebergLinkedIn clean build --continue 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
 
       # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
       # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
@@ -48,7 +50,7 @@ jobs:
       # start of its failure, and the full reports can be downloaded.
       - name: Print the failed tests
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
-        run: python3 scripts/ci/print-failed-tests.py --lines 60 build
+        run: python3 scripts/ci/print-failed-tests.py --lines 60 --log "$RUNNER_TEMP/gradle-build.log" build
 
       - name: Upload the test reports
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}

@@ -73,7 +73,11 @@ jobs:
       - name: Build with Gradle
         id: suites
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
-        run: ./gradlew build --continue
+        # The console is also written to a file: a test JVM that dies leaves no JUnit XML, and the
+        # print step reads the failures from the file.
+        run: |
+          set -o pipefail
+          ./gradlew build --continue 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
 
       # The deployables (docs/development/iceberg-fork.md, "Docker images"): the jars the images are
       # built from, the jobs-scheduler image, and the oh-only recipe with the integration tests
@@ -95,6 +99,7 @@ jobs:
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
         run: >-
           python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          --log "$RUNNER_TEMP/gradle-build.log"
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'
           build
