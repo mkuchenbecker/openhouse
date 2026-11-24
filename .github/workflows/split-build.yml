@@ -54,6 +54,9 @@ jobs:
           echo "Groups: $groups"
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
 
+      - name: Self-test the failed-tests printer
+        run: python3 scripts/ci/test-print-failed-tests.py
+
   tests:
     name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, ${{ matrix.group }}
     needs: plan
@@ -98,7 +101,11 @@ jobs:
           CI_GROUP_MODE: ${{ matrix.mode }}
           CI_GROUP_DIRS: ${{ matrix.dirs }}
           LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
-        run: ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue
+        # The console is also written to a file under RUNNER_TEMP (not build/, which `clean` empties):
+        # a test JVM that dies leaves no JUnit XML, and the print step reads the failures from it.
+        run: |
+          set -o pipefail
+          ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
 
       # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
       # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
@@ -110,13 +117,14 @@ jobs:
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' && inputs.line == 'default' }}
         run: >-
           python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          --log "$RUNNER_TEMP/gradle-build.log"
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'
           build
 
       - name: Print the failed tests
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' && inputs.line == 'reference' }}
-        run: python3 scripts/ci/print-failed-tests.py --lines 60 build
+        run: python3 scripts/ci/print-failed-tests.py --lines 60 --log "$RUNNER_TEMP/gradle-build.log" build
 
       - name: Upload the test reports
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
