@@ -665,6 +665,43 @@ public class FormatV3NativeApiTest {
     assertEquals(v0, stored(db));
   }
 
+  /**
+   * Widening the type of a defaulted column (int to long, float to double) carries its
+   * initial-default over as Iceberg does, by converting the value to the new type: that is not a
+   * change of the initial-default, so it is stored. Widening while also changing the value is.
+   */
+  @Test
+  void aTypeWideningCarriesTheInitialDefaultOverOnV3() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String db = "fv3_widen";
+    created.add(db);
+    CreateUpdateTableRequestBody body = asking(plain(db), "3");
+    String v0 =
+        make(
+            body.toBuilder()
+                .schema(
+                    addColumn(
+                        addColumn(body.getSchema(), "tier", "int", "7", "7"),
+                        "score",
+                        "float",
+                        "1.5",
+                        "1.5"))
+                .build());
+    String schema = str(v0, "$.schema");
+
+    refused(
+        put(mvc, withSchema(v0, withDefaults(withType(schema, "tier", "long"), "tier", "8", "7"))),
+        "COLUMN_INITIAL_DEFAULT_IMMUTABLE");
+    assertEquals(v0, stored(db));
+
+    String widened = withType(withType(schema, "tier", "long"), "score", "double");
+    ok(put(mvc, withSchema(v0, widened)));
+    org.apache.iceberg.Schema stored = FormatV3.metadata(catalog, db, "t").schema();
+    assertEquals(7L, stored.findField("tier").initialDefault());
+    assertEquals(7L, stored.findField("tier").writeDefault());
+    assertEquals(1.5d, stored.findField("score").initialDefault());
+  }
+
   @Test
   void theReadBridgeOptInIsRefusedOnV3() throws Exception {
     assumeTrue(IcebergV3.supported());
