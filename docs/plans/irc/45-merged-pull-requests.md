@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 56 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 135, merge
-commit e2823b69) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 57 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 136, merge
+commit 4b696a55) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -66,6 +66,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 133 | C16: a pull request's CI is split into parallel jobs, 52.2 minutes before and 21.6 after, with identical test lists; post-merge runs stay single jobs (`71-c16-ci-split-result.md`) | 7e57bd2162489d248da60022d7af434e7e056b01 |
 | 134 | V14: a create transaction over the Iceberg REST routes keeps its schema, partition spec and sort order history; the compatibility kit passes 42 of 160 (`72-v14-create-history-result.md`) | d30cb9f628d34b8d1f6ca42968ad201d4a01d2fa |
 | 135 | N11: the maintenance jobs build and pass on Spark 4.2 over the Iceberg REST routes, 395 tests, 0 failed, 5 skipped; the Spark 3.5 jobs unchanged; three changes in shared job code (`73-n11-jobs-spark42-result.md`) | e2823b698825d1c0cc02f5429826fd3e3e8c341d |
+| 136 | C12: Java compile and Javadoc use UTF-8 in the root build, so a build under the `C` locale no longer fails on non-ASCII sources; C8 and T12 needed no change (`dec16c80`, `98328ea2`) | 4b696a5562c27faf268b15908e64d3cfd6b91ad4 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
