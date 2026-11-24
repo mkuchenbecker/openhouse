@@ -30,3 +30,21 @@ Each exists on the native path only (J3).
 | X5 | oh | New v3 types pass schema validation and column policies. Refused today with 400, naming X5 (`variant` is refused by request validation without naming it). | X1 | Create and evolve with each type. |
 | X6 | oh | **Next, and the v3 item with the most risk.** Maintenance jobs (compaction, snapshot expiry, orphan-file removal) run on the new line and are correct for X2 to X5, with row ids kept across compaction. None has run on a v3 table, and a job that mishandles deletion vectors or row ids loses data. | V9e, I4, X2 | Each job on a v3 table loses no live data. |
 | X7 | oh | Replication of v3 tables. Refused today with 400, naming X7. Investigate first (J24). | X1 | Defined by the investigation. |
+
+## IRC scan planning and credentials (V11, V12)
+
+Bottom line: two small steps are ready to build (V11a, V12a); the rest wait on Mike or on those two. Replaces the single
+rows V11 and V12 of `04-work.md`. Decisions: D44 and D45 in `56-decisions-continued-5.md`; reasons in
+`60-v11-v12-investigation-result.md`. Each black-box test is written first. "Mike's" marks a one-way door that is his to decide.
+
+| ID | Repo | Leaves true | Needs | Proven by |
+| --- | --- | --- | --- | --- |
+| V11a | oh | `POST .../plan` is served synchronously and answers `completed` with all tasks inline, a random plan id, no state on the service, `min-rows-requested` ignored, the same checks as a table load; listed in `endpoints`; nothing sets `scan-planning-mode`. Two-way door. | V9, V2 | A client with `scan-planning-mode=server` plans the same files, deletes and residuals as client planning, for filters, a snapshot id and a branch, on v2 with position and equality deletes and on v3 with deletion vectors; 403 and 404 as load; a client without the property sends no plan request; endpoint list test updated. |
+| V11b | oh | Spark 3.5 and 4.2 over IRC with server planning pass the read smoke and the MERGE, UPDATE and DELETE writes. Two-way door. | V11a | The existing smoke and write suites rerun with the catalog property set give the same results as client planning. |
+| V11c | oh | Large plans are bounded: stateless `plan-tasks` (snapshot plus manifest range in the token) served by `POST .../tasks`, or a task cap answered `failed`. Two-way door (the token format is internal). | V11a | A table whose task count is above the page size plans identically; a forged token answers 400. |
+| V11d | oh | **Mike's decision.** The server sets `scan-planning-mode=server` per table or cluster. One-way for him: it changes every client's read path. | V11a | The load config carries it only where configured. |
+| V12a | oh | `GET .../credentials` is served after the load checks and answers an empty list; the access-delegation header is accepted and ignored. Two-way door. | V9, V2 | 200 with an empty list; 403 and 404 as load; the load response is the same with and without the header. |
+| V12b | oh | **Mike's decision.** A decision record: which storages vend, the identity service (STS role, Entra), which privilege grants read and which write, credential lifetime, HDFS declared not applicable. | none (decision) | None; it is a decision. |
+| V12c | oh | **Mike's decision.** S3 vending: STS credentials scoped to the table prefix in `storage-credentials`, refreshed through `/credentials`. One-way (new dependency, secret, contract). | V12b | A MinIO STS container test: the vended key reads this table's prefix and is refused on another table's. |
+| V12d | oh | **Mike's decision.** S3 remote signing: `/sign` with a prefix check, and `s3.remote-signing-enabled` in the load config when requested. One-way (contract, service in the data path). | V12b | MinIO: a signed GET of this table's file works, another table's is 403. |
+| V12e | oh | **Mike's decision.** ADLS SAS vending through config and the refresh endpoint. One-way. | V12b | Azurite: a SAS limited to the table directory. |

@@ -2,10 +2,11 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is now
 the default build, and the Spark image and dataloader checks now pass in CI (C10). Pull requests 121 (three service
-follow-ups) and 124 (format v3) are merged; three pieces of work are in flight (X6, W7 with X4, and an investigation of
-V11 and V12), described in "How to resume" below.
+follow-ups) and 124 (format v3) are merged. The investigation of V11 and V12 is finished (D44, D45,
+`60-v11-v12-investigation-result.md`); two pieces of work are in flight (X6, and W7 with X4), described in "How to
+resume" below. Next to start when a build slot frees: V11a, then V12a.
 Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red. This is the
-single place for current state; other files record design, evidence and decisions. Dated 2026-11-23.
+single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
 - Conforming IRC server: every route of the specification is served except scan planning and credential vending. View
   rename and namespace create, alter and drop are refused because OpenHouse has no such operations. Multi-table
@@ -49,7 +50,7 @@ single place for current state; other files record design, evidence and decision
 - Served over IRC now: config with the endpoint list (19 routes), namespace reads, table create, staged create,
   load, commit, rename, drop, register, metrics report, one-table transactions, views except rename, and the
   OpenHouse capability routes (policies, grants, unlock).
-- Not served: scan planning (V11), credential vending and signing (V12), view rename (OpenHouse has none), and
+- Not served: scan planning (V11a is next) and credential vending and signing (V12a is next; real vending is Mike's), view rename (OpenHouse has none), and
   namespace create, alter and drop (OpenHouse refuses them natively too, D20).
 - Not atomic: multi-table transactions. A transaction of one table commits; several tables are refused whole with
   400 (D39, pull request 120, `53-v8-multi-table-commit-result.md`). Real atomicity is put to Mike (D40).
@@ -82,9 +83,13 @@ C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 are merged, and `irc-integration` is at `72947228`. Three pieces of work were in
-flight as of 2026-11-23 about 00:10 UTC on the 24th; none has reported. If the session stops, a future session reads
-each record below and the branch's log, and resumes from what they say.
+Bottom line: pull requests 121 and 124 are merged, and `irc-integration` is at `72947228`. The V11 and V12
+investigation is finished. Two pieces of work are in flight and have not reported; next to start when a build slot
+frees are V11a, then V12a (`41-work-platforms-v3.md`). If the session stops, a future session reads each record below
+and the branch's log, and resumes from what they say.
+
+- The container restarted on 2026-11-24 at about 00:01 UTC. Files survived and the agents were resumed from their
+  transcripts. Agents now push work in progress to their branches early, so a restart loses less.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC. Code agents run on the next
   model down meanwhile.
@@ -92,14 +97,14 @@ each record below and the branch's log, and resumes from what they say.
   `x6-maintenance-v3.md` in the reports directory.
 - W7 with X4, Spark reads old files through native default values on v3: worktree `/home/user/oh-w7`, branch
   `irc/w7-x4-v3-default-reads`, record `w7-x4-v3-default-reads.md`.
-- An investigation of V11 (IRC scan planning) and V12 (IRC credential vending), read-only, no branch: record
-  `v11-v12-investigation.md`.
+- Finished: the investigation of V11 and V12, read-only, no branch. Result in `60-v11-v12-investigation-result.md`;
+  decisions D44 and D45. Its raw record `v11-v12-investigation.md` is in the reports directory.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, in order, after these:
 
 1. The rest of format v3: the wider X2 and X3 scenarios, W8, and X5 and X7 (refused today; X7 investigated first).
-2. IRC scan planning (V11) and credential vending (V12), built from the investigation.
+2. V11a (synchronous scan planning), then V12a (the empty credentials route), as soon as a build slot frees. The rest of V11 and V12 follows the new rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
 3. N1-c and N7: the Spark 3.5 smoke suite on the plain REST path, and one shared list of scenarios.
 4. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
 
@@ -124,7 +129,7 @@ the 1.12 line only if it ran there.
 
 ## Waiting on Mike
 
-Nothing blocks work. The list is in `58-waiting-on-mike.md`: the meaning of "conforming" (D32), the one-way doors
+Nothing blocks work. The list is in `58-waiting-on-mike.md`: the meaning of "conforming" (D32), whether the server turns on server-side scan planning (V11d), credential vending (V12b), the one-way doors
 (D12, D24, D34, D38, D40), the native directory-reuse fix (D35), the Spark 4.2 differences (D37), and, new, turning
 the v3 switch on for a real cluster and upgrading a real table. An upgrade is irreversible and LinkedIn 1.5.2 clients
 cannot load the table afterwards.
@@ -133,6 +138,6 @@ cannot load the table afterwards.
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D45).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

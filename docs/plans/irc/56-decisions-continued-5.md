@@ -2,10 +2,10 @@
 
 Continues `51-decisions-continued-4.md`, which is full (its D41 carries a dated amendment).
 
-Bottom line: one new decision, D43 (with a dated addendum for the merge of pull request 124), dated 2026-11-23, the orchestrator's. It records the format v3 design choices
-the orchestrator accepted while work item X1 (with W6, pull request 124) was being built, and one data-safety finding
-that the same work closes. D42 (v3 off by default, chosen per table, never implied) still stands and D43 refines it.
-Nothing here is agreed by Mike. Claude wrote the entry.
+Bottom line: three decisions. D43 (2026-11-23, with a dated addendum for the merge of pull request 124) records the format
+v3 design choices and one data-safety finding. D44 and D45 (2026-11-24) record the first step of IRC scan planning and of
+credentials: both are small, two-way doors, and what is left is Mike's. All are the orchestrator's. Nothing here is
+agreed by Mike. Claude wrote the entries.
 
 ## D43. Format v3: how requests are accepted and refused
 
@@ -54,3 +54,30 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
 9. One-way door: upgrading a table to v3 is irreversible, and LinkedIn 1.5.2 clients cannot load it afterwards. The
    code allows it behind the switch, but turning the switch on for a real cluster and upgrading a real table stay
    Mike's (D12; `58-waiting-on-mike.md`). On the 1.5.2 reference line every v3 request is refused.
+
+## D44. Scan planning: a synchronous plan route with no state
+
+- Date: 2026-11-24. The orchestrator's decision, a two-way door. Work items V11a to V11c. Reasons and evidence in
+  `60-v11-v12-investigation-result.md`.
+- Decision: serve `POST .../plan` synchronously. It answers `completed` with every task in one response, keeps no
+  state on the service, and runs the same checks as a table load. The service never sends `scan-planning-mode`, so no
+  existing client's read path changes; only a client that itself asks for server planning is affected.
+- Do not reuse Iceberg's `CatalogHandlers.planTableScan`. It keeps plans in a process-wide map that only cancel
+  clears, and it cuts the file list to `min-rows-requested`, which Spark fills from LIMIT.
+- Rejected: asynchronous planning with stored plan state. It is not known whether the service runs as several
+  instances, and stored state would be wrong there.
+- Why this is a two-way door: the route can be withdrawn from the endpoint list and nothing depends on it by default.
+- Left for Mike: having the server turn server-side planning on for clients (V11d), because it changes every
+  client's read path (`58-waiting-on-mike.md`).
+
+## D45. Credentials: an empty list, no vending yet
+
+- Date: 2026-11-24. The orchestrator's decision, a two-way door. Work item V12a. Reasons in
+  `60-v11-v12-investigation-result.md`.
+- Decision: serve `GET .../credentials` with an empty list after the load checks, and accept and ignore the
+  access-delegation header. The specification allows the server to supply access "via any or none".
+- Real vending is not started. The service holds no credential it can narrow to one table: it uses cluster-wide
+  long-lived keys for S3 and ADLS and its own delegation token for HDFS. Vending needs a new external identity
+  dependency and a new access contract, which are Mike's to decide (V12b to V12e).
+- HDFS cannot be vended to an Iceberg 1.12 client at all, because its FileIO accepts no credentials.
+- Reverse by: removing the route from the endpoint list restores the 406 answer.

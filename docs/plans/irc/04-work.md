@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 115 items in two repos (N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`), counted across this file, `30-work-defaults.md` and
+Bottom line: 122 items in two repos (N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`; the nine rows V11a to V11d and V12a to V12e replace V11 and V12 and are in that file too), counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.
@@ -81,8 +81,7 @@ native REST.
 | V9 | oh | Replaced by V9a to V9e, all done, which make the 1.12 line the default build. The order is in `40-i6f-full-regression-result.md`. Other rows that need V9 need V9e. | none | See V9a to V9e. |
 | V10a | oh | **Done 2026-11-22 (pull request 102).** The service's IRC config route advertises exactly the endpoints it serves, including view support, so Iceberg 1.12 clients use HEAD existence checks and views and do not assume routes that are not served. | V4 | A 1.12 `RESTCatalog` creates and loads a view and uses HEAD for existence against the service. |
 | V10 | oh | IRC endpoint list advertised. View registration. Spec revision of the new line. | V9, V4 | A current `RESTCatalog` negotiates against it. |
-| V11 | oh | IRC scan planning. | V9, V2 | Planned scans return the same files as client-side planning. |
-| V12 | oh | IRC credentials and signing. Investigate first (J24). | V9, V2 | Defined by the investigation. |
+| V11, V12 | oh | **Investigated 2026-11-24; replaced by nine rows V11a to V11d and V12a to V12e in `41-work-platforms-v3.md`** (result in `60-v11-v12-investigation-result.md`, decisions D44 and D45). | V9, V2 | See those rows. |
 | V13 | oh | Apache's REST compatibility kit passes against the service. What counts as passing is D32. The first measurement is V13a (`39-v13-compat-kit-result.md`). | V9, V3, V4 | Kit green. Every exclusion listed with its reason. |
 
 ## Native path, platforms and v3 functions
