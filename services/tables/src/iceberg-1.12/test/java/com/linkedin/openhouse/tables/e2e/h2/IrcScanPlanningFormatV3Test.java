@@ -44,7 +44,7 @@ import org.springframework.test.context.ContextConfiguration;
 @SpringBootTest(
     classes = SpringH2Application.class,
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = SWITCH_ON)
+    properties = {SWITCH_ON, FormatV3.VARIANT_ON})
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 @Import({IrcReadRoutesTest.StubDefaults.class, ScanPlanning.RecordRequests.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -66,6 +66,7 @@ class IrcScanPlanningFormatV3Test {
   void stop() throws Exception {
     try {
       client.dropTable(TableIdentifier.of(DB, "dv"));
+      client.dropTable(TableIdentifier.of(DB, "variant"));
     } finally {
       client.close();
       server.close();
@@ -187,5 +188,33 @@ class IrcScanPlanningFormatV3Test {
                     .build(),
                 java.net.http.HttpResponse.BodyHandlers.ofString())
             .statusCode());
+  }
+
+  /** A table with a variant column is format v3 too, and is refused like any other. */
+  @Test
+  void aTableWithAVariantColumnIsRefused() {
+    TableIdentifier id = TableIdentifier.of(DB, "variant");
+    org.apache.iceberg.Schema schema =
+        new org.apache.iceberg.Schema(
+            org.apache.iceberg.types.Types.NestedField.optional(
+                1, "id", org.apache.iceberg.types.Types.LongType.get()),
+            org.apache.iceberg.types.Types.NestedField.optional(
+                2, "v", org.apache.iceberg.types.Types.VariantType.get()));
+    Table table = client.buildTable(id, schema).withProperty("format-version", "3").create();
+    table
+        .newAppend()
+        .appendFile(
+            org.apache.iceberg.DataFiles.builder(PartitionSpec.unpartitioned())
+                .withPath(table.location() + "/data/variant-0.parquet")
+                .withFormat(FileFormat.PARQUET)
+                .withFileSizeInBytes(100)
+                .withRecordCount(1)
+                .build())
+        .commit();
+    assertEquals(1, plan(client.loadTable(id).newScan()).size());
+    IllegalStateException refused =
+        assertThrows(IllegalStateException.class, () -> plan(server.loadTable(id).newScan()));
+    assertTrue(
+        refused.getMessage().contains("ScanPlanFormatVersionException"), refused.getMessage());
   }
 }
