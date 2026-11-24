@@ -3,8 +3,9 @@
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is the
 default build, and the Spark image and dataloader checks pass in CI. Pull requests 121, 124, 125, 126, 127, 128, 129,
 130, 131 and 132 are merged (132 is V11e: the plan route refuses format v3 tables, and late-added columns plan as on the
-client). Three pieces of work are in flight: a scout of the maintenance jobs on Spark 4.2 (N11), the split of the pull
-request CI's main build job (C16), and V14. View rename stopped on D47. Nothing is merged into either fork's main or
+client). The N11 scout of the maintenance jobs on Spark 4.2 is finished (`70-n11-jobs-spark42-scout-result.md`). Three
+pieces of work are in flight: the Spark 4.2 jobs pull request (D50), the split of the pull request CI's main build job
+(C16), and V14. View rename stopped on D47. Nothing is merged into either fork's main or
 into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for 129 and 131 was read and passed, and
 for 132 it is not read yet. This is the single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
@@ -19,6 +20,8 @@ for 132 it is not read yet. This is the single place for current state; other fi
   `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). On Spark 3.5 with Iceberg's plain REST catalog (1.12 line)
   168 of 177 behave as the baseline; the 9 differences are declared, none in rows read or in what a write stores
   (`64-n1c-n7-result.md`) [ran].
+- Maintenance jobs: they compile unchanged on Spark 4.2 and their format v3 maintenance suite passes there over the REST
+  routes, measured on 2026-11-24 (`70-n11-jobs-spark42-scout-result.md`) [ran].
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
@@ -90,15 +93,16 @@ C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f
 ## How to resume
 
 Bottom line: pull requests 121, 124, 125, 126, 127, 128, 129, 130, 131 and 132 are merged, and `irc-integration` is at
-`9f9561e6`. Three pieces of work are in flight: the Spark 4.2 jobs scout (N11), the CI split (C16) and V14. View rename stopped on D47 with no code written and no branch pushed. If
-the session stops, a future session reads each record below and the branch's log, and resumes from what they say.
+`9f9561e6`. The N11 scout is finished. Three pieces of work are in flight: the Spark 4.2 jobs pull request (D50), the CI
+split (C16) and V14. View rename stopped on D47 with no code written and no branch pushed. If the session stops, a future
+session reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- Scout for N11 (the maintenance jobs on Spark 4.2, Iceberg 1.12, through the OpenHouse catalog and the REST routes):
-  worktree `/home/user/oh-jobs42`, branch `irc/jobs-spark42-scout`, record `jobs-spark42-scout.md` in the reports directory.
-- C16 (the pull request CI's main build job is split so that wall time comes down; the 1.12 job took 52 minutes on
-  2026-11-24): worktree `/home/user/oh-c16`, branch `irc/ci-split-build-job`, record `ci-split-build-job.md` in the
+- The Spark 4.2 jobs pull request (N11, D50: the project, per-line expectations, `type=rest`, the SYSTEM header, the sort
+  stats table format version): worktree `/home/user/oh-jobs42`, branch `irc/jobs-spark42-scout`, record
+  `jobs-spark42-scout.md` in the reports directory.
+- C16 (the CI main build job split, pull request 133, draft; the 1.12 job took 52 minutes on 2026-11-24): worktree `/home/user/oh-c16`, branch `irc/ci-split-build-job`, record `ci-split-build-job.md` in the
   reports directory.
 - V14 (an IRC create transaction keeps its schema, partition spec and sort order history): worktree `/home/user/oh-v14`,
   branch `irc/v14-create-history`, record `v14-create-history.md` in the reports directory.
@@ -106,8 +110,8 @@ the session stops, a future session reads each record below and the branch's log
 - Post-merge CI for 132 has not been read yet; read it first (D33).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
-What comes next, in order: the N11 scout, C16 and V14 are in flight; then:
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6 and X10 (X14 needs Mike's say), the rest of X10, and X8 once D46 is decided, and N11.
+What comes next, in order: the Spark 4.2 jobs pull request, C16 and V14 are in flight; then:
+1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6 and X10 (X14 needs Mike's say), the rest of X10, and X8 once D46 is decided; N12 to N15 are Mike's.
 2. V11d and V12b to V12e are Mike's; see `41-work-platforms-v3.md`.
 3. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
 
@@ -141,6 +145,6 @@ Three questions from X5's column types are there too (the third is whether and w
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D47) and `67-decisions-continued-6.md` (D48 and D49).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D47) and `67-decisions-continued-6.md` (D48 to D50).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

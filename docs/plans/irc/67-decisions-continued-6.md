@@ -1,11 +1,13 @@
 # Decision log, continued a sixth time
 
-Continues `56-decisions-continued-5.md` (141 lines, D43 to D47). D48 was numbered by the orchestrator and D49 follows it.
+Continues `56-decisions-continued-5.md` (141 lines, D43 to D47). D48 was numbered by the orchestrator; D49 and D50 follow it.
 
-Bottom line: two decisions, both made by the orchestrator on 2026-11-24, both two-way doors. D48 puts the `variant`
+Bottom line: three decisions, all made by the orchestrator on 2026-11-24. D48 and D49 are two-way doors; D50 splits the
+Spark 4.2 jobs into a two-way part that lands and a one-way part that goes to Mike. D48 puts the `variant`
 column type behind its own cluster property, off by default, so that turning on format v3 does not by itself open a
 one-way door with degraded maintenance. D49 makes the scan planning route refuse format v3 tables until scan tasks carry
-sequence numbers. Neither is agreed by Mike. Claude wrote the entries.
+sequence numbers. D50 lets the maintenance jobs run on Spark 4.2 over the Iceberg REST routes without deploying anything. None is agreed by
+Mike. Claude wrote the entries.
 
 ## D48. The `variant` column type goes behind its own cluster property, off by default
 
@@ -45,3 +47,23 @@ sequence numbers. Neither is agreed by Mike. Claude wrote the entries.
   snapshot, which answered 400 under server planning, can be made to equal client planning. How it ended: the
   late-added-column case was fixed, because every listed case was shown equal to client planning (`69-v11e-result.md`).
 - Status: implemented by pull request 132, merge commit `9f9561e6` (V11e, `69-v11e-result.md`), 2026-11-24.
+
+## D50. The maintenance jobs get a Spark 4.2 project over the Iceberg REST routes; the first five items land together
+
+- Date: 2026-11-24. The orchestrator's decision. Work item N11; the scout is in `70-n11-jobs-spark42-scout-result.md`.
+- Decision, what lands (two-way doors), as one pull request: the project `apps/spark-4.2` compiling the same shared job
+  sources, its suite green and run by CI, not opt-in; expectations that differ on that line declared per line with
+  reasons; `Operations.getCatalog` working with `type=rest`; the SYSTEM action sent as a request header when the catalog
+  is the REST catalog; the temporary table of sort stats collection taking the source table's format version.
+- Condition: the Spark 3.5 jobs behave exactly as before on format v2 tables, shown by their full suite on both build lines.
+- Decided inside D50: six concurrency cases behave differently over REST and that is correct. A commit prepared before a
+  snapshot expiry is accepted over REST, where the native client is refused and retries. A REST commit sends changes plus
+  requirements, and expiry does not move the branch, so the requirements hold. The result equals the serial order and the
+  data checks pass. The tests pin it with assertions that no expired snapshot returns.
+- What does not land and goes to Mike (one-way: deployables, published artifacts, contracts): a Spark 4.2 uber jar; a Spark
+  4.2 image and `jobs.yaml` entries; the jobs service's token key for the REST catalog; routing `variant` tables or a whole
+  cluster to the Spark 4.2 jobs and then turning the `variant` property on by default (D48); job state and optimizer
+  reporting for a Spark platform that cannot reach House Tables. They are N12 to N15 in `41-work-platforms-v3.md` and an
+  entry in `58-waiting-on-mike.md`.
+- Why two-way: nothing is deployed or published, and the Spark 3.5 jobs are shown unchanged by their suite.
+- Status: in flight on the scout's branch `irc/jobs-spark42-scout` (worktree `/home/user/oh-jobs42`).

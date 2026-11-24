@@ -48,4 +48,9 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   Without it a rename is two calls and can leave two names for one view or lose a name. The author recommends a new
   atomic House Tables endpoint, and against a non-atomic version. A new House Tables API is a one-way door. Nothing
   waits on this; the route keeps answering 406 (V21).
+- Spark 4.2 jobs (N11, D50, `70-n11-jobs-spark42-scout-result.md`): four things are his: a Spark 4.2 uber jar and image
+  with `jobs.yaml` entries and the jobs service's token key (N12, N13); routing `variant` tables or a cluster to those
+  jobs and then the `variant` default (N14); job state and optimizer reporting without House Tables access (N15).
+  Nothing waits on them: the jobs project and its tests land without them. Until they are decided a Spark 4.2 platform
+  is not maintainable by Spark 4.2 jobs in a deployment.
 - Item order: D29.
