@@ -1,12 +1,14 @@
 // The maintenance jobs (apps/spark-3.5) built for Spark 4.2 / Scala 2.13 on the fork's Iceberg 1.12
 // line: the SAME main and test sources as :apps:openhouse-spark-apps-1.5_2.12, compiled against
-// Spark 4.2, with nothing of that project's build or outputs changed. Not in the -PicebergLinkedIn
-// reference build (settings.gradle), which has no Iceberg 1.12, like the other Spark 4.2 modules.
+// Spark 4.2, with nothing of that project's build changed. Not in the -PicebergLinkedIn reference
+// build (settings.gradle), which has no Iceberg 1.12, like the other Spark 4.2 modules. Its tests are
+// part of `check`. Outcomes that differ on this line are declared in the shared tests
+// (jobs.spark.JobsLine and the places that ask it), each with its reason.
 //
-// Scout (work item: jobs on Spark 4.2). What differs from the Spark 3.5 project:
+// What differs from the Spark 3.5 project:
 // - Spark 4.2 (Scala 2.13) and the fork's iceberg-spark-runtime-4.2_2.13 replace Spark 3.5 and
 //   iceberg-spark-runtime-3.5_2.12.
-// - Hadoop is Spark 4.2's (hadoop-client-api / -runtime 3.4); the Hadoop 2.10 jars the OpenHouse
+// - Hadoop is Spark 4.2's (hadoop-client-api / -runtime 3.5); the Hadoop 2.10 jars the OpenHouse
 //   libraries declare are excluded.
 // - The root build's forces (Jackson 2.13.4 for the services, ORC/Avro for the 1.5 line) do not
 //   apply, as in the other Spark 4.2 modules: Spark 4.2 needs its own Jackson.
@@ -14,7 +16,7 @@
 //   2.7's 2.13; see the Spark 4.2 itest), so it runs in its own JVM (service source set) and the
 //   session's `openhouse` catalog is Iceberg's SparkCatalog over RESTCatalog at the service's
 //   /iceberg routes. src/test-spark-4.2 holds the per-line test helpers that do this, under the
-//   names the shared tests use (OpenHouseSparkITest, FormatV3TablesServer).
+//   names the shared tests use (OpenHouseSparkITest, FormatV3TablesServer, CommitHookCatalog).
 plugins {
   id 'openhouse.java-conventions'
 }
@@ -184,9 +186,6 @@ tasks.named('test') {
     systemProperty 'jobs42.workdir', "${temporaryDir}"
   }
   outputs.upToDateWhen { false }
-  // Scout: the suite has known failures on Spark 4.2 over REST (recorded in the scout report), so
-  // `./gradlew build` does not run it unless asked: -PappsSpark42Tests.
-  onlyIf { project.hasProperty('appsSpark42Tests') }
 }
 
 tasks.matching { it.name in ['spotbugsService', 'checkstyleService'] }.configureEach { enabled = false }
