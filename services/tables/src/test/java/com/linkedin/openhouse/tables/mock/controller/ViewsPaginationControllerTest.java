@@ -19,7 +19,6 @@ import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInit
 import com.linkedin.openhouse.tables.model.ViewDto;
 import com.linkedin.openhouse.tables.model.ViewListResult;
 import com.linkedin.openhouse.tables.model.ViewModelConstants;
-import com.linkedin.openhouse.tables.services.ViewsDisabledService;
 import com.linkedin.openhouse.tables.services.ViewsService;
 import java.net.URI;
 import java.util.Collections;
@@ -501,45 +500,6 @@ public class ViewsPaginationControllerTest {
         .andExpect(status().isNotFound())
         .andExpect(jsonPath("$.message", Matchers.is("Database not found")))
         .andExpect(jsonPath("$.results").doesNotExist());
-  }
-
-  // The disabled stub, registered only in runtimes without the Iceberg view API
-
-  /** Valid read and write requests both reach the disabled service rather than failing earlier. */
-  @Test
-  public void theDisabledServiceStubReportsViewsDisabled() throws Exception {
-    MockMvc disabled = standaloneMvcBackedBy(new ViewsDisabledService());
-
-    disabled
-        .perform(listRequest())
-        .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.message", Matchers.is("Views are disabled")));
-
-    disabled
-        .perform(
-            authorize(MockMvcRequestBuilders.post(VIEWS_PATH))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(ViewModelConstants.createRequestWithoutBaseVersion().toJson()))
-        .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.message", Matchers.is("Views are disabled")));
-
-    disabled
-        .perform(
-            authorize(MockMvcRequestBuilders.put(VIEWS_PATH + "/" + ViewModelConstants.VIEW_ID))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(ViewModelConstants.fullyPopulatedRequest().toJson()))
-        .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.message", Matchers.is("Views are disabled")));
-
-    disabled
-        .perform(listRequest().param("pageToken", ViewModelConstants.REQUEST_PAGE_TOKEN))
-        .andExpect(status().isNotFound())
-        .andExpect(jsonPath("$.message", Matchers.is("Views are disabled")));
-
-    disabled
-        .perform(listRequest().param("pageToken", "   "))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.message", Matchers.is("pageToken : cannot be blank when provided")));
   }
 
   /** Tokens do not bypass authentication. */

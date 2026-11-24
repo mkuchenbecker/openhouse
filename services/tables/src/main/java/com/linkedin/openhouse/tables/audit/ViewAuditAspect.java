@@ -42,8 +42,8 @@ import org.springframework.stereotype.Component;
  * a second FAILED event nor allowed to replace the handler's response or throwable. It is attempted
  * once, logged as a fixed line without the exception, and counted.
  *
- * <p>Registered unconditionally, unlike {@code ViewsServiceImpl}: it references only API, model and
- * audit types, and has nothing to advise when no {@code ViewsApiHandler} bean exists.
+ * <p>It references only API, model and audit types, and has nothing to advise when no {@code
+ * ViewsApiHandler} bean exists.
  */
 @Slf4j
 @Aspect

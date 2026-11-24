@@ -5,7 +5,6 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.view.ViewCommitEngine;
 import com.linkedin.openhouse.internal.catalog.view.model.ViewCommitIntent;
 import com.linkedin.openhouse.internal.catalog.view.model.ViewCommitResult;
-import com.linkedin.openhouse.tables.services.ViewsService;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,60 +18,16 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * The view beans and the view commit contract of the embedded server. Both fixtures compile and run
- * this, so an expectation that depends on the Iceberg line is chosen at runtime from the classpath.
+ * this.
  *
  * <p>Until the Iceberg 1.2 line was removed this also audited every bean signature for Iceberg view
  * types (a view type on a bean signature stopped the server from starting under 1.2) and checked
  * that the view commit beans were registered only where the view API exists. Those checks went with
- * the guards they tested (work item V18); what remains has its own subject.
+ * the guards they tested (work item V18). It also checked that exactly one of the real and the
+ * disabled views service was registered, by the Iceberg line; the disabled service went with the
+ * last of that line (work item V22). What remains has its own subject.
  */
 public class IcebergViewBeanBoundaryTest {
-
-  private static final String VIEW_METADATA_CLASS = "org.apache.iceberg.view.ViewMetadata";
-  private static final String VIEWS_SERVICE_IMPL_CLASS =
-      "com.linkedin.openhouse.tables.services.ViewsServiceImpl";
-  private static final String VIEWS_DISABLED_SERVICE_CLASS =
-      "com.linkedin.openhouse.tables.services.ViewsDisabledService";
-
-  private static boolean icebergViewApiPresent() {
-    try {
-      Class.forName(VIEW_METADATA_CLASS);
-      return true;
-    } catch (ClassNotFoundException e) {
-      return false;
-    }
-  }
-
-  @Test
-  public void exactlyOneViewsServiceExistsForEachIcebergRuntime() {
-    try (ConfigurableApplicationContext context = boot()) {
-      String[] serviceBeans = context.getBeanNamesForType(ViewsService.class);
-      Assertions.assertEquals(
-          1,
-          serviceBeans.length,
-          "exactly one ViewsService must be registered, found " + Arrays.toString(serviceBeans));
-
-      if (icebergViewApiPresent()) {
-        Assertions.assertTrue(
-            loadOrFail(VIEWS_SERVICE_IMPL_CLASS).isAssignableFrom(context.getType(serviceBeans[0])),
-            "Iceberg-view-capable runtimes must use the real bridge service");
-        Assertions.assertEquals(
-            0,
-            context.getBeanNamesForType(loadOrFail(VIEWS_DISABLED_SERVICE_CLASS)).length,
-            "disabled service must not also be registered with the real bridge");
-      } else {
-        Assertions.assertTrue(
-            loadOrFail(VIEWS_DISABLED_SERVICE_CLASS)
-                .isAssignableFrom(context.getType(serviceBeans[0])),
-            "Iceberg 1.2 runtimes must use the disabled service");
-        for (String name : context.getBeanDefinitionNames()) {
-          Assertions.assertFalse(
-              name.toLowerCase().contains("viewsserviceimpl"),
-              "real ViewsServiceImpl may not be loaded under Iceberg 1.2: " + name);
-        }
-      }
-    }
-  }
 
   private ConfigurableApplicationContext boot() {
     try {
@@ -182,14 +137,6 @@ public class IcebergViewBeanBoundaryTest {
       Assertions.assertTrue(
           context.getBean(Catalog.class) instanceof OpenHouseInternalCatalog,
           "an unqualified Catalog lookup must keep resolving to OpenHouseInternalCatalog");
-    }
-  }
-
-  private static Class<?> loadOrFail(String className) {
-    try {
-      return Class.forName(className);
-    } catch (ClassNotFoundException e) {
-      throw new AssertionError("expected " + className + " on the Iceberg 1.5 classpath", e);
     }
   }
 }
