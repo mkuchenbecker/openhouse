@@ -222,6 +222,11 @@ public class AppsTest extends OpenHouseSparkITest {
       Mockito.verify(stateManagerMock).updateState(jobId, expectedState);
       SparkSession reader = getSparkSession().newSession();
       reader.conf().set("spark.sql.catalog.openhouse.action-type", "SYSTEM");
+      if (JobsLine.restCatalog(reader)) {
+        // Iceberg's RESTCatalog (Spark 4.2 line) does not read action-type, which is the OpenHouse
+        // catalog's property; it sends a header.<name> property as that HTTP header.
+        reader.conf().set("spark.sql.catalog.openhouse.header.X-OpenHouse-Action-Type", "SYSTEM");
+      }
       Table table = getOpenHouseCatalog(reader).loadTable(TableIdentifier.parse(fqtn));
       Assertions.assertEquals(currentSnapshotId, table.currentSnapshot().snapshotId());
       Assertions.assertEquals(expectedSnapshots, Iterables.size(table.snapshots()));

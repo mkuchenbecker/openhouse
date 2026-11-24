@@ -215,9 +215,13 @@ final class VariantData {
     List<String> rows = new ArrayList<>();
     try (CloseableIterable<Record> records = scan.build()) {
       for (Record record : records) {
+        // By name, the projection's columns only: a record read from a data file that has deletes
+        // also carries the row's position after them, which a rewrite that applies the deletes
+        // drops, so reading by position would compare a different row shape before and after.
         StringBuilder row = new StringBuilder();
-        for (int i = 0; i < record.size(); i++) {
-          row.append(i == 0 ? "" : " | ").append(record.get(i));
+        List<Types.NestedField> columns = projection.columns();
+        for (int i = 0; i < columns.size(); i++) {
+          row.append(i == 0 ? "" : " | ").append(record.getField(columns.get(i).name()));
         }
         rows.add(row.toString());
       }
