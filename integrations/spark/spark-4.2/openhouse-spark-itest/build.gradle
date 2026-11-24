@@ -39,13 +39,16 @@ sourceSets {
   service {
     java.srcDirs = ['src/service/java']
   }
-  // The Spark SQL smoke suite. src/shared/test holds its statements and baseline outcomes, which
-  // need only spark.sql and JUnit, so that another Spark line's itest can name the directory and
-  // run the same list (as the Spark 3.1 itest named the Spark 3.5 itest's src/shared/test).
-  // src/smoke holds what runs them on Spark 4.2 over IRC. Its own source set, so that the other
-  // tests' JVMs, which assert what is on their classpath, do not get these classes.
+  // The Spark SQL smoke suite. Its statements and baseline outcomes are one list, shared with the
+  // Spark 3.5 itest, which owns it (work item N7): that itest's src/shared/smoke/java holds only
+  // SparkSqlSmokeScenarios, which needs only spark.sql and JUnit, and both itests compile the same
+  // file. src/smoke holds what runs the list on Spark 4.2 over IRC. Its own source set, so that the
+  // other tests' JVMs, which assert what is on their classpath, do not get these classes.
   smoke {
-    java.srcDirs = ['src/shared/test/java', 'src/smoke/java']
+    java.srcDirs = [
+        rootProject.file('integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/smoke/java'),
+        'src/smoke/java'
+    ]
   }
 }
 
@@ -161,20 +164,12 @@ tasks.register('smokeTest', Test) {
   systemProperty 'junit.jupiter.testclass.order.default', classOrder
   def serviceClasspath = sourceSets.service.runtimeClasspath
   inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
-  // The scenarios are a copy of the Spark 3.5 suite's: SmokeScenariosCopyTest compares the sources.
-  def spark35SmokeSuite = rootProject.file(
-      'integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/SparkSqlSmokeTest.java')
-  def smokeScenarios = file(
-      'src/shared/test/java/com/linkedin/openhouse/spark/smoke/SparkSqlSmokeScenarios.java')
-  inputs.file(spark35SmokeSuite).withPropertyName('spark35SmokeSuite')
   def outcomes = layout.buildDirectory.file('reports/smoke/spark-4.2-irc-outcomes.tsv')
   outputs.file(outcomes).withPropertyName('smokeOutcomes')
   doFirst {
     systemProperty 'irc42.service.classpath', serviceClasspath.asPath
     systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
     systemProperty 'irc42.workdir', "${temporaryDir}"
-    systemProperty 'smoke.spark35.suite', spark35SmokeSuite.path
-    systemProperty 'smoke.scenarios.source', smokeScenarios.path
     // One line per smoke statement: the statement, the baseline, what Spark 4.2 over IRC did.
     systemProperty 'smoke.outcomes.file', outcomes.get().asFile.path
   }
