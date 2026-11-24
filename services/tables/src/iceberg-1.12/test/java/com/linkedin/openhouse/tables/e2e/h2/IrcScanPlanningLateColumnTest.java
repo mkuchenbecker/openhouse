@@ -130,22 +130,26 @@ class IrcScanPlanningLateColumnTest {
   }
 
   /**
-   * Today (pinned): with no snapshot since the column was added, client planning plans a filter on
-   * it, and the service answers 400, because it scans with the snapshot's schema, which lacks the
-   * column. A projection without a filter plans the same either way.
+   * With no snapshot since the column was added, a filter that is true for nulls, one that is false
+   * for nulls, and a projection alone plan what client planning plans (until V11e the filters were
+   * a 400: the service selected the names from the snapshot's schema, which lacks the column).
    */
   @Test
   void noSnapshotSinceTheColumnWasAdded() {
     TableIdentifier id = table("no_snapshot_since", false);
     for (Expression filter :
-        new Expression[] {Expressions.isNull("extra"), Expressions.equal("extra", 7)}) {
-      UnaryOperator<TableScan> read = spark(id, null, filter, "id", "extra");
-      String onClient = outcome(client, id, read);
-      assertTrue(onClient.startsWith("plans [") && onClient.contains(".parquet"), onClient);
-      assertEquals("fails", outcome(server, id, read), filter.toString());
+        new Expression[] {Expressions.isNull("extra"), Expressions.equal("extra", 7), null}) {
+      String outcome = assertSameAsClientPlanning(id, spark(id, null, filter, "id", "extra"));
+      assertTrue(outcome.startsWith("plans [") && outcome.contains(".parquet"), outcome);
     }
-    String projectionOnly = assertSameAsClientPlanning(id, spark(id, null, null, "id", "extra"));
-    assertTrue(projectionOnly.contains(".parquet"), projectionOnly);
+    // Case-insensitive names resolve the same way.
+    String outcome =
+        assertSameAsClientPlanning(
+            id,
+            scan ->
+                spark(id, null, Expressions.isNull("EXTRA"), "id", "extra")
+                    .apply(scan.caseSensitive(false)));
+    assertTrue(outcome.startsWith("plans ["), outcome);
   }
 
   @Test
