@@ -175,6 +175,64 @@ tasks.register('smokeTest', Test) {
   }
   outputs.upToDateWhen { false }
 }
+
+// The same two suites a second time with server-side scan planning (work item V11b): the system
+// property makes every IRC catalog of the session ask for scan-planning-mode=server, so each read
+// and each row-level write plans its scans through the service's plan route (ServerPlanning). Their
+// own tasks, not a parameter of test and smokeTest: each run needs its own Spark session (catalog
+// properties are read when a catalog is first loaded) and its own service, whose access log the
+// last check of each suite reads (the no-plan-request checks assert the converse here), and the
+// default runs must stay exactly what a default client does.
+def serverPlanning = 'irc42.scan-planning-mode'
+
+tasks.register('testServerPlanning', Test) {
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  dependsOn tasks.named('serviceClasses')
+  mustRunAfter tasks.named('test'), tasks.named('extensionsTest'), tasks.named('smokeTest')
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+  systemProperty 'junit.jupiter.testclass.order.default', classOrder
+  systemProperty serverPlanning, 'server'
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  doFirst {
+    systemProperty 'irc42.service.classpath', serviceClasspath.asPath
+    systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'irc42.workdir', "${temporaryDir}"
+  }
+  outputs.upToDateWhen { false }
+  filter {
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.extensions.*'
+  }
+}
+
+tasks.register('smokeTestServerPlanning', Test) {
+  testClassesDirs = sourceSets.smoke.output.classesDirs
+  classpath = sourceSets.smoke.runtimeClasspath
+  dependsOn tasks.named('serviceClasses')
+  mustRunAfter tasks.named('test'), tasks.named('extensionsTest'), tasks.named('smokeTest'),
+      tasks.named('testServerPlanning')
+  maxHeapSize = '1536m'
+  jvmArgs extraJvmArgs
+  systemProperty 'junit.jupiter.testclass.order.default', classOrder
+  systemProperty serverPlanning, 'server'
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  def outcomes = layout.buildDirectory.file('reports/smoke/spark-4.2-irc-server-planning-outcomes.tsv')
+  outputs.file(outcomes).withPropertyName('smokeOutcomes')
+  doFirst {
+    systemProperty 'irc42.service.classpath', serviceClasspath.asPath
+    systemProperty 'irc42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'irc42.workdir', "${temporaryDir}"
+    systemProperty 'smoke.outcomes.file', outcomes.get().asFile.path
+  }
+  outputs.upToDateWhen { false }
+}
+
 // As for the other test classes of the build (spotbugsTest is off in the root build).
 tasks.matching { it.name == 'spotbugsSmoke' }.configureEach { enabled = false }
-tasks.named('check') { dependsOn tasks.named('extensionsTest'), tasks.named('smokeTest') }
+tasks.named('check') {
+  dependsOn tasks.named('extensionsTest'), tasks.named('smokeTest'),
+      tasks.named('testServerPlanning'), tasks.named('smokeTestServerPlanning')
+}

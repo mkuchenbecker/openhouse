@@ -82,6 +82,7 @@ public class SparkIrcConcurrencyTest {
     spark.conf().set(prefix + ".uri", service.uri() + "/iceberg");
     spark.conf().set(prefix + ".token", service.token(IrcSpark.READER));
     spark.conf().set(prefix + ".cache-enabled", "false");
+    ServerPlanning.apply(prefix, spark.conf()::set);
   }
 
   @AfterAll

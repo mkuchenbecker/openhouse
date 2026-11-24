@@ -18,6 +18,10 @@ import org.junit.jupiter.api.Test;
  * scan-planning-mode=server}. So a default-configured Spark 4.2 catalog, across the whole suite's
  * reads and writes (SELECT, CTAS, INSERT, DELETE, UPDATE, MERGE, metadata tables, views), never
  * asks the service to plan: the service lists the route but tells no client to use it.
+ *
+ * <p>In the {@code testServerPlanning} run of the same suite ({@link ServerPlanning}), every
+ * catalog asks for server planning, and this check asserts the converse: the other tests'
+ * statements did send plan requests.
  */
 @Order(Integer.MAX_VALUE)
 public class SparkIrcNoPlanRequestTest {
@@ -48,6 +52,28 @@ public class SparkIrcNoPlanRequestTest {
                     !l.startsWith(
                         "POST /iceberg/v1/namespaces/" + SparkIrcScanPlanningTest.DB + "/tables/"))
             .collect(Collectors.toList());
+    // Either way, a client only ever posts a plan: the service answers every plan completed or
+    // failed, so no client fetches a stored plan, cancels one, or pages its tasks.
+    Assertions.assertEquals(
+        new ArrayList<String>(),
+        plans.stream()
+            .filter(l -> !l.matches("POST /iceberg/v1/namespaces/[^/ ]+/tables/[^/ ]+/plan .*"))
+            .collect(Collectors.toList()),
+        "requests for stored plans or plan tasks");
+    if (ServerPlanning.selected()) {
+      // The suite's own run with server planning (testServerPlanning): every catalog asked for it,
+      // so the other tests' reads and writes did plan on the server.
+      Assertions.assertFalse(others.isEmpty(), "no plan request from the other tests");
+      System.out.println(
+          "Plan requests in this JVM (server planning selected): "
+              + plans.size()
+              + ", of which "
+              + others.size()
+              + " from tests other than the scan planning tests, of "
+              + lines.size()
+              + " requests");
+      return;
+    }
     Assertions.assertEquals(new ArrayList<String>(), others, "plan requests from other tests");
     System.out.println(
         "Plan requests in this JVM: "

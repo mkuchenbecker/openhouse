@@ -67,6 +67,7 @@ public class SparkIrcNativeDefaultsTest {
     spark.conf().set(prefix + ".type", "rest");
     spark.conf().set(prefix + ".uri", service.uri() + "/iceberg");
     spark.conf().set(prefix + ".token", service.token(IrcSpark.READER));
+    ServerPlanning.apply(prefix, spark.conf()::set);
   }
 
   @AfterAll

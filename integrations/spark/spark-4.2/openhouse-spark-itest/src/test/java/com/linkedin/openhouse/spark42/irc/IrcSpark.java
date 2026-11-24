@@ -61,6 +61,7 @@ final class IrcSpark {
         .config(prefix + ".type", "rest")
         .config(prefix + ".uri", service.uri() + "/iceberg")
         .config(prefix + ".token", token);
+    ServerPlanning.apply(prefix, builder::config);
   }
 
   static IrcReadTestServiceProcess service() throws Exception {
