@@ -159,6 +159,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
     Table table = rest.loadTable(TableIdentifier.parse(fqtn));
     long head = table.currentSnapshot().snapshotId();
     table.manageSnapshots().createBranch("rest_dev", head).createTag("rest_tag", head).commit();
+    session(formatVersion).sql("REFRESH TABLE openhouse." + fqtn);
     session(formatVersion)
         .sql(
             "INSERT INTO openhouse."

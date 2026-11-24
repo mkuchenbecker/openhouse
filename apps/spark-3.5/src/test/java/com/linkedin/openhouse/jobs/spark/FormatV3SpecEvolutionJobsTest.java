@@ -41,14 +41,16 @@ import org.junit.jupiter.params.provider.ValueSource;
  * .checkPartitionSpecEvolution; pinned below). A table holds several specs only from birth: an
  * Iceberg REST create transaction keeps the specs its client built (pull request 134), and a
  * replace keeps the old specs (not built here). So the shape is built through the REST routes: a
- * create transaction with spec 0 = (identity(category), day(ts)) that appends one data file per
- * day, drops {@code category} from the spec (spec 1 = day(ts)), and appends one more file per day
- * under spec 1; then Spark writes through the native catalog: the base fixture's DELETEs, UPDATE
- * and MERGE (deletion vectors on v3), on files of both specs. 12 snapshots, ids laid out as in the
- * base fixture (file k = 0 of each day under spec 0, k = 1 under spec 1).
+ * create transaction with spec 0 = (day(ts), identity(category)) that appends one data file per
+ * day, replaces {@code category} by {@code region} in the spec (spec 1 = (day(ts),
+ * identity(region))), and appends one more file per day under spec 1 (each spec one the native
+ * partitioning model expresses, time partitioning plus clustering: a staged create whose first spec
+ * is not is refused); then Spark writes through the native catalog: the base fixture's DELETEs,
+ * UPDATE and MERGE (deletion vectors on v3), on files of both specs. 12 snapshots, ids laid out as
+ * in the base fixture (file k = 0 of each day under spec 0, k = 1 under spec 1).
  *
  * <p>The metadata tables' {@code partition} struct is the union of every spec's fields, by field
- * id: (category, ts_day). The current spec has ts_day only.
+ * id: (ts_day, category, region). The current spec is (ts_day, region).
  */
 public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
   @Override
@@ -61,11 +63,12 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
           Types.NestedField.optional(1, "id", Types.LongType.get()),
           Types.NestedField.optional(2, "data", Types.StringType.get()),
           Types.NestedField.optional(3, "ts", Types.TimestampType.withZone()),
-          Types.NestedField.optional(4, "category", Types.StringType.get()));
+          Types.NestedField.optional(4, "category", Types.StringType.get()),
+          Types.NestedField.optional(5, "region", Types.StringType.get()));
 
   @Override
   String extraRow(long id) {
-    return "(" + id + ", 'extra-" + id + "', " + ts(0, 59) + ", 'x')";
+    return "(" + id + ", 'extra-" + id + "', " + ts(0, 59) + ", 'x', 'r1')";
   }
 
   private static String category(int p) {
@@ -83,6 +86,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
           "ts",
           tables.today.minusDays(PARTITION_DAYS_AGO[p]).plusMinutes(id).atOffset(ZoneOffset.UTC));
       record.setField("category", k == 0 ? category(p) : "c");
+      record.setField("region", k == 0 ? null : "r1");
       records.add(record);
     }
     return records;
@@ -106,7 +110,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     Transaction create =
         rest.buildTable(TableIdentifier.parse(fqtn), SCHEMA)
             .withPartitionSpec(
-                PartitionSpec.builderFor(SCHEMA).identity("category").day("ts").build())
+                PartitionSpec.builderFor(SCHEMA).day("ts").identity("category").build())
             .withProperties(properties)
             .createTransaction();
     Table staged = create.table();
@@ -114,7 +118,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
       DataFile file = IcebergFiles.writeData(staged, staged.spec(), records(staged.schema(), p, 0));
       create.newAppend().appendFile(file).commit();
     }
-    create.updateSpec().removeField("category").commit();
+    create.updateSpec().removeField("category").addField("region").commit();
     for (int p = 0; p < PARTITION_DAYS_AGO.length; p++) {
       DataFile file = IcebergFiles.writeData(staged, staged.spec(), records(staged.schema(), p, 1));
       create.newAppend().appendFile(file).commit();
@@ -127,7 +131,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     Assertions.assertEquals(2, table.specs().size(), "two specs");
     Assertions.assertEquals(1, table.spec().specId());
     Assertions.assertEquals(
-        Arrays.asList("ts_day"),
+        Arrays.asList("ts_day", "region"),
         table.spec().fields().stream().map(f -> f.name()).collect(Collectors.toList()));
     Assertions.assertEquals(12, snapshotIds(table).size());
     Set<Integer> specIds =
@@ -137,7 +141,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     Assertions.assertEquals(
         new TreeSet<>(Arrays.asList(0, 1)), specIds, "live files of both specs");
     Assertions.assertEquals(
-        Arrays.asList("category", "ts_day"),
+        Arrays.asList("ts_day", "category", "region"),
         partitionStructFields(spark, t),
         "the metadata tables' partition struct is the union of both specs");
     return new Shape(fqtn, deleted(MAIN, new TreeSet<>(DELETED_IDS)));
@@ -211,6 +215,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     events.forEach(e -> labels.add(e.getPartitionData()));
     stats.forEach(s -> labels.add(s.getPartitionData()));
     boolean sawCategory = false;
+    boolean sawRegion = false;
     for (List<ColumnData> partition : labels) {
       Map<String, String> byName = new HashMap<>();
       partition.forEach(c -> byName.put(c.getColumnName(), String.valueOf(c.getValue())));
@@ -222,10 +227,16 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
         Assertions.assertTrue(
             Arrays.asList("a", "b").contains(byName.get("category")), "category: " + byName);
       }
+      if (byName.containsKey("region")) {
+        sawRegion = true;
+        Assertions.assertEquals("r1", byName.get("region"), "region: " + byName);
+      }
       Assertions.assertTrue(
-          Arrays.asList("ts_day", "category").containsAll(byName.keySet()), byName.toString());
+          Arrays.asList("ts_day", "category", "region").containsAll(byName.keySet()),
+          byName.toString());
     }
     Assertions.assertTrue(sawCategory, "spec 0 partitions keep their category label");
+    Assertions.assertTrue(sawRegion, "spec 1 partitions keep their region label");
   }
 
   /**

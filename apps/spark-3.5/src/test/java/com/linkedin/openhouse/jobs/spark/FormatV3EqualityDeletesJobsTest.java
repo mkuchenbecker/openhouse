@@ -142,6 +142,7 @@ public class FormatV3EqualityDeletesJobsTest extends FormatV3ShapeJobsTestBase {
     String fqtn = tables.createAndInsert(formatVersion, "native_eq", "orc");
     Table table = ops(formatVersion).getTable(fqtn);
     table.newRowDelta().addDeletes(equalityDelete(table, 5, "id", 5L)).commit();
+    session(formatVersion).sql("REFRESH TABLE openhouse." + fqtn);
     List<String> ids =
         FormatV3Tables.rows(session(formatVersion), "SELECT id FROM openhouse." + fqtn);
     Assertions.assertEquals(31, ids.size());

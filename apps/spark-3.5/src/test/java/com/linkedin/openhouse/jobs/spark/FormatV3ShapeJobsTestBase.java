@@ -124,13 +124,17 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
 
   /** An Iceberg RESTCatalog on the {@code /iceberg} routes of the service of this format. */
   RESTCatalog rest(int formatVersion) {
-    String uri = tables.serviceUri(formatVersion, getOpenHouseLocalServerURI().toString());
+    // The service's Iceberg REST routes: the session catalog's own uri on the Spark 4.2 line (a
+    // RESTCatalog already), its /iceberg routes on the Spark 3.5 line (the OpenHouse catalog).
+    SparkSession spark = session(formatVersion);
+    String sessionUri = spark.conf().get(FormatV3Tables.CATALOG_PREFIX + ".uri");
+    String uri = JobsLine.restCatalog(spark) ? sessionUri : sessionUri + "/iceberg";
     RESTCatalog existing = restCatalogs.get(formatVersion);
     if (existing != null) {
       return existing;
     }
     Map<String, String> properties = new HashMap<>();
-    properties.put("uri", uri + "/iceberg");
+    properties.put("uri", uri);
     try {
       properties.put("token", new DummyTokenInterceptor.DummySecurityJWT("x10b").buildNoopJWT());
     } catch (Exception e) {

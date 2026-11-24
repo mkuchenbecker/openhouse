@@ -224,16 +224,6 @@ final class FormatV3Tables implements AutoCloseable {
             + ")");
   }
 
-  /**
-   * The URI of the tables service holding tables of this format version (the v3 service, or the
-   * apps tests' default one, whose URI the caller passes), for clients other than Spark, such as an
-   * Iceberg RESTCatalog on its {@code /iceberg} routes.
-   */
-  String serviceUri(int formatVersion, String defaultServiceUri) {
-    session(formatVersion);
-    return formatVersion == 3 ? server.uri() : defaultServiceUri;
-  }
-
   static int formatVersion(Table table) {
     return ((HasTableOperations) table).operations().current().formatVersion();
   }
