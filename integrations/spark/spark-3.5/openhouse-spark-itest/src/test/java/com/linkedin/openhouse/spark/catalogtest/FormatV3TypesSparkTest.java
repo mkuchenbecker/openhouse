@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import org.apache.iceberg.CatalogUtil;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -24,7 +26,8 @@ import org.junit.jupiter.api.function.Executable;
  * The column types format v3 adds (work item X5), through Spark 3.5 SQL with the OpenHouse catalog
  * (the native API), against a tables service with the cluster switch on. Of those types Spark 3.5
  * can spell only one, {@code void}, which Iceberg's Spark integration maps to Iceberg's {@code
- * unknown}; it has no type for variant, geometry, geography or nanosecond timestamps.
+ * unknown} and the service takes; it has no type for variant, geometry, geography or nanosecond
+ * timestamps, and cannot read a table with a variant column (which the service takes from Spark 4).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FormatV3TypesSparkTest extends OpenHouseSparkITest {
@@ -109,37 +112,84 @@ public class FormatV3TypesSparkTest extends OpenHouseSparkITest {
 
   // ---------------------------------------------------------------- tests
 
+  private static String v3(String format) {
+    return " TBLPROPERTIES ('format-version'='3'"
+        + (format == null ? "" : ", 'write.format.default'='" + format + "'")
+        + ")";
+  }
+
   /**
-   * A {@code void} column (Iceberg's {@code unknown}) on a v3 table is refused by the service, by
-   * CREATE TABLE, CTAS and ADD COLUMN, naming work item X5, and leaves nothing behind.
+   * A {@code void} column (Iceberg's {@code unknown}) on a v3 table: CREATE TABLE, CTAS and ADD
+   * COLUMN take it, in ORC (the cluster's default) and Parquet; rows read it as null and filter on
+   * it; it takes a column tag.
    */
   @Test
-  void aVoidColumnOnAV3TableIsRefusedNamingX5() throws Exception {
+  void aVoidColumnOnAV3TableIsWrittenAndReadInEveryFormat() throws Exception {
     requireFormatV3();
-    String create =
-        failure(
-            "CREATE TABLE "
-                + t("void_create")
-                + " (id bigint, c void) TBLPROPERTIES ('format-version'='3')");
-    String ctas =
-        failure(
-            "CREATE TABLE "
-                + t("void_ctas")
-                + " TBLPROPERTIES ('format-version'='3') AS SELECT 1L AS id, NULL AS c");
-    spark.sql(
-        "CREATE TABLE " + t("void_add") + " (id bigint) TBLPROPERTIES ('format-version'='3')");
-    String add = failure("ALTER TABLE " + t("void_add") + " ADD COLUMN c void");
-    for (String message : new String[] {create, ctas, add}) {
-      Assertions.assertTrue(
-          message.contains("400")
-              && message.contains("FORMAT_V3_TYPE_NOT_SUPPORTED: column c (unknown)")
-              && message.contains("work item X5"),
-          message);
+    // Not Avro: this test JVM cannot write an Avro data file for any table (its Iceberg's shaded
+    // Avro meets the unshaded one), which has nothing to do with the column's type.
+    for (String format : new String[] {null, "parquet"}) {
+      String table = "void_" + (format == null ? "default" : format);
+      spark.sql("CREATE TABLE " + t(table) + " (id bigint, c void)" + v3(format));
+      spark.sql("INSERT INTO " + t(table) + " VALUES (1, NULL), (2, NULL)");
+      Assertions.assertEquals(
+          java.util.Arrays.asList("[1,null]", "[2,null]"),
+          rows("SELECT * FROM " + t(table) + " ORDER BY id"),
+          table);
+      Assertions.assertEquals(
+          java.util.Arrays.asList("[1]", "[2]"),
+          rows("SELECT id FROM " + t(table) + " WHERE c IS NULL ORDER BY id"),
+          table);
+      Assertions.assertEquals(
+          java.util.Arrays.asList("[id,bigint,null]", "[c,void,null]"),
+          rows("DESCRIBE " + t(table)),
+          table);
     }
-    Assertions.assertFalse(exists("void_create"));
-    Assertions.assertFalse(exists("void_ctas"));
+    spark.sql("CREATE TABLE " + t("void_ctas") + v3(null) + " AS SELECT 1L AS id, NULL AS c");
     Assertions.assertEquals(
-        java.util.Collections.singletonList("[id,bigint,null]"), rows("DESCRIBE " + t("void_add")));
+        java.util.Collections.singletonList("[1,null]"), rows("SELECT * FROM " + t("void_ctas")));
+    spark.sql("CREATE TABLE " + t("void_add") + " (id bigint)" + v3(null));
+    spark.sql("INSERT INTO " + t("void_add") + " VALUES (1)");
+    spark.sql("ALTER TABLE " + t("void_add") + " ADD COLUMN c void");
+    spark.sql("INSERT INTO " + t("void_add") + " VALUES (2, NULL)");
+    Assertions.assertEquals(
+        java.util.Arrays.asList("[1,null]", "[2,null]"),
+        rows("SELECT * FROM " + t("void_add") + " ORDER BY id"));
+    spark.sql("ALTER TABLE " + t("void_add") + " MODIFY COLUMN c SET TAG = (PII)");
+    String policies =
+        onServer.loadTable(TableIdentifier.of(DB, "void_add")).properties().get("policies");
+    Assertions.assertTrue(policies.contains("\"c\"") && policies.contains("PII"), policies);
+  }
+
+  /**
+   * A table with a variant column, as Spark 4 creates one over the Iceberg REST routes (here
+   * through the Iceberg API): Spark 3.5 cannot read it. Iceberg's Spark 3.5 integration has no
+   * variant type, so the table fails to load into Spark. A Spark 3.5 limitation, not a refusal.
+   */
+  @Test
+  void sparkThreeFiveCannotReadATableWithAVariantColumn() throws Exception {
+    requireFormatV3();
+    Map<String, String> properties = new HashMap<>();
+    properties.put("format-version", "3");
+    properties.put("write.format.default", "parquet");
+    onServer.createTable(
+        TableIdentifier.of(DB, "variant_table"),
+        SchemaParser.fromJson(
+            "{\"type\":\"struct\",\"fields\":[{\"id\":1,\"name\":\"id\",\"required\":false,"
+                + "\"type\":\"long\"},{\"id\":2,\"name\":\"v\",\"required\":false,"
+                + "\"type\":\"variant\"}]}"),
+        PartitionSpec.unpartitioned(),
+        properties);
+    Assertions.assertTrue(exists("variant_table"));
+    for (String sql :
+        new String[] {
+          "SELECT * FROM " + t("variant_table"),
+          "SELECT id FROM " + t("variant_table"),
+          "DESCRIBE " + t("variant_table")
+        }) {
+      String failure = failure(sql);
+      Assertions.assertTrue(failure.contains("Unsupported type: variant"), failure);
+    }
   }
 
   /**
