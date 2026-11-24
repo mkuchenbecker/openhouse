@@ -27,6 +27,7 @@ final class IrcReadTestServiceProcess {
   private static final long START_TIMEOUT_SECONDS = 300;
   private static IrcReadTestServiceProcess instance;
   private static IrcReadTestServiceProcess formatV3Instance;
+  private static IrcReadTestServiceProcess formatV3VariantInstance;
 
   private final Process process;
   private final Path work;
@@ -59,6 +60,24 @@ final class IrcReadTestServiceProcess {
           .addShutdownHook(new Thread(formatV3Instance::stop, "irc42-v3-service-stop"));
     }
     return formatV3Instance;
+  }
+
+  /**
+   * A third service, with the format v3 switch on and variant columns allowed ({@code
+   * cluster.iceberg.format-v3.variant.enabled}, off by default and in {@link #getWithFormatV3()}).
+   * Started on first use, for the tests of tables that take a variant column only.
+   */
+  static synchronized IrcReadTestServiceProcess getWithFormatV3AndVariant() throws Exception {
+    if (formatV3VariantInstance == null) {
+      formatV3VariantInstance =
+          start(
+              java.util.Arrays.asList(
+                  "-Dcluster.iceberg.format-v3.enabled=true",
+                  "-Dcluster.iceberg.format-v3.variant.enabled=true"));
+      Runtime.getRuntime()
+          .addShutdownHook(new Thread(formatV3VariantInstance::stop, "irc42-v3v-service-stop"));
+    }
+    return formatV3VariantInstance;
   }
 
   /**

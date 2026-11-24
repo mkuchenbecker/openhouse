@@ -42,9 +42,11 @@ import org.springframework.test.web.servlet.ResultActions;
  * through the native API and the Iceberg REST routes, on a cluster with {@code
  * cluster.iceberg.format-v3.enabled} on: a create with a column of the type, the column added by
  * schema evolution, and the same on a format v2 table. Schemas are written as schema JSON, the way
- * a client sends them, so the native cases compile and run on both Iceberg lines.
+ * a client sends them, so the native cases compile and run on both Iceberg lines. Variant columns
+ * are on in this context ({@code cluster.iceberg.format-v3.variant.enabled}); {@link
+ * FormatV3VariantOffTest} has the default.
  */
-@SpringBootTest(properties = SWITCH_ON)
+@SpringBootTest(properties = {SWITCH_ON, VARIANT_ON})
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})

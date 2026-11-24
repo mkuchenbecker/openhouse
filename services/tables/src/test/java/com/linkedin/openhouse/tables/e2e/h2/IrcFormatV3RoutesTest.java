@@ -460,7 +460,7 @@ public class IrcFormatV3RoutesTest {
             .message();
     assertTrue(
         message.startsWith("FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table "), message);
-    assertTrue(message.contains("cannot write a variant column to ORC"), message);
+    assertTrue(message.contains("cluster.iceberg.format-v3.variant.enabled is false"), message);
     assertEquals(404, status(get(mvc, db, "t")));
 
     TableMetadata base = createV3(db);

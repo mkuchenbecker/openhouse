@@ -471,8 +471,8 @@ public class FormatV3NativeApiTest {
                 .schema(addColumn(str(v3, "$.schema"), "v", "timestamp_ns", null, null))
                 .build()),
         "FORMAT_V3_TYPE_NOT_SUPPORTED");
-    // A variant column is refused by the same policy on a table that writes ORC, the cluster's
-    // default (FormatV3TypesTest has every type, and the tables that take one).
+    // A variant column is refused by the same policy: variant columns are off by default
+    // (FormatV3VariantOffTest; FormatV3TypesTest has the tables that take one).
     for (ResultActions variant :
         new ResultActions[] {
           put(

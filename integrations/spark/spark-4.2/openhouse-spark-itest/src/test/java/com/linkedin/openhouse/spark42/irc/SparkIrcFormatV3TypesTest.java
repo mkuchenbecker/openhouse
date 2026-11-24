@@ -16,10 +16,11 @@ import org.junit.jupiter.api.Test;
 /**
  * The column types format v3 adds (work item X5), through Spark 4.2 SQL on Iceberg 1.12 over the
  * Iceberg REST routes, with no OpenHouse class in the engine, against a tables service with the
- * cluster switch on (catalog {@code ircv3t}). Spark 4.2 can spell three of them: {@code variant},
- * {@code void} (Iceberg's {@code unknown}) and, behind Spark's {@code
- * spark.sql.geospatial.enabled}, {@code geometry} and {@code geography}; it has no nanosecond
- * timestamp type.
+ * cluster switch on and variant columns allowed ({@code cluster.iceberg.format-v3.variant.enabled},
+ * catalog {@code ircv3t}; SparkIrcFormatV3Test has the default, variant off). Spark 4.2 can spell
+ * three of them: {@code variant}, {@code void} (Iceberg's {@code unknown}) and, behind Spark's
+ * {@code spark.sql.geospatial.enabled}, {@code geometry} and {@code geography}; it has no
+ * nanosecond timestamp type.
  */
 public class SparkIrcFormatV3TypesTest {
   private static final String DB = "irc42";
@@ -28,7 +29,7 @@ public class SparkIrcFormatV3TypesTest {
 
   @BeforeAll
   static void addTheCatalog() throws Exception {
-    IrcReadTestServiceProcess service = IrcReadTestServiceProcess.getWithFormatV3();
+    IrcReadTestServiceProcess service = IrcReadTestServiceProcess.getWithFormatV3AndVariant();
     SparkSession spark = IrcSpark.session();
     String prefix = "spark.sql.catalog.ircv3t";
     spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");

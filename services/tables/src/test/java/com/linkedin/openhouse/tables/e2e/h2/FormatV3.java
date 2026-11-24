@@ -25,6 +25,9 @@ final class FormatV3 {
   /** The property that turns the cluster switch on for a test's Spring context. */
   static final String SWITCH_ON = "cluster.iceberg.format-v3.enabled=true";
 
+  /** The property that allows variant columns on v3 tables, on in a test's Spring context. */
+  static final String VARIANT_ON = "cluster.iceberg.format-v3.variant.enabled=true";
+
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private FormatV3() {}
