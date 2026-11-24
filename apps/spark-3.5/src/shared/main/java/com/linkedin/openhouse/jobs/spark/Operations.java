@@ -39,6 +39,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
+import org.apache.iceberg.CatalogProperties;
 import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.FileScanTask;
 import org.apache.iceberg.Schema;
@@ -740,6 +741,13 @@ public final class Operations implements AutoCloseable {
         catalogProperties.put(
             entry.getKey().substring(catalogPropertyPrefix.length()), entry.getValue());
       }
+    }
+    String catalogImpl = catalogProperties.get(CatalogProperties.CATALOG_IMPL);
+    if (catalogImpl == null && catalogProperties.get(CatalogUtil.ICEBERG_CATALOG_TYPE) != null) {
+      // A catalog named by type only, as Iceberg's SparkCatalog allows (e.g. type=rest, for a
+      // platform that reaches OpenHouse through the tables service's Iceberg REST routes).
+      return CatalogUtil.buildIcebergCatalog(
+          CATALOG, catalogProperties, spark.sparkContext().hadoopConfiguration());
     }
     // this initializes the catalog based on runtime Catalog class passed in catalog-impl conf.
     return CatalogUtil.loadCatalog(
