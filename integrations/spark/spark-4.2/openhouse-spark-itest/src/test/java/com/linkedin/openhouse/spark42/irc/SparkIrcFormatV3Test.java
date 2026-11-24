@@ -249,10 +249,11 @@ public class SparkIrcFormatV3Test {
   // ---------------------------------------------------------------- not yet, and said so
 
   /**
-   * What format v3 adds to Spark SQL that this service does not take yet: a VARIANT column (work
-   * item X5) is refused by the service, on create and on ADD COLUMN, and leaves nothing behind; a
-   * column DEFAULT is refused by Iceberg's own Spark integration before any request (defaults are
-   * set through the Iceberg API until work item W9).
+   * What format v3 adds to Spark SQL that this service does not take as written here: a VARIANT
+   * column on a table that writes ORC, the cluster's default, is refused by the service, on create
+   * and on ADD COLUMN, and leaves nothing behind (SparkIrcFormatV3TypesTest has the tables that
+   * take one, work item X5); a column DEFAULT is refused by Iceberg's own Spark integration before
+   * any request (defaults are set through the Iceberg API until work item W9).
    */
   @Test
   void variantColumnsAndSqlDefaultsAreRefused() throws Exception {
@@ -261,7 +262,8 @@ public class SparkIrcFormatV3Test {
             "CREATE TABLE "
                 + t("v3_types")
                 + " (id bigint, v variant) USING iceberg TBLPROPERTIES ('format-version'='3')");
-    Assertions.assertTrue(chain(create).contains("Unsupported type: variant"), chain(create));
+    Assertions.assertTrue(
+        chain(create).contains("cannot write a variant column to ORC"), chain(create));
     Assertions.assertFalse(
         rows("SHOW TABLES IN ircv3." + DB).stream().anyMatch(r -> "v3_types".equals(r.get(1))));
     rows(
@@ -269,7 +271,7 @@ public class SparkIrcFormatV3Test {
             + t("v3_types")
             + " (id bigint) USING iceberg TBLPROPERTIES ('format-version'='3')");
     Throwable add = failure("ALTER TABLE " + t("v3_types") + " ADD COLUMN v variant");
-    Assertions.assertTrue(chain(add).contains("Unsupported type: variant"), chain(add));
+    Assertions.assertTrue(chain(add).contains("cannot write a variant column to ORC"), chain(add));
     Throwable withDefault = failure("ALTER TABLE " + t("v3_types") + " ADD COLUMN c int DEFAULT 7");
     Assertions.assertTrue(
         chain(withDefault).contains("setting default values in Spark is currently unsupported"),

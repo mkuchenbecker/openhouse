@@ -2,15 +2,27 @@ package com.linkedin.openhouse.tables.formatversion;
 
 import com.linkedin.openhouse.common.exception.CommitRejectedException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import org.apache.iceberg.DataFile;
+import org.apache.iceberg.FileFormat;
+import org.apache.iceberg.ManifestFile;
+import org.apache.iceberg.ManifestFiles;
+import org.apache.iceberg.ManifestReader;
 import org.apache.iceberg.Schema;
+import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
@@ -24,8 +36,10 @@ import org.apache.iceberg.types.Types;
  *       NULL} makes one) and read it as nulls; no file format stores it.
  *   <li>{@code variant}: supported on a table that writes Parquet or Avro data files. Iceberg's
  *       Spark 4 integration writes and reads it there; it has no ORC writer for it, and ORC is the
- *       cluster's default, so a v3 table that writes ORC is refused a variant column. Spark 3.5 has
- *       no variant type and cannot read such a table (a Spark 3.5 limitation, not refused).
+ *       cluster's default, so a v3 table that writes ORC is refused a variant column; and its ORC
+ *       reader cannot read a variant column from older ORC files, so a table that still has ORC
+ *       data files is refused one by schema evolution. Spark 3.5 has no variant type and cannot
+ *       read such a table (a Spark 3.5 limitation, not refused).
  *   <li>{@code timestamp_ns}, {@code timestamptz_ns}: refused. No Spark integration of Iceberg 1.12
  *       has a type for them, so no Spark could read the table.
  *   <li>{@code geometry}, {@code geography}: refused. Spark 3.5 cannot read them, Spark 4 has them
@@ -128,6 +142,80 @@ public final class FormatV3Types {
                         TableProperties.DEFAULT_FILE_FORMAT));
               });
     }
+  }
+
+  /**
+   * Refuses a commit that gives a table with data a variant column it did not have, while a branch
+   * or tag of the table still reads ORC data files: Iceberg's Spark ORC reader cannot project a
+   * variant column into an ORC file that lacks it (it fails reading every such file), whatever the
+   * table writes from now on. A table whose data files are Parquet or Avro takes the column.
+   *
+   * @param base the table's current metadata; {@code null} for a create, which has no data files
+   * @param io the table's file IO; {@code null} where the caller has none, which refuses such a
+   *     commit rather than guess
+   */
+  public static void refuseVariantOverOrcFiles(
+      TableIdentifier table, TableMetadata base, TableMetadata committed, FileIO io) {
+    if (base == null || base.snapshots().isEmpty()) {
+      return;
+    }
+    Set<Integer> before = new HashSet<>();
+    for (Schema schema : base.schemas()) {
+      TypeUtil.indexById(schema.asStruct()).values().stream()
+          .filter(f -> isVariant(f.type()))
+          .forEach(f -> before.add(f.fieldId()));
+    }
+    Optional<Types.NestedField> added =
+        fieldsInIdOrder(committed.schema())
+            .filter(f -> isVariant(f.type()) && !before.contains(f.fieldId()))
+            .findFirst();
+    if (!added.isPresent()) {
+      return;
+    }
+    String column = committed.schema().findColumnName(added.get().fieldId());
+    Optional<String> orcFile = io == null ? Optional.of("") : firstOrcDataFile(base, io);
+    if (orcFile.isPresent()) {
+      throw new CommitRejectedException(
+          String.format(
+              "%s: column %s (variant) of table %s: the table has ORC data files%s, and Iceberg's"
+                  + " Spark integration cannot read a variant column from an ORC file that lacks"
+                  + " it. A variant column can be added to a table whose data files are all"
+                  + " Parquet or Avro; rewrite the table's data to Parquet first, or create a"
+                  + " table with the column.",
+              REFUSED, column, table, orcFile.get().isEmpty() ? "" : " (" + orcFile.get() + ")"));
+    }
+  }
+
+  /** The first ORC data file a branch or tag of {@code metadata} reads, if any. */
+  private static Optional<String> firstOrcDataFile(TableMetadata metadata, FileIO io) {
+    Set<Long> heads = new HashSet<>();
+    metadata.refs().values().forEach(ref -> heads.add(ref.snapshotId()));
+    if (metadata.currentSnapshot() != null) {
+      heads.add(metadata.currentSnapshot().snapshotId());
+    }
+    Set<String> seen = new HashSet<>();
+    for (Long id : heads) {
+      Snapshot snapshot = metadata.snapshot(id);
+      if (snapshot == null) {
+        continue;
+      }
+      for (ManifestFile manifest : snapshot.dataManifests(io)) {
+        if (!seen.add(manifest.path())) {
+          continue;
+        }
+        try (ManifestReader<DataFile> reader =
+            ManifestFiles.read(manifest, io, metadata.specsById())) {
+          for (DataFile file : reader) {
+            if (file.format() == FileFormat.ORC) {
+              return Optional.of(file.path().toString());
+            }
+          }
+        } catch (IOException e) {
+          throw new UncheckedIOException("Cannot read manifest " + manifest.path(), e);
+        }
+      }
+    }
+    return Optional.empty();
   }
 
   /**

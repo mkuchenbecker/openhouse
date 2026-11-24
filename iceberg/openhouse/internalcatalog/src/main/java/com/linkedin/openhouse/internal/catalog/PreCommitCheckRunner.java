@@ -12,6 +12,7 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
+import org.apache.iceberg.io.FileIO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -74,10 +75,23 @@ public class PreCommitCheckRunner {
       TableMetadata base,
       TableMetadata metadata,
       Map<String, String> properties) {
+    checkAll(tableIdentifier, base, metadata, properties, null);
+  }
+
+  /**
+   * {@link #checkAll(TableIdentifier, TableMetadata, TableMetadata, Map)} with the table's file IO,
+   * for checks that read the base's manifests.
+   */
+  public void checkAll(
+      TableIdentifier tableIdentifier,
+      TableMetadata base,
+      TableMetadata metadata,
+      Map<String, String> properties,
+      FileIO io) {
     if (checks.isEmpty()) {
       return;
     }
-    PendingCommit commit = PendingCommit.of(tableIdentifier, base, metadata, properties);
+    PendingCommit commit = PendingCommit.of(tableIdentifier, base, metadata, properties, io);
     for (PreCommitCheck check : checks) {
       run(check, commit);
     }

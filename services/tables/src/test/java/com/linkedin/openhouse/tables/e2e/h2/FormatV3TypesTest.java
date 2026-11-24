@@ -390,6 +390,52 @@ public class FormatV3TypesTest {
     }
   }
 
+  /**
+   * A variant column added by schema evolution to a v3 table with data: refused while a branch of
+   * the table reads ORC data files (Iceberg's Spark ORC reader cannot read the column from them,
+   * whatever the table writes now); taken where the data files are Parquet.
+   */
+  @Test
+  void aVariantColumnIsRefusedOnATableThatStillHasOrcDataFiles() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    for (String file : new String[] {"orc", "parquet"}) {
+      String db = db("x5f" + file, "variant");
+      TableMetadata base =
+          IrcWrite.parsed(IrcWrite.create(mvc, db, ircCreate("3", null, "parquet").build()));
+      TableMetadata withData =
+          IrcWrite.parsed(
+              IrcWrite.commit(
+                  mvc,
+                  db,
+                  "t",
+                  base,
+                  IrcWrite.withMain(base, IrcWrite.append(base, "/tmp/" + db + "_a." + file))));
+      Schema evolved =
+          SchemaParser.fromJson(
+              addColumn(SchemaParser.toJson(withData.schema()), "v", "variant", null, null));
+      List<MetadataUpdate> changes =
+          Arrays.asList(IrcWrite.addSchema(evolved), new MetadataUpdate.SetCurrentSchema(-1));
+      Answer ircAnswer = answer(IrcWrite.commit(mvc, db, "t", IrcWrite.simple(withData, changes)));
+      String stored = json(get(mvc, db, "t"));
+      if ("orc".equals(file)) {
+        for (Answer answer :
+            new Answer[] {
+              ircAnswer, answer(put(mvc, withColumn(bodyFromGet(stored), "variant")))
+            }) {
+          refused(answer, 400, "FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table ");
+          assertTrue(
+              answer.message.contains("the table has ORC data files (")
+                  && answer.message.contains("_a.orc)"),
+              answer.toString());
+        }
+        assertNoColumnV(db);
+      } else {
+        ok(ircAnswer, 200);
+        assertEquals("variant", storedType(db));
+      }
+    }
+  }
+
   private static final String SORT_BY_V =
       "{\"order-id\":1,\"fields\":[{\"transform\":\"identity\",\"source-id\":7,"
           + "\"direction\":\"asc\",\"null-order\":\"nulls-first\"}]}";

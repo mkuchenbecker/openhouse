@@ -15,6 +15,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.expressions.Literal;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
@@ -75,7 +76,8 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
         commit.getTableIdentifier(),
         commit.getBase().orElse(null),
         commit.getMetadata(),
-        commit.getProperties());
+        commit.getProperties(),
+        commit.getIo());
   }
 
   /**
@@ -91,11 +93,25 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
       TableMetadata base,
       TableMetadata committed,
       Map<String, String> properties) {
+    check(table, base, committed, properties, null);
+  }
+
+  /**
+   * The check, with the table's file IO, which a commit that adds a variant column to a table with
+   * data needs to read the base's data manifests; without it such a commit is refused.
+   */
+  public void check(
+      TableIdentifier table,
+      TableMetadata base,
+      TableMetadata committed,
+      Map<String, String> properties,
+      FileIO io) {
     rule.checkCommitted(
         table.toString(), base == null ? null : base.formatVersion(), committed.formatVersion());
     List<Schema> added = addedSchemas(base, committed);
     if (committed.formatVersion() >= IcebergV3.VERSION) {
       refuseWhatV3DoesNotHandleYet(table, committed, properties, added);
+      FormatV3Types.refuseVariantOverOrcFiles(table, base, committed, io);
       keepInitialDefaults(table, base, added);
     } else {
       refuseNewWriteDefaults(table, base, committed, added);

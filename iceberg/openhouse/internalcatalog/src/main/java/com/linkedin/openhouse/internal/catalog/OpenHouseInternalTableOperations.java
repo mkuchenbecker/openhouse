@@ -691,7 +691,7 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
       restoreOverriddenProperties(properties);
       enforcePropertyRules(base, properties);
       if (preCommitCheckRunner != null) {
-        preCommitCheckRunner.checkAll(tableIdentifier, base, metadata, properties);
+        preCommitCheckRunner.checkAll(tableIdentifier, base, metadata, properties, io());
       }
       rejectIfHouseTableRowWillNotFit(properties, newMetadataLocation);
       return properties;
