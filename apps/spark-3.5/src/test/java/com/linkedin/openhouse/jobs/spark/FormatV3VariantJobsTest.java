@@ -25,19 +25,9 @@ import org.apache.hadoop.fs.LocatedFileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.RemoteIterator;
 import org.apache.iceberg.CatalogUtil;
-import org.apache.iceberg.ContentFile;
-import org.apache.iceberg.DataFile;
-import org.apache.iceberg.DeleteFile;
-import org.apache.iceberg.HasTableOperations;
-import org.apache.iceberg.ManifestContent;
-import org.apache.iceberg.ManifestFile;
-import org.apache.iceberg.ManifestFiles;
-import org.apache.iceberg.ManifestReader;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
-import org.apache.iceberg.Snapshot;
-import org.apache.iceberg.StatisticsFile;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -69,10 +59,10 @@ import org.junit.jupiter.api.function.Executable;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   private static final String DB = "x5variant";
-  private static final String CATALOG_PREFIX = "spark.sql.catalog.openhouse";
-  private static final String DEFAULT_ICEBERG_PREFIX = "spark.sql.catalog.default_iceberg";
+  private static final String CATALOG_PREFIX = FormatV3Tables.CATALOG_PREFIX;
+  private static final String DEFAULT_ICEBERG_PREFIX = FormatV3Tables.DEFAULT_ICEBERG_PREFIX;
   private static final List<Long> DELETED = Arrays.asList(2L, 6L, 10L, 14L, 19L, 23L);
-  private static final int[] PARTITION_DAYS_AGO = {10, 5, 1, 0};
+  private static final int[] PARTITION_DAYS_AGO = FormatV3Tables.PARTITION_DAYS_AGO;
   private static final String SCHEMA =
       "{\"type\":\"struct\",\"fields\":["
           + "{\"id\":1,\"name\":\"id\",\"required\":false,\"type\":\"long\"},"
@@ -82,7 +72,9 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   private final OtelEmitter otelEmitter =
       new AppsOtelEmitter(Collections.singletonList(DefaultOtelConfig.getOpenTelemetry()));
 
-  private FormatV3TablesServer server;
+  /** The v3 tables service and its session, shared with the other format v3 job tests. */
+  private FormatV3Tables tables;
+
   private SparkSession spark;
   private Catalog catalog;
   private Map<String, String> conf;
@@ -92,26 +84,19 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
 
   @BeforeAll
   void start() throws Exception {
-    SparkSession base = getSparkSession();
-    server = new FormatV3TablesServer();
-    spark = base.newSession();
-    conf = new HashMap<>();
-    base.conf().getAll().foreach(entry -> conf.put(entry._1(), entry._2()));
-    for (Map.Entry<String, String> entry : conf.entrySet()) {
-      if (entry.getKey().startsWith(CATALOG_PREFIX)
-          || entry.getKey().startsWith(DEFAULT_ICEBERG_PREFIX)) {
-        spark.conf().set(entry.getKey(), entry.getValue());
-      }
+    tables = new FormatV3Tables(getSparkSession(), DB, otelEmitter);
+    if (!VariantData.supported()) {
+      return;
     }
-    spark.conf().set(CATALOG_PREFIX + ".uri", server.uri());
-    spark.conf().set(DEFAULT_ICEBERG_PREFIX + ".uri", server.uri());
+    spark = tables.session(3);
+    conf = new HashMap<>();
+    spark.conf().getAll().foreach(entry -> conf.put(entry._1(), entry._2()));
     Map<String, String> properties = new HashMap<>();
-    for (String key : Arrays.asList("cluster", "auth-token")) {
+    for (String key : Arrays.asList("uri", "cluster", "auth-token")) {
       if (conf.containsKey(CATALOG_PREFIX + "." + key)) {
         properties.put(key, conf.get(CATALOG_PREFIX + "." + key));
       }
     }
-    properties.put("uri", server.uri());
     catalog =
         CatalogUtil.loadCatalog(
             conf.get(CATALOG_PREFIX + ".catalog-impl"),
@@ -122,8 +107,8 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
 
   @AfterAll
   void stop() {
-    if (server != null) {
-      server.close();
+    if (tables != null) {
+      tables.close();
     }
   }
 
@@ -135,7 +120,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   }
 
   private Operations ops() {
-    return Operations.withCatalog(spark, otelEmitter);
+    return tables.ops(3);
   }
 
   private long micros(int daysAgo, int hour) {
@@ -173,8 +158,8 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     table.refresh();
     VariantData.delete(table, Arrays.asList(19L, 23L));
     table.refresh();
-    Assertions.assertEquals(3, formatVersion(table));
-    Assertions.assertEquals(10, snapshotIds(table).size());
+    Assertions.assertEquals(3, FormatV3Tables.formatVersion(table));
+    Assertions.assertEquals(10, FormatV3Tables.snapshotIds(table).size());
     List<String> rows = VariantData.read(table, null);
     Assertions.assertEquals(32 - DELETED.size(), rows.size());
     // Not vacuous: the variant values and the row lineage are in what the checks compare.
@@ -182,16 +167,6 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     Assertions.assertTrue(row4.contains("row-4") && row4.contains("40"), row4);
     Assertions.assertTrue(rows.stream().noneMatch(r -> r.endsWith("null")), rows.toString());
     return fqtn;
-  }
-
-  private static int formatVersion(Table table) {
-    return ((HasTableOperations) table).operations().current().formatVersion();
-  }
-
-  private static List<Long> snapshotIds(Table table) {
-    List<Long> ids = new ArrayList<>();
-    table.snapshots().forEach(s -> ids.add(s.snapshotId()));
-    return ids;
   }
 
   /** What a job may not change, or may change only as its outcome allows. */
@@ -208,7 +183,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
       storage = listFiles(ops().fs(), new Path(table.location()));
       referenced = referencedFiles(table);
       rows = VariantData.read(table, null);
-      for (long id : snapshotIds(table)) {
+      for (long id : FormatV3Tables.snapshotIds(table)) {
         perSnapshot.put(id, VariantData.read(table, id));
       }
     }
@@ -230,43 +205,11 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     return files;
   }
 
+  /** {@link FormatV3Tables#referencedFiles}, as storage paths. */
   private static Set<String> referencedFiles(Table table) {
-    Set<String> files = new TreeSet<>();
-    files.add(
-        normalized(((HasTableOperations) table).operations().current().metadataFileLocation()));
-    for (Snapshot snapshot : table.snapshots()) {
-      files.add(normalized(snapshot.manifestListLocation()));
-      for (ManifestFile manifest : snapshot.allManifests(table.io())) {
-        files.add(normalized(manifest.path()));
-        for (ContentFile<?> file : manifestEntries(table, manifest)) {
-          files.add(normalized(file.path().toString()));
-        }
-      }
-    }
-    for (StatisticsFile statistics : table.statisticsFiles()) {
-      files.add(normalized(statistics.path()));
-    }
-    return files;
-  }
-
-  private static List<ContentFile<?>> manifestEntries(Table table, ManifestFile manifest) {
-    List<ContentFile<?>> files = new ArrayList<>();
-    try {
-      if (manifest.content() == ManifestContent.DATA) {
-        try (ManifestReader<DataFile> reader =
-            ManifestFiles.read(manifest, table.io(), table.specs())) {
-          reader.forEach(f -> files.add(f.copy()));
-        }
-      } else {
-        try (ManifestReader<DeleteFile> reader =
-            ManifestFiles.readDeleteManifest(manifest, table.io(), table.specs())) {
-          reader.forEach(f -> files.add(f.copy()));
-        }
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-    return files;
+    return FormatV3Tables.referencedFiles(table).stream()
+        .map(FormatV3VariantJobsTest::normalized)
+        .collect(Collectors.toCollection(TreeSet::new));
   }
 
   private static Throwable run(Executable job) {
@@ -433,7 +376,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     Throwable work = run(() -> app.runInner(ops()));
     assertCompletedCorrectly(work, fqtn, before, retained);
     Table table = ops().getTable(fqtn);
-    Assertions.assertEquals(retained, snapshotIds(table));
+    Assertions.assertEquals(retained, FormatV3Tables.snapshotIds(table));
     Set<String> after = referencedFiles(table);
     List<String> expiredOnly =
         before.referenced.stream()
@@ -580,7 +523,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   @Test
   void sortStatsCollectionFailsCleanly() throws Exception {
     requireFormatV3();
-    SparkSession sortSpark = spark.newSession();
+    SparkSession sortSpark = FormatV3Tables.copyCatalogs(spark, spark.newSession());
     for (Map.Entry<String, String> entry : conf.entrySet()) {
       if (entry.getKey().startsWith(CATALOG_PREFIX + ".")) {
         String key = entry.getKey().substring(CATALOG_PREFIX.length());
@@ -588,9 +531,6 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
       }
     }
     sortSpark.conf().set("spark.sql.catalog.spark_catalog", conf.get(CATALOG_PREFIX));
-    sortSpark.conf().set("spark.sql.catalog.spark_catalog.uri", server.uri());
-    sortSpark.conf().set(CATALOG_PREFIX + ".uri", server.uri());
-    sortSpark.conf().set(DEFAULT_ICEBERG_PREFIX + ".uri", server.uri());
     String name = "sortstats";
     TableIdentifier id = TableIdentifier.of(DB, name);
     if (catalog.tableExists(id)) {

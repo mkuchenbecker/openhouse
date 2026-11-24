@@ -42,13 +42,14 @@ import org.junit.jupiter.api.TestInstance;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
   private static final String DB = "x5jobs";
-  private static final String CATALOG_PREFIX = "spark.sql.catalog.openhouse";
-  private static final String DEFAULT_ICEBERG_PREFIX = "spark.sql.catalog.default_iceberg";
+  private static final String CATALOG_PREFIX = FormatV3Tables.CATALOG_PREFIX;
 
   private final OtelEmitter otelEmitter =
       new AppsOtelEmitter(Collections.singletonList(DefaultOtelConfig.getOpenTelemetry()));
 
-  private FormatV3TablesServer server;
+  /** The v3 tables service and its session, shared with the other format v3 job tests. */
+  private FormatV3Tables tables;
+
   private SparkSession spark;
   private Catalog catalog;
 
@@ -57,26 +58,19 @@ public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
 
   @BeforeAll
   void start() throws Exception {
-    SparkSession base = getSparkSession();
-    server = new FormatV3TablesServer();
-    spark = base.newSession();
-    Map<String, String> all = new HashMap<>();
-    base.conf().getAll().foreach(entry -> all.put(entry._1(), entry._2()));
-    for (Map.Entry<String, String> entry : all.entrySet()) {
-      if (entry.getKey().startsWith(CATALOG_PREFIX)
-          || entry.getKey().startsWith(DEFAULT_ICEBERG_PREFIX)) {
-        spark.conf().set(entry.getKey(), entry.getValue());
-      }
+    tables = new FormatV3Tables(getSparkSession(), DB, otelEmitter);
+    if (!FormatV3Tables.icebergCanWriteV3()) {
+      return;
     }
-    spark.conf().set(CATALOG_PREFIX + ".uri", server.uri());
-    spark.conf().set(DEFAULT_ICEBERG_PREFIX + ".uri", server.uri());
+    spark = tables.session(3);
+    Map<String, String> all = new HashMap<>();
+    spark.conf().getAll().foreach(entry -> all.put(entry._1(), entry._2()));
     Map<String, String> properties = new HashMap<>();
     for (String key : Arrays.asList("uri", "cluster", "auth-token")) {
       if (all.containsKey(CATALOG_PREFIX + "." + key)) {
         properties.put(key, all.get(CATALOG_PREFIX + "." + key));
       }
     }
-    properties.put("uri", server.uri());
     catalog =
         CatalogUtil.loadCatalog(
             all.get(CATALOG_PREFIX + ".catalog-impl"),
@@ -87,8 +81,8 @@ public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
 
   @AfterAll
   void stop() {
-    if (server != null) {
-      server.close();
+    if (tables != null) {
+      tables.close();
     }
   }
 
