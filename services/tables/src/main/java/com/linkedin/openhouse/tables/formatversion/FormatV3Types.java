@@ -1,5 +1,7 @@
 package com.linkedin.openhouse.tables.formatversion;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 import com.linkedin.openhouse.common.exception.CommitRejectedException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import java.io.IOException;
@@ -39,7 +41,8 @@ import org.apache.iceberg.types.Types;
  *       cluster's default, so a v3 table that writes ORC is refused a variant column; and its ORC
  *       reader cannot read a variant column from older ORC files, so a table that still has ORC
  *       data files is refused one by schema evolution. Spark 3.5 has no variant type and cannot
- *       read such a table (a Spark 3.5 limitation, not refused).
+ *       read such a table (a Spark 3.5 limitation, not refused); because OpenHouse's retention job
+ *       runs on Spark 3.5, a table with a variant column may not have a retention policy.
  *   <li>{@code timestamp_ns}, {@code timestamptz_ns}: refused. No Spark integration of Iceberg 1.12
  *       has a type for them, so no Spark could read the table.
  *   <li>{@code geometry}, {@code geography}: refused. Spark 3.5 cannot read them, Spark 4 has them
@@ -57,6 +60,9 @@ public final class FormatV3Types {
   public static final String REFUSED = "FORMAT_V3_TYPE_NOT_SUPPORTED";
 
   static final String VARIANT = "VARIANT";
+
+  /** The table property that holds the table's OpenHouse policies, as JSON. */
+  private static final String POLICIES = "policies";
 
   /** The refused type ids, with why. */
   private static final Map<String, String> REFUSALS;
@@ -116,6 +122,23 @@ public final class FormatV3Types {
               table,
               field.type(),
               REFUSALS.get(name(field.type()))));
+    }
+    String policies = properties.get(POLICIES);
+    if (policies != null && hasRetention(policies)) {
+      fieldsInIdOrder(schema)
+          .filter(f -> isVariant(f.type()))
+          .findFirst()
+          .ifPresent(
+              field -> {
+                throw new CommitRejectedException(
+                    String.format(
+                        "%s: column %s (variant) of table %s: the table has a retention policy,"
+                            + " and OpenHouse's retention job runs on Spark 3.5, which cannot read"
+                            + " a table with a variant column, so the policy would not be"
+                            + " enforced. A table with a variant column cannot have a retention"
+                            + " policy yet.",
+                        REFUSED, schema.findColumnName(field.fieldId()), table));
+              });
     }
     String format =
         properties
@@ -226,6 +249,20 @@ public final class FormatV3Types {
   public static void refuseVariantBelowV3(Schema schema, int formatVersion) {
     if (formatVersion < IcebergV3.VERSION && hasVariant(schema)) {
       throw new RequestValidationFailureException(Collections.singletonList(VARIANT_BELOW_V3));
+    }
+  }
+
+  /** Whether the table's {@code policies} property sets a retention policy. */
+  private static boolean hasRetention(String policies) {
+    try {
+      JsonElement parsed = JsonParser.parseString(policies);
+      if (!parsed.isJsonObject()) {
+        return false;
+      }
+      JsonElement retention = parsed.getAsJsonObject().get("retention");
+      return retention != null && !retention.isJsonNull();
+    } catch (RuntimeException e) {
+      return false;
     }
   }
 

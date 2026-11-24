@@ -12,6 +12,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.PolicyTag;
+import com.linkedin.openhouse.tables.api.spec.v0.request.components.Retention;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
 import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import java.util.ArrayList;
@@ -433,6 +434,50 @@ public class FormatV3TypesTest {
         ok(ircAnswer, 200);
         assertEquals("variant", storedType(db));
       }
+    }
+  }
+
+  /**
+   * OpenHouse's retention job runs on Spark 3.5, which cannot read a table with a variant column:
+   * such a table may not have a retention policy, by create or by a later policy update. An unknown
+   * column does not stop one.
+   */
+  @Test
+  void aTableWithAVariantColumnCannotHaveARetentionPolicy() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    Policies retention =
+        Policies.builder()
+            .retention(
+                Retention.builder()
+                    .count(30)
+                    .granularity(TimePartitionSpec.Granularity.DAY)
+                    .build())
+            .build();
+    for (String type : Arrays.asList("variant", "unknown")) {
+      String db = db("x5ret", type);
+      CreateUpdateTableRequestBody body =
+          withColumn(table(db, "3", "parquet"), type)
+              .toBuilder()
+              .timePartitioning(dayOf("timestampCol"))
+              .build();
+      Answer withPolicy = answer(post(mvc, body.toBuilder().policies(retention).build()));
+      if ("unknown".equals(type)) {
+        ok(withPolicy, 201);
+        continue;
+      }
+      refused(withPolicy, 400, "FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table ");
+      assertTrue(
+          withPolicy.message.contains(
+              "the table has a retention policy, and OpenHouse's retention job runs on Spark 3.5"),
+          withPolicy.toString());
+      assertEquals(404, status(get(mvc, db, "t")));
+      ok(answer(post(mvc, body)), 201);
+      String stored = json(get(mvc, db, "t"));
+      refused(
+          answer(put(mvc, bodyFromGet(stored).toBuilder().policies(retention).build())),
+          400,
+          "the table has a retention policy");
+      assertEquals(stored, json(get(mvc, db, "t")));
     }
   }
 
