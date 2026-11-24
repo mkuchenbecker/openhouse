@@ -167,9 +167,15 @@ def extraJvmArgs = [
 
 tasks.named('test') {
   dependsOn tasks.named('serviceClasses')
-  maxHeapSize = '2g'
+  maxHeapSize = '1536m'
   jvmArgs extraJvmArgs
+  testLogging {
+    exceptionFormat 'full'
+    events 'failed', 'skipped'
+  }
   systemProperty 'openhouse.iceberg.line', 'default'
+  // -Pjobs42CatalogMode=type: the sessions' catalogs use type=rest instead of catalog-impl.
+  systemProperty 'jobs42.catalog.mode', findProperty('jobs42CatalogMode') ?: 'impl'
   def serviceClasspath = sourceSets.service.runtimeClasspath
   inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
   doFirst {

@@ -92,6 +92,9 @@ public class OpenHouseSparkITest {
       builder.config(prefix + ".catalog-impl", "org.apache.iceberg.rest.RESTCatalog");
     }
     builder.config(prefix + ".uri", ircUri).config(prefix + ".token", DUMMY_TOKEN);
+    // The OpenHouse catalog's name for the token, which RESTCatalog ignores: shared tests read it
+    // from the session to call the native API themselves (AppsTest's lock controls).
+    builder.config(prefix + ".auth-token", DUMMY_TOKEN);
   }
 
   /** The native API's base URI (the jobs' tables client and the tests' direct API calls use it). */

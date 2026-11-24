@@ -34,6 +34,14 @@ public final class JobsTestService {
     appArgs.add("--server.port=0");
     appArgs.add("--server.shutdown=immediate");
     appArgs.add("--server.tomcat.basedir=" + work.resolve("tomcat"));
+    // Every request, unbuffered, so a run shows which routes (native or /iceberg) the jobs called.
+    appArgs.add("--server.tomcat.accesslog.enabled=true");
+    appArgs.add("--server.tomcat.accesslog.directory=" + work.resolve("access"));
+    appArgs.add("--server.tomcat.accesslog.prefix=access");
+    appArgs.add("--server.tomcat.accesslog.suffix=.log");
+    appArgs.add("--server.tomcat.accesslog.rotate=false");
+    appArgs.add("--server.tomcat.accesslog.buffered=false");
+    appArgs.add("--server.tomcat.accesslog.pattern=%m %U %s");
     appArgs.addAll(Arrays.asList(args).subList(1, args.length));
     ConfigurableApplicationContext context =
         new SpringApplication(SpringH2TestApplication.class).run(appArgs.toArray(new String[0]));
