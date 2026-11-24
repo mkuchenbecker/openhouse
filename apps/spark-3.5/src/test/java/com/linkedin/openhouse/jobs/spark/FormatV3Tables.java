@@ -127,13 +127,10 @@ final class FormatV3Tables implements AutoCloseable {
   }
 
   /**
-   * Creates {@code <db>.<name>_v<formatVersion>_<fileFormat>} and fills it: 4 daily partitions, two
-   * INSERTs of 4 rows each per partition (8 data files; ids {@code p * 8 + k * 4 + 1} to {@code +
-   * 4} share one file), a DELETE touching every data file, a second DELETE touching one data file
-   * only (on v3 it replaces one deletion vector, so the first Puffin file stays live for the
-   * others), an UPDATE, and a MERGE that updates, deletes and inserts. 12 snapshots.
+   * The first part of {@link #createTable}: creates the table (merge-on-read, partitioned by
+   * days(ts)) and runs its 8 INSERTs (8 snapshots), without the row-level statements.
    */
-  String createTable(int formatVersion, String name, String fileFormat) {
+  String createAndInsert(int formatVersion, String name, String fileFormat) {
     SparkSession spark = session(formatVersion);
     String fqtn = db + "." + name + "_v" + formatVersion + "_" + fileFormat;
     String t = "openhouse." + fqtn;
@@ -160,19 +157,21 @@ final class FormatV3Tables implements AutoCloseable {
         spark.sql("INSERT INTO " + t + " VALUES " + String.join(", ", values));
       }
     }
-    spark.sql("DELETE FROM " + t + " WHERE id IN (2, 6, 10, 14, 18, 22, 26, 30)");
-    spark.sql("DELETE FROM " + t + " WHERE id = 3");
-    spark.sql("UPDATE " + t + " SET data = concat(data, '-updated') WHERE id IN (7, 23)");
-    spark.sql(
-        "MERGE INTO "
-            + t
-            + " target USING (SELECT * FROM VALUES (11L, 'u'), (15L, 'd'), (100L, 'i') AS s(id, op))"
-            + " source ON target.id = source.id"
-            + " WHEN MATCHED AND source.op = 'd' THEN DELETE"
-            + " WHEN MATCHED THEN UPDATE SET target.data = 'merged'"
-            + " WHEN NOT MATCHED THEN INSERT (id, data, ts) VALUES (source.id, 'inserted', "
-            + ts(1, 59)
-            + ")");
+    return fqtn;
+  }
+
+  /**
+   * Creates {@code <db>.<name>_v<formatVersion>_<fileFormat>} and fills it: 4 daily partitions, two
+   * INSERTs of 4 rows each per partition (8 data files; ids {@code p * 8 + k * 4 + 1} to {@code +
+   * 4} share one file), a DELETE touching every data file, a second DELETE touching one data file
+   * only (on v3 it replaces one deletion vector, so the first Puffin file stays live for the
+   * others), an UPDATE, and a MERGE that updates, deletes and inserts. 12 snapshots.
+   */
+  String createTable(int formatVersion, String name, String fileFormat) {
+    SparkSession spark = session(formatVersion);
+    String fqtn = createAndInsert(formatVersion, name, fileFormat);
+    String t = "openhouse." + fqtn;
+    rowLevelWrites(spark, t);
     Table table = ops(formatVersion).getTable(fqtn);
     Assertions.assertEquals(formatVersion, formatVersion(table));
     Assertions.assertEquals(12, snapshotIds(table).size(), "one snapshot per statement");
@@ -201,6 +200,38 @@ final class FormatV3Tables implements AutoCloseable {
     }
     Assertions.assertTrue(liveDataFiles(table, current).size() >= 8);
     return fqtn;
+  }
+
+  /**
+   * The four row-level statements of {@link #createTable} on table {@code t} (catalog-qualified): a
+   * DELETE touching every data file of the fixture's layout, a DELETE of one row, an UPDATE, and a
+   * MERGE that updates, deletes and inserts; the deleted ids are {@link #DELETED_IDS}. Shared with
+   * the fixtures of other table shapes built on the same id layout.
+   */
+  void rowLevelWrites(SparkSession spark, String t) {
+    spark.sql("DELETE FROM " + t + " WHERE id IN (2, 6, 10, 14, 18, 22, 26, 30)");
+    spark.sql("DELETE FROM " + t + " WHERE id = 3");
+    spark.sql("UPDATE " + t + " SET data = concat(data, '-updated') WHERE id IN (7, 23)");
+    spark.sql(
+        "MERGE INTO "
+            + t
+            + " target USING (SELECT * FROM VALUES (11L, 'u'), (15L, 'd'), (100L, 'i') AS s(id, op))"
+            + " source ON target.id = source.id"
+            + " WHEN MATCHED AND source.op = 'd' THEN DELETE"
+            + " WHEN MATCHED THEN UPDATE SET target.data = 'merged'"
+            + " WHEN NOT MATCHED THEN INSERT (id, data, ts) VALUES (source.id, 'inserted', "
+            + ts(1, 59)
+            + ")");
+  }
+
+  /**
+   * The URI of the tables service holding tables of this format version (the v3 service, or the
+   * apps tests' default one, whose URI the caller passes), for clients other than Spark, such as an
+   * Iceberg RESTCatalog on its {@code /iceberg} routes.
+   */
+  String serviceUri(int formatVersion, String defaultServiceUri) {
+    session(formatVersion);
+    return formatVersion == 3 ? server.uri() : defaultServiceUri;
   }
 
   static int formatVersion(Table table) {
