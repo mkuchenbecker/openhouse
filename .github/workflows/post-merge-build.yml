@@ -1,10 +1,18 @@
 name: Post-Merge Build and Test
 
-# Runs the full default build (Iceberg 1.12 from the pinned fork commit) and its tests after each
-# merge to the integration branch, and writes the Gradle cache and the published fork there so
-# pull requests targeting this branch can restore them. A second, independent job runs the
-# reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn). Neither publishes, tags,
-# releases or deploys anything.
+# Runs both build lines whole after each merge to the integration branch: the default build
+# (Iceberg 1.12 from the pinned fork commit) with its Docker steps, and the reference build on
+# LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn). Each line is cut into parallel jobs exactly as on a
+# pull request (split-build.yml, scripts/ci/test-groups.py): the jobs together run every task of
+# `clean build`, and the default line's Docker job the deployables and the integration tests. Each
+# line's `rest` job writes the Gradle cache that pull requests targeting this branch restore; the
+# default line's jobs also save the published fork when they had to publish it. Nothing here
+# publishes, tags, releases or deploys anything.
+#
+# Until 2026-11-24 each line was one job (build-run-tests.yml, iceberg-linkedin-build.yml): the
+# default one took up to 67 minutes, and with a dozen merges a day each run queued behind the last,
+# so a merge's answer came one to two hours later. Split, a run takes about what a pull request's
+# build takes.
 on:
   push:
     branches:
@@ -15,22 +23,25 @@ on:
 permissions:
   contents: read
 
-# Merges arrive faster than the build takes, so cancelling in-progress runs meant no run ever finished.
-# A running build is allowed to finish; GitHub keeps at most one pending run in the group, and a newer
-# pending run replaces an older pending one, so every merge is covered by some completed run.
+# One group per commit, so the runs of different merges overlap instead of queueing one behind
+# another (and a newer merge never replaces an older merge's pending run): every merge gets its own
+# run, which runs everything. A second run of the same commit (by hand) waits for the first;
+# nothing is ever cancelled.
 concurrency:
-  group: post-merge-build-${{ github.ref }}
+  group: post-merge-build-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   build-run-tests:
-    uses: ./.github/workflows/build-run-tests.yml
+    uses: ./.github/workflows/split-build.yml
     with:
+      line: default
       gradle-cache-write: true
 
-  # The reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn,
-  # docs/development/iceberg-fork.md), defined once in iceberg-linkedin-build.yml and also run on
-  # pull requests. A separate job with no `needs`, so it runs beside the build above on its own
-  # runner and never holds it up. It publishes nothing.
+  # The reference line. No `needs`: it runs beside the default line on its own runners and never
+  # holds it up.
   iceberg-linkedin-build:
-    uses: ./.github/workflows/iceberg-linkedin-build.yml
+    uses: ./.github/workflows/split-build.yml
+    with:
+      line: reference
+      gradle-cache-write: true

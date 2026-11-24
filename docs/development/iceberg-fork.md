@@ -239,11 +239,13 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
 Two builds, the default and the reference, run beside each other on every pull request
 (`pr-validations.yml`, decision D33) and after each merge to `irc-integration`
 (`post-merge-build.yml`, also by hand with `workflow_dispatch`). Neither blocks nor waits for the
-other. A newer push to a pull request cancels the pull request's older run; a running post-merge
-run is never cancelled. After a merge each build is one job; on a pull request each is cut into
-parallel jobs that run the same tasks (below).
+other. A newer push to a pull request cancels the pull request's older run. A post-merge run is
+never cancelled and waits for no other: each merge commit has its own concurrency group, so the
+runs of merges that land close together overlap, and every merge gets a run of its own. Both on a
+pull request and after a merge each build is cut into parallel jobs (`split-build.yml`, below);
+the default build's single job (`build-run-tests.yml`) runs only before a release.
 
-**The default build**, `build-run-tests.yml` (job `build-and-run-tests`):
+**The default build**, the tasks of `build-run-tests.yml` (job `build-and-run-tests`):
 
 - restores the published fork from the cache or publishes it (the composite action
   `.github/actions/iceberg-fork`);
@@ -263,19 +265,18 @@ parallel jobs that run the same tasks (below).
 
 `build-tag-publish.yml` calls the same workflow before a release.
 
-**The reference build**, `iceberg-linkedin-build.yml` (job `iceberg-linkedin-build`): `./gradlew
--PicebergLinkedIn clean build --continue`, the whole build on LinkedIn's Iceberg 1.5.2, so that a
+**The reference build**: `./gradlew -PicebergLinkedIn clean build --continue`, the whole build on LinkedIn's Iceberg 1.5.2, so that a
 change that breaks the line the default is measured against is red before it merges. It needs no
 published fork and builds no image.
 
-When a suite fails, either job's last two steps print each failed test with the start of its
+When a suite fails, a job's last two steps print each failed test with the start of its
 failure (`scripts/ci/print-failed-tests.py`, read from the JUnit XML results, plus, on the default
 build, the end of the Spark 4.2 tests' service logs) and upload the test reports as the artifact
 `default-build-test-reports` or `reference-build-test-reports` (kept 7 days). The failed tests are
 therefore at the end of the job's log, not only where they ran.
 
-**On a pull request**, `split-build.yml` runs each build as parallel jobs, so that the pull
-request waits for its slowest job instead of one runner running every suite. The jobs are cut by
+**On a pull request and after a merge**, `split-build.yml` runs each build as parallel jobs, so
+that the answer waits for the slowest job instead of one runner running every suite. The jobs are cut by
 project: `scripts/ci/test-groups.py` makes a job of each project directory that matches its
 patterns (`apps/spark-*`, `integrations/spark/spark-*/openhouse-spark-itest`), which runs that
 project's `check` (its test tasks, checkstyle and spotbugs), and a job `rest`, which runs
@@ -288,8 +289,11 @@ that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Grad
 the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
 reads the list (and on the default line checks the merged optimizer migrations); a last one of the
 default line runs the Docker steps above, after `./gradlew clean assemble`. Each job restores the
-fork and the Gradle cache the line's single job saved on `irc-integration`
-(`GRADLE_BUILD_ACTION_CACHE_KEY_JOB` names that job) and writes no cache. A red job cancels no
+fork and the newest Gradle cache entry of its line, saved under one name a line
+(`GRADLE_BUILD_ACTION_CACHE_KEY_JOB`: `build-and-run-tests` or `iceberg-linkedin-build`, the ids
+the single jobs had). Only one job a line writes that cache, the `rest` job of the run after a
+merge (input `gradle-cache-write`): an entry is about 530 MB and holds what its job used, so a
+writer per job would fill the repository's cache and evict the fork's entry. A red job cancels no
 other; each prints its failed tests and uploads its reports as
 `default-build-test-reports-<group>` or `reference-build-test-reports-<group>`.
 
@@ -328,8 +332,8 @@ script, so the fork is built (about 6 minutes on a runner) only when either chan
 - A pull request that misses the cache without changing either file (the base's cache was evicted,
   or the base's post-merge run has not saved yet) publishes the fork and saves nothing.
 
-The Gradle cache is written only on `irc-integration`; a pull request and a branch run by hand read
-it.
+The Gradle cache is written only by the `rest` jobs of a post-merge run: on `irc-integration`, or
+in a branch's own scope when the workflow is run there by hand. A pull request reads it.
 
 ## Spark 4.2 over the IRC read routes
 

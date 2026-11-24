@@ -1,17 +1,20 @@
 name: Split Build and Run Tests
 
-# A pull request's build of one line, cut into jobs that run side by side
-# (docs/development/iceberg-fork.md, "CI"). The same Gradle tasks as the single job after each
-# merge (build-run-tests.yml for the default line, iceberg-linkedin-build.yml for the reference
-# line), cut by project: scripts/ci/test-groups.py lists a job per project directory that matches
+# One line's build, cut into jobs that run side by side (docs/development/iceberg-fork.md, "CI"),
+# on a pull request (pr-validations.yml) and after each merge (post-merge-build.yml). The same
+# Gradle tasks as the default line's single job before a release (build-run-tests.yml) and as the
+# reference line's whole `clean build -PicebergLinkedIn`, cut by project: scripts/ci/test-groups.py
+# lists a job per project directory that matches
 # its patterns (the Spark apps, the Spark itests), each running that project's `check`, and the
 # job `rest`, the whole build without those; the init script scripts/ci/test-groups.gradle does
 # the cutting inside Gradle. So the jobs together run all of `build`, and a project or test task
 # added later runs in its project's job or in `rest` without a change here. The default line's
-# Docker steps are a job of their own. It publishes nothing outside the runner and writes no cache.
+# Docker steps are a job of their own. It publishes nothing outside the runner. It writes the
+# Gradle cache only when the caller asks (after a merge), and then from one job of the line, `rest`.
 #
-# The single job took 52 minutes on 2026-11-24, most of it the apps' tests (38 minutes) and the
-# Spark itests running beside them on one runner; each group here has a runner to itself.
+# The single job took 52 minutes on a pull request and up to 67 after a merge on 2026-11-24, most
+# of it the apps' tests and the Spark itests sharing one runner; each group here has a runner to
+# itself.
 on:
   workflow_call:
     inputs:
@@ -21,6 +24,13 @@ on:
           LinkedIn's Iceberg 1.5.2).
         type: string
         required: true
+      gradle-cache-write:
+        description: >-
+          Let the line's `rest` job write the Gradle cache (after a merge to irc-integration); every
+          other job, and every job when false (the default, a pull request), only reads it.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   # The jobs, from the patterns in scripts/ci/test-groups.py and the checkout's directories, so
@@ -69,9 +79,11 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.groups) }}
     env:
-      # Each group restores the Gradle cache that the line's single job writes on irc-integration
-      # (post-merge-build.yml): gradle/actions/setup-gradle keys the cache on the job id, and this
-      # names that job's. Read-only, so a pull request still writes no cache entry.
+      # gradle/actions/setup-gradle keys the Gradle cache on the job id, and restores the newest
+      # entry saved under it. Every job of a line uses one name, the id its single job had (so
+      # the entries that job saved on irc-integration before still match): after a merge the
+      # line's `rest` job saves under it, and every job, on a pull request and after a merge,
+      # restores the newest entry.
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
     steps:
       - name: Checkout project sources
@@ -83,10 +95,15 @@ jobs:
           distribution: 'microsoft'
           java-version: '17'
 
+      # One writer a line, not one a job: an entry is about 530 MB and setup-gradle's cleanup keeps
+      # only what the job used, so a job's entry serves its own group. Eight entries a merge would
+      # fill the repository's cache and evict the fork's entry and each other. `rest` is the
+      # writer: it compiles every project and runs most test tasks, so its entry holds the
+      # dependencies of every project's main code and the build-cache outputs of the most tasks.
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: true
+          cache-read-only: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
 
       # Every Gradle command of the default build needs it; the reference build needs none.
       - name: Restore or publish the Iceberg fork
@@ -139,8 +156,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The default build's Docker steps, as the single job runs them after its tests: the same
-  # composite action. They need the compiled build, not the tests' outcome.
+  # The default build's Docker steps, as the single job before a release runs them after its
+  # tests: the same composite action. They need the compiled build, not the tests' outcome.
   docker:
     name: Default build, Docker images and integration tests
     if: inputs.line == 'default'

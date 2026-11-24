@@ -6,10 +6,10 @@ name: Gradle Build and Run Tests
 # compatibility kit among them), then builds the deployables and runs the integration tests
 # against the oh-only containers. It publishes nothing outside the runner.
 #
-# One job, called after each merge (post-merge-build.yml) and before a release
-# (build-tag-publish.yml). A pull request runs the same tasks and the same Docker steps cut into
-# parallel jobs (split-build.yml, scripts/ci/test-groups.py). The reference build on LinkedIn's
-# Iceberg 1.5.2 is iceberg-linkedin-build.yml.
+# One job, called before a release (build-tag-publish.yml). A pull request and the run after each
+# merge (post-merge-build.yml) run the same tasks and the same Docker steps cut into parallel jobs
+# (split-build.yml, scripts/ci/test-groups.py), which also run the reference build on LinkedIn's
+# Iceberg 1.5.2.
 on:
   workflow_call: # Allow to be run by other workflows
     inputs:
@@ -22,8 +22,8 @@ on:
         default: false
 
 jobs:
-  # The job id is part of the Gradle cache's key (gradle/actions/setup-gradle): keep it, so that a
-  # pull request restores the Gradle cache this job wrote on irc-integration.
+  # The job id is part of the Gradle cache's key (gradle/actions/setup-gradle). The split jobs use
+  # the same name (GRADLE_BUILD_ACTION_CACHE_KEY_JOB in split-build.yml): keep the two equal.
   build-and-run-tests:
     name: Build and Run Tests
     runs-on: ubuntu-latest

@@ -7,9 +7,9 @@ on:
 
 jobs:
   # The default build: Iceberg 1.12 from the pinned fork commit, every suite, the deployables. The
-  # same tasks and Docker steps as the single job after each merge (build-run-tests.yml), cut into
+  # same tasks and Docker steps as the single job before a release (build-run-tests.yml), cut into
   # parallel jobs (split-build.yml) so that a pull request waits for its slowest group, not for
-  # all of them one after another.
+  # all of them one after another. The run after each merge (post-merge-build.yml) is the same.
   build-run-tests:
     # Of the edits, only a base-branch change reruns the build. The concurrency group is on the job,
     # so a skipped run doesn't cancel a running build.
@@ -21,10 +21,10 @@ jobs:
     with:
       line: default
 
-  # The reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn), the same tasks as the job
-  # that runs after each merge to irc-integration (iceberg-linkedin-build.yml), cut into parallel
-  # jobs the same way: a change that breaks the line the default build is measured against is red
-  # here, before it merges. No `needs`: it runs beside the build above. Its own concurrency group,
+  # The reference build on LinkedIn's Iceberg 1.5.2 (-PicebergLinkedIn), the whole
+  # `clean build -PicebergLinkedIn` as after each merge to irc-integration (post-merge-build.yml),
+  # cut into parallel jobs the same way: a change that breaks the line the default build is
+  # measured against is red here, before it merges. No `needs`: it runs beside the build above. Its own concurrency group,
   # so the two never cancel each other; a newer push to the pull request cancels the older run.
   iceberg-linkedin-build:
     if: github.event.action != 'edited' || github.event.changes.base
