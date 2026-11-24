@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.api.validator.impl;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.*;
 import static com.linkedin.openhouse.common.schema.IcebergSchemaHelper.*;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
@@ -14,6 +15,8 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Replication;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.common.TableType;
+import com.linkedin.openhouse.tables.formatversion.FormatV3Types;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,7 +38,6 @@ import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
 import org.apache.iceberg.types.Type;
-import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -60,6 +62,9 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   @Autowired private ReplicationConfigValidator replicationConfigValidator;
 
   @Autowired private HistoryPolicySpecValidator historyPolicySpecValidator;
+
+  @Autowired(required = false)
+  private ClusterProperties clusterProperties;
 
   @Override
   public void validateGetTable(String databaseId, String tableId) {
@@ -482,99 +487,7 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       String schemaJson, List<String> validationFailures) {
     try {
       Schema schema = SchemaParser.fromJson(schemaJson);
-      TypeUtil.visit(
-          schema,
-          new TypeUtil.SchemaVisitor<Void>() {
-            final Deque<String> path = new ArrayDeque<>();
-
-            @Override
-            public void beforeField(Types.NestedField field) {
-              path.push(field.name());
-            }
-
-            @Override
-            public void afterField(Types.NestedField field) {
-              path.pop();
-            }
-
-            @Override
-            public void beforeListElement(Types.NestedField elementField) {
-              path.push("[]");
-            }
-
-            @Override
-            public void afterListElement(Types.NestedField elementField) {
-              path.pop();
-            }
-
-            @Override
-            public void beforeMapKey(Types.NestedField keyField) {
-              path.push("{key}");
-            }
-
-            @Override
-            public void afterMapKey(Types.NestedField keyField) {
-              path.pop();
-            }
-
-            @Override
-            public void beforeMapValue(Types.NestedField valueField) {
-              path.push("{value}");
-            }
-
-            @Override
-            public void afterMapValue(Types.NestedField valueField) {
-              path.pop();
-            }
-
-            @Override
-            public Void struct(Types.StructType struct, List<Void> fieldResults) {
-              Set<String> seen = new HashSet<>();
-              List<String> duplicates =
-                  struct.fields().stream()
-                      .map(Types.NestedField::name)
-                      .filter(name -> !seen.add(name.toLowerCase(Locale.ROOT)))
-                      .collect(Collectors.toList());
-              if (!duplicates.isEmpty()) {
-                List<String> parts = new ArrayList<>(path);
-                Collections.reverse(parts);
-                String location =
-                    parts.isEmpty()
-                        ? "top-level"
-                        : "struct field '" + String.join(".", parts) + "'";
-                validationFailures.add(
-                    String.format(
-                        "schema : duplicate column names found %s in %s. Column names must be unique (case-insensitive).",
-                        duplicates, location));
-              }
-              return null;
-            }
-
-            @Override
-            public Void schema(Schema schema, Void structResult) {
-              return null;
-            }
-
-            @Override
-            public Void field(Types.NestedField field, Void fieldResult) {
-              return null;
-            }
-
-            @Override
-            public Void list(Types.ListType list, Void elementResult) {
-              return null;
-            }
-
-            @Override
-            public Void map(Types.MapType map, Void keyResult, Void valueResult) {
-              return null;
-            }
-
-            @Override
-            public Void primitive(Type.PrimitiveType primitive) {
-              return null;
-            }
-          });
+      checkDuplicates(schema.asStruct(), new ArrayDeque<>(), validationFailures);
       return Optional.of(schema);
     } catch (org.apache.iceberg.exceptions.ValidationException e) {
       // Iceberg detected a structural issue (e.g. exact duplicate field names).
@@ -585,6 +498,58 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       validationFailures.add("schema : " + e.getMessage());
       return Optional.empty();
     }
+  }
+
+  /**
+   * The duplicate column check of {@link #validateNoDuplicateColumns}, at every depth: a struct's
+   * fields after its children, as Iceberg's schema visitor walks them. A variant column has no
+   * names inside it. Where this cluster cannot have format v3 tables it is refused here, with the
+   * answer it always had ({@code Unsupported type: variant}, the message of Iceberg's visitor);
+   * where it can, whether the table takes one is the format version policy's to say (work item X5).
+   */
+  private void checkDuplicates(Type type, Deque<String> path, List<String> validationFailures) {
+    if (type.isStructType()) {
+      Types.StructType struct = type.asStructType();
+      for (Types.NestedField field : struct.fields()) {
+        path.push(field.name());
+        checkDuplicates(field.type(), path, validationFailures);
+        path.pop();
+      }
+      Set<String> seen = new HashSet<>();
+      List<String> duplicates =
+          struct.fields().stream()
+              .map(Types.NestedField::name)
+              .filter(name -> !seen.add(name.toLowerCase(Locale.ROOT)))
+              .collect(Collectors.toList());
+      if (!duplicates.isEmpty()) {
+        List<String> parts = new ArrayList<>(path);
+        Collections.reverse(parts);
+        String location =
+            parts.isEmpty() ? "top-level" : "struct field '" + String.join(".", parts) + "'";
+        validationFailures.add(
+            String.format(
+                "schema : duplicate column names found %s in %s. Column names must be unique (case-insensitive).",
+                duplicates, location));
+      }
+    } else if (type.isListType()) {
+      path.push("[]");
+      checkDuplicates(type.asListType().elementType(), path, validationFailures);
+      path.pop();
+    } else if (type.isMapType()) {
+      path.push("{key}");
+      checkDuplicates(type.asMapType().keyType(), path, validationFailures);
+      path.pop();
+      path.push("{value}");
+      checkDuplicates(type.asMapType().valueType(), path, validationFailures);
+      path.pop();
+    } else if (FormatV3Types.isVariant(type) && !formatV3Enabled()) {
+      throw new UnsupportedOperationException("Unsupported type: variant");
+    }
+  }
+
+  /** Whether this cluster can have format v3 tables. */
+  private boolean formatV3Enabled() {
+    return clusterProperties != null && new FormatVersionRule(clusterProperties).v3Enabled();
   }
 
   private void validateDatabaseId(String databaseId, List<String> validationFailures) {

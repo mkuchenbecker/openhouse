@@ -15,6 +15,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.expressions.Literal;
+import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
@@ -27,8 +28,8 @@ import org.apache.iceberg.types.Types;
  *   <li>The format version the commit leaves is one {@link FormatVersionRule#checkCommitted}
  *       allows.
  *   <li>A commit that leaves a format v3 table may not carry what OpenHouse does not yet handle on
- *       v3, and is refused with the work item that will: types that exist only from v3 on (X5), a
- *       replica or replicated table (X7), table encryption.
+ *       v3, and is refused with the work item that will: a replica or replicated table (X7), table
+ *       encryption; and the format v3 types are checked type by type ({@link FormatV3Types}, X5).
  *   <li>Column defaults (work item W6). On v3, defaults are Iceberg's native ones and are stored as
  *       committed: a field the table already has keeps its {@code initial-default}, only a field
  *       new in the commit may carry one, and the read-bridge opt-in {@code
@@ -40,8 +41,6 @@ import org.apache.iceberg.types.Types;
  * policy on who may write.
  */
 public class FormatVersionCommitPolicy implements PreCommitCheck {
-
-  static final String V3_TYPE = "FORMAT_V3_TYPE_NOT_SUPPORTED";
 
   static final String V3_REPLICATION = "FORMAT_V3_REPLICATION_NOT_SUPPORTED";
 
@@ -77,7 +76,8 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
         commit.getTableIdentifier(),
         commit.getBase().orElse(null),
         commit.getMetadata(),
-        commit.getProperties());
+        commit.getProperties(),
+        commit.getIo());
   }
 
   /**
@@ -93,11 +93,26 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
       TableMetadata base,
       TableMetadata committed,
       Map<String, String> properties) {
+    check(table, base, committed, properties, null);
+  }
+
+  /**
+   * The check, with the table's file IO, which a commit that adds a variant column to a table with
+   * data needs to read the base's data manifests; without it such a commit is refused.
+   */
+  public void check(
+      TableIdentifier table,
+      TableMetadata base,
+      TableMetadata committed,
+      Map<String, String> properties,
+      FileIO io) {
     rule.checkCommitted(
         table.toString(), base == null ? null : base.formatVersion(), committed.formatVersion());
     List<Schema> added = addedSchemas(base, committed);
     if (committed.formatVersion() >= IcebergV3.VERSION) {
+      FormatV3Types.refuseNewVariantWhenOff(table, base, added, rule.variantEnabled());
       refuseWhatV3DoesNotHandleYet(table, committed, properties, added);
+      FormatV3Types.refuseVariantOverOrcFiles(table, base, committed, io);
       keepInitialDefaults(table, base, added);
     } else {
       refuseNewWriteDefaults(table, base, committed, added);
@@ -146,18 +161,10 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
               V3_ENCRYPTION, table));
     }
     for (Schema schema : added) {
-      IcebergV3.firstV3OnlyType(schema)
-          .ifPresent(
-              column -> {
-                throw new CommitRejectedException(
-                    String.format(
-                        "%s: column %s of table %s has a type that exists only from format"
-                            + " version 3 on. OpenHouse does not support the format v3 types yet"
-                            + " (variant, geometry, geography, nanosecond timestamps, unknown):"
-                            + " work item X5.",
-                        V3_TYPE, column, table));
-              });
+      FormatV3Types.checkOnV3(table, schema, properties);
     }
+    // A property change (to ORC) can make the current schema's variant column unwritable too.
+    FormatV3Types.checkOnV3(table, committed.schema(), properties);
   }
 
   /**

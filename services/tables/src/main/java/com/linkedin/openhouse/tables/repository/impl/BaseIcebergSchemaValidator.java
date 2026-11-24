@@ -34,91 +34,72 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
    * defaults, identifier-field-ids) are preserved.
    *
    * <p>Uses {@code TypeUtil.indexById} to build a single flat {@code Map<Integer, NestedField>} for
-   * the entire table schema in one O(n) walk, giving O(1) name lookup at any depth. Uses {@code
-   * TypeUtil.visit} to recurse through the write schema — covering struct, list, and map container
-   * types exhaustively via Iceberg's visitor contract.
+   * the entire table schema in one O(n) walk, giving O(1) name lookup at any depth, then recurses
+   * through the write schema's structs, list elements and map keys and values.
    */
   static Schema normalizeSchemaCasingToTable(Schema writeSchema, Schema tableSchema) {
     // One O(n) walk over the full table schema tree; lookup at any depth is then O(1).
     final Map<Integer, Types.NestedField> tableById = TypeUtil.indexById(tableSchema.asStruct());
-
-    Type rewritten =
-        TypeUtil.visit(
-            writeSchema,
-            new TypeUtil.SchemaVisitor<Type>() {
-              @Override
-              public Type schema(Schema s, Type structResult) {
-                return structResult;
-              }
-
-              @Override
-              public Type struct(Types.StructType struct, List<Type> fieldTypes) {
-                List<Types.NestedField> originals = struct.fields();
-                List<Types.NestedField> rebuilt = new ArrayList<>(originals.size());
-                for (int i = 0; i < originals.size(); i++) {
-                  Types.NestedField original = originals.get(i);
-                  Types.NestedField tableField = tableById.get(original.fieldId());
-                  // Only normalize *casing*: adopt the table's spelling when the write name differs
-                  // from it by case alone. A genuinely different name (a real column rename) is
-                  // left
-                  // intact so schema validation rejects it loudly, instead of it being silently
-                  // reverted to the old name and dropped as a no-op.
-                  String name =
-                      (tableField != null && tableField.name().equalsIgnoreCase(original.name()))
-                          ? tableField.name()
-                          : original.name();
-                  Type type = fieldTypes.get(i);
-                  // Reuse the original if nothing changed (cheap reference-equality short-circuit).
-                  if (name.equals(original.name()) && type == original.type()) {
-                    rebuilt.add(original);
-                  } else if (original.initialDefault() != null || original.writeDefault() != null) {
-                    // A field with column defaults keeps them: on a format v3 table they are the
-                    // table's native defaults, stored as committed.
-                    rebuilt.add(
-                        Types.NestedField.from(original).withName(name).ofType(type).build());
-                  } else {
-                    rebuilt.add(
-                        original.isOptional()
-                            ? Types.NestedField.optional(
-                                original.fieldId(), name, type, original.doc())
-                            : Types.NestedField.required(
-                                original.fieldId(), name, type, original.doc()));
-                  }
-                }
-                return Types.StructType.of(rebuilt);
-              }
-
-              @Override
-              public Type field(Types.NestedField f, Type fieldResult) {
-                return fieldResult;
-              }
-
-              @Override
-              public Type list(Types.ListType list, Type elementResult) {
-                Types.NestedField elem = list.fields().get(0);
-                return elem.isOptional()
-                    ? Types.ListType.ofOptional(elem.fieldId(), elementResult)
-                    : Types.ListType.ofRequired(elem.fieldId(), elementResult);
-              }
-
-              @Override
-              public Type map(Types.MapType map, Type keyResult, Type valueResult) {
-                Types.NestedField k = map.fields().get(0);
-                Types.NestedField v = map.fields().get(1);
-                return v.isOptional()
-                    ? Types.MapType.ofOptional(k.fieldId(), v.fieldId(), keyResult, valueResult)
-                    : Types.MapType.ofRequired(k.fieldId(), v.fieldId(), keyResult, valueResult);
-              }
-
-              @Override
-              public Type primitive(Type.PrimitiveType p) {
-                return p;
-              }
-            });
-
-    Types.StructType normalizedStruct = (Types.StructType) rewritten;
+    Types.StructType normalizedStruct =
+        (Types.StructType) normalizeCasing(writeSchema.asStruct(), tableById);
     return new Schema(
         writeSchema.schemaId(), normalizedStruct.fields(), writeSchema.identifierFieldIds());
+  }
+
+  /**
+   * {@code type} with every field name inside it in the table's casing. Written as an explicit walk
+   * rather than with Iceberg's schema visitor, whose default refuses a variant: a type that is not
+   * a struct, list or map has no names inside it and is returned as it is.
+   */
+  private static Type normalizeCasing(Type type, Map<Integer, Types.NestedField> tableById) {
+    if (type.isStructType()) {
+      List<Types.NestedField> originals = type.asStructType().fields();
+      List<Types.NestedField> rebuilt = new ArrayList<>(originals.size());
+      for (Types.NestedField original : originals) {
+        Types.NestedField tableField = tableById.get(original.fieldId());
+        // Only normalize *casing*: adopt the table's spelling when the write name differs from it
+        // by case alone. A genuinely different name (a real column rename) is left intact so
+        // schema validation rejects it loudly, instead of it being silently reverted to the old
+        // name and dropped as a no-op.
+        String name =
+            (tableField != null && tableField.name().equalsIgnoreCase(original.name()))
+                ? tableField.name()
+                : original.name();
+        Type fieldType = normalizeCasing(original.type(), tableById);
+        // Reuse the original if nothing changed (cheap reference-equality short-circuit).
+        if (name.equals(original.name()) && fieldType == original.type()) {
+          rebuilt.add(original);
+        } else if (original.initialDefault() != null || original.writeDefault() != null) {
+          // A field with column defaults keeps them: on a format v3 table they are the table's
+          // native defaults, stored as committed.
+          rebuilt.add(Types.NestedField.from(original).withName(name).ofType(fieldType).build());
+        } else {
+          rebuilt.add(
+              original.isOptional()
+                  ? Types.NestedField.optional(original.fieldId(), name, fieldType, original.doc())
+                  : Types.NestedField.required(
+                      original.fieldId(), name, fieldType, original.doc()));
+        }
+      }
+      return Types.StructType.of(rebuilt);
+    }
+    if (type.isListType()) {
+      Types.NestedField elem = type.asListType().fields().get(0);
+      Type elementResult = normalizeCasing(elem.type(), tableById);
+      return elem.isOptional()
+          ? Types.ListType.ofOptional(elem.fieldId(), elementResult)
+          : Types.ListType.ofRequired(elem.fieldId(), elementResult);
+    }
+    if (type.isMapType()) {
+      Types.NestedField k = type.asMapType().fields().get(0);
+      Types.NestedField v = type.asMapType().fields().get(1);
+      Type keyResult = normalizeCasing(k.type(), tableById);
+      Type valueResult = normalizeCasing(v.type(), tableById);
+      return v.isOptional()
+          ? Types.MapType.ofOptional(k.fieldId(), v.fieldId(), keyResult, valueResult)
+          : Types.MapType.ofRequired(k.fieldId(), v.fieldId(), keyResult, valueResult);
+    }
+    return type;
   }
 
   @Override
