@@ -55,6 +55,16 @@ public class ClusterProperties {
   @Value("${cluster.iceberg.format-v3.enabled:false}")
   private boolean clusterIcebergFormatV3Enabled;
 
+  /**
+   * Whether a format v3 table may have a variant column. Off by default, and needs {@code
+   * cluster.iceberg.format-v3.enabled}. Turning it on costs this for every table that takes one:
+   * the column can never be dropped; the maintenance jobs, which run on Spark 3.5, do not compact
+   * the table and report failure on it; Spark 3.5 cannot read it; and it cannot carry a retention
+   * policy. Turning it off again refuses new variant columns only; tables that have one keep it.
+   */
+  @Value("${cluster.iceberg.format-v3.variant.enabled:false}")
+  private boolean clusterIcebergFormatV3VariantEnabled;
+
   @Value("${cluster.iceberg.write.metadata.delete-after-commit.enabled:false}")
   private boolean clusterIcebergWriteMetadataDeleteAfterCommitEnabled;
 

@@ -38,6 +38,7 @@ import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.TableTypeMapper;
+import com.linkedin.openhouse.tables.formatversion.FormatV3Types;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionCommitPolicy;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.formatversion.IcebergV3;
@@ -56,6 +57,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -155,6 +157,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       throw new AlreadyExistsException(
           occupant.get().getEntityType(), tableDto.getDatabaseId() + "." + tableDto.getTableId());
     }
+    refuseVariantBelowV3(tableIdentifier, occupant.isPresent(), writeSchema, tableDto);
     if (!occupant.isPresent()) {
       creationEligibilityCheck(tableDto);
       PartitionSpec partitionSpec = partitionSpecMapper.toPartitionSpec(tableDto);
@@ -274,6 +277,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       throw new AlreadyExistsException(
           occupant.get().getEntityType(), tableDto.getDatabaseId() + "." + tableDto.getTableId());
     }
+    refuseVariantBelowV3(tableIdentifier, false, writeSchema, tableDto);
     creationEligibilityCheck(tableDto);
     PartitionSpec partitionSpec = partitionSpecMapper.toPartitionSpec(tableDto);
     Map<String, String> tableProps = computePropsForTableCreation(tableDto);
@@ -300,6 +304,32 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     OpenHouseInternalTableOperations.rejectIfFirstMetadataLocationWillNotFit(
         tableIdentifier, staged, houseTableRowLimits);
     return staged;
+  }
+
+  /**
+   * A variant column on a write that leaves the table below format v3 gets the answer it always
+   * had: before format v3 types could pass the request validation (a cluster that can have v3
+   * tables lets them through, work item X5), its schema walk refused a variant column with 400
+   * {@code schema : Unsupported type: variant}. Read before anything else of the write, as the
+   * validation was, and only for a schema with a variant column.
+   */
+  private void refuseVariantBelowV3(
+      TableIdentifier tableIdentifier, boolean exists, Schema writeSchema, TableDto tableDto) {
+    if (!FormatV3Types.hasVariant(writeSchema)) {
+      return;
+    }
+    Map<String, String> properties = tableDto.getTableProperties();
+    OptionalInt asked = FormatVersionRule.requested(properties);
+    int leaves =
+        exists
+            ? formatVersionRule()
+                .versionAfterUpdate(
+                    InternalRepositoryUtils.formatVersion(catalog.loadTable(tableIdentifier)),
+                    properties)
+            : asked.isPresent() && asked.getAsInt() >= IcebergV3.VERSION
+                ? asked.getAsInt()
+                : formatVersionRule().clusterVersion();
+    FormatV3Types.refuseVariantBelowV3(writeSchema, leaves);
   }
 
   /** The format version rule, over this cluster's configuration. */

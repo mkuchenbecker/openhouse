@@ -17,7 +17,11 @@ final class FormatV3Server implements AutoCloseable {
     org.apache.catalina.webresources.TomcatURLStreamHandlerFactory.disable();
     context =
         new SpringApplication(SpringH2TestApplication.class)
-            .run("--server.port=0", "--cluster.iceberg.format-v3.enabled=true");
+            .run(
+                "--server.port=0",
+                "--cluster.iceberg.format-v3.enabled=true",
+                // Variant columns too (off by default), for the tests of tables that have one.
+                "--cluster.iceberg.format-v3.variant.enabled=true");
   }
 
   String uri() {

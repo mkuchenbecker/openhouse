@@ -79,6 +79,10 @@ sourceSets {
     test {
         java {
             srcDirs += 'src/shared/test/java'
+            // Test helpers that need one Iceberg line's API (variant data on the 1.12 line, work item
+            // X5), with a same-named copy for the other line, so the tests compile on both.
+            srcDirs += rootProject.hasProperty('icebergLinkedIn')
+                ? 'src/test-iceberg-1.5/java' : 'src/test-iceberg-1.12/java'
         }
     }
 }

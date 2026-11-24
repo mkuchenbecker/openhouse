@@ -6,6 +6,7 @@ import java.util.Optional;
 import lombok.Value;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.io.FileIO;
 
 /**
  * The commit doCommit is about to write, as each {@link PreCommitCheck} sees it before anything is
@@ -37,6 +38,36 @@ public class PendingCommit {
   boolean snapshotCommit;
 
   /**
+   * The table's file IO, for a check that must read the base's manifests; {@code null} where the
+   * caller has none (a check then decides without them).
+   */
+  FileIO io;
+
+  public PendingCommit(
+      TableIdentifier tableIdentifier,
+      Optional<TableMetadata> base,
+      TableMetadata metadata,
+      ImmutableMap<String, String> properties,
+      boolean snapshotCommit) {
+    this(tableIdentifier, base, metadata, properties, snapshotCommit, null);
+  }
+
+  public PendingCommit(
+      TableIdentifier tableIdentifier,
+      Optional<TableMetadata> base,
+      TableMetadata metadata,
+      ImmutableMap<String, String> properties,
+      boolean snapshotCommit,
+      FileIO io) {
+    this.tableIdentifier = tableIdentifier;
+    this.base = base;
+    this.metadata = metadata;
+    this.properties = properties;
+    this.snapshotCommit = snapshotCommit;
+    this.io = io;
+  }
+
+  /**
    * The commit doCommit is about to write. {@code properties} still carry its commit-only keys,
    * which tell whether it puts snapshots or replaces the table.
    */
@@ -44,7 +75,8 @@ public class PendingCommit {
       TableIdentifier tableIdentifier,
       TableMetadata base,
       TableMetadata metadata,
-      Map<String, String> properties) {
+      Map<String, String> properties,
+      FileIO io) {
     return new PendingCommit(
         tableIdentifier,
         Optional.ofNullable(base),
@@ -52,6 +84,7 @@ public class PendingCommit {
         ImmutableMap.copyOf(properties),
         Boolean.parseBoolean(properties.get(CatalogConstants.IS_REPLACE_COMMIT_KEY))
             || Boolean.parseBoolean(properties.get(CatalogConstants.IS_STAGE_REPLACE_KEY))
-            || properties.containsKey(CatalogConstants.SNAPSHOTS_JSON_KEY));
+            || properties.containsKey(CatalogConstants.SNAPSHOTS_JSON_KEY),
+        io);
   }
 }

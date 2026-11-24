@@ -28,6 +28,12 @@ import org.junit.jupiter.api.Test;
 public class SparkIrcFormatV3Test {
   private static final String DB = "irc42";
   private static final ObjectMapper MAPPER = new ObjectMapper();
+
+  /** The service's refusal of a variant column while variant columns are off (the default). */
+  private static final String VARIANT_OFF =
+      "FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table irc42.v3_types: variant columns"
+          + " are off on this cluster (cluster.iceberg.format-v3.variant.enabled is false)";
+
   private static final List<String> TABLES =
       Arrays.asList(
           "v3_created", "v3_plain", "v3_upgraded", "v3_cow", "v3_mor", "v3_ctas", "v3_types");
@@ -250,10 +256,11 @@ public class SparkIrcFormatV3Test {
   // ---------------------------------------------------------------- not yet, and said so
 
   /**
-   * What format v3 adds to Spark SQL that this service does not take yet: a VARIANT column (work
-   * item X5) is refused by the service, on create and on ADD COLUMN, and leaves nothing behind; a
-   * column DEFAULT is refused by Iceberg's own Spark integration before any request (defaults are
-   * set through the Iceberg API until work item W9).
+   * What format v3 adds to Spark SQL that this service does not take: a VARIANT column is refused
+   * by the service, on create (whatever the file format) and on ADD COLUMN, naming the property
+   * that keeps variant columns off by default, and leaves nothing behind (SparkIrcFormatV3TypesTest
+   * has the tables that take one, work item X5); a column DEFAULT is refused by Iceberg's own Spark
+   * integration before any request (defaults are set through the Iceberg API until work item W9).
    */
   @Test
   void variantColumnsAndSqlDefaultsAreRefused() throws Exception {
@@ -262,7 +269,15 @@ public class SparkIrcFormatV3Test {
             "CREATE TABLE "
                 + t("v3_types")
                 + " (id bigint, v variant) USING iceberg TBLPROPERTIES ('format-version'='3')");
-    Assertions.assertTrue(chain(create).contains("Unsupported type: variant"), chain(create));
+    Assertions.assertTrue(chain(create).contains(VARIANT_OFF), chain(create));
+    // Whatever the file format: variant columns are off on this cluster.
+    Throwable onParquet =
+        failure(
+            "CREATE TABLE "
+                + t("v3_types")
+                + " (id bigint, v variant) USING iceberg TBLPROPERTIES ('format-version'='3',"
+                + " 'write.format.default'='parquet')");
+    Assertions.assertTrue(chain(onParquet).contains(VARIANT_OFF), chain(onParquet));
     Assertions.assertFalse(
         rows("SHOW TABLES IN ircv3." + DB).stream().anyMatch(r -> "v3_types".equals(r.get(1))));
     rows(
@@ -270,7 +285,7 @@ public class SparkIrcFormatV3Test {
             + t("v3_types")
             + " (id bigint) USING iceberg TBLPROPERTIES ('format-version'='3')");
     Throwable add = failure("ALTER TABLE " + t("v3_types") + " ADD COLUMN v variant");
-    Assertions.assertTrue(chain(add).contains("Unsupported type: variant"), chain(add));
+    Assertions.assertTrue(chain(add).contains(VARIANT_OFF), chain(add));
     Throwable withDefault = failure("ALTER TABLE " + t("v3_types") + " ADD COLUMN c int DEFAULT 7");
     Assertions.assertTrue(
         chain(withDefault).contains("setting default values in Spark is currently unsupported"),
