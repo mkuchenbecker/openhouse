@@ -655,7 +655,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     // Work item X9: retention signals that the expired partitions carry delete files (a WARN log
     // and a metric per kind); nothing else about the run changes.
     OtelEmitter retentionEmitter = Mockito.spy(otelEmitter);
-    Operations retentionOps = Operations.withCatalog(spark, retentionEmitter);
+    Operations retentionOps = tables.newOps(spark, retentionEmitter);
     RetentionSparkApp retention =
         new RetentionSparkApp(
             "x6-retention-backup", null, fqtn, "ts", "", "day", 3, retentionEmitter, ".backup");
@@ -832,7 +832,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
         liveDeleteFiles(table, table.currentSnapshot()).isEmpty(), "no delete files");
     long rowsBefore = spark.sql("SELECT * FROM openhouse." + fqtn).count();
     OtelEmitter retentionEmitter = Mockito.spy(otelEmitter);
-    Operations retentionOps = Operations.withCatalog(spark, retentionEmitter);
+    Operations retentionOps = tables.newOps(spark, retentionEmitter);
     RetentionSparkApp retention =
         new RetentionSparkApp(
             "x9-retention-backup", null, fqtn, "ts", "", "day", 3, retentionEmitter, ".backup");
@@ -1095,7 +1095,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     }
     spark.sql("DELETE FROM " + t + " WHERE id IN (2, 6, 10, 14, 3)");
     spark.sql("UPDATE " + t + " SET data = 'updated' WHERE id = 7");
-    Operations ops = Operations.withCatalog(spark, otelEmitter);
+    Operations ops = tables.newOps(spark, otelEmitter);
     Assertions.assertEquals(formatVersion, formatVersion(ops.getTable(fqtn)));
     Reading before = readingIn(spark, formatVersion, fqtn);
 

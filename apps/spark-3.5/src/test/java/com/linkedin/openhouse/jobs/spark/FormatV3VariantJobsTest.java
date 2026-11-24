@@ -656,7 +656,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
     }
     String fqtn = DB + "." + name;
     State before = new State(fqtn);
-    Operations sortOps = Operations.withCatalog(sortSpark, otelEmitter);
+    Operations sortOps = tables.newOps(sortSpark, otelEmitter);
     SortStatsCollectionSparkApp app =
         new SortStatsCollectionSparkApp("x5-sort-stats", null, fqtn, otelEmitter);
     Throwable failure = run(() -> app.runInner(sortOps));

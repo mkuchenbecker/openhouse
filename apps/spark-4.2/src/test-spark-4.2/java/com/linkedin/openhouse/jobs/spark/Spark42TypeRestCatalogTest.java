@@ -36,13 +36,15 @@ public class Spark42TypeRestCatalogTest extends OpenHouseSparkITest {
     }
     Assertions.assertNull(session.conf().get("spark.sql.catalog.openhouse.catalog-impl", null));
     Assertions.assertTrue(JobsLine.restCatalog(session));
-    Operations ops = Operations.withCatalog(session, otelEmitter);
-    Assertions.assertEquals(2, Iterables.size(ops.getTable(fqtn).snapshots()));
-    new SnapshotsExpirationSparkApp("j3", null, fqtn, 0, "", 1, false, ".backup", otelEmitter)
-        .runInner(ops);
-    Table table = ops.getTable(fqtn);
-    Assertions.assertEquals(1, Iterables.size(table.snapshots()));
-    Assertions.assertEquals(2L, session.sql("SELECT * FROM openhouse." + fqtn).count());
-    base.sql("DROP TABLE openhouse." + fqtn);
+    // Closing Operations also closes its Spark session (the one context here), so it is last.
+    try (Operations ops = Operations.withCatalog(session, otelEmitter)) {
+      Assertions.assertEquals(2, Iterables.size(ops.getTable(fqtn).snapshots()));
+      new SnapshotsExpirationSparkApp("j3", null, fqtn, 0, "", 1, false, ".backup", otelEmitter)
+          .runInner(ops);
+      Table table = ops.getTable(fqtn);
+      Assertions.assertEquals(1, Iterables.size(table.snapshots()));
+      Assertions.assertEquals(2L, session.sql("SELECT * FROM openhouse." + fqtn).count());
+      base.sql("DROP TABLE openhouse." + fqtn);
+    }
   }
 }

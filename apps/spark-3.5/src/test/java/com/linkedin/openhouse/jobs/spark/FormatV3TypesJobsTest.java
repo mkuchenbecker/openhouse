@@ -99,7 +99,7 @@ public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
   }
 
   private Operations ops() {
-    return Operations.withCatalog(spark, otelEmitter);
+    return tables.ops(3);
   }
 
   private String ts(int daysAgo) {

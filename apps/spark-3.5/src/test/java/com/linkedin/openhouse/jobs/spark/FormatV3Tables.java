@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.DataFile;
@@ -64,6 +66,9 @@ final class FormatV3Tables implements AutoCloseable {
    * heap by one pool per load. The jobs' own code still builds its catalogs as in production.
    */
   private final Map<Integer, org.apache.iceberg.catalog.Catalog> catalogs = new HashMap<>();
+
+  private final Map<Integer, Operations> opsByFormat = new ConcurrentHashMap<>();
+  private final List<Operations> ownOps = new CopyOnWriteArrayList<>();
 
   /** Midnight today, UTC: rows are written in partitions this many days before it. */
   final LocalDateTime today =
@@ -123,6 +128,17 @@ final class FormatV3Tables implements AutoCloseable {
 
   @Override
   public void close() {
+    List<Operations> opened = new ArrayList<>(opsByFormat.values());
+    opened.addAll(ownOps);
+    for (Operations ops : opened) {
+      try {
+        ops.close();
+      } catch (Exception e) {
+        // best effort
+      }
+    }
+    opsByFormat.clear();
+    ownOps.clear();
     for (org.apache.iceberg.catalog.Catalog catalog : catalogs.values()) {
       if (catalog instanceof AutoCloseable) {
         try {
@@ -159,8 +175,26 @@ final class FormatV3Tables implements AutoCloseable {
     return v2Spark;
   }
 
+  /**
+   * The jobs' {@link Operations} on this format version's session: one per format version, built on
+   * first use and closed with this object. {@code Operations} holds one catalog whose client keeps
+   * a connection pool until it is closed, so a new one per call, never closed, grew the test JVM's
+   * heap by one pool per call.
+   */
   Operations ops(int formatVersion) {
-    return Operations.withCatalog(session(formatVersion), otelEmitter);
+    SparkSession session = session(formatVersion);
+    return opsByFormat.computeIfAbsent(
+        formatVersion, v -> Operations.withCatalog(session, otelEmitter));
+  }
+
+  /**
+   * An {@link Operations} with its own session or emitter (a spy, say), not the shared one of
+   * {@link #ops}: closed with this object.
+   */
+  Operations newOps(SparkSession session, OtelEmitter emitter) {
+    Operations ops = Operations.withCatalog(session, emitter);
+    ownOps.add(ops);
+    return ops;
   }
 
   String ts(int daysAgo, int minute) {

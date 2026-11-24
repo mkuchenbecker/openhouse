@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -86,6 +87,8 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
   private FormatV3Tables tables;
   /** Per format version, a session whose {@code openhouse} catalog is {@link CommitHookCatalog}. */
   private final Map<Integer, SparkSession> hooked = new HashMap<>();
+
+  private final Map<Integer, Operations> loserOpsByFormat = new ConcurrentHashMap<>();
   /**
    * The thread the winner runs on, started before any Spark statement, so that it carries no Spark
    * SQL execution of the loser's thread (Spark's local properties are inherited by threads a thread
@@ -106,6 +109,14 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     if (winnerThread != null) {
       winnerThread.shutdownNow();
     }
+    for (Operations ops : loserOpsByFormat.values()) {
+      try {
+        ops.close();
+      } catch (Exception e) {
+        // best effort
+      }
+    }
+    loserOpsByFormat.clear();
     if (tables != null) {
       tables.close();
     }
@@ -137,8 +148,15 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
         });
   }
 
+  /**
+   * The loser's {@link Operations}: one per format version, independent of the winner's ({@code
+   * tables.ops}: another object, another catalog), closed in {@link #stop()}. A new one per call,
+   * never closed, left one undisposed connection pool each.
+   */
   private Operations loserOps(int formatVersion) {
-    return Operations.withCatalog(loserSession(formatVersion), otelEmitter);
+    SparkSession session = loserSession(formatVersion);
+    return loserOpsByFormat.computeIfAbsent(
+        formatVersion, v -> Operations.withCatalog(session, otelEmitter));
   }
 
   /** A statement on the winner's (ordinary) session, on the table as it is now. */
