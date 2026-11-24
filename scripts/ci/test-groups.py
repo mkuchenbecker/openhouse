@@ -1,71 +1,65 @@
 #!/usr/bin/env python3
-"""The test groups that the pull request build runs as parallel jobs (.github/workflows/split-build.yml).
+"""The groups that a pull request's build runs as parallel jobs (.github/workflows/split-build.yml).
 
-A pull request's build is the whole `./gradlew build` of a build line, cut into groups that run
-side by side on their own runners. The named groups below each run their own Gradle test tasks;
-the group `rest` runs `./gradlew build` with exactly those tasks excluded (`-x`). So the groups
-together run every task `build` runs, once: a task that no named group lists, a test task added
-later among them, runs in `rest`. A named task that no longer exists fails both its own group and
-`rest` (Gradle refuses an unknown task, also after `-x`), so a rename cannot drop a suite silently.
+A pull request's build is the whole `./gradlew clean build --continue` of a build line, cut by
+project into groups that run side by side on their own runners. Each named group below is a
+directory pattern; every directory it matches that holds a Gradle build file becomes a job of its
+own, which runs that project's `check` (its test tasks, checkstyle and spotbugs). The last group,
+`rest`, runs the whole build with the `check` of every matched project excluded. The init script
+scripts/ci/test-groups.gradle does the cutting inside Gradle, by project directory.
 
-The groups are cut where the time goes: measured on the pull request run of 2026-11-24 (52 minutes
-for the default build), the apps' tests alone took 38 minutes, the Spark 4.2 itest's five tasks 22
-(they run one after another, in one project), the Spark 3.5 itest's three 17.5, and everything
-else ran beside them.
+So the jobs together run every task of `build`, once, whatever is added: a new test task goes
+with its project, a new project under a pattern (say apps/spark-4.2) gets its own job, and a
+project no pattern matches runs in `rest`. A matched directory that holds no project of the line
+(a Spark 4.2 project on the reference line) is a job that says so and runs nothing.
 
-  test-groups.py matrix LINE         the line's groups, as a JSON list (the jobs' matrix)
-  test-groups.py args LINE GROUP     the Gradle arguments of one group, one per line
+The patterns are where the time goes: on the pull request run of 2026-11-24 (52 minutes for the
+default build on one runner) the apps' tests took 38 minutes, the Spark 4.2 itest's five tasks 22
+(one after another, in one project) and the Spark 3.5 itest's three 17.5; the rest ran beside them.
 
-LINE is `default` (Iceberg 1.12) or `reference` (-PicebergLinkedIn, LinkedIn's Iceberg 1.5.2,
-which has no Spark 4.2 modules). Reads nothing; prints only.
+  test-groups.py matrix [ROOT]   the jobs, as a JSON list of {"group", "mode", "dirs"} objects
+                                 for the jobs' matrix (ROOT: the checkout, default `.`)
+
+Each job's `mode` and `dirs` are the init script's CI_GROUP_MODE and CI_GROUP_DIRS (directories
+one per line). Reads the checkout's directories only; prints only.
 """
+import glob
 import json
+import os
 import sys
 
-APPS = ":apps:openhouse-spark-apps-1.5_2.12"
-SPARK35_ITEST = ":integrations:spark:spark-3.5:openhouse-spark-3.5-itest"
-SPARK42_ITEST = ":integrations:spark:spark-4.2:openhouse-spark-4.2-itest"
+# A pattern per named group; each matching project directory is one job.
+PATTERNS = [
+    "apps/spark-*",
+    "integrations/spark/spark-*/openhouse-spark-itest",
+]
 
-# Each named group's test tasks, by line. A task's own dependencies run with it (compiling what it
-# needs); the tasks of one project run one after another there, as they did in the single build.
-GROUPS = {
-    "default": {
-        "apps": [APPS + ":test"],
-        "spark-3.5-itest": [SPARK35_ITEST + ":catalogTest", SPARK35_ITEST + ":statementTest", SPARK35_ITEST + ":test"],
-        "spark-4.2-itest": [
-            SPARK42_ITEST + ":test",
-            SPARK42_ITEST + ":extensionsTest",
-            SPARK42_ITEST + ":smokeTest",
-            SPARK42_ITEST + ":testServerPlanning",
-            SPARK42_ITEST + ":smokeTestServerPlanning",
-        ],
-    },
-    "reference": {
-        "apps": [APPS + ":test"],
-        "spark-3.5-itest": [SPARK35_ITEST + ":catalogTest", SPARK35_ITEST + ":statementTest", SPARK35_ITEST + ":test"],
-    },
-}
-
-REST = "rest"
+BUILD_FILES = ("build.gradle", "build.gradle.kts")
 
 
-def matrix(line):
-    return list(GROUPS[line]) + [REST]
+def project_dirs(root, pattern):
+    found = []
+    for path in sorted(glob.glob(os.path.join(root, pattern))):
+        if any(os.path.isfile(os.path.join(path, name)) for name in BUILD_FILES):
+            found.append(os.path.relpath(path, root).replace(os.sep, "/"))
+    return found
 
 
-def args(line, group):
-    if group == REST:
-        excluded = [task for tasks in GROUPS[line].values() for task in tasks]
-        return ["build"] + [arg for task in excluded for arg in ("-x", task)]
-    return list(GROUPS[line][group])
+def matrix(root):
+    dirs = [d for pattern in PATTERNS for d in project_dirs(root, pattern)]
+    if len(set(dirs)) != len(dirs):
+        raise SystemExit("a directory matches two patterns: %s" % dirs)
+    # The job's name and its report artifact's: the directory's last two parts (no slashes).
+    jobs = [{"group": "-".join(d.split("/")[-2:]), "mode": "only", "dirs": d} for d in dirs]
+    if len({job["group"] for job in jobs}) != len(jobs):
+        raise SystemExit("two directories make the same group name: %s" % dirs)
+    jobs.append({"group": "rest", "mode": "except", "dirs": "\n".join(dirs)})
+    return jobs
 
 
 def main(argv):
-    if len(argv) == 3 and argv[1] == "matrix" and argv[2] in GROUPS:
-        print(json.dumps(matrix(argv[2])))
-        return 0
-    if len(argv) == 4 and argv[1] == "args" and argv[2] in GROUPS and argv[3] in matrix(argv[2]):
-        print("\n".join(args(argv[2], argv[3])))
+    if len(argv) in (2, 3) and argv[1] == "matrix":
+        print(json.dumps(matrix(argv[2] if len(argv) == 3 else ".")))
         return 0
     sys.stderr.write(__doc__)
     return 2

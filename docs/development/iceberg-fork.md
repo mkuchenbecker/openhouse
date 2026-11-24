@@ -275,17 +275,23 @@ build, the end of the Spark 4.2 tests' service logs) and upload the test reports
 therefore at the end of the job's log, not only where they ran.
 
 **On a pull request**, `split-build.yml` runs each build as parallel jobs, so that the pull
-request waits for its slowest group instead of one runner running every suite. The groups are
-defined once, in `scripts/ci/test-groups.py`: the apps' tests, the Spark 3.5 itest's three tasks,
-on the default line the Spark 4.2 itest's five tasks, and `rest`, which runs `./gradlew build` with
-exactly the named groups' tasks excluded (`-x`). The groups together therefore run every task of
-`build`; a new test task runs in `rest` without a change here, and a renamed one fails its group and
-`rest` (Gradle refuses an unknown task). A first job, the test groups, reads the list (and on the
-default line checks the merged optimizer migrations); a last one of the default line runs the
-Docker steps above, after `./gradlew clean assemble`. Each job restores the fork and the Gradle
-cache the line's single job saved on `irc-integration` (`GRADLE_BUILD_ACTION_CACHE_KEY_JOB` names
-that job) and writes no cache. A red group cancels no other; each prints its failed tests and
-uploads its reports as `default-build-test-reports-<group>` or `reference-build-test-reports-<group>`.
+request waits for its slowest job instead of one runner running every suite. The jobs are cut by
+project: `scripts/ci/test-groups.py` makes a job of each project directory that matches its
+patterns (`apps/spark-*`, `integrations/spark/spark-*/openhouse-spark-itest`), which runs that
+project's `check` (its test tasks, checkstyle and spotbugs), and a job `rest`, which runs
+`./gradlew clean build` with the `check` of each of those projects excluded. The init script
+`scripts/ci/test-groups.gradle` does the cutting inside Gradle. The jobs together therefore run
+every task of `build`: a new test task goes with its project, a new Spark apps or itest project
+gets a job of its own, and any other new project runs in `rest`, without a change to the
+workflow. On the reference line a matched project that is not in that build (Spark 4.2) is a job
+that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Gradle dry runs, that
+the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
+reads the list (and on the default line checks the merged optimizer migrations); a last one of the
+default line runs the Docker steps above, after `./gradlew clean assemble`. Each job restores the
+fork and the Gradle cache the line's single job saved on `irc-integration`
+(`GRADLE_BUILD_ACTION_CACHE_KEY_JOB` names that job) and writes no cache. A red job cancels no
+other; each prints its failed tests and uploads its reports as
+`default-build-test-reports-<group>` or `reference-build-test-reports-<group>`.
 
 **The Dataloader workflow**, `dataloader-tests.yml`, has two jobs: the dataloader's own checks and
 unit tests (`make sync verify`), and the integration tests. The integration job restores the fork,

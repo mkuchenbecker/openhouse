@@ -3,10 +3,12 @@ name: Split Build and Run Tests
 # A pull request's build of one line, cut into jobs that run side by side
 # (docs/development/iceberg-fork.md, "CI"). The same Gradle tasks as the single job after each
 # merge (build-run-tests.yml for the default line, iceberg-linkedin-build.yml for the reference
-# line), in groups that scripts/ci/test-groups.py defines: each named group runs its own test
-# tasks, and the group `rest` runs `./gradlew build` with exactly those excluded, so the groups
-# together run all of `build` and a task no group names still runs. The default line's Docker
-# steps are a job of their own. It publishes nothing outside the runner and writes no cache.
+# line), cut by project: scripts/ci/test-groups.py lists a job per project directory that matches
+# its patterns (the Spark apps, the Spark itests), each running that project's `check`, and the
+# job `rest`, the whole build without those; the init script scripts/ci/test-groups.gradle does
+# the cutting inside Gradle. So the jobs together run all of `build`, and a project or test task
+# added later runs in its project's job or in `rest` without a change here. The default line's
+# Docker steps are a job of their own. It publishes nothing outside the runner and writes no cache.
 #
 # The single job took 52 minutes on 2026-11-24, most of it the apps' tests (38 minutes) and the
 # Spark itests running beside them on one runner; each group here has a runner to itself.
@@ -21,8 +23,8 @@ on:
         required: true
 
 jobs:
-  # The groups, from the one list in scripts/ci/test-groups.py, so that the jobs below and the
-  # exclusions of `rest` cannot disagree. And the merged migrations check of the default build:
+  # The jobs, from the patterns in scripts/ci/test-groups.py and the checkout's directories, so
+  # that the jobs below and the exclusions of `rest` cannot disagree. And the merged migrations check of the default build:
   # every job of the line waits for it, as every step of the single job did.
   plan:
     name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, test groups
@@ -47,10 +49,8 @@ jobs:
 
       - name: List the test groups
         id: groups
-        env:
-          LINE: ${{ inputs.line }}
         run: |
-          groups="$(python3 scripts/ci/test-groups.py matrix "$LINE")"
+          groups="$(python3 scripts/ci/test-groups.py matrix)"
           echo "Groups: $groups"
           echo "groups=$groups" >> "$GITHUB_OUTPUT"
 
@@ -64,7 +64,7 @@ jobs:
       # A red group does not cancel the others, as --continue does not stop at a red suite.
       fail-fast: false
       matrix:
-        group: ${{ fromJSON(needs.plan.outputs.groups) }}
+        include: ${{ fromJSON(needs.plan.outputs.groups) }}
     env:
       # Each group restores the Gradle cache that the line's single job writes on irc-integration
       # (post-merge-build.yml): gradle/actions/setup-gradle keys the cache on the job id, and this
@@ -90,22 +90,15 @@ jobs:
         if: inputs.line == 'default'
         uses: ./.github/actions/iceberg-fork
 
-      # With --continue, so that one red suite does not hide the others. The arguments are read
-      # first, so that a failure of the script fails the step rather than running no task.
+      # The line's whole build, cut to this job's share by the init script (it prints what it
+      # runs). With --continue, so that one red suite does not hide the others.
       - name: Run the group's Gradle tasks
         id: suites
         env:
-          LINE: ${{ inputs.line }}
-          GROUP: ${{ matrix.group }}
-        run: |
-          args="$(python3 scripts/ci/test-groups.py args "$LINE" "$GROUP")"
-          mapfile -t tasks <<< "$args"
-          line_flag=()
-          if [ "$LINE" = reference ]; then
-            line_flag=(-PicebergLinkedIn)
-          fi
-          echo "./gradlew ${line_flag[*]} clean ${tasks[*]} --continue"
-          ./gradlew "${line_flag[@]}" clean "${tasks[@]}" --continue
+          CI_GROUP_MODE: ${{ matrix.mode }}
+          CI_GROUP_DIRS: ${{ matrix.dirs }}
+          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
+        run: ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue
 
       # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
       # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
