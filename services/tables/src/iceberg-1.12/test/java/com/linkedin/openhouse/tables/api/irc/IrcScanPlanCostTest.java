@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.tables.api.irc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,7 +66,8 @@ import org.springframework.test.context.ContextConfiguration;
  *
  * <p>The sizes are {@code 1000,10000} unless the system property {@value #SIZES} or the environment
  * variable {@code IRC_PLAN_COST_SIZES} names others (the V11c measurement also ran 20,000 and
- * 50,000). Each size asserts that the route answered every task in one answer and that the bytes it
+ * 50,000). Each size asserts that the route answered every task in one answer at or below the
+ * default bound of one plan (V11c), and {@code failed} with no task above it, and that the bytes it
  * sent are the bytes the in-JVM measurement wrote.
  */
 @SpringBootTest(
@@ -286,6 +288,12 @@ class IrcScanPlanCostTest {
       MEASURED.clear();
       long before = allThreadsAllocated();
       HttpResponse<byte[]> response = postPlan(name, body);
+      // The filter records a request once its chain returns, which can be after the client has
+      // the whole answer.
+      long deadline = System.nanoTime() + 10_000_000_000L;
+      while (MEASURED.isEmpty() && System.nanoTime() < deadline) {
+        Thread.sleep(10);
+      }
       long all = allThreadsAllocated() - before;
       assertEquals(200, response.statusCode(), new String(response.body()));
       answer = reader.readTree(response.body());
@@ -303,7 +311,8 @@ class IrcScanPlanCostTest {
     PlanTableScanRequest request =
         IcebergRestJson.read(body.getBytes(StandardCharsets.UTF_8), PlanTableScanRequest.class);
     long base = usedAfterGc();
-    PlanTableScanResponse planned = IcebergRestScanPlanner.plan(table, request);
+    int bound = IcebergRestScanPlanner.bound(0);
+    PlanTableScanResponse planned = IcebergRestScanPlanner.plan(table, request, bound);
     long withTasks = usedAfterGc() - base;
     resetPeaks();
     ResponseEntity<byte[]> written = IcebergRestJson.ok(planned);
@@ -323,8 +332,15 @@ class IrcScanPlanCostTest {
             withTasks / 1024,
             withBytes / 1024,
             peak / 1024);
-    if (planned.fileScanTasks() != null) {
+    // At or below the default bound every task comes in one answer; above it, none.
+    if (files <= bound) {
+      assertEquals("completed", status);
+      assertEquals(files, tasks);
       assertEquals(files, planned.fileScanTasks().size());
+    } else {
+      assertEquals("failed", status);
+      assertEquals(0, tasks);
+      assertEquals(null, planned.fileScanTasks());
     }
     assertEquals(written.getBody().length, answerBytes);
     return line;
@@ -338,5 +354,31 @@ class IrcScanPlanCostTest {
       sum += Math.max(0, allocated);
     }
     return sum;
+  }
+
+  /** The default bound is 10,000 tasks: 10,000 files plan, 10,001 are answered failed. */
+  @Test
+  void theDefaultBoundIsTenThousandFileScanTasks() throws Exception {
+    assertEquals(10_000, IcebergRestScanPlanner.DEFAULT_MAX_FILE_SCAN_TASKS);
+    assertEquals(10_000, IcebergRestScanPlanner.bound(0));
+    assertEquals(10_000, IcebergRestScanPlanner.bound(-1));
+    assertEquals(7, IcebergRestScanPlanner.bound(7));
+    table("files_10001", 10_001);
+    JsonNode answer = new ObjectMapper().readTree(postPlan("files_10001", "{}").body());
+    assertEquals("failed", answer.get("status").asText(), answer.toString());
+    assertEquals(IcebergRestScanPlanner.TOO_LARGE, answer.get("error").get("type").asText());
+    assertTrue(
+        answer.get("error").get("message").asText().contains("more than 10000 file scan tasks"),
+        answer.toString());
+    // A filter that prunes it to the bound plans.
+    JsonNode pruned =
+        new ObjectMapper()
+            .readTree(
+                postPlan(
+                        "files_10001",
+                        "{\"filter\":{\"type\":\"not-eq\",\"term\":\"p\",\"value\":\"p0\"}}")
+                    .body());
+    assertEquals("completed", pruned.get("status").asText());
+    assertEquals(9_000, pruned.get("file-scan-tasks").size());
   }
 }
