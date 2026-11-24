@@ -57,6 +57,7 @@ import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
+import org.apache.iceberg.rest.RESTCatalog;
 import org.apache.iceberg.spark.actions.SparkActions;
 import org.apache.spark.sql.SparkSession;
 import scala.collection.JavaConverters;
@@ -755,6 +756,28 @@ public final class Operations implements AutoCloseable {
         CATALOG,
         catalogProperties,
         spark.sparkContext().hadoopConfiguration());
+  }
+
+  /**
+   * Whether {@code spark}'s {@code openhouse} catalog is Iceberg's RESTCatalog ({@code type=rest},
+   * or a {@code catalog-impl} that is a RESTCatalog) rather than the OpenHouse catalog.
+   */
+  static boolean isRestCatalog(SparkSession spark) {
+    String prefix = String.format("spark.sql.catalog.%s.", CATALOG);
+    if (CatalogUtil.ICEBERG_CATALOG_TYPE_REST.equals(
+        spark.conf().get(prefix + CatalogUtil.ICEBERG_CATALOG_TYPE, null))) {
+      return true;
+    }
+    String impl = spark.conf().get(prefix + CatalogProperties.CATALOG_IMPL, null);
+    if (impl == null) {
+      return false;
+    }
+    try {
+      return RESTCatalog.class.isAssignableFrom(
+          Class.forName(impl, false, Operations.class.getClassLoader()));
+    } catch (ClassNotFoundException | LinkageError e) {
+      return false;
+    }
   }
 
   private void useCatalog() {

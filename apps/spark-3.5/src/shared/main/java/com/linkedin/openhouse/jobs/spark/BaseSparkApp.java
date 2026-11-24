@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.jobs.spark;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.linkedin.openhouse.client.ssl.WebClientFactory;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.spark.state.StateManager;
@@ -35,7 +36,8 @@ public abstract class BaseSparkApp extends BaseApp {
     String className = this.getClass().getSimpleName();
     Throwable failure = null;
     try (Operations ops =
-        Operations.withCatalog(sessionBuilder(className).getOrCreate(), otelEmitter)) {
+        Operations.withCatalog(
+            declareSystemActionOverRest(sessionBuilder(className).getOrCreate()), otelEmitter)) {
       log.info("Session created");
       onStarted();
       runInner(ops);
@@ -65,6 +67,26 @@ public abstract class BaseSparkApp extends BaseApp {
         ? builder.config(
             "spark.sql.catalog.openhouse.action-type", WebClientFactory.ACTION_TYPE_SYSTEM)
         : builder;
+  }
+
+  /** The catalog property that makes Iceberg's RESTCatalog send the SYSTEM action header. */
+  static final String REST_ACTION_TYPE_HEADER =
+      "spark.sql.catalog.openhouse.header." + WebClientFactory.HTTP_HEADER_ACTION_TYPE;
+
+  /**
+   * For an app that declares SYSTEM ({@link #isSystemAction()}) on a session whose {@code
+   * openhouse} catalog is Iceberg's RESTCatalog (a platform that reaches OpenHouse through the
+   * tables service's Iceberg REST routes): RESTCatalog does not read {@code action-type}, the
+   * OpenHouse catalog's property, so the header is declared with RESTCatalog's {@code header.}
+   * property as well. With the OpenHouse catalog nothing is added, so it sends what it always did.
+   * Set before the session first loads the catalog, as {@code action-type} is.
+   */
+  @VisibleForTesting
+  SparkSession declareSystemActionOverRest(SparkSession spark) {
+    if (isSystemAction() && Operations.isRestCatalog(spark)) {
+      spark.conf().set(REST_ACTION_TYPE_HEADER, WebClientFactory.ACTION_TYPE_SYSTEM);
+    }
+    return spark;
   }
 
   /**
