@@ -28,8 +28,10 @@ fork, behind the flag) `geometry` and `geography`, and has no `timestamp_ns`. Op
 
 - Name `cluster.iceberg.format-v3.variant.enabled`, default false; it is documented in `docs/development/iceberg-fork.md`.
 - With it off, a new `variant` column is refused with 400 `FORMAT_V3_TYPE_NOT_SUPPORTED`, on create and on evolution,
-  on the native API and the Iceberg REST routes. The message names the property and the reason. The exact wording is not
-  in the sources used for this file; read it in the service code or in `FormatV3VariantOffTest` [not read here].
+  on the native API and the Iceberg REST routes, with the same message on both (asserted by `FormatV3VariantOffTest` [ran]):
+  `FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table <db>.t: variant columns are off on this cluster
+  (cluster.iceberg.format-v3.variant.enabled is false): a variant column can never be dropped, and the maintenance jobs,
+  which run on Spark 3.5, cannot read, compact or apply retention to a table that has one.`
 - A table that already has a `variant` column keeps it and is not blocked when the property is turned off again. Only
   new `variant` columns are refused (a detail decided during implementation).
 - Why it exists: OpenHouse refuses DROP COLUMN, so a `variant` column is permanent, and the maintenance jobs run on
@@ -43,7 +45,8 @@ reports failure on every run.
 
 | Job | What it does | After the job |
 | --- | --- | --- |
-| Compaction (strict arguments) | Commits nothing | Validation fails |
+| Compaction, production arguments (table name only) | Plans no file group (the fixture's files are small), commits nothing | Validation fails |
+| Compaction, strict arguments (minInputFiles 2, deleteFileThreshold 1) | Every file group fails to read in Spark 3.5; the action logs the failures, reports 0 files rewritten without throwing, commits nothing | Validation fails |
 | Snapshot expiry | Does its work correctly | Validation fails |
 | Orphan files deletion, single and batched | Does its work correctly | Validation fails |
 | Staged files deletion | Does its work correctly | Validation fails |
@@ -51,8 +54,8 @@ reports failure on every run.
 | Layout strategy generation, sort stats | Fail in their own work, commit nothing | Validation fails |
 | Retention | Refused in both directions: a policy cannot be set on a `variant` table, and a `variant` column cannot be added to one with a policy | Not applicable |
 
-Not run [ran nothing]: compaction planning file groups under production arguments (the fixture's files are too small;
-[inferred] to fail like the strict case), batched table stats, orphan directory deletion.
+Not run: a production-arguments compaction that actually plans file groups ([inferred] to fail like the strict case),
+batched table stats, orphan directory deletion.
 
 ## What was checked to conclude other answers did not change
 
