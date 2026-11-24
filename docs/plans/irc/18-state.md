@@ -2,9 +2,9 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is now
 the default build, and the Spark image and dataloader checks now pass in CI (C10). Pull requests 121 (three service
-follow-ups) and 124 (format v3) are merged. The investigation of V11 and V12 is finished (D44, D45,
-`60-v11-v12-investigation-result.md`); two pieces of work are in flight (X6, and W7 with X4), described in "How to
-resume" below. Next to start when a build slot frees: V11a, then V12a.
+follow-ups), 124 (format v3) and 126 (Spark reads through native defaults on v3, W7 and X4) are merged. The
+investigation of V11 and V12 is finished (D44, D45, `60-v11-v12-investigation-result.md`); two pieces of work are in
+flight (X6, and V11a with V12a), described in "How to resume" below.
 Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red. This is the
 single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
@@ -20,8 +20,8 @@ single place for current state; other files record design, evidence and decision
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
-  work on them. Maintenance jobs, v3 types, replication and the defaults migration remain
-  (`57-x1-format-v3-result.md`, D42, D43).
+  work on them. Spark 3.5 and 4.2 read old files through native defaults (`61-w7-x4-result.md`). Maintenance jobs,
+  v3 types, replication and the defaults migration remain (`57-x1-format-v3-result.md`, D42, D43).
 - One data-loss risk remains, natively only: a create naming a renamed-away table's directory is closed over IRC and
   pinned natively, and the fix is put to Mike (D35).
 
@@ -58,59 +58,65 @@ single place for current state; other files record design, evidence and decision
 
 ## How far from the goal
 
-- Conformance: Apache's compatibility kit passes 41 of 160 tests. Of the 119 that do not pass, 78 are OpenHouse's own
-  rules or one known gap, 11 are routes not yet served, 22 are skipped by capability flags and 11 assert the reference
-  server's messages (D32).
+- Conformance: Apache's compatibility kit passes 41 of 160 tests; 96 fail and 23 are skipped (22 capability flags, one
+  kit `@Disabled`). By class, 77 of the 96 are OpenHouse's own rules, 9 are routes not served and 10 are kit
+  assumptions (D32). By cause: namespace has no independent existence 26, namespace create, alter and drop not served 7,
+  view rename not served 2, view policy 15, table replace needs `replace.enabled` 16, schema and partition evolution
+  rules 13, other model differences 7, the kit asserting the reference server's messages 9, the kit's own
+  contradiction 1. None is about scan planning or credentials (`60-v11-v12-investigation-result.md`).
+  Note 2026-11-24: these numbers replaced an older breakdown (78 OpenHouse rules or one known gap, 11 routes not
+  served, 22 skipped, 11 asserting the reference server's messages). It sums to 122, the figure in
+  `42-v13b-spec-deviations-result.md` when 38 of 160 passed, so it looks like that earlier measurement
+  (inferred from the sum only; what each old group counted was not checked).
 - Iceberg 1.12 as the default: done. The Iceberg 1.2 and Spark 3.1 projects are deleted. The Spark image and the
   dataloader tests pass on a CI runner (C10, pull request 122). Open: the default build cannot publish anywhere
   until Mike decides where the fork's Iceberg jars live.
-- Format v3: X1 and W6 are done (pull request 124). v3 is off by default per cluster, chosen per table at create or
+- Format v3: X1 and W6 are done (pull request 124), and so are W7 and X4 (pull request 126). v3 is off by default per cluster, chosen per table at create or
   by explicit upgrade, never implied, with no downgrade (D42, D43).
 
 ## Merged pull requests
 
-45 pull requests are merged into `irc-integration` (the last is 121, merge commit 72947228) and 10 into the Iceberg
+46 pull requests are merged into `irc-integration` (the last is 126, merge commit 57db4015) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 121 (V15, V3b and V3c, `59-v15-v3b-v3c-result.md`); 124 (X1 and W6, `57-x1-format-v3-result.md`); 122 (C10) and 123 (C14), both in `55-c10-c14-result.md`; 118 (V9e, in `54-v9e-flip-result.md`) and 120
+The latest: 126 (W7 and X4, `61-w7-x4-result.md`); 121 (V15, V3b and V3c, `59-v15-v3b-v3c-result.md`); 124 (X1 and W6, `57-x1-format-v3-result.md`); 122 (C10) and 123 (C14), both in `55-c10-c14-result.md`; 118 (V9e, in `54-v9e-flip-result.md`) and 120
 (V8, in `53-v8-multi-table-commit-result.md`). The first post-merge run of the flipped layout (head 440249d1, run
 45202558910) was green on both jobs: 25 minutes for the default line with Docker steps, 23 for the reference line.
-Nothing is merged into either fork's main or into LinkedIn's repositories.
-
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, V15, V3b, V3c, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, V15, V3b, V3c, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 are merged, and `irc-integration` is at `72947228`. The V11 and V12
-investigation is finished. Two pieces of work are in flight and have not reported; next to start when a build slot
-frees are V11a, then V12a (`41-work-platforms-v3.md`). If the session stops, a future session reads each record below
-and the branch's log, and resumes from what they say.
+Bottom line: pull requests 121, 124 and 126 are merged, and `irc-integration` is at `57db4015`. The V11 and V12
+investigation is finished. Two pieces of work are in flight: X6 and V11a with V12a. If the session stops, a future
+session reads each record below and the branch's log, and resumes from what they say.
 
-- The container restarted on 2026-11-24 at about 00:01 UTC. Files survived and the agents were resumed from their
-  transcripts. Agents now push work in progress to their branches early, so a restart loses less.
-
+- The container restarted on 2026-11-24 at about 00:01 UTC; files survived. Agents now push work in progress early.
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC. Code agents run on the next
   model down meanwhile.
-- X6, maintenance jobs on format v3 tables: worktree `/home/user/oh-x6`, branch `irc/x6-maintenance-v3`, record
-  `x6-maintenance-v3.md` in the reports directory.
-- W7 with X4, Spark reads old files through native default values on v3: worktree `/home/user/oh-w7`, branch
-  `irc/w7-x4-v3-default-reads`, record `w7-x4-v3-default-reads.md`.
-- Finished: the investigation of V11 and V12, read-only, no branch. Result in `60-v11-v12-investigation-result.md`;
-  decisions D44 and D45. Its raw record `v11-v12-investigation.md` is in the reports directory.
+- X6, maintenance jobs on format v3 tables: pull request 125 is open as a draft, tests only, held back from merging
+  while its author closes the gaps an independent review found: retention with backup does not carry deletion
+  vectors, compaction was not tested with the scheduler's real arguments, and several checks that the job did real
+  work were not asserted. Worktree `/home/user/oh-x6`, branch `irc/x6-maintenance-v3`, record `x6-maintenance-v3.md`
+  in the reports directory.
+- V11a with V12a, scan planning and the credentials route (`41-work-platforms-v3.md`): worktree `/home/user/oh-v11a`,
+  branch `irc/v11a-v12a-plan-credentials`, record `v11a-v12a-plan-credentials.md` in the reports directory.
+- Finished: W7 with X4 (pull request 126, `61-w7-x4-result.md`), and the investigation of V11 and V12, read-only, no
+  branch (`60-v11-v12-investigation-result.md`; decisions D44 and D45; raw record `v11-v12-investigation.md`).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, in order, after these:
 
 1. The rest of format v3: the wider X2 and X3 scenarios, W8, and X5 and X7 (refused today; X7 investigated first).
-2. V11a (synchronous scan planning), then V12a (the empty credentials route), as soon as a build slot frees. The rest of V11 and V12 follows the new rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
+2. The rest of V11 and V12 follows V11a and V12a, by the rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
 3. N1-c and N7: the Spark 3.5 smoke suite on the plain REST path, and one shared list of scenarios.
 4. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Both builds passed in CI on pull requests 113, 118, 122 and 123, and the post-merge run
+Nothing known red at this time. Post-merge CI for pull requests 124 and 121 was read on 2026-11-24; every job passed.
+Both builds passed in CI on pull requests 113, 118, 122 and 123, and the post-merge run
 of 118 was green on both jobs. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). The build is not reproducible bit for bit (C15, `21-findings-continued.md`). Open product
