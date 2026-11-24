@@ -54,4 +54,8 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   The jobs project and its tests have landed (pull request 135, merge commit `e2823b69`, `73-n11-jobs-spark42-result.md`),
   and what remains is exactly these four deployment items. Nothing waits on them. Until they are decided a Spark 4.2
   platform is not maintainable by Spark 4.2 jobs in a deployment.
+- A principal holding only CREATE TABLE on a database: over the Iceberg REST routes its create succeeds; through the
+  OpenHouse catalog the table is created and the statement then fails with 403, because the catalog reads the new table
+  back and the creator holds nothing on its own table in the test authorization model. Does a deployed policy grant a
+  creator access to its own table? Only he can say. Nothing waits on it; a test pins it (`77-t6-n10-result.md`).
 - Item order: D29.

@@ -3,7 +3,7 @@
 Bottom line: 146 items in two repos (C16 is new on 2026-11-24; N11 is new on 2026-11-24 and is in `41-work-platforms-v3.md`; V11e is new on 2026-11-24 and is in `41-work-platforms-v3.md`; V21 is new on 2026-11-24; X13 and X14 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; N8 to N10 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; X8 to X12 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; W14 is new on 2026-11-24; N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`; the nine rows V11a to V11d and V12a to V12e replace V11 and V12 and are in that file too), counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
-state. All of it is Claude's judgement, built on `03-inferred.md`. After the audit of 2026-11-24 (`74-work-table-audit.md`), 50 of the items are still open, 8 of them partly done (N8, V18 and C15 closed since the audit; V22 added).
+state. All of it is Claude's judgement, built on `03-inferred.md`. After the audit of 2026-11-24 (`74-work-table-audit.md`), 48 of the items are still open, 8 of them partly done (N8, V18 and C15 closed since the audit; V22 added).
 
 Reading the tables: `oh` is the openhouse fork, `ib` is the iceberg fork. `J`, `Q` refer to
 `03-inferred.md`. "Paths" means the catalog paths selectable by config: legacy, REST-shaped over legacy,
@@ -97,7 +97,7 @@ Rows W1 to W14 are in `30-work-defaults.md`. They are part of the total in the b
 | ID | Repo | Leaves true | Needs | Proven by |
 | --- | --- | --- | --- | --- |
 | T5 | oh | The house table test stand-in checks versions and deletes like the real store. **Done 2026-11-22** (pull request 83). | T4 | Conflict and soft-delete tests pass at the HTTP boundary. |
-| T6 | oh | A test server that stores grants, so grant behavior is observable through Spark SQL. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
+| T6 | oh | **Done 2026-11-24 (pull request 140, merge commit `dfcd15a0`; `77-t6-n10-result.md`).** Test services store grants; scenario 17 asserts listed then gone. | T1 | Smoke scenario 17 asserts a grant is listed and then gone. |
 | I7 | ib | The Iceberg fork's CI survives dependency download limits. | none | One full CI run completes on the 1.12 branch. |
 | I8 | ib | All reapplied patches hold together on one branch, with the full Spark 3.5 suites run. | I3, I4 | **Done 2026-11-22** (branch `irc/reapply-all` tip f180ae589, draft pull request 8 in mkuchenbecker/iceberg). The 8 test failures and 4 checkstyle failures are fixed on their source branches and merged forward. Verified by the touched classes plus compile and style on the combined branch; full suites not re-run after the fixes. |
 | X0 | ib, oh | **Partly done.** W1 to W7 are done; W8 (Mike's, D12) remains. The new Iceberg line has defined, tested behavior for v2 tables with OpenHouse column defaults (S47, D5, `14-native-defaults-design.md`). | I3 | Defined by the design in progress. |

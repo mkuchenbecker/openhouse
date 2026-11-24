@@ -2,23 +2,24 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 139 are merged (137 is the rest of X10 and X15; 139 is N8, V18 and C15; 138 is the CI
-print fix). Two pieces of work are in flight: the jobs catalog leak with X9 (N16), and grants and write checks (T6,
-N10). View rename stopped on D47. Nothing is merged into either fork's main or into LinkedIn's or Apache's
-repositories. Nothing is known red; post-merge CI for 134, 135, 136 and 138 was read and passed, and for 139 and 137 it
-is not read yet. An audit of the open
-work items found 8 of 62 already true and 8 partly done (`74-work-table-audit.md`; N8, V18, C15, the rest of X10 and X15 have closed since).
+checks pass in CI. Pull requests 121 and 124 to 140 are merged (140 is T6 and N10, grants seen through Spark SQL and the write checks on
+the plain REST path; 139 is N8, V18 and C15; 137 is the rest of X10 and X15; 138 is the CI print fix). Two pieces of
+work are in flight: the jobs catalog leak with X9 (N16), and a tables-service batch (V19, V20, V22). View rename stopped
+on D47. Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red;
+post-merge CI for 134, 135, 136, 137, 138 and 139 was read and passed, and for 140 it is not read yet. An audit of the
+open work items found 8 of 62 already true and 8 partly done (`74-work-table-audit.md`; N8, V18, C15, the rest of X10, X15, T6 and N10 have closed since).
 This is the single place for current state. Dated 2026-11-24.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
   rename, and namespace create, alter and drop (OpenHouse has no such operations). The compatibility kit passes 42 of
   160, almost all failures being kit assumptions OpenHouse deliberately does not meet (`39-v13-compat-kit-result.md`,
   `42-v13b-spec-deviations-result.md`). What "conforming" should mean is still put to Mike (D32).
-- Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 166 of 177 smoke statements behave as on the
-  Spark 3.5 baseline. The 11 differences are listed and are accepted or are Spark 4's own (D37,
-  `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). On Spark 3.5 with Iceberg's plain REST catalog (1.12 line)
-  168 of 177 behave as the baseline; the 9 differences are declared, none in rows read or in what a write stores
-  (`64-n1c-n7-result.md`) [ran].
+- Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 199 of 210 smoke statements behave as on the
+  Spark 3.5 baseline [CI]. The 11 differences are listed and are accepted or are Spark 4's own (D37,
+  `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). On Spark 3.5 with Iceberg's plain REST catalog 201 of 210
+  behave as the baseline on both Iceberg lines; the 9 differences are declared, none in rows read or in what a write
+  stores. The OpenHouse catalog and the REST-shaped shim give 208 of 210 on 1.12 and 210 of 210 on 1.5.2 [ran]
+  (`64-n1c-n7-result.md`, `77-t6-n10-result.md`). Grants are listed after GRANT and gone after REVOKE on every path.
 - Maintenance jobs: they pass their whole suite on Spark 4.2 over the REST catalog (395 tests, 0 failed, 5 skipped); the
   Spark 3.5 jobs are unchanged. Deploying them is Mike's (N12 to N15) (`73-n11-jobs-spark42-result.md`) [ran].
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
@@ -44,8 +45,8 @@ This is the single place for current state. Dated 2026-11-24.
   `38-c2-3-rest-capability-client-result.md`). Failures keep the native message but arrive as Iceberg exception types.
 - An IRC create can no longer be given another table's directory: a completion naming a directory in use is refused
   with 400, and `openhouse.tableUUID` in a create is ignored (D36, `48-v16-directory-reuse-result.md`).
-- Spark 4.2 over IRC passes the Spark SQL smoke suite (177 statements) and 18 write statements, all storing what they
-  should (pull request 117); renaming to a target that names the catalog works since N6 (pull request 119).
+- Spark 4.2 over IRC passes the Spark SQL smoke suite (210 statements) and 19 write statements, all storing what they
+  should (pull request 117, 140); renaming to a target that names the catalog works since N6 (pull request 119).
 - Served over IRC now: config with the endpoint list, namespace reads, table create, staged create, load, commit,
   rename, drop, register, metrics report, one-table transactions, views except rename, and the OpenHouse capability
   routes (policies, grants, unlock). On the Iceberg 1.12 line also the synchronous plan route and the credentials
@@ -66,18 +67,18 @@ This is the single place for current state. Dated 2026-11-24.
 
 ## Merged pull requests
 
-60 pull requests are merged into `irc-integration` (the last is 137, merge commit 461ae437) and 10 into the Iceberg
+61 pull requests are merged into `irc-integration` (the last is 140, merge commit dfcd15a0) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 137 in `76-x10-shapes-result.md`; 139 and 138 in `75-n8-v18-c15-and-ci-fix-result.md`.
+The latest: 140 in `77-t6-n10-result.md`; 137 in `76-x10-shapes-result.md`; 139 and 138 in `75-n8-v18-c15-and-ci-fix-result.md`.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6e, N1, N2, C8, C12, T12, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N8, V18, C15, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 to 139 are merged, and `irc-integration` is at `461ae437`. Two pieces of
+Bottom line: pull requests 121 and 124 to 140 are merged, and `irc-integration` is at `dfcd15a0`. Two pieces of
 work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
@@ -87,15 +88,14 @@ reads each record below and the branch's log, and resumes from what they say.
   pool that is never disposed; worktree `/home/user/oh-n16`, branch `irc/n16-jobs-catalog-leak`, record
   `n16-jobs-catalog-leak.md` in the reports directory. Done when one catalog is used per job run and closed at its end,
   with the jobs' behavior shown unchanged.
-- Grants observable through Spark SQL and the write checks on the Spark 3.5 plain REST path (T6 and N10): worktree
-  `/home/user/oh-t6`, branch `irc/t6-n10-grants-and-rest-write-checks`, record `t6-n10-grants-and-rest-write-checks.md`
-  in the reports directory.
+- Tables-service batch V19, V20 and V22: a rename target of 129 to 255 characters; the FileIO class advertised for a
+  table on a non-default storage type; the last Iceberg 1.2 leftover. Worktree `/home/user/oh-svc2`, branch
+  `irc/service-batch-v19-v20-v22`, record `service-batch-v19-v20-v22.md` in the reports directory.
 - View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
-- Post-merge CI [read 2026-11-24]: passed for the merges of 134, 135, 136 and 138. For 135 the main build job took 53
-  minutes, now that it carries the Spark 4.2 jobs suite. Not read yet for 139 and 137: read them first (D33).
-- Audit of the open work items: `74-work-table-audit.md` (62 open at the time: 8 already true, 8 partly done, 16 waiting
-  on Mike, 2 cannot be settled by reading, 28 still open; N8, V18, C15, the rest of X10 and X15 closed since). Read it before launching any
-  small item.
+- Post-merge CI [read 2026-11-24]: passed for the merges of 134, 135, 136, 138, 139 and 137 (for 137 the jobs test
+  process did not run out of memory in the single post-merge job). Not read yet for 140: read it first (D33).
+- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 8 items closed since). Read it before
+  launching any small item.
 - Hazard: orphaned test processes from a finished agent (a Gradle test worker and three test service processes of the
   format v3 types work, started about 07:10 UTC on 2026-11-24) hold about 3 GB of the machine's 15 GB. The orchestrator's
   attempt to stop them was denied by the permission system and Mike was told; builds have less headroom until they are
@@ -112,7 +112,7 @@ What comes next, after the work in flight:
 ## Known red on `irc-integration`
 
 Nothing known red at this time. Post-merge CI for pull requests 121, 124 to 136 and 138 was read on 2026-11-24 and every
-job passed; those of 139 and 137 are not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+job passed, as did those of 139 and 137; the one of 140 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). Open product defects found by pull request 121: V19 (rename to 129 to 255 characters) and V20
 (FileIO of a table on a non-default storage type).
