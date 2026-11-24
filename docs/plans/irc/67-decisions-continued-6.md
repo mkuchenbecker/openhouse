@@ -66,4 +66,6 @@ Mike. Claude wrote the entries.
   reporting for a Spark platform that cannot reach House Tables. They are N12 to N15 in `41-work-platforms-v3.md` and an
   entry in `58-waiting-on-mike.md`.
 - Why two-way: nothing is deployed or published, and the Spark 3.5 jobs are shown unchanged by their suite.
-- Status: in flight on the scout's branch `irc/jobs-spark42-scout` (worktree `/home/user/oh-jobs42`).
+- Status: implemented by pull request 135, merge commit `e2823b69` (`73-n11-jobs-spark42-result.md`), 2026-11-24. One detail
+  was decided during implementation: the catalog is still built on every table load (241 config requests in one suite).
+  It is left as is because changing it could not be shown to leave the Spark 3.5 path unchanged; it is work item N16.

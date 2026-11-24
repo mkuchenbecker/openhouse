@@ -1,3 +1,5 @@
+Final state after the merge of pull request 135 (`e2823b69`): see `73-n11-jobs-spark42-result.md`. This file is the scout's dated record.
+
 # N11 scout result: the maintenance jobs on Spark 4.2
 
 Bottom line: the maintenance jobs compile on Spark 4.2 with Iceberg 1.12 with no source change. The first full run, with

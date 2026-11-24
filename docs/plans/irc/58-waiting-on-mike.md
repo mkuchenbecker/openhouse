@@ -51,6 +51,7 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
 - Spark 4.2 jobs (N11, D50, `70-n11-jobs-spark42-scout-result.md`): four things are his: a Spark 4.2 uber jar and image
   with `jobs.yaml` entries and the jobs service's token key (N12, N13); routing `variant` tables or a cluster to those
   jobs and then the `variant` default (N14); job state and optimizer reporting without House Tables access (N15).
-  Nothing waits on them: the jobs project and its tests land without them. Until they are decided a Spark 4.2 platform
-  is not maintainable by Spark 4.2 jobs in a deployment.
+  The jobs project and its tests have landed (pull request 135, merge commit `e2823b69`, `73-n11-jobs-spark42-result.md`),
+  and what remains is exactly these four deployment items. Nothing waits on them. Until they are decided a Spark 4.2
+  platform is not maintainable by Spark 4.2 jobs in a deployment.
 - Item order: D29.
