@@ -113,3 +113,29 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
   The interim step X9 (log and count, no refusal) is a two-way door.
 - Correction by the orchestrator: deletion vectors are the delete mechanism only for merge-on-read writes, and
   copy-on-write remains Iceberg's default, so format v3 does not widen which tables are exposed.
+
+## D47. View rename over the Iceberg REST routes: put to Mike, not decided
+
+- Date: 2026-11-24. Put to Mike; no decision yet. Work item V21 (`04-work.md`). Everything below was read in code;
+  nothing was run (no build, no test, no kit run). The kit count of 96 failures is taken from `18-state.md`.
+- Question: should a view-only rename be added to the House Tables API, so the Iceberg REST view rename route can be
+  served?
+- Facts. Table rename is atomic because it is one conditional update in House Tables (`renameTableId`), and that update
+  refuses view rows by design: its predicate admits only table rows, and `HtsControllerTest.testRenameTableRefusesToMoveAView`
+  pins that renaming a view row answers 404 and moves nothing. The view row API offers only get, put (create, or a
+  version-checked update) and delete. A rename built from two calls leaves, if it fails midway, either two names for one
+  view UUID sharing one metadata directory (create then delete), which diverge on the next replace of either, or a lost
+  name (delete then create). Compensation narrows these windows and can itself fail.
+- Options:
+  - A. A new view-only House Tables rename endpoint, atomic like table rename. It needs the House Tables API addition,
+    the regenerated client and the deployed House Tables service to have it. Table rename and its pinned refusal stay
+    unchanged.
+  - B. Create then delete with compensation, in the tables service only. No House Tables change, and not atomic.
+  - C. Keep answering 406 (D27).
+- Recommendation of the author: A, and C until it is decided; against B, because a view that two names resolve to with
+  one UUID is a state no other OpenHouse path can produce and nothing cleans it up.
+- Why it is Mike's: a new House Tables API is on the list of one-way doors.
+- Until decided: the route keeps answering 406 and stays out of the endpoint list; 2 of the compatibility kit's 96
+  failures stay.
+- Note: D27 (`22-decisions-continued-2.md`) recorded only that the native view API has no rename. D47 records the
+  underlying reason, that House Tables cannot rename a view row.

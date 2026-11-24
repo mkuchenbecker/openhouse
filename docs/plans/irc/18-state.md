@@ -5,7 +5,7 @@ the default build, and the Spark image and dataloader checks now pass in CI (C10
 follow-ups), 124 (format v3), 125 (maintenance jobs on v3, X6), 126 (Spark reads through native defaults on v3, W7 and
 X4), 127 (scan planning and the credentials route, V11a and V12a) and 128 (Spark 3.5 on the plain REST path, N1-c and
 N7) and 130 (row-level writes racing maintenance on v3, the concurrency part of X10) are merged. Two pieces of work are
-in flight (X5 and view rename over the Iceberg REST routes), described in "How to resume" below. Nothing is merged into
+in flight (X5, and V11b with V11c); view rename stopped on D47, described in "How to resume" below. Nothing is merged into
 either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for 128 was read and
 passed, and for 130 it is not read yet. This is the single place for current state; other files record design,
 evidence and decisions. Dated 2026-11-24.
@@ -93,21 +93,24 @@ C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f
 ## How to resume
 
 Bottom line: pull requests 121, 124, 125, 126, 127, 128 and 130 are merged, and `irc-integration` is at `adc28470`.
-Two pieces of work are in flight: X5 and view rename over the Iceberg REST routes. If the session stops, a future
+Two pieces of work are in flight: X5, and V11b with V11c. View rename is no longer in flight: it stopped on D47 with
+no code written and no branch pushed. If the session stops, a future
 session reads each record below and the branch's log, and resumes from what they say.
 
-- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next model
-  down meanwhile.
+- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
+  model down.
 - X5, the column types format v3 adds (pull request 129, draft, CI green on its first head): held from merging while its
   author proves each maintenance job on a `variant` table that holds data. Worktree `/home/user/oh-x5`, branch
   `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory. Questions it raised are in `58-waiting-on-mike.md`.
-- View rename over the Iceberg REST routes: worktree `/home/user/oh-vren`, branch `irc/view-rename`, record
-  `view-rename.md` in the reports directory.
+- V11b with V11c (Spark writes under server-side planning, and a bound on one plan): worktree `/home/user/oh-v11b`,
+  branch `irc/v11b-v11c-planning-followups`, record `v11b-v11c-planning-followups.md` in the reports directory.
+- View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's. The
+  stop cost one read-only agent run; D27 already said the native API had no view rename, so the brief should have
+  started from it.
 - Post-merge CI for 130 has not been read yet; read it first (D33).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
-What comes next, in order: when a build slot frees, V11b and V11c; then:
-
+What comes next, in order: V11b and V11c are in flight; then:
 1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6 and X10 (X14 needs Mike's say), the rest of X10, and X8 once D46 is decided, after X5.
 2. The rest of V11 and V12 (V11b, V11c) follows, by the rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
 3. The small follow-ups: V17 to V20, C11 to C13, C15, T8, T11, C7, C8. The order of the large work is D29.
@@ -133,7 +136,7 @@ the 1.12 line only if it ran there.
 ## Waiting on Mike
 
 Nothing blocks work. The list is in `58-waiting-on-mike.md`: the meaning of "conforming" (D32), whether the server turns on server-side scan planning (V11d), credential vending (V12b), the one-way doors
-(D12, D24, D34, D38, D40), the native directory-reuse fix (D35), the Spark 4.2 differences (D37), and, new, turning
+(D12, D24, D34, D38, D40), view rename and the House Tables API (D47), the native directory-reuse fix (D35), the Spark 4.2 differences (D37), and, new, turning
 the v3 switch on for a real cluster and upgrading a real table, and the retention backup's handling of deletes (D46).
 An upgrade is irreversible and LinkedIn 1.5.2 clients cannot load the table afterwards.
 Three questions from X5's column types are there too, and X14 (an age floor in orphan removal) needs his say; nothing waits on them.
@@ -142,6 +145,6 @@ Three questions from X5's column types are there too, and X14 (an age floor in o
 
 - The merge commits on the two integration branches carry the why for each work item and each commit.
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D46).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D47).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

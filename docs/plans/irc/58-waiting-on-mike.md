@@ -43,4 +43,8 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   cannot be read from Spark 3.5, and is refused a retention policy because the retention job runs on Spark 3.5. If every
   table must be able to carry a retention policy, `variant` should stay refused until the jobs run on Spark 4. Nothing
   waits on this.
+- D47: whether to add a view-only rename to the House Tables API so the Iceberg REST view rename route can be served.
+  Without it a rename is two calls and can leave two names for one view or lose a name. The author recommends a new
+  atomic House Tables endpoint, and against a non-atomic version. A new House Tables API is a one-way door. Nothing
+  waits on this; the route keeps answering 406 (V21).
 - Item order: D29.
