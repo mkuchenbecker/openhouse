@@ -1,6 +1,6 @@
 # Work and dependencies
 
-Bottom line: 128 items in two repos (X8 to X12 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; W14 is new on 2026-11-24; N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`; the nine rows V11a to V11d and V12a to V12e replace V11 and V12 and are in that file too), counted across this file, `30-work-defaults.md` and
+Bottom line: 131 items in two repos (N8 to N10 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; X8 to X12 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; W14 is new on 2026-11-24; N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`; the nine rows V11a to V11d and V12a to V12e replace V11 and V12 and are in that file too), counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
 state. All of it is Claude's judgement, built on `03-inferred.md`.

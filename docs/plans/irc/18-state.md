@@ -3,9 +3,10 @@
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, Iceberg 1.12 is now
 the default build, and the Spark image and dataloader checks now pass in CI (C10). Pull requests 121 (three service
 follow-ups), 124 (format v3), 125 (maintenance jobs on v3, X6), 126 (Spark reads through native defaults on v3, W7 and
-X4) and 127 (scan planning and the credentials route, V11a and V12a) are merged. Two pieces of work are in flight (X5,
-and N1-c with N7), described in "How to resume" below. Nothing is merged into either fork's main or into LinkedIn's or
-Apache's repositories. Nothing is known red, but post-merge CI for pull requests 126, 127 and 125 is not read yet. This is the
+X4), 127 (scan planning and the credentials route, V11a and V12a) and 128 (Spark 3.5 on the plain REST path, N1-c and
+N7) are merged. Two pieces of work are in flight (X5 and the concurrency part of X10), described in "How to resume"
+below. Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red;
+post-merge CI for 126, 127 and 125 was read and passed, and for 128 it is not read yet. This is the
 single place for current state; other files record design, evidence and decisions. Dated 2026-11-24.
 
 - Conforming IRC server: every route of the specification is served except the stored-plan routes and credential vending and
@@ -16,7 +17,9 @@ single place for current state; other files record design, evidence and decision
   wire contract is still the question put to Mike (D32).
 - Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 166 of 177 smoke statements behave as on the
   Spark 3.5 baseline. The 11 differences are listed and are accepted or are Spark 4's own (D37,
-  `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`).
+  `50-n3b-spark42-smoke-result.md`, `52-c9-n6-result.md`). On Spark 3.5 with Iceberg's plain REST catalog (1.12 line)
+  168 of 177 behave as the baseline; the 9 differences are declared, none in rows read or in what a write stores
+  (`64-n1c-n7-result.md`) [ran].
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
@@ -67,9 +70,7 @@ single place for current state; other files record design, evidence and decision
   view rename not served 2, view policy 15, table replace needs `replace.enabled` 16, schema and partition evolution
   rules 13, other model differences 7, the kit asserting the reference server's messages 9, the kit's own
   contradiction 1. None is about scan planning or credentials (`60-v11-v12-investigation-result.md`).
-  Note 2026-11-24: these numbers replaced an older breakdown that sums to 122, the figure in
-  `42-v13b-spec-deviations-result.md` when 38 of 160 passed (inferred from the sum only; what each old group counted
-  was not checked).
+  Note 2026-11-24: these numbers replaced an older breakdown that sums to 122 (`42-v13b-spec-deviations-result.md`).
 - Iceberg 1.12 as the default: done. The Iceberg 1.2 and Spark 3.1 projects are deleted. The Spark image and the
   dataloader tests pass on a CI runner (C10, pull request 122). Open: the default build cannot publish anywhere
   until Mike decides where the fork's Iceberg jars live.
@@ -78,35 +79,35 @@ single place for current state; other files record design, evidence and decision
 
 ## Merged pull requests
 
-48 pull requests are merged into `irc-integration` (the last is 125, merge commit 262a1416) and 10 into the Iceberg
+49 pull requests are merged into `irc-integration` (the last is 128, merge commit ca94d82e) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 125 (X6, `63-x6-maintenance-v3-result.md`); 127 (V11a and V12a, `62-v11a-v12a-result.md`); 126 (W7 and X4, `61-w7-x4-result.md`); 121 (V15, V3b and
+The latest: 128 (N1-c and N7, `64-n1c-n7-result.md`); 125 (X6, `63-x6-maintenance-v3-result.md`); 127 (V11a and V12a, `62-v11a-v12a-result.md`); 126 (W7 and X4, `61-w7-x4-result.md`); 121 (V15, V3b and
 V3c, `59-v15-v3b-v3c-result.md`); 124 (X1 and W6, `57-x1-format-v3-result.md`); 122 (C10) and 123 (C14), both in
 `55-c10-c14-result.md`. The first post-merge run of the flipped layout (head 440249d1) was green on both jobs.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X6, V15, V3b, V3c, V11a, V12a, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X6, V15, V3b, V3c, V11a, V12a, N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121, 124, 125, 126 and 127 are merged, and `irc-integration` is at `262a1416`. Two pieces of
-work are in flight: X5, and N1-c with N7. If the session stops, a future session reads each record below and the
-branch's log, and resumes from what they say.
+Bottom line: pull requests 121, 124, 125, 126, 127 and 128 are merged, and `irc-integration` is at `ca94d82e`. Two pieces
+of work are in flight: X5, and the concurrency part of X10. If the session stops, a future session reads each record
+below and the branch's log, and resumes from what they say.
 
 - The container restarted on 2026-11-24 at about 00:01 UTC; files survived. Agents push work early.
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next model
   down meanwhile.
 - X5, the column types format v3 adds, supported or refused type by type: worktree `/home/user/oh-x5`, branch
   `irc/x5-v3-types`, record `x5-v3-types.md` in the reports directory.
-- N1-c with N7, the Spark 3.5 smoke suite on the plain Iceberg REST catalog path and one shared scenario list for Spark
-  3.5 and 4.2: worktree `/home/user/oh-n1c`, branch `irc/n1c-n7-spark35-rest-smoke`, record
-  `n1c-n7-spark35-rest-smoke.md` in the reports directory.
-- Post-merge CI for the merges of pull requests 126, 127 and 125 has not been read yet; read it first (D33).
+- X10, concurrency part (row-level writes on a format v3 table racing compaction, expiry and retention through the
+  service's commit path): worktree `/home/user/oh-x10`, branch `irc/x10-v3-maintenance-concurrency`, record
+  `x10-v3-maintenance-concurrency.md` in the reports directory.
+- Post-merge CI for 128 has not been read yet; read it first (D33).
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
-What comes next, in order, after these:
+What comes next, in order: when a build slot frees, view rename over the Iceberg REST routes, then V11b and V11c; then:
 
 1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X12 from X6, and X8 once D46 is decided, after X5.
 2. The rest of V11 and V12 (V11b, V11c) follows, by the rows in `41-work-platforms-v3.md`; V11d and V12b to V12e are Mike's.
@@ -114,7 +115,7 @@ What comes next, in order, after these:
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for pull requests 124 and 121 was read on 2026-11-24 and passed; for 126, 127 and 125 it is not read yet.
+Nothing known red at this time. Post-merge CI for pull requests 124, 121, 126, 127 and 125 was read on 2026-11-24 and every job passed (both build lines and the dataloader integration tests); for 128 it is not read yet.
 Both builds passed in CI on pull requests 113, 118, 122 and 123, and the post-merge run
 of 118 was green on both jobs. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
