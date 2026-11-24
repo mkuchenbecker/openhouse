@@ -90,7 +90,7 @@ public class FormatV3EqualityDeletesJobsTest extends FormatV3ShapeJobsTestBase {
     spark.sql("UPDATE " + t + " SET data = concat(data, '-updated') WHERE id IN (7, 23)");
     spark.sql("INSERT INTO " + t + " VALUES (26, 'row-26-again', " + ts(0, 26) + ")");
 
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     Assertions.assertEquals(13, snapshotIds(table).size());
     long equalityDeletes =
         liveDeleteFiles(table, table.currentSnapshot()).stream()
@@ -105,7 +105,7 @@ public class FormatV3EqualityDeletesJobsTest extends FormatV3ShapeJobsTestBase {
 
   @Override
   void afterJob(String job, int formatVersion, Shape shape, RefsReading before) throws IOException {
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     long liveEqualityDeletes =
         liveDeleteFiles(table, table.currentSnapshot()).stream()
             .filter(d -> d.content() == FileContent.EQUALITY_DELETES)
@@ -140,7 +140,7 @@ public class FormatV3EqualityDeletesJobsTest extends FormatV3ShapeJobsTestBase {
   @ValueSource(ints = {2, 3})
   void equalityDeletesAreAcceptedNatively(int formatVersion) throws Exception {
     String fqtn = tables.createAndInsert(formatVersion, "native_eq", "orc");
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     table.newRowDelta().addDeletes(equalityDelete(table, 5, "id", 5L)).commit();
     session(formatVersion).sql("REFRESH TABLE openhouse." + fqtn);
     List<String> ids =

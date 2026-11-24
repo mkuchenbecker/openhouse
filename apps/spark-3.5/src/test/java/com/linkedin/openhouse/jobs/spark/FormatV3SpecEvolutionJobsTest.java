@@ -126,7 +126,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     create.commitTransaction();
     tables.rowLevelWrites(spark, t);
 
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     Assertions.assertEquals(formatVersion, FormatV3Tables.formatVersion(table));
     Assertions.assertEquals(2, table.specs().size(), "two specs");
     Assertions.assertEquals(1, table.spec().specId());
@@ -166,7 +166,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
   @ValueSource(ints = {2, 3})
   void aSpecChangeOnAnExistingTableIsRefusedNatively(int formatVersion) {
     String fqtn = tables.createAndInsert(formatVersion, "refused_native", "orc");
-    long head = ops(formatVersion).getTable(fqtn).currentSnapshot().snapshotId();
+    long head = table(formatVersion, fqtn).currentSnapshot().snapshotId();
     Exception refused =
         Assertions.assertThrows(
             Exception.class,
@@ -176,7 +176,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     Assertions.assertTrue(
         String.valueOf(refused.getMessage()).contains("Evolution of table partitioning"),
         String.valueOf(refused.getMessage()));
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     Assertions.assertEquals(1, table.specs().size());
     Assertions.assertEquals(head, table.currentSnapshot().snapshotId());
   }
@@ -193,7 +193,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     Assertions.assertTrue(
         String.valueOf(refused.getMessage()).contains("Evolution of table partitioning"),
         String.valueOf(refused.getMessage()));
-    Assertions.assertEquals(1, ops(formatVersion).getTable(fqtn).specs().size());
+    Assertions.assertEquals(1, table(formatVersion, fqtn).specs().size());
   }
 
   /**
@@ -250,7 +250,7 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
     String fqtn = tables.createTable(formatVersion, "single_spec_labels", "orc");
     String t = "openhouse." + fqtn;
     SparkSession spark = session(formatVersion);
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     Assertions.assertEquals(
         table.spec().fields().stream().map(f -> f.name()).collect(Collectors.toList()),
         partitionStructFields(spark, t));

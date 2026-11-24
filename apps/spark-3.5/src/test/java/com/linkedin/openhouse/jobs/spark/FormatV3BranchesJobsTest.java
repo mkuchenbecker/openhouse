@@ -53,7 +53,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
     SparkSession spark = session(formatVersion);
     String fqtn = tables.createTable(formatVersion, name, "orc");
     String t = "openhouse." + fqtn;
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     List<Long> mainSnapshots = snapshotIds(table);
     spark.sql("ALTER TABLE " + t + " CREATE TAG before_branch");
     spark.sql("ALTER TABLE " + t + " CREATE TAG old_main AS OF VERSION " + mainSnapshots.get(4));
@@ -69,7 +69,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
             + ")");
     spark.sql("DELETE FROM " + dev + " WHERE id IN (1, 300)");
     spark.sql("UPDATE " + dev + " SET data = 'dev-updated' WHERE id = 17");
-    long devMid = ops(formatVersion).getTable(fqtn).refs().get("dev").snapshotId();
+    long devMid = table(formatVersion, fqtn).refs().get("dev").snapshotId();
     spark.sql("ALTER TABLE " + t + " CREATE TAG dev_mid AS OF VERSION " + devMid);
     spark.sql("DELETE FROM " + dev + " WHERE id = 25");
     // Main diverges: a file in a partition of its own (2 days ago) that main adds and then drops by
@@ -79,7 +79,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
     spark.sql("DELETE FROM " + t + " WHERE ts >= " + ts(2, 0) + " AND ts < " + ts(1, 0));
     spark.sql("DELETE FROM " + t + " WHERE id IN (4, 5)");
 
-    table = ops(formatVersion).getTable(fqtn);
+    table = table(formatVersion, fqtn);
     Map<String, SnapshotRef> refs = table.refs();
     Assertions.assertEquals(
         new TreeSet<>(java.util.Arrays.asList(MAIN, "dev", "before_branch", "old_main", "dev_mid")),
@@ -121,7 +121,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
 
   @Override
   void afterJob(String job, int formatVersion, Shape shape, RefsReading before) {
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     if ("expiry".equals(job)) {
       // retainLast applies per branch: main and dev keep their last 2 each, the tags their own,
       // and dev's two older snapshots expired too.
@@ -147,7 +147,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
   @ValueSource(ints = {2, 3})
   void branchesAndTagsAreAcceptedNatively(int formatVersion) {
     Shape shape = createShape(formatVersion, "native_refs");
-    Assertions.assertEquals(5, ops(formatVersion).getTable(shape.fqtn).refs().size());
+    Assertions.assertEquals(5, table(formatVersion, shape.fqtn).refs().size());
   }
 
   /** The Iceberg REST routes accept a branch, a tag and a commit to the branch too. */
@@ -167,7 +167,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
                 + ".branch_rest_dev VALUES (500, 'rest-500', "
                 + ts(0, 50)
                 + ")");
-    Table loaded = ops(formatVersion).getTable(fqtn);
+    Table loaded = table(formatVersion, fqtn);
     Assertions.assertEquals(head, loaded.refs().get("rest_tag").snapshotId());
     Assertions.assertNotEquals(head, loaded.refs().get("rest_dev").snapshotId());
     Assertions.assertEquals(head, loaded.currentSnapshot().snapshotId(), "main unchanged");
@@ -184,7 +184,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
       throws Exception {
     Shape shape = createShape(formatVersion, "compact_expire");
     RefsReading before = read(formatVersion, shape.fqtn);
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     Set<String> mainFilesBefore = paths(liveDataFiles(table, table.currentSnapshot()));
     Snapshot devHead = table.snapshot(table.refs().get("dev").snapshotId());
     Set<String> sharedWithDev = paths(liveDataFiles(table, devHead));
@@ -201,7 +201,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
             otelEmitter);
     compaction.runInner(ops);
     compaction.runValidations(ops);
-    table = ops(formatVersion).getTable(shape.fqtn);
+    table = table(formatVersion, shape.fqtn);
     Set<String> mainFilesAfter = paths(liveDataFiles(table, table.currentSnapshot()));
     Set<String> replacedShared = new HashSet<>(sharedWithDev);
     replacedShared.removeAll(mainFilesAfter);
@@ -214,7 +214,7 @@ public class FormatV3BranchesJobsTest extends FormatV3ShapeJobsTestBase {
     new OrphanFilesDeletionSparkApp(
             "x10b-ofd-branch", null, shape.fqtn, 0, otelEmitter, ".backup", 2, false, 1000)
         .runInner(ops);
-    table = ops(formatVersion).getTable(shape.fqtn);
+    table = table(formatVersion, shape.fqtn);
     for (String file : replacedShared) {
       Assertions.assertTrue(table.io().newInputFile(file).exists(), "dev's file kept: " + file);
     }

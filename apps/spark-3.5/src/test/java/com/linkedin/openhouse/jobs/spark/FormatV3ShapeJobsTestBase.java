@@ -121,6 +121,11 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     return tables.ts(daysAgo, minute);
   }
 
+  /** The table, loaded through the format's one test catalog ({@link FormatV3Tables#table}). */
+  Table table(int formatVersion, String fqtn) {
+    return tables.table(formatVersion, fqtn);
+  }
+
   /** An Iceberg RESTCatalog on the {@code /iceberg} routes of the service of this format. */
   RESTCatalog rest(int formatVersion) {
     // The service's Iceberg REST routes: the session catalog's own uri on the Spark 4.2 line (a
@@ -187,7 +192,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
   RefsReading read(int formatVersion, String fqtn) {
     SparkSession spark = session(formatVersion);
     Reading reading = tables.readingIn(spark, formatVersion, fqtn);
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     String t = "openhouse." + fqtn;
     Map<String, Long> heads = new TreeMap<>();
     Map<String, List<String>> refRows = new TreeMap<>();
@@ -245,7 +250,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
             live.contains(id), "row " + id + " stays deleted on " + deleted.getKey());
       }
     }
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     for (long id : snapshotIds(table)) {
       if (before.table.perSnapshot.containsKey(id)) {
         Assertions.assertEquals(
@@ -302,7 +307,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
   void compactionRewritesEveryFileWithDeletesAndKeepsEveryRef(int formatVersion) throws Exception {
     Shape shape = createShape(formatVersion, "compact");
     RefsReading before = read(formatVersion, shape.fqtn);
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     Set<String> withDeletes = dataFilesWithDeletes(table);
     Assertions.assertFalse(withDeletes.isEmpty(), "main has data files with deletes");
 
@@ -317,7 +322,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     app.runInner(ops);
     app.runValidations(ops);
 
-    table = ops(formatVersion).getTable(shape.fqtn);
+    table = table(formatVersion, shape.fqtn);
     Assertions.assertEquals("replace", table.currentSnapshot().operation(), "compaction committed");
     Set<String> liveAfter =
         liveDataFiles(table, table.currentSnapshot()).stream()
@@ -341,13 +346,13 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     Shape shape = createShape(formatVersion, "compact_prod");
     RefsReading before = read(formatVersion, shape.fqtn);
     Operations ops = ops(formatVersion);
-    long current = ops.getTable(shape.fqtn).currentSnapshot().snapshotId();
+    long current = table(formatVersion, shape.fqtn).currentSnapshot().snapshotId();
     DataCompactionSparkApp app =
         DataCompactionSparkApp.createApp(
             new String[] {"--storageURL", STORAGE_URL, "--tableName", shape.fqtn}, otelEmitter);
     app.runInner(ops);
     app.runValidations(ops);
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     System.out.println(
         "X10B-COMPACTION-PROD "
             + getClass().getSimpleName()
@@ -373,7 +378,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     Shape shape = createShape(formatVersion, "expire");
     prepareExpiry(formatVersion, shape);
     RefsReading before = read(formatVersion, shape.fqtn);
-    Table table = ops(formatVersion).getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     List<Long> idsBefore = snapshotIds(table);
     Set<String> filesBefore = referencedFiles(table);
     long mainHead = table.currentSnapshot().snapshotId();
@@ -391,7 +396,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     orphans.runInner(ops);
     orphans.runValidations(ops);
 
-    table = ops(formatVersion).getTable(shape.fqtn);
+    table = table(formatVersion, shape.fqtn);
     List<Long> idsAfter = snapshotIds(table);
     Assertions.assertTrue(idsAfter.contains(mainHead) && idsAfter.contains(mainParent));
     Assertions.assertTrue(idsAfter.size() < idsBefore.size(), "expiry removed snapshots");
@@ -425,7 +430,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     prepareExpiry(formatVersion, shape);
     RefsReading before = read(formatVersion, shape.fqtn);
     Operations ops = ops(formatVersion);
-    Table table = ops.getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     int snapshotsBefore = snapshotIds(table).size();
     Set<String> filesBefore = referencedFiles(table);
     long eightDays = 8 * 86_400_000L;
@@ -452,7 +457,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     orphans.runInner(ops);
     orphans.runValidations(ops);
 
-    table = ops(formatVersion).getTable(shape.fqtn);
+    table = table(formatVersion, shape.fqtn);
     Assertions.assertTrue(snapshotIds(table).size() < snapshotsBefore, "expiry removed snapshots");
     for (Path orphan : planted) {
       Assertions.assertFalse(ops.fs().exists(orphan), "planted old orphan removed: " + orphan);
@@ -470,7 +475,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     Shape shape = createShape(formatVersion, "ofd" + (batched ? "_batch" : ""));
     RefsReading before = read(formatVersion, shape.fqtn);
     Operations ops = ops(formatVersion);
-    Table table = ops.getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     FileSystem fs = ops.fs();
     long hour = 3_600_000L;
     Path liveDir =
@@ -577,7 +582,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     Shape shape = createShape(formatVersion, "stats");
     RefsReading before = read(formatVersion, shape.fqtn);
     Operations ops = ops(formatVersion);
-    Table table = ops.getTable(shape.fqtn);
+    Table table = table(formatVersion, shape.fqtn);
     long current = table.currentSnapshot().snapshotId();
     IcebergTableStats stats = ops.collectTableStats(shape.fqtn);
     Assertions.assertNotNull(stats, "stats collection failed (it returns null on an exception)");
@@ -589,7 +594,8 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
         new TableStatsCollectionSparkApp("x10b-stats", null, shape.fqtn, otelEmitter);
     app.runInner(ops);
     app.runValidations(ops);
-    Assertions.assertEquals(current, ops.getTable(shape.fqtn).currentSnapshot().snapshotId());
+    Assertions.assertEquals(
+        current, table(formatVersion, shape.fqtn).currentSnapshot().snapshotId());
     assertNoLiveDataLost(formatVersion, shape, before);
     afterJob("stats", formatVersion, shape, before);
   }

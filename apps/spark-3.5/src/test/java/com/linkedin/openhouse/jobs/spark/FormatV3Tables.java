@@ -56,6 +56,15 @@ final class FormatV3Tables implements AutoCloseable {
   /** A session whose {@code openhouse} catalog is the service with the switch on (v3 tables). */
   private final SparkSession v3Spark;
 
+  /**
+   * One catalog per format version for the tests' own table loads. Operations.getTable builds a new
+   * catalog on every call, and each OpenHouse client it builds keeps a connection pool (reactor
+   * netty, evicting in the background, never disposed: client WebClientFactory) that stays
+   * reachable for the life of the JVM; loading through Operations in a loop grows the test JVM's
+   * heap by one pool per load. The jobs' own code still builds its catalogs as in production.
+   */
+  private final Map<Integer, org.apache.iceberg.catalog.Catalog> catalogs = new HashMap<>();
+
   /** Midnight today, UTC: rows are written in partitions this many days before it. */
   final LocalDateTime today =
       LocalDateTime.ofInstant(Instant.now(), ZoneOffset.UTC).truncatedTo(ChronoUnit.DAYS);
@@ -87,8 +96,42 @@ final class FormatV3Tables implements AutoCloseable {
     return to;
   }
 
+  /** The table {@code fqtn}, loaded fresh through this format version's one catalog. */
+  Table table(int formatVersion, String fqtn) {
+    SparkSession spark = session(formatVersion);
+    org.apache.iceberg.catalog.Catalog catalog =
+        catalogs.computeIfAbsent(
+            formatVersion,
+            v -> {
+              Map<String, String> properties = new HashMap<>();
+              String prefix = CATALOG_PREFIX + ".";
+              spark
+                  .conf()
+                  .getAll()
+                  .foreach(
+                      entry -> {
+                        if (entry._1().startsWith(prefix)) {
+                          properties.put(entry._1().substring(prefix.length()), entry._2());
+                        }
+                        return null;
+                      });
+              return org.apache.iceberg.CatalogUtil.buildIcebergCatalog(
+                  "openhouse_tests_v" + v, properties, spark.sparkContext().hadoopConfiguration());
+            });
+    return catalog.loadTable(org.apache.iceberg.catalog.TableIdentifier.parse(fqtn));
+  }
+
   @Override
   public void close() {
+    for (org.apache.iceberg.catalog.Catalog catalog : catalogs.values()) {
+      if (catalog instanceof AutoCloseable) {
+        try {
+          ((AutoCloseable) catalog).close();
+        } catch (Exception e) {
+          // best effort
+        }
+      }
+    }
     server.close();
   }
 
@@ -172,7 +215,7 @@ final class FormatV3Tables implements AutoCloseable {
     String fqtn = createAndInsert(formatVersion, name, fileFormat);
     String t = "openhouse." + fqtn;
     rowLevelWrites(spark, t);
-    Table table = ops(formatVersion).getTable(fqtn);
+    Table table = table(formatVersion, fqtn);
     Assertions.assertEquals(formatVersion, formatVersion(table));
     Assertions.assertEquals(12, snapshotIds(table).size(), "one snapshot per statement");
     Snapshot current = table.currentSnapshot();
@@ -270,7 +313,7 @@ final class FormatV3Tables implements AutoCloseable {
     spark.sql("REFRESH TABLE " + t);
     List<String> live = rows(spark, "SELECT * FROM " + t);
     Map<Long, List<String>> perSnapshot = new LinkedHashMap<>();
-    for (long id : snapshotIds(ops(formatVersion).getTable(fqtn))) {
+    for (long id : snapshotIds(table(formatVersion, fqtn))) {
       perSnapshot.put(id, rows(spark, "SELECT * FROM " + t + " VERSION AS OF " + id));
     }
     List<String> lineage =
