@@ -11,7 +11,6 @@ import org.apache.iceberg.rest.requests.RegisterTableRequest;
 import org.apache.iceberg.rest.requests.RenameTableRequest;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,21 +23,12 @@ import org.springframework.web.bind.annotation.RestController;
  * The table write routes of the Iceberg REST Catalog (IRC) protocol, under the same base path as
  * {@link IcebergRestCatalogController} (whose catch-all they take precedence over, being more
  * specific); the work is {@link IcebergRestWriteHandler}'s. Hidden from the generated OpenAPI spec,
- * like the other IRC routes.
- *
- * <p>A separate controller, registered only where {@code org.apache.iceberg.UpdateRequirement}
- * exists (Iceberg 1.4 and later), as {@link IcebergRestWriteHandler} is. The tables service is also
- * embedded with Iceberg 1.2 at runtime ({@code tables-test-fixtures_2.12}, for the Spark 3.1 line),
- * which gets no new features: there the server starts without these routes, and the catch-all
- * answers them 406 as it did before they existed.
+ * like the other IRC routes. Registered on every Iceberg line this server builds with (the fork's
+ * 1.12 and LinkedIn's 1.5.2).
  */
 @Hidden
 @RestController
-@ConditionalOnClass(name = IcebergRestWriteController.WRITE_API_CLASS)
 public class IcebergRestWriteController {
-
-  /** The Iceberg class the write routes need, and whose presence registers them. */
-  static final String WRITE_API_CLASS = "org.apache.iceberg.UpdateRequirement";
 
   private static final String V1 = IcebergRestCatalogController.BASE_PATH + "/v1";
 

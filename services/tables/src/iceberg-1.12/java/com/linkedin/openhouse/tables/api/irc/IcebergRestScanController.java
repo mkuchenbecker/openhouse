@@ -50,8 +50,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>Compiled only on the Iceberg 1.12 line ({@code src/iceberg-1.12}), whose request and response
  * classes these routes use; LinkedIn's Iceberg 1.5.2 reference line has none of them, and there
- * both routes answer 406 as before. Registered only where those classes exist, as the write routes
- * are.
+ * both routes answer 406 as before. Registered only where those classes exist.
  */
 @Hidden
 @Slf4j

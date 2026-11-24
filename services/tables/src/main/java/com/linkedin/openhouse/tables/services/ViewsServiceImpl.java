@@ -425,8 +425,7 @@ public class ViewsServiceImpl implements ViewsService {
 
   /**
    * HTS stores only the pointer; creator and modification time live in the view metadata, whose
-   * properties are passed here. (Bean signatures name no Iceberg view type: the bean-boundary test
-   * of the 1.2 and 1.5 fixtures allows that only in the codec and the commit engine.)
+   * properties are passed here.
    */
   private static ViewDto toPointerDto(HouseTable row, Map<String, String> properties) {
     String creator = properties.get(getCanonicalFieldName("tableCreator"));

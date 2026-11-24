@@ -59,9 +59,9 @@ public final class IcebergRestJson {
 
   /**
    * A 200 config response: {@code config} and, as its {@code endpoints}, the spec routes served, in
-   * the spec's format. Written at the JSON level because this server's Iceberg lines differ: 1.2
-   * and 1.5.2 have no {@code endpoints} in {@code ConfigResponse} (and their clients ignore the
-   * field), 1.12 has it with an {@code Endpoint} type the other lines lack.
+   * the spec's format. Written at the JSON level because this server's Iceberg lines differ:
+   * LinkedIn's 1.5.2 has no {@code endpoints} in {@code ConfigResponse} (and its clients ignore the
+   * field), 1.12 has it with an {@code Endpoint} type 1.5.2 lacks.
    */
   public static ResponseEntity<byte[]> config(ConfigResponse config, List<String> endpoints) {
     ObjectNode node = MAPPER.valueToTree(config);

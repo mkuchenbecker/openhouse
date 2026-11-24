@@ -10,12 +10,8 @@ import org.apache.iceberg.rest.requests.UpdateTableRequest;
  * The requirements of an IRC commit: checking them against the base, and reading the commit's shape
  * from them.
  *
- * <p>This is deliberately not a Spring bean and the beans name none of its types. {@link
- * UpdateRequirement} exists from Iceberg 1.4 on, and the tables service is also embedded with
- * Iceberg 1.2 at runtime ({@code tables-test-fixtures_2.12}, used by the Spark 3.1 apps and the
- * data-layout library). Spring introspects every declared method of a bean while creating it, the
- * synthetic lambda methods included, so a bean method that names this type would stop the embedded
- * server from starting under Iceberg 1.2. Here the type is resolved only when an IRC write runs.
+ * <p>Static helpers of {@link IcebergRestWriteHandler}, kept apart because the replace-shape rule
+ * and its reasoning read on their own.
  */
 final class IcebergRestRequirements {
 

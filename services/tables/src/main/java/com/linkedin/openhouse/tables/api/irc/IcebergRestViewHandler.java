@@ -28,7 +28,6 @@ import org.apache.iceberg.rest.responses.ImmutableLoadViewResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.stereotype.Component;
 
@@ -58,11 +57,8 @@ import org.springframework.stereotype.Component;
  * RESTCatalog} should raise. With views disabled the native API answers 404 on every route; here
  * that is {@code NoSuchViewException} on a view's own routes and {@code NoSuchNamespaceException}
  * on the namespace's routes (list, create), which is what a catalog without views answers.
- *
- * <p>Registered only where the Iceberg view API exists, as {@link ViewsServiceImpl} is.
  */
 @Component
-@ConditionalOnClass(name = "org.apache.iceberg.view.ViewMetadata")
 public class IcebergRestViewHandler {
 
   /** The page size asked of the native list while collecting every view. */
