@@ -479,6 +479,20 @@ public class FormatV3TypesTest {
           "the table has a retention policy");
       assertEquals(stored, json(get(mvc, db, "t")));
     }
+    // The other direction: a variant column added to a table that has a retention policy.
+    String db = db("x5ret_add", "variant");
+    CreateUpdateTableRequestBody withRetention =
+        table(db, "3", "parquet")
+            .toBuilder()
+            .timePartitioning(dayOf("timestampCol"))
+            .policies(retention)
+            .build();
+    ok(answer(post(mvc, withRetention)), 201);
+    String stored = json(get(mvc, db, "t"));
+    Answer added = answer(put(mvc, withColumn(bodyFromGet(stored), "variant")));
+    refused(added, 400, "FORMAT_V3_TYPE_NOT_SUPPORTED: column v (variant) of table ");
+    assertTrue(added.message.contains("the table has a retention policy"), added.toString());
+    assertNoColumnV(db);
   }
 
   private static final String SORT_BY_V =
