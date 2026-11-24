@@ -96,6 +96,18 @@ final class FormatV3 {
     throw new IllegalArgumentException("no column " + name + " in " + schemaJson);
   }
 
+  /** {@code schemaJson} with column {@code name} of {@code type} (Iceberg's type string). */
+  static String withType(String schemaJson, String name, String type) throws Exception {
+    ObjectNode schema = (ObjectNode) MAPPER.readTree(schemaJson);
+    for (JsonNode field : schema.get("fields")) {
+      if (name.equals(field.get("name").asText())) {
+        ((ObjectNode) field).put("type", type);
+        return MAPPER.writeValueAsString(schema);
+      }
+    }
+    throw new IllegalArgumentException("no column " + name + " in " + schemaJson);
+  }
+
   private static void setDefaults(ObjectNode field, String initialDefault, String writeDefault) {
     field.remove("initial-default");
     field.remove("write-default");

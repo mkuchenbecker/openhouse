@@ -14,6 +14,7 @@ import java.util.Objects;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.expressions.Literal;
 import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
@@ -175,7 +176,7 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
         if (known.containsKey(id) || id <= lastColumnId) {
           Types.NestedField before = known.get(id);
           Object stored = before == null ? null : before.initialDefault();
-          if (!Objects.equals(stored, initial)) {
+          if (!sameInitialDefault(before, field)) {
             throw new CommitRejectedException(
                 String.format(
                     "%s: the commit on table %s changes the initial-default of the existing column"
@@ -206,6 +207,24 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
         }
       }
     }
+  }
+
+  /**
+   * Whether {@code after} keeps the {@code initial-default} of {@code before}. A type promotion
+   * (int to long, float to double, a wider decimal) converts the value to the new type, as Iceberg
+   * itself does when it builds the promoted field, so it compares the stored value in the new type.
+   */
+  private static boolean sameInitialDefault(Types.NestedField before, Types.NestedField after) {
+    Object stored = before == null ? null : before.initialDefault();
+    Object initial = after.initialDefault();
+    if (Objects.equals(stored, initial)) {
+      return true;
+    }
+    if (stored == null || initial == null || before.type().equals(after.type())) {
+      return false;
+    }
+    Literal<?> promoted = before.initialDefaultLiteral().to(after.type());
+    return promoted != null && Objects.equals(promoted.value(), initial);
   }
 
   /** Below v3: a commit may not introduce or change a non-null {@code write-default}. */
