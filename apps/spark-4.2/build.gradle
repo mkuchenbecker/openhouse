@@ -1,0 +1,183 @@
+// The maintenance jobs (apps/spark-3.5) built for Spark 4.2 / Scala 2.13 on the fork's Iceberg 1.12
+// line: the SAME main and test sources as :apps:openhouse-spark-apps-1.5_2.12, compiled against
+// Spark 4.2, with nothing of that project's build or outputs changed. Not in the -PicebergLinkedIn
+// reference build (settings.gradle), which has no Iceberg 1.12, like the other Spark 4.2 modules.
+//
+// Scout (work item: jobs on Spark 4.2). What differs from the Spark 3.5 project:
+// - Spark 4.2 (Scala 2.13) and the fork's iceberg-spark-runtime-4.2_2.13 replace Spark 3.5 and
+//   iceberg-spark-runtime-3.5_2.12.
+// - Hadoop is Spark 4.2's (hadoop-client-api / -runtime 3.4); the Hadoop 2.10 jars the OpenHouse
+//   libraries declare are excluded.
+// - The root build's forces (Jackson 2.13.4 for the services, ORC/Avro for the 1.5 line) do not
+//   apply, as in the other Spark 4.2 modules: Spark 4.2 needs its own Jackson.
+// - Tests: the tables service cannot share the Spark 4.2 JVM (Jackson 2.21 against Spring Boot
+//   2.7's 2.13; see the Spark 4.2 itest), so it runs in its own JVM (service source set) and the
+//   session's `openhouse` catalog is Iceberg's SparkCatalog over RESTCatalog at the service's
+//   /iceberg routes. src/test-spark-4.2 holds the per-line test helpers that do this, under the
+//   names the shared tests use (OpenHouseSparkITest, FormatV3TablesServer).
+plugins {
+  id 'openhouse.java-conventions'
+}
+
+def pin = new Properties()
+rootProject.file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
+
+ext {
+  icebergVersion = rootProject.ext.iceberg_1_5_version
+  sparkVersion = pin.getProperty('spark42Version')
+  log4jVersion = "2.20.0"
+  jackson42Version = '2.21.4'
+}
+
+def forkRepo = rootProject.ext.icebergForkRepo
+if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
+  throw new GradleException(
+      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
+          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
+}
+
+def apps35 = project(':apps:openhouse-spark-apps-1.5_2.12').projectDir
+
+sourceSets {
+  main {
+    java {
+      srcDirs = ["${apps35}/src/shared/main/java"]
+    }
+    resources {
+      srcDirs = ["${apps35}/src/shared/main/resources"]
+    }
+  }
+  test {
+    java {
+      srcDirs = [
+          "${apps35}/src/shared/test/java",
+          "${apps35}/src/test/java",
+          "${apps35}/src/test-iceberg-1.12/java",
+          'src/test-spark-4.2/java'
+      ]
+      // Replaced by same-named classes in src/test-spark-4.2: the second tables service, in its
+      // own JVM; the commit-hook catalog, a RESTCatalog (Spark 4.2 has no OpenHouse catalog).
+      def replaced = [
+          "${apps35}/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3TablesServer.java",
+          "${apps35}/src/test/java/com/linkedin/openhouse/javaclient/CommitHookCatalog.java"
+      ].collect { new File(it) }
+      exclude { element -> replaced.contains(element.file) }
+    }
+  }
+  // The tables service the tests run against, in its own JVM (Spring Boot 2.7, Jackson 2.13).
+  service {
+    java.srcDirs = ['src/service/java']
+  }
+}
+
+def hadoop2 = [
+    'hadoop-common', 'hadoop-client', 'hadoop-hdfs', 'hadoop-hdfs-client', 'hadoop-auth',
+    'hadoop-annotations', 'hadoop-mapreduce-client-core', 'hadoop-mapreduce-client-common',
+    'hadoop-mapreduce-client-jobclient', 'hadoop-mapreduce-client-app',
+    'hadoop-mapreduce-client-shuffle', 'hadoop-yarn-api', 'hadoop-yarn-client',
+    'hadoop-yarn-common', 'hadoop-yarn-server-common', 'hadoop-yarn-server-nodemanager',
+    'hadoop-yarn-registry'
+]
+
+configurations {
+  [compileClasspath, runtimeClasspath, testCompileClasspath, testRuntimeClasspath].each { c ->
+    c.resolutionStrategy.forcedModules = []
+    // Spark 4.2's Jackson (spark-parent fasterxml.jackson.version 2.21.x): its jackson-module-scala
+    // refuses another minor, and Iceberg 1.12 / the OpenHouse clients ask for 2.22 and 2.13.
+    c.resolutionStrategy.eachDependency { d ->
+      if (d.requested.group.startsWith('com.fasterxml.jackson')) {
+        d.useVersion(d.requested.name == 'jackson-annotations' ? '2.21' : jackson42Version)
+      }
+    }
+    hadoop2.each { m -> c.exclude group: 'org.apache.hadoop', module: m }
+    // Spark 3.5 / Scala 2.12 jars that OpenHouse libraries (datalayout) declare.
+    c.exclude group: 'org.apache.spark', module: 'spark-core_2.12'
+    c.exclude group: 'org.apache.spark', module: 'spark-sql_2.12'
+    c.exclude group: 'com.linkedin.iceberg', module: 'iceberg-spark-runtime-3.5_2.12'
+    // The shaded iceberg-spark-runtime-4.2 carries these, as the 3.5 project's runtime does.
+    c.exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+    c.exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
+    c.exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
+    c.exclude module: 'spring-boot-starter-logging'
+    c.exclude module: 'logback-classic'
+    c.exclude group: 'org.apache.logging.log4j', module: 'log4j-slf4j2-impl'
+  }
+  serviceImplementation {
+    exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
+  }
+}
+
+dependencies {
+  // As openhouse.apps-spark-common, without its Hadoop 2.10 (hadoop-conventions).
+  implementation project(':iceberg:openhouse:internalcatalog')
+  implementation project(':client:hts')
+  implementation project(':client:jobsclient')
+  implementation project(':client:tableclient')
+  implementation project(':client:secureclient')
+  implementation project(':services:common')
+  implementation project(':cluster:storage')
+  implementation project(':libs:datalayout')
+  implementation project(':libs:optimizer:binpack')
+
+  implementation "com.linkedin.iceberg:iceberg-bundled-guava:${icebergVersion}"
+  implementation "com.linkedin.iceberg:iceberg-core:${icebergVersion}"
+  implementation "com.linkedin.iceberg:iceberg-common:${icebergVersion}"
+  implementation "com.linkedin.iceberg:iceberg-api:${icebergVersion}"
+
+  implementation 'commons-cli:commons-cli:1.5.0'
+  implementation 'org.reflections:reflections:0.10.2'
+  implementation 'org.springframework.boot:spring-boot-starter-webflux:2.7.8'
+  implementation 'org.springframework.retry:spring-retry:1.3.3'
+  implementation "org.apache.logging.log4j:log4j-slf4j-impl:${log4jVersion}"
+  implementation 'com.squareup.okhttp3:okhttp:' + ok_http3_version
+  implementation 'io.opentelemetry:opentelemetry-api:1.47.0'
+  implementation 'io.opentelemetry:opentelemetry-exporter-otlp:1.47.0'
+  implementation 'io.opentelemetry:opentelemetry-sdk:1.47.0'
+  implementation 'io.opentelemetry:opentelemetry-semconv:1.14.0-alpha'
+  implementation 'org.apache.commons:commons-lang3:3.12.0'
+  // commons-lang 2 (org.apache.commons.lang.StringUtils): Hadoop 2.10 brought it on the 3.5 line.
+  implementation 'commons-lang:commons-lang:2.6'
+
+  // The engine's own: Spark 4.2 (with Scala 2.13 and Hadoop 3.4 client jars) and the fork's shaded
+  // Iceberg Spark 4.2 runtime.
+  implementation "org.apache.spark:spark-core_2.13:${sparkVersion}"
+  implementation "org.apache.spark:spark-sql_2.13:${sparkVersion}"
+  implementation "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
+
+  // The OpenHouse SQL extensions for Spark 4.2 (no OpenHouse catalog), as an engine adds them.
+  testImplementation project(path: ':integrations:spark:spark-4.2:openhouse-spark-4.2-runtime_2.13', configuration: 'shadow')
+  testImplementation 'org.mockito:mockito-inline:4.11.0'
+  // IcebergLine (the Java client's Iceberg-line detector), which shared tests name. Its plain jar,
+  // not the shaded client: no OpenHouse catalog is configured in any session.
+  testImplementation(project(':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime')) {
+    transitive = false
+  }
+
+  serviceImplementation project(':tables-test-fixtures:tables-test-fixtures-iceberg-1.5_2.12')
+  serviceImplementation project(':services:common')
+  serviceImplementation 'org.slf4j:slf4j-simple:1.7.36'
+}
+
+def extraJvmArgs = [
+    'java.io', 'java.lang.invoke', 'java.lang.reflect', 'java.lang', 'java.math', 'java.net',
+    'java.nio', 'java.text', 'java.time', 'java.util.concurrent.atomic', 'java.util.concurrent',
+    'java.util.regex', 'java.util', 'jdk.internal.ref', 'jdk.internal.reflect', 'sun.util.calendar',
+    'sun.nio.ch', 'sun.nio.cs', 'sun.security.action'
+].collect { "--add-opens=java.base/${it}=ALL-UNNAMED" } + ['--add-opens=java.sql/java.sql=ALL-UNNAMED']
+
+tasks.named('test') {
+  dependsOn tasks.named('serviceClasses')
+  maxHeapSize = '2g'
+  jvmArgs extraJvmArgs
+  systemProperty 'openhouse.iceberg.line', 'default'
+  def serviceClasspath = sourceSets.service.runtimeClasspath
+  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  doFirst {
+    systemProperty 'jobs42.service.classpath', serviceClasspath.asPath
+    systemProperty 'jobs42.java', "${System.getProperty('java.home')}/bin/java"
+    systemProperty 'jobs42.workdir', "${temporaryDir}"
+  }
+  outputs.upToDateWhen { false }
+}
+
+tasks.matching { it.name in ['spotbugsService', 'checkstyleService'] }.configureEach { enabled = false }
