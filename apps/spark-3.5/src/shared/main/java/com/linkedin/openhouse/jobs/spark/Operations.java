@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -76,6 +77,9 @@ public final class Operations implements AutoCloseable {
   private final SparkSession spark;
 
   private final OtelEmitter otelEmitter;
+
+  /** Catalogs this instance has built (each with its own client); see {@link #catalogsBuilt()}. */
+  private final AtomicInteger catalogsBuilt = new AtomicInteger();
 
   public static Operations of(SparkSession spark, OtelEmitter otelEmitter) {
     return new Operations(spark, otelEmitter);
@@ -733,7 +737,18 @@ public final class Operations implements AutoCloseable {
     spark.close();
   }
 
+  /** How many catalogs this instance has built: each holds a client of its own. */
+  @VisibleForTesting
+  int catalogsBuilt() {
+    return catalogsBuilt.get();
+  }
+
   private Catalog getCatalog() {
+    catalogsBuilt.incrementAndGet();
+    return buildCatalog();
+  }
+
+  private Catalog buildCatalog() {
     final Map<String, String> catalogProperties = new HashMap<>();
     final String catalogPropertyPrefix = String.format("spark.sql.catalog.%s.", CATALOG);
     final Map<String, String> sparkProperties = JavaConverters.mapAsJavaMap(spark.conf().getAll());
