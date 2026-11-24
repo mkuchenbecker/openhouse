@@ -9,10 +9,16 @@ ext {
 
 // src/shared/test holds the tests the Spark 3.1 itest compiled and ran as well, until that project
 // was deleted. It is an ordinary second test root now and can be folded into src/test.
+// src/shared/smoke holds the Spark SQL smoke suite's statements and baseline outcomes
+// (SparkSqlSmokeScenarios), which need only spark.sql and JUnit. It is the one list of scenarios:
+// this itest runs it on its catalog paths (SparkSqlSmokeTest), and the Spark 4.2 itest compiles the
+// same directory into its smoke source set (work item N7). It lives here because the baseline is
+// what this itest's legacy path does, and this project is in both builds.
 sourceSets {
   test {
     java {
       srcDirs += 'src/shared/test/java'
+      srcDirs += 'src/shared/smoke/java'
     }
   }
 }
@@ -84,6 +90,8 @@ task catalogTest(type: Test) {
   filter {
     includeTestsMatching 'com.linkedin.openhouse.spark.catalogtest.*'
   }
+  // One line per smoke statement and catalog path: the statement, the baseline, the outcome.
+  systemProperty 'smoke.outcomes.dir', layout.buildDirectory.dir('reports/smoke').get().asFile.path
   if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
     jvmArgs \
         '--add-opens=java.base/java.nio=ALL-UNNAMED',

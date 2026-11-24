@@ -42,12 +42,12 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Every statement of a scenario is run even after one of them gave an unexpected outcome, and
  * the scenario then fails with all of them. With the system property {@code smoke.outcomes.file}
- * set, the run writes one line per statement to that file: the statement, the baseline, this
- * platform's outcome and whether they are the same.
+ * set, or another file named by {@link #outcomesFile()}, the run writes one line per statement to
+ * that file: the statement, the baseline, this platform's outcome and whether they are the same.
  *
- * <p>Today this file is compiled only by the Spark 4.2 itest, and it is a copy of the Spark 3.5
- * suite's scenarios: the Spark 3.5 itest still has its own. {@code SmokeScenariosCopyTest} fails
- * when the two lists of scenarios differ. See that class for the follow-up that leaves one copy.
+ * <p>This is the one list of scenarios (work item N7). It lives in the Spark 3.5 itest ({@code
+ * src/shared/smoke/java}), whose {@code SparkSqlSmokeTest} runs it on each Spark 3.5 catalog path;
+ * the Spark 4.2 itest compiles the same file into its smoke source set and runs it over IRC.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class SparkSqlSmokeScenarios {
@@ -71,6 +71,15 @@ public abstract class SparkSqlSmokeScenarios {
   /** The directory the service keeps tables in. The baseline fixture uses {@code /tmp}. */
   protected String storageRoot() {
     return "/tmp";
+  }
+
+  /**
+   * The file the run writes its outcomes to, or null for none. By default the file the system
+   * property {@code smoke.outcomes.file} names; a platform that runs the suite more than once in a
+   * JVM names one file per run.
+   */
+  protected String outcomesFile() {
+    return System.getProperty("smoke.outcomes.file");
   }
 
   /** The statements on which this platform differs from the baseline. None by default. */
@@ -318,7 +327,7 @@ public abstract class SparkSqlSmokeScenarios {
 
   @AfterAll
   public void endSuite() throws IOException {
-    String file = System.getProperty("smoke.outcomes.file");
+    String file = outcomesFile();
     if (file != null) {
       Path path = Paths.get(file);
       Files.createDirectories(path.getParent());

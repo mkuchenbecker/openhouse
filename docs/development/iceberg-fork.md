@@ -367,9 +367,9 @@ catalog or client class, in its own JVM and service JVM:
 ```
 
 - The statements and their baseline outcomes (Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2)
-  are in `src/shared/test/java` (`SparkSqlSmokeScenarios`). It needs only `spark.sql` and JUnit. It
-  is a copy of the Spark 3.5 suite's scenarios for now: `SmokeScenariosCopyTest` compares the two
-  source files, and its comment names the change that leaves one list.
+  are one list, `SparkSqlSmokeScenarios`, in the Spark 3.5 itest's `src/shared/smoke/java`. It needs
+  only `spark.sql` and JUnit. The Spark 3.5 itest's `SparkSqlSmokeTest` runs it on each Spark 3.5
+  catalog path, and this module compiles the same directory into its `smoke` source set.
 - `Spark42IrcSparkSqlSmokeTest` (`src/smoke/java`) runs every statement and lists the statements
   whose outcome is not the baseline's, each with the baseline, what Spark 4.2 does, and the kind of
   difference. A statement that differs without being listed fails, and so does a listed one that
