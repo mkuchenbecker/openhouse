@@ -218,6 +218,8 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     final State after;
     final Throwable loserFailure;
     final List<String> attempts;
+    /** The outcome of the attempt the winner ran in (built on N, sent after N+1 landed). */
+    String racedAttempt;
     /** What a serial order of the two gives, read before the race: {@code null} if not asked. */
     final List<String> serial;
 
@@ -290,13 +292,16 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     Assertions.assertFalse(
         stillArmed,
         "the loser never reached a commit attempt, so nothing raced: " + chain(loserFailure));
-    return new Race(
-        base,
-        winnerState.get(),
-        state(formatVersion, fqtn),
-        loserFailure,
-        CommitHook.attempts(fqtn),
-        serial);
+    Race race =
+        new Race(
+            base,
+            winnerState.get(),
+            state(formatVersion, fqtn),
+            loserFailure,
+            CommitHook.attempts(fqtn),
+            serial);
+    race.racedAttempt = CommitHook.racedAttempt(fqtn);
+    return race;
   }
 
   private enum Outcome {
@@ -312,6 +317,10 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       all.append(t.getClass().getSimpleName()).append(": ").append(t.getMessage()).append(" <- ");
     }
     return all.toString();
+  }
+
+  private static String abbreviate(String s) {
+    return s == null || s.length() <= 120 ? s : s.substring(0, 120) + "...";
   }
 
   private static boolean isConflict(Throwable thrown) {
@@ -338,6 +347,17 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       Race race,
       Outcome expected,
       Set<Long> inserted) {
+    assertSafe(name, formatVersion, fqtn, race, expected, inserted, false);
+  }
+
+  private void assertSafe(
+      String name,
+      int formatVersion,
+      String fqtn,
+      Race race,
+      Outcome expected,
+      Set<Long> inserted,
+      boolean danglingDeletionVectorsPinned) {
     Outcome actual = race.loserFailure == null ? Outcome.SERIAL : Outcome.CONFLICT;
     System.out.println(
         "X10-RACE native v"
@@ -346,8 +366,10 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
             + name
             + " outcome="
             + actual
+            + " raced="
+            + abbreviate(race.racedAttempt)
             + " attempts="
-            + race.attempts
+            + race.attempts.size()
             + " failure="
             + (race.loserFailure == null ? "-" : chain(race.loserFailure)));
     if (actual == Outcome.CONFLICT) {
@@ -397,16 +419,20 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     assertEveryReferencedFileExists(table);
     if (formatVersion == 3) {
       assertAtMostOneDeletionVectorPerDataFile(table);
-      assertNoDanglingDeletionVectors(formatVersion, table);
+      if (!danglingDeletionVectorsPinned) {
+        assertNoDanglingDeletionVectors(formatVersion, table);
+      }
     }
-    // The race went through the service: when the winner committed, the loser's first attempt,
-    // built on N, was refused by the tables service as a conflict.
-    Assertions.assertFalse(race.attempts.isEmpty(), "the loser made a commit attempt");
+    // The race went through the service: when the winner committed, the loser's attempt built on
+    // N was refused by the tables service as a conflict (409); otherwise it committed.
+    Assertions.assertNotNull(race.racedAttempt, "the raced attempt ended: " + race.attempts);
     if (!race.winner.metadataLocation.equals(race.base.metadataLocation)) {
       Assertions.assertTrue(
-          race.attempts.get(0).startsWith("CommitFailedException")
-              && race.attempts.get(0).contains("409"),
-          "the service refused the attempt built on N: " + race.attempts);
+          race.racedAttempt.startsWith("CommitFailedException: 409")
+              && race.racedAttempt.contains("Conflict detected"),
+          "the service refused the attempt built on N: " + race.racedAttempt);
+    } else {
+      Assertions.assertEquals("committed", race.racedAttempt);
     }
   }
 
@@ -429,14 +455,23 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
 
   // ----------------------------------------------------------------------------- the steps
 
-  /** Compaction as X6 runs it: every data file that carries deletes is rewritten, in one commit. */
+  /**
+   * Compaction as X6 runs it (every data file that carries deletes is rewritten), with partial
+   * progress off so that it commits once: with partial progress on, its file groups commit from
+   * more than one thread, so the race would not be one by construction (each group's commit is a
+   * rewrite with the same conflict checks).
+   */
   private void compaction(Operations ops, String fqtn) {
     DataCompactionSparkApp app =
         new DataCompactionSparkApp(
             "x10-compaction",
             null,
             fqtn,
-            DataCompactionConfig.builder().minInputFiles(2).deleteFileThreshold(1).build(),
+            DataCompactionConfig.builder()
+                .minInputFiles(2)
+                .deleteFileThreshold(1)
+                .partialProgressEnabled(false)
+                .build(),
             otelEmitter);
     app.runInner(ops);
     app.runValidations(ops);
@@ -693,7 +728,9 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
 
   /**
    * A DELETE prepared at N targets a row in a partition past retention (id 1, 10 days old) and one
-   * inside it (id 25); retention drops the old partitions; then the DELETE commits.
+   * inside it (id 25); retention drops the old partitions; then the DELETE commits on its retry
+   * (its delete of row 1 is moot: the row's file is gone), and the table reads as retention then
+   * the DELETE.
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
@@ -707,7 +744,28 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
             () -> loserSession(formatVersion).sql("DELETE FROM " + t + " WHERE id IN (1, 25)"),
             () -> retention(tables.ops(formatVersion), fqtn),
             "SELECT * FROM %s WHERE id >= 17 AND id <> 25");
-    assertSafe("delete-then-retention", formatVersion, fqtn, race, Outcome.CONFLICT, ids());
+    assertSafe("delete-then-retention", formatVersion, fqtn, race, Outcome.SERIAL, ids(), true);
+    // Iceberg's check that a row-level write's data files still exist skips files a DELETE
+    // snapshot removed, for a DELETE statement (its rows are gone either way), so the DELETE
+    // commits, and its delete for row 1 now applies to a data file the table no longer has. Rows
+    // read as in a serial order. Pinned: inside Iceberg (MergingSnapshotProducer
+    // validateDataFilesExist with skipDeletes), not in OpenHouse's commit path.
+    if (formatVersion == 3) {
+      Table table = tables.ops(formatVersion).getTable(fqtn);
+      Set<String> live =
+          FormatV3Tables.liveDataFiles(table, table.currentSnapshot()).stream()
+              .map(d -> d.path().toString())
+              .collect(Collectors.toSet());
+      List<String> dangling =
+          liveDeleteFiles(table, table.currentSnapshot()).stream()
+              .map(FormatV3Tables::referencedDataFile)
+              .filter(f -> !live.contains(f))
+              .collect(Collectors.toList());
+      Assertions.assertEquals(1, dangling.size(), "one dangling deletion vector: " + dangling);
+      Assertions.assertTrue(
+          dangling.get(0).contains("ts_day=" + tables.today.minusDays(10).toLocalDate()),
+          "for the data file of row 1, which retention removed: " + dangling);
+    }
   }
 
   /** Retention prepared at N; the same DELETE commits N+1; then retention commits on its retry. */

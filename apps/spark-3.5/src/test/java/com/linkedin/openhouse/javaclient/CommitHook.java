@@ -17,12 +17,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class CommitHook {
   private static final Map<String, Runnable> ARMED = new ConcurrentHashMap<>();
   private static final Map<String, List<String>> ATTEMPTS = new ConcurrentHashMap<>();
+  private static final Map<String, String> RACED = new ConcurrentHashMap<>();
+  /** Whether the attempt this thread is in is the one the armed step ran in. */
+  private static final ThreadLocal<Boolean> IN_RACED_ATTEMPT = ThreadLocal.withInitial(() -> false);
 
   private CommitHook() {}
 
   /** Runs {@code step} at the start of the next commit attempt on {@code table} ({@code db.t}). */
   public static void arm(String table, Runnable step) {
     ATTEMPTS.put(table, Collections.synchronizedList(new ArrayList<>()));
+    RACED.remove(table);
     ARMED.put(table, step);
   }
 
@@ -44,20 +48,34 @@ public final class CommitHook {
     return attempts == null ? Collections.emptyList() : new ArrayList<>(attempts);
   }
 
+  /**
+   * The outcome of the commit attempt the armed step ran in, recorded as in {@link #attempts}, or
+   * {@code null} if the step has not run or that attempt has not ended.
+   */
+  public static String racedAttempt(String table) {
+    return RACED.get(table);
+  }
+
   static void beforeAttempt(String table) {
     Runnable step = ARMED.remove(table);
     if (step != null) {
+      IN_RACED_ATTEMPT.set(true);
       step.run();
     }
   }
 
   static void afterAttempt(String table, Throwable failure) {
+    String outcome =
+        failure == null
+            ? "committed"
+            : failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage());
     List<String> attempts = ATTEMPTS.get(table);
     if (attempts != null) {
-      attempts.add(
-          failure == null
-              ? "committed"
-              : failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()));
+      attempts.add(outcome);
+    }
+    if (IN_RACED_ATTEMPT.get()) {
+      IN_RACED_ATTEMPT.set(false);
+      RACED.put(table, outcome);
     }
   }
 }
