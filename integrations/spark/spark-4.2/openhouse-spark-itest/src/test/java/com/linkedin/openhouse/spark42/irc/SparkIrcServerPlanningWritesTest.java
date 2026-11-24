@@ -21,15 +21,14 @@ import org.junit.jupiter.params.provider.EnumSource;
  * write (the copy-on-write rewrite, the merge-on-read delete scan, the MERGE join, the SELECT of an
  * INSERT OVERWRITE or a CTAS) is planned the one way or the other. Then the two tables must be the
  * same: their rows, their data and delete files (content, format, record count, partition, and for
- * a deletion vector its size), the operation and counts of every snapshot, and on format v3 the row
- * lineage: the row ids, the row id of every row a statement carries over, and every row's {@code
- * _last_updated_sequence_number}. Both tables are read back through the client-planning catalog, so
- * what is compared is what the writes stored.
+ * a deletion vector its size), and the operation and counts of every snapshot. Both tables are read
+ * back through the client-planning catalog, so what is compared is what the writes stored.
  *
- * <p>One known difference, pinned below and not OpenHouse's: a server-planned scan task carries no
- * sequence number (the specification's {@code DataFile} has none), so on format v3 a copy-on-write
- * rewrite gives the rows it keeps the rewrite's sequence number. The copy-on-write scenarios on v3
- * therefore compare the row ids but not the sequence numbers.
+ * <p>Format v3: the service refuses to plan v3 tables (work item V11e; a scan task carries no
+ * sequence number, so row lineage would be wrong). The same scenarios on v3 assert that the
+ * statement under test fails visibly with the refusal and leaves the table, its row lineage
+ * included, as it was. Until V11e they compared the stored tables, and two tests pinned the wrong
+ * lineage; that subject no longer exists.
  *
  * <p>Every table first gets a merge-on-read DELETE of one row, so the statement under test plans
  * files that already have a position delete or a deletion vector: a copy-on-write rewrite must not
@@ -138,36 +137,10 @@ public class SparkIrcServerPlanningWritesTest {
     }
   }
 
-  /**
-   * Which part of the format v3 row lineage two runs of a scenario must agree on, row by row.
-   *
-   * @param carried a predicate on the rows whose {@code _row_id} a statement carries over (the rows
-   *     it does not write anew). The rows a CTAS or an INSERT OVERWRITE writes get new row ids in
-   *     the order the write meets them, which follows the order of the planned tasks; they are
-   *     compared as a set.
-   * @param sequenceKept false where server planning is known to lose {@code
-   *     _last_updated_sequence_number} (a copy-on-write rewrite of a v3 table, pinned by {@link
-   *     #aCopyOnWriteRewriteWithServerPlanningGivesTheRowsItKeepsANewSequenceNumber}).
-   */
-  private static final class Lineage {
-    final String carried;
-    final boolean sequenceKept;
-
-    Lineage(String carried, boolean sequenceKept) {
-      this.carried = carried;
-      this.sequenceKept = sequenceKept;
-    }
-  }
-
-  private static final Lineage ALL_KEPT = new Lineage("true", true);
-
   /** What is compared of a table: rows, files, snapshots, and on v3 the row lineage. */
-  private static List<List<List<Object>>> outcome(Format format, String table, Lineage lineage)
-      throws Exception {
+  private static List<List<List<Object>>> outcome(Format format, String table) throws Exception {
     List<List<List<Object>>> outcome = new ArrayList<>();
     outcome.add(rows("SELECT * FROM " + table + " ORDER BY id"));
-    // A deletion vector's offset in its Puffin file is left out: it follows the order in which
-    // the writer met the data files, as the row ids of new rows do.
     outcome.add(
         rows(
             "SELECT content, file_format, record_count, CAST(partition AS STRING),"
@@ -183,58 +156,53 @@ public class SparkIrcServerPlanningWritesTest {
                 + table
                 + ".snapshots ORDER BY committed_at"));
     if (format == Format.V3) {
-      outcome.add(rows("SELECT _row_id FROM " + table + " ORDER BY 1"));
       outcome.add(
-          rows("SELECT id, _row_id FROM " + table + " WHERE " + lineage.carried + " ORDER BY id"));
-      if (lineage.sequenceKept) {
-        outcome.add(
-            rows("SELECT id, _last_updated_sequence_number FROM " + table + " ORDER BY id"));
-      }
+          rows("SELECT id, _row_id, _last_updated_sequence_number FROM " + table + " ORDER BY id"));
     }
     return outcome;
   }
 
-  private static List<List<Object>> assertSameTable(
-      Format format, String scenario, List<String> statements, String compared) throws Exception {
-    return assertSameTable(format, scenario, statements, compared, ALL_KEPT);
-  }
-
   /**
-   * Runs the scenario both ways and compares the tables; returns the rows of the client-planned
-   * table, for the scenario's own checks.
+   * Format v2: runs the scenario both ways and asserts the two tables are the same. Format v3: the
+   * service refuses to plan v3 tables (V11e), so the scenario's last statement, through the
+   * server-planning catalog, must fail visibly with the refusal and leave the table exactly as the
+   * statements before it left it. Returns the rows of the client-planned run, for the scenario's
+   * own checks.
    */
   private static List<List<Object>> assertSameTable(
-      Format format, String scenario, List<String> statements, String compared, Lineage lineage)
-      throws Exception {
+      Format format, String scenario, List<String> statements, String compared) throws Exception {
     String name = scenario + "_" + format.name().toLowerCase();
     run(statements, format.client, name, "_c");
-    run(statements, format.server, name, "_s");
     String suffix = compared == null ? "" : "_" + compared;
     String onClient = format.client + "." + DB + "." + name + suffix + "_c";
     // Both tables are read back through the client-planning catalog: what is compared is what the
     // writes stored, not how a server-planned read reads it.
     String onServer = format.client + "." + DB + "." + name + suffix + "_s";
-    List<List<List<Object>>> expected = outcome(format, onClient, lineage);
-    Assertions.assertEquals(expected, outcome(format, onServer, lineage), scenario + " " + format);
+    List<List<List<Object>>> expected = outcome(format, onClient);
     Assertions.assertFalse(expected.get(0).isEmpty(), "no rows");
     if (format == Format.V3) {
-      // Every delete file is a deletion vector, at most one per data file.
-      List<List<Object>> deletes =
-          rows("SELECT file_format, referenced_data_file FROM " + onServer + ".delete_files");
-      for (List<Object> delete : deletes) {
-        Assertions.assertEquals("PUFFIN", delete.get(0), deletes.toString());
+      List<String> before = statements.subList(0, statements.size() - 1);
+      run(before, format.client, name, "_s");
+      List<List<List<Object>>> unchanged = outcome(format, onServer);
+      String last = statements.get(statements.size() - 1);
+      Throwable refused =
+          Assertions.assertThrows(
+              Throwable.class, () -> run(Arrays.asList(last), format.server, name, "_s"), last);
+      StringBuilder chain = new StringBuilder();
+      for (Throwable t = refused; t != null; t = t.getCause()) {
+        chain.append(t.getClass().getName()).append(": ").append(t.getMessage()).append(" <- ");
       }
-      Assertions.assertEquals(
-          deletes.size(),
-          deletes.stream().map(d -> d.get(1)).distinct().count(),
-          "one deletion vector per data file: " + deletes);
+      Assertions.assertTrue(
+          chain.toString().contains("Remote scan planning failed")
+              && chain.toString().contains("ScanPlanFormatVersionException"),
+          chain.toString());
+      rows("REFRESH TABLE " + onServer);
+      Assertions.assertEquals(unchanged, outcome(format, onServer), scenario + " unchanged");
+      return expected.get(0);
     }
+    run(statements, format.server, name, "_s");
+    Assertions.assertEquals(expected, outcome(format, onServer), scenario + " " + format);
     return expected.get(0);
-  }
-
-  /** Copy-on-write keeps row ids; on v3 with server planning, not the sequence numbers. */
-  private static Lineage copyOnWrite(Format format) {
-    return new Lineage("true", format != Format.V3);
   }
 
   private static List<List<Object>> ids(List<List<Object>> rows) {
@@ -254,11 +222,7 @@ public class SparkIrcServerPlanningWritesTest {
   void deleteCopyOnWrite(Format format) throws Exception {
     List<List<Object>> rows =
         assertSameTable(
-            format,
-            "del_cow",
-            with(seed(format, COW), "DELETE FROM %t WHERE id IN (2, 7)"),
-            null,
-            copyOnWrite(format));
+            format, "del_cow", with(seed(format, COW), "DELETE FROM %t WHERE id IN (2, 7)"), null);
     Assertions.assertEquals(
         Arrays.asList(
             row(1L, "n1"),
@@ -297,8 +261,7 @@ public class SparkIrcServerPlanningWritesTest {
             with(
                 seed(format, COW),
                 "UPDATE %t SET name = concat(name, '-u') WHERE p = 'a' AND id > 1"),
-            null,
-            copyOnWrite(format));
+            null);
     Assertions.assertEquals(
         Arrays.asList(
             row(1L, "n1"),
@@ -343,7 +306,7 @@ public class SparkIrcServerPlanningWritesTest {
     List<String> statements = with(seed(format, COW));
     statements.addAll(SOURCE);
     statements.add(MERGE);
-    assertMerged(assertSameTable(format, "merge_cow", statements, null, copyOnWrite(format)));
+    assertMerged(assertSameTable(format, "merge_cow", statements, null));
   }
 
   @ParameterizedTest
@@ -384,8 +347,7 @@ public class SparkIrcServerPlanningWritesTest {
               with(
                   seed(format, COW),
                   "INSERT OVERWRITE %t SELECT id + 100, name, p FROM %t WHERE p IN ('a', 'c')"),
-              null,
-              new Lineage("id < 100", true));
+              null);
     } finally {
       spark.conf().unset("spark.sql.sources.partitionOverwriteMode");
     }
@@ -417,80 +379,77 @@ public class SparkIrcServerPlanningWritesTest {
             "DELETE FROM %t WHERE id = 2",
             "CREATE OR REPLACE TABLE %new USING iceberg PARTITIONED BY (p)"
                 + " AS SELECT id, upper(name) AS name, p FROM %t WHERE p <> 'c'");
-    List<List<Object>> rows =
-        assertSameTable(format, "ctas", statements, "new", new Lineage("false", true));
+    List<List<Object>> rows = assertSameTable(format, "ctas", statements, "new");
     Assertions.assertEquals(
         Arrays.asList(row(1L, "N1"), row(4L, "N4"), row(6L, "N6"), row(8L, "N8")), ids(rows));
   }
 
-  // ---------------------------------------------------------------- format v3 sequence numbers
+  // ---------------------------------------------------------------- format v3: refused
 
   /**
-   * Pins a difference that is not OpenHouse's: the specification's {@code DataFile} in a scan task
-   * has no data or file sequence number, and Iceberg 1.12's parser ({@code ContentFileParser})
-   * reads none, so a server-planned scan task's file has none. A row whose {@code
-   * _last_updated_sequence_number} is inherited from its file then reads as null, where client
-   * planning reads the file's sequence number. Row ids are not affected ({@code first-row-id} is
-   * sent).
+   * The three statements of the V11e decision on a format v3 table with deletion vectors, through
+   * the server-planning catalog: a SELECT, a copy-on-write UPDATE and a merge-on-read MERGE. Each
+   * fails visibly with the service's refusal, and the table is unchanged (rows, files, snapshots
+   * and row lineage). The same statements on a format v2 table plan on the server and succeed.
+   * Until V11e two tests here pinned the wrong row lineage a server-planned v3 read and rewrite
+   * produced; the route no longer plans v3 tables.
    */
   @Test
-  void aServerPlannedReadOfAFormatV3TableHasNoInheritedSequenceNumber() throws Exception {
-    Format v3 = Format.V3;
-    run(seed(v3, MOR), v3.client, "seq_read_v3", "_c");
-    String table = DB + ".seq_read_v3_c";
-    List<List<Object>> onClient =
-        rows(
-            "SELECT id, _row_id, _last_updated_sequence_number FROM "
-                + v3.client
-                + "."
-                + table
-                + " ORDER BY id");
-    List<List<Object>> onServer =
-        rows(
-            "SELECT id, _row_id, _last_updated_sequence_number FROM "
-                + v3.server
-                + "."
-                + table
-                + " ORDER BY id");
-    Assertions.assertEquals(8, onClient.size());
-    for (int i = 0; i < onClient.size(); i++) {
-      Assertions.assertEquals(onClient.get(i).subList(0, 2), onServer.get(i).subList(0, 2));
-      Assertions.assertNotNull(onClient.get(i).get(2), onClient.toString());
-      Assertions.assertNull(onServer.get(i).get(2), onServer.toString());
+  void aSelectAnUpdateAndAMergeOnAFormatV3TableAreRefusedAndChangeNothing() throws Exception {
+    for (Format format : Format.values()) {
+      String name = "refused_" + format.name().toLowerCase();
+      List<String> setup = with(seed(format, MOR));
+      setup.addAll(SOURCE);
+      run(setup, format.client, name, "_s");
+      String table = DB + "." + name + "_s";
+      String source = DB + "." + name + "_src_s";
+      List<String> statements =
+          Arrays.asList(
+              "SELECT * FROM " + format.server + "." + table + " ORDER BY id",
+              "ALTER TABLE "
+                  + format.client
+                  + "."
+                  + table
+                  + " SET TBLPROPERTIES ('write.update.mode'='copy-on-write')",
+              "UPDATE " + format.server + "." + table + " SET name = upper(name) WHERE p = 'a'",
+              "MERGE INTO "
+                  + format.server
+                  + "."
+                  + table
+                  + " t USING "
+                  + format.server
+                  + "."
+                  + source
+                  + " s ON t.id = s.id"
+                  + " WHEN MATCHED AND s.op = 'd' THEN DELETE"
+                  + " WHEN MATCHED THEN UPDATE SET t.name = s.name"
+                  + " WHEN NOT MATCHED THEN INSERT (id, name, p) VALUES (s.id, s.name, s.p)");
+      for (String statement : statements) {
+        if (statement.startsWith("ALTER") || format == Format.V2) {
+          rows(statement);
+          continue;
+        }
+        List<List<List<Object>>> before = outcome(format, format.client + "." + table);
+        SparkIrcScanPlanningTest.assertRefusedAsFormatV3(statement);
+        rows("REFRESH TABLE " + format.client + "." + table);
+        Assertions.assertEquals(
+            before, outcome(format, format.client + "." + table), statement + ": unchanged");
+      }
+      if (format == Format.V2) {
+        // The client catalog cached the table before the server catalog wrote it.
+        rows("REFRESH TABLE " + format.client + "." + table);
+        Assertions.assertEquals(
+            Arrays.asList(
+                row(1L, "m1"),
+                row(4L, "m4"),
+                row(7L, "n7"),
+                row(8L, "N8"),
+                row(9L, "n9"),
+                row(10L, "n10"),
+                row(11L, "m11"),
+                row(12L, "m12")),
+            ids(rows("SELECT * FROM " + format.client + "." + table + " ORDER BY id")));
+      }
     }
-  }
-
-  /**
-   * Pins what that does to a write: a copy-on-write rewrite of a format v3 table copies the rows it
-   * keeps into a new file with their row ids and their last-updated sequence numbers, as Spark read
-   * them. With server planning it read none, so the rows it kept get the rewrite's sequence number,
-   * as if the statement had changed them: the stored row lineage differs from client planning's.
-   * Merge-on-read writes do not copy rows and are not affected (the scenarios above).
-   */
-  @Test
-  void aCopyOnWriteRewriteWithServerPlanningGivesTheRowsItKeepsANewSequenceNumber()
-      throws Exception {
-    Format v3 = Format.V3;
-    List<String> statements = with(seed(v3, COW), "DELETE FROM %t WHERE id = 2");
-    run(statements, v3.client, "seq_cow_v3", "_c");
-    run(statements, v3.server, "seq_cow_v3", "_s");
-    String query = "SELECT id, _row_id, _last_updated_sequence_number FROM %s WHERE id = 1";
-    long rewrite =
-        (Long)
-            rows("SELECT sequence_number FROM "
-                    + v3.client
-                    + "."
-                    + DB
-                    + ".seq_cow_v3_s.entries ORDER BY sequence_number DESC LIMIT 1")
-                .get(0)
-                .get(0);
-    // Row 1 shared its first file with row 2: the DELETE rewrote that file and kept row 1.
-    Assertions.assertEquals(
-        Arrays.asList(row(1L, 0L, 1L)),
-        rows(String.format(query, v3.client + "." + DB + ".seq_cow_v3_c")));
-    Assertions.assertEquals(
-        Arrays.asList(row(1L, 0L, rewrite)),
-        rows(String.format(query, v3.client + "." + DB + ".seq_cow_v3_s")));
-    Assertions.assertTrue(rewrite > 1L);
   }
 }

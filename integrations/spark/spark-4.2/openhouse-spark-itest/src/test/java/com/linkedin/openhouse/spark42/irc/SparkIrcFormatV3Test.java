@@ -47,7 +47,7 @@ public class SparkIrcFormatV3Test {
     spark.conf().set(prefix + ".type", "rest");
     spark.conf().set(prefix + ".uri", service.uri() + "/iceberg");
     spark.conf().set(prefix + ".token", service.token(IrcSpark.READER));
-    ServerPlanning.apply(prefix, spark.conf()::set);
+    ServerPlanning.notApplied(prefix, ServerPlanning.FORMAT_V3);
   }
 
   @AfterAll
