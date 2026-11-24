@@ -6,8 +6,9 @@ name: Reference Build on LinkedIn's Iceberg 1.5.2
 # so none can drop out of a list. It has no Spark 4.2 modules, no REST compatibility kit and no
 # deployables, and needs no published fork. It publishes nothing outside the runner.
 #
-# One definition, called after each merge (post-merge-build.yml) and on each pull request
-# (pr-validations.yml). The callers set the concurrency: this file cancels nothing.
+# One job, called after each merge (post-merge-build.yml). A pull request runs the same tasks cut
+# into parallel jobs (split-build.yml, scripts/ci/test-groups.py). The callers set the concurrency:
+# this file cancels nothing.
 on:
   workflow_call:
 
