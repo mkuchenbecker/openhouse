@@ -1,0 +1,170 @@
+name: Split Build and Run Tests
+
+# A pull request's build of one line, cut into jobs that run side by side
+# (docs/development/iceberg-fork.md, "CI"). The same Gradle tasks as the single job after each
+# merge (build-run-tests.yml for the default line, iceberg-linkedin-build.yml for the reference
+# line), cut by project: scripts/ci/test-groups.py lists a job per project directory that matches
+# its patterns (the Spark apps, the Spark itests), each running that project's `check`, and the
+# job `rest`, the whole build without those; the init script scripts/ci/test-groups.gradle does
+# the cutting inside Gradle. So the jobs together run all of `build`, and a project or test task
+# added later runs in its project's job or in `rest` without a change here. The default line's
+# Docker steps are a job of their own. It publishes nothing outside the runner and writes no cache.
+#
+# The single job took 52 minutes on 2026-11-24, most of it the apps' tests (38 minutes) and the
+# Spark itests running beside them on one runner; each group here has a runner to itself.
+on:
+  workflow_call:
+    inputs:
+      line:
+        description: >-
+          `default` (Iceberg 1.12 from the pinned fork commit) or `reference` (-PicebergLinkedIn,
+          LinkedIn's Iceberg 1.5.2).
+        type: string
+        required: true
+
+jobs:
+  # The jobs, from the patterns in scripts/ci/test-groups.py and the checkout's directories, so
+  # that the jobs below and the exclusions of `rest` cannot disagree. And the merged migrations check of the default build:
+  # every job of the line waits for it, as every step of the single job did.
+  plan:
+    name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, test groups
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      groups: ${{ steps.groups.outputs.groups }}
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      # Protect merged migration files before deployment: only additions to the base's directory pass.
+      - name: Check merged optimizer migrations are unchanged
+        if: inputs.line == 'default' && github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          git diff --exit-code --stat --diff-filter=DMRT "$BASE_SHA" HEAD -- \
+            libs/optimizer/optimizer-common/src/main/resources/db/migration
+
+      - name: List the test groups
+        id: groups
+        run: |
+          groups="$(python3 scripts/ci/test-groups.py matrix)"
+          echo "Groups: $groups"
+          echo "groups=$groups" >> "$GITHUB_OUTPUT"
+
+  tests:
+    name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, ${{ matrix.group }}
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # A red group does not cancel the others, as --continue does not stop at a red suite.
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.groups) }}
+    env:
+      # Each group restores the Gradle cache that the line's single job writes on irc-integration
+      # (post-merge-build.yml): gradle/actions/setup-gradle keys the cache on the job id, and this
+      # names that job's. Read-only, so a pull request still writes no cache entry.
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'microsoft'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      # Every Gradle command of the default build needs it; the reference build needs none.
+      - name: Restore or publish the Iceberg fork
+        if: inputs.line == 'default'
+        uses: ./.github/actions/iceberg-fork
+
+      # The line's whole build, cut to this job's share by the init script (it prints what it
+      # runs). With --continue, so that one red suite does not hide the others.
+      - name: Run the group's Gradle tasks
+        id: suites
+        env:
+          CI_GROUP_MODE: ${{ matrix.mode }}
+          CI_GROUP_DIRS: ${{ matrix.dirs }}
+          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
+        run: ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue
+
+      # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
+      # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
+      # task. These steps come last so that the job's log ends with each failed test and the start
+      # of its failure (on the default line also the Spark 4.2 tests' own service processes' logs),
+      # and the full reports can be downloaded. The kit's failing tests are expected and it reports
+      # its own outcome, so its results are left out.
+      - name: Print the failed tests
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' && inputs.line == 'default' }}
+        run: >-
+          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
+          --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'
+          build
+
+      - name: Print the failed tests
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' && inputs.line == 'reference' }}
+        run: python3 scripts/ci/print-failed-tests.py --lines 60 build
+
+      - name: Upload the test reports
+        if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.line }}-build-test-reports-${{ matrix.group }}
+          path: |
+            build/*/reports/tests
+            build/*/test-results
+            build/openhouse-spark-4.2-itest/tmp/*/*/service.log
+            build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The default build's Docker steps, as the single job runs them after its tests: the same
+  # composite action. They need the compiled build, not the tests' outcome.
+  docker:
+    name: Default build, Docker images and integration tests
+    if: inputs.line == 'default'
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: build-and-run-tests
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'microsoft'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      - name: Restore or publish the Iceberg fork
+        uses: ./.github/actions/iceberg-fork
+
+      # What the images are built from. The test classes compile in the groups that run them.
+      - name: Compile
+        id: compile
+        run: ./gradlew clean assemble
+
+      - name: Build the deployables and run the integration tests
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        uses: ./.github/actions/default-build-deployables
