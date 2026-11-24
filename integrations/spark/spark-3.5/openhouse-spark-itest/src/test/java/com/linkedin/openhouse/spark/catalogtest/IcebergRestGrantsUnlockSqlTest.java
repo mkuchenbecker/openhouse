@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
+import com.linkedin.openhouse.spark.grants.GrantStoringAuthorization;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
@@ -34,8 +35,8 @@ import org.springframework.context.ConfigurableApplicationContext;
  * unmodified {@code RESTCatalog} ({@code type=rest}), compared statement by statement with the same
  * statement through the OpenHouse catalog on an identical table.
  *
- * <p>A second embedded tables service stores grants ({@link RecordingAuthorization}; the default
- * fixture drops them) and denies {@value RecordingAuthorization#STRANGER} every privilege. Each
+ * <p>A second embedded tables service stores grants ({@link GrantStoringAuthorization}; the default
+ * fixture drops them) and denies {@value GrantStoringAuthorization#STRANGER} every privilege. Each
  * statement runs twice: through the OpenHouse catalog ({@code oh}) on database {@value #LEGACY_DB},
  * and through the REST catalog ({@code irc}) on database {@value #REST_DB}, whose tables are
  * created identically. Each outcome is pinned; where both succeed they must be equal (SHOW GRANTS
@@ -64,11 +65,13 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
           "system_lock_wrong_reason",
           "legacy_lock_wrong_reason",
           "denied_lock",
-          "unlocked");
+          "unlocked",
+          "effect",
+          "across");
 
   private ConfigurableApplicationContext server;
   private SparkSession spark;
-  private RecordingAuthorization acls;
+  private GrantStoringAuthorization acls;
   private OpenHouseInternalRepository repository;
   private final HttpClient http = HttpClient.newHttpClient();
 
@@ -76,18 +79,30 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   void start() throws Exception {
     org.apache.catalina.webresources.TomcatURLStreamHandlerFactory.disable();
     server =
-        new SpringApplication(SpringH2TestApplication.class, RecordingAuthorization.Config.class)
+        new SpringApplication(SpringH2TestApplication.class, GrantStoringAuthorization.Config.class)
             .run(
                 "--server.port=0",
                 "--cluster.security.token.interceptor.classname="
                     + DummyTokenInterceptor.class.getName());
-    acls = server.getBean(RecordingAuthorization.class);
+    acls = server.getBean(GrantStoringAuthorization.class);
     repository = server.getBean(OpenHouseInternalRepository.class);
     spark = getSparkSession().newSession();
     openHouseCatalog("ohc", OWNER);
-    openHouseCatalog("ohc_stranger", RecordingAuthorization.STRANGER);
+    openHouseCatalog("ohc_stranger", GrantStoringAuthorization.STRANGER);
     restCatalog("irc", OWNER);
-    restCatalog("irc_stranger", RecordingAuthorization.STRANGER);
+    restCatalog("irc_stranger", GrantStoringAuthorization.STRANGER);
+    // The principal that holds only what is granted to it. No catalog cache, so that every
+    // statement asks the service again after a grant or a revoke.
+    openHouseCatalog("ohc_only", GrantStoringAuthorization.ONLY_GRANTED);
+    restCatalog("irc_only", GrantStoringAuthorization.ONLY_GRANTED);
+    spark.conf().set("spark.sql.catalog.irc_only.cache-enabled", "false");
+    // The REST-shaped catalog class over the same service, for grants seen across paths.
+    openHouseCatalog("shim", OWNER);
+    spark
+        .conf()
+        .set(
+            "spark.sql.catalog.shim.catalog-impl",
+            "com.linkedin.openhouse.spark.OpenHouseRestCatalog");
 
     for (String db : Arrays.asList(LEGACY_DB, REST_DB)) {
       for (String table : TABLES) {
@@ -103,6 +118,7 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
       lock(db, "denied_lock", null);
       lock(db, "system_lock", "SYSTEM_ONLY");
       lock(db, "system_lock_wrong_reason", "SYSTEM_ONLY");
+      spark.sql("INSERT INTO ohc." + db + ".effect VALUES (1)");
     }
     assertSameState("set-up");
   }
@@ -215,11 +231,19 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
    * nativeMessage}, which the REST failure must carry too. The stored state must be equal after.
    */
   private String both(String template, boolean stranger, String nativeMessage) {
-    String legacy = outcome(sql(template, stranger ? "ohc_stranger" : "ohc", LEGACY_DB), LEGACY_DB);
-    String rest = outcome(sql(template, stranger ? "irc_stranger" : "irc", REST_DB), REST_DB);
+    return both(template, stranger ? "_stranger" : "", nativeMessage);
+  }
+
+  /**
+   * As {@link #both(String, boolean, String)}, as the principal of the catalogs named {@code ohc}
+   * and {@code irc} followed by {@code principal}: {@code ""} the owner, {@code "_stranger"} the
+   * principal denied everything, {@code "_only"} the one that holds only what is granted to it.
+   */
+  private String both(String template, String principal, String nativeMessage) {
+    String legacy = outcome(sql(template, "ohc" + principal, LEGACY_DB), LEGACY_DB);
+    String rest = outcome(sql(template, "irc" + principal, REST_DB), REST_DB);
     // Both outcomes in the test report, for the record of what a user sees on each path.
-    System.out.println(
-        "OUTCOME\t" + template + (stranger ? " (denied)" : "") + "\t" + legacy + "\t" + rest);
+    System.out.println("OUTCOME\t" + template + " (as" + principal + ")\t" + legacy + "\t" + rest);
     if (nativeMessage == null) {
       Assertions.assertEquals(legacy, rest, template);
     } else {
@@ -328,6 +352,123 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
     Assertions.assertEquals(
         "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + database,
         both("GRANT CREATE TABLE ON DATABASE {cat}.{db} TO gu_reader", true, database));
+  }
+
+  // ------------------------------------------------------------------ the effect of a grant
+
+  private static final String ONLY = "_only";
+
+  /**
+   * A grant has an effect (work item T6): {@value GrantStoringAuthorization#ONLY_GRANTED} holds
+   * only the privileges of what is granted to it, so it is refused a read until SELECT is granted,
+   * reads after the grant, and is refused again after the revoke; the grant gives what it names and
+   * not a write. Through the native routes (OpenHouse catalog) and the IRC routes (REST catalog),
+   * with the same outcome and the same stored state.
+   */
+  @Test
+  void aTableGrantLetsThePrincipalReadAndTheRevokeTakesItAway() {
+    String select = "SELECT * FROM {cat}.{db}.effect";
+    String message = "Operation on table {db}.effect failed as user only_granted is unauthorized";
+    String forbidden = "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + message;
+    Assertions.assertEquals(forbidden, both(select, ONLY, message));
+    Assertions.assertEquals(
+        "ok", both("GRANT SELECT ON TABLE {cat}.{db}.effect TO only_granted", "", null));
+    Assertions.assertEquals("ok [[1]]", both(select, ONLY, null));
+    // SELECT gives a read, not a write.
+    Assertions.assertEquals(
+        forbidden, both("INSERT INTO {cat}.{db}.effect VALUES (2)", ONLY, message));
+    Assertions.assertEquals(
+        "ok", both("REVOKE SELECT ON TABLE {cat}.{db}.effect FROM only_granted", "", null));
+    Assertions.assertEquals(forbidden, both(select, ONLY, message));
+    Assertions.assertEquals("ok [[1]]", both(select, "", null));
+  }
+
+  /**
+   * The database form: {@value GrantStoringAuthorization#ONLY_GRANTED} may not create a table in a
+   * database until CREATE TABLE is granted on it, and may again not after the revoke.
+   *
+   * <p>With the grant, the two paths differ, and both create the table. Over IRC the create
+   * succeeds. Through the OpenHouse catalog the statement fails after the table is created: the
+   * catalog reads the new table back, which needs a privilege on the table that CREATE TABLE on the
+   * database does not give in this backend (the creator is given nothing on its table here; what a
+   * deployed policy gives a creator is not in this repository). Pinned as observed.
+   */
+  @Test
+  void aDatabaseGrantLetsThePrincipalCreateATableAndTheRevokeTakesItAway() {
+    String create = "CREATE TABLE {cat}.{db}.made_by_grantee (id bigint)";
+    String message = "Operation on database [{db}] failed as user [only_granted] is unauthorized";
+    String forbidden = "org.apache.iceberg.exceptions.ForbiddenException: Forbidden: " + message;
+    try {
+      Assertions.assertEquals(forbidden, both(create, ONLY, message));
+      Assertions.assertEquals(
+          "ok", both("GRANT CREATE TABLE ON DATABASE {cat}.{db} TO only_granted", "", null));
+
+      Assertions.assertEquals(
+          LEGACY_FAILURE
+              + ": 403 Forbidden , {\"status\":\"FORBIDDEN\",\"error\":\"Forbidden\",\"message\":"
+              + "\"Operation on table {db}.made_by_grantee failed as user only_granted is"
+              + " unauthorized\",\"stacktrace\":null,\"cause\":\"Not Available\"}",
+          outcome(sql(create, "ohc" + ONLY, LEGACY_DB), LEGACY_DB));
+      Assertions.assertEquals("ok", outcome(sql(create, "irc" + ONLY, REST_DB), REST_DB));
+      Assertions.assertEquals("unlocked", lockState(LEGACY_DB, "made_by_grantee"));
+      Assertions.assertEquals("unlocked", lockState(REST_DB, "made_by_grantee"));
+
+      Assertions.assertEquals(
+          "ok", both("REVOKE CREATE TABLE ON DATABASE {cat}.{db} FROM only_granted", "", null));
+      both("DROP TABLE {cat}.{db}.made_by_grantee", "", null);
+      Assertions.assertEquals(forbidden, both(create, ONLY, message));
+    } finally {
+      both("DROP TABLE IF EXISTS {cat}.{db}.made_by_grantee", "", null);
+    }
+  }
+
+  /**
+   * One service, three catalog paths: a grant made through one is listed through the others, and a
+   * revoke through one is gone through the others. The OpenHouse catalog and the REST-shaped
+   * catalog class reach the native routes, the REST catalog the IRC capability routes; all three
+   * reach the one store.
+   */
+  @Test
+  void aGrantMadeThroughOnePathIsListedAndRevokedThroughTheOthers() {
+    String t = "." + REST_DB + ".across";
+    Assertions.assertEquals("ok", outcome("GRANT SELECT ON TABLE ohc" + t + " TO gu_x", REST_DB));
+    Assertions.assertEquals("ok", outcome("GRANT ALTER ON TABLE irc" + t + " TO gu_y", REST_DB));
+    Assertions.assertEquals(
+        "ok", outcome("GRANT MANAGE GRANTS ON TABLE shim" + t + " TO gu_z", REST_DB));
+    String all = "ok [[SELECT,gu_x], [ALTER,gu_y], [MANAGE GRANTS,gu_z]]";
+    for (String catalog : Arrays.asList("ohc", "irc", "shim")) {
+      Assertions.assertEquals(
+          all, outcome("SHOW GRANTS ON TABLE " + catalog + t, REST_DB), catalog);
+    }
+    Assertions.assertEquals(
+        Arrays.asList("gu_x=TABLE_VIEWER", "gu_y=TABLE_ADMIN", "gu_z=ACL_EDITOR"),
+        acls.stored(REST_DB + ".across"));
+
+    Assertions.assertEquals(
+        "ok", outcome("REVOKE SELECT ON TABLE irc" + t + " FROM gu_x", REST_DB));
+    Assertions.assertEquals(
+        "ok", outcome("REVOKE ALTER ON TABLE shim" + t + " FROM gu_y", REST_DB));
+    Assertions.assertEquals(
+        "ok", outcome("REVOKE MANAGE GRANTS ON TABLE ohc" + t + " FROM gu_z", REST_DB));
+    for (String catalog : Arrays.asList("ohc", "irc", "shim")) {
+      Assertions.assertEquals(
+          "ok", outcome("SHOW GRANTS ON TABLE " + catalog + t, REST_DB), catalog);
+    }
+
+    String db = " ON DATABASE irc." + REST_DB;
+    Assertions.assertEquals("ok", outcome("GRANT CREATE TABLE" + db + " TO gu_across", REST_DB));
+    for (String catalog : Arrays.asList("ohc", "irc", "shim")) {
+      Assertions.assertEquals(
+          "ok [[CREATE TABLE,gu_across]]",
+          outcome("SHOW GRANTS ON DATABASE " + catalog + "." + REST_DB, REST_DB),
+          catalog);
+    }
+    Assertions.assertEquals(
+        "ok",
+        outcome("REVOKE CREATE TABLE ON DATABASE shim." + REST_DB + " FROM gu_across", REST_DB));
+    Assertions.assertEquals("ok", outcome("SHOW GRANTS ON DATABASE ohc." + REST_DB, REST_DB));
+    // Everything granted is revoked again: the two databases hold the same.
+    assertSameState("grants across paths");
   }
 
   @Test

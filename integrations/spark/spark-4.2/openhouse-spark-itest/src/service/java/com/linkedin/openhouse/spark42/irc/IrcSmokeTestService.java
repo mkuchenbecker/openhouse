@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.housetables.client.model.ToggleStatus;
+import com.linkedin.openhouse.spark.grants.GrantStoringAuthorization;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
@@ -47,17 +48,17 @@ import org.springframework.context.ConfigurableApplicationContext;
 /**
  * The tables service for the Spark 4.2 run of the Spark SQL smoke suite ({@code smokeTest}), in its
  * own JVM. It is the service the Spark 3.5 smoke suite embeds ({@link SpringH2TestApplication} with
- * the cluster defaults: ORC, format version 2, the service's own authorization handler, which
- * allows everything and drops grants), so that a statement that behaves differently here differs
- * because of the engine or the catalog path and not because of the service. Three things are not
- * the embedded fixture's:
+ * the cluster defaults: ORC, format version 2, and the authorization backend that stores grants,
+ * {@link GrantStoringAuthorization}, work item T6), so that a statement that behaves differently
+ * here differs because of the engine or the catalog path and not because of the service. These
+ * things are not the Spark 3.5 suite's service's:
  *
  * <ul>
  *   <li>tables are kept in a directory of this run ({@link ServiceWarehouse}), not in {@code /tmp};
  *   <li>the dummy token interceptor is on, so the catalog's {@code token} names a principal, as for
  *       the other Spark 4.2 test services;
- *   <li>the views feature gate is open for {@value #VIEWS_DB}. The Spark 3.5 suite starts a second
- *       embedded service for that; here one service has both kinds of database;
+ *   <li>it is one service for the whole run (the Spark 3.5 suite's service, which also opens the
+ *       views feature gate for {@value #VIEWS_DB}, is one per test class);
  *   <li>every request is written to an access log ({@code access} in the work directory), so a test
  *       can see which routes the suite called.
  * </ul>
@@ -90,7 +91,7 @@ public final class IrcSmokeTestService {
     // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
     Path warehouse = ServiceWarehouse.create();
     ConfigurableApplicationContext context =
-        new SpringApplication(SpringH2TestApplication.class)
+        new SpringApplication(SpringH2TestApplication.class, GrantStoringAuthorization.Config.class)
             .run(
                 "--server.port=0",
                 "--server.shutdown=immediate",

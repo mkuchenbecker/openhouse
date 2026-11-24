@@ -2,6 +2,7 @@ package com.linkedin.openhouse.spark42.smoke;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.linkedin.openhouse.spark.smoke.StoredTable;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -12,9 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -132,7 +131,9 @@ final class SmokeTestService {
     if (response.statusCode() != 200) {
       throw new IllegalStateException(name + ": " + result.path("error").asText());
     }
-    return new StoredTable(result);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> stored = JSON.convertValue(result, Map.class);
+    return new StoredTable(stored);
   }
 
   /** Whether the service has a table {@code <db>.<table>}, asked through the Java client. */
@@ -159,98 +160,6 @@ final class SmokeTestService {
             .GET()
             .build(),
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  /** A table as the service stored it. */
-  static final class StoredTable {
-    private final JsonNode stored;
-
-    private StoredTable(JsonNode stored) {
-      this.stored = stored;
-    }
-
-    /** Each column as {@code name type}, with {@code not null} and the comment if it has them. */
-    List<String> columns() {
-      return strings(stored.get("columns"));
-    }
-
-    /** The partition fields, as Iceberg prints them. */
-    String partitioning() {
-      return stored.get("partitioning").asText();
-    }
-
-    Map<String, String> properties() {
-      Map<String, String> properties = new LinkedHashMap<>();
-      stored
-          .get("properties")
-          .fields()
-          .forEachRemaining(e -> properties.put(e.getKey(), e.getValue().asText()));
-      return properties;
-    }
-
-    /** The operation of every snapshot, in commit order. */
-    List<String> operations() {
-      List<String> operations = new ArrayList<>();
-      stored.get("snapshots").forEach(s -> operations.add(s.get("operation").asText()));
-      return operations;
-    }
-
-    /** The summary of the snapshot at {@code position} (from 1, in commit order). */
-    Map<String, String> summary(int position) {
-      Map<String, String> summary = new LinkedHashMap<>();
-      stored
-          .get("snapshots")
-          .get(position - 1)
-          .get("summary")
-          .fields()
-          .forEachRemaining(e -> summary.put(e.getKey(), e.getValue().asText()));
-      return summary;
-    }
-
-    /** The id of the snapshot at {@code position} (from 1, in commit order). */
-    long snapshotId(int position) {
-      return stored.get("snapshots").get(position - 1).get("id").asLong();
-    }
-
-    /** Whether a branch or tag reaches the snapshot at {@code position} (from 1). */
-    boolean reachable(int position) {
-      return stored.get("snapshots").get(position - 1).get("reachable").asBoolean();
-    }
-
-    /** Each ref as {@code name=branch} or {@code name=tag}, sorted by name. */
-    List<String> refs() {
-      List<String> refs = new ArrayList<>();
-      stored
-          .get("refs")
-          .fields()
-          .forEachRemaining(e -> refs.add(e.getKey() + "=" + e.getValue().asText()));
-      return refs;
-    }
-
-    /** The rows a reader of {@code main} gets, comma-joined and sorted; none without a main. */
-    List<String> rows() {
-      return rows("main");
-    }
-
-    /**
-     * The rows a reader of {@code ref} gets, or of {@code snapshot <position>} for a snapshot no
-     * ref reaches; an empty list if there is no such ref.
-     */
-    List<String> rows(String ref) {
-      JsonNode rows = stored.get("rows").get(ref);
-      return rows == null ? new ArrayList<>() : strings(rows);
-    }
-
-    private static List<String> strings(JsonNode array) {
-      List<String> values = new ArrayList<>();
-      array.forEach(v -> values.add(v.asText()));
-      return values;
-    }
-
-    @Override
-    public String toString() {
-      return stored.toString();
-    }
   }
 
   private void stop() {

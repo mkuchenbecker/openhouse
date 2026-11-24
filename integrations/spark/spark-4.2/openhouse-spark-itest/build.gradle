@@ -37,7 +37,12 @@ java {
 
 sourceSets {
   service {
-    java.srcDirs = ['src/service/java']
+    // The authorization backend that stores grants is the Spark 3.5 itest's (work item T6), so the
+    // services of both itests answer grants the same way.
+    java.srcDirs = [
+        'src/service/java',
+        rootProject.file('integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/authorization/java')
+    ]
   }
   // The Spark SQL smoke suite. Its statements and baseline outcomes are one list, shared with the
   // Spark 3.5 itest, which owns it (work item N7): that itest's src/shared/smoke/java holds only
