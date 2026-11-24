@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 46 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 126, merge
-commit 57db4015) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 47 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 127, merge
+commit 91e175c4) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -56,6 +56,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 124 | X1, W6: format v3 tables behind `cluster.iceberg.format-v3.enabled`, default off; create or upgrade through the table property on both APIs; Spark's row-level writes work on them; four native answers change (`57-x1-format-v3-result.md`) | e2e02bfa0d1b674cb774f591355e19c911fee46b |
 | 126 | W7, X4: Spark 3.5 and Spark 4.2 read old Parquet and ORC files through native default values on format v3 tables; widening the type of a column with an `initial-default` is now accepted on v3 (`61-w7-x4-result.md`) | 57db4015ff0085f1cce6ca9c5a54ee09150a876b |
 | 121 | V15, V3b, V3c: a write whose House Tables row would not fit is refused with 400 before anything is written, the limit a cluster property (default 255); the IRC config route's FileIO follows the default storage; failed IRC requests are audited (`59-v15-v3b-v3c-result.md`) | 72947228dc77359a6c1b76fef667ba108ee7769d |
+| 127 | V11a, V12a: on the Iceberg 1.12 line the plan route is served synchronously and the credentials route answers an empty list; the 1.5.2 line still answers 406 for both (`62-v11a-v12a-result.md`) | 91e175c4809915645473f7070bf64b93b8adda66 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
