@@ -81,6 +81,17 @@ final class IrcReadTestServiceProcess {
   }
 
   /**
+   * A service of its own for one test class, with {@code serviceJvmArgs} (system properties are
+   * configuration properties of the service). Not shared: the caller stops it with {@link #stop()};
+   * it is stopped when the test JVM exits at the latest.
+   */
+  static IrcReadTestServiceProcess startOwn(List<String> serviceJvmArgs) throws Exception {
+    IrcReadTestServiceProcess own = start(serviceJvmArgs);
+    Runtime.getRuntime().addShutdownHook(new Thread(own::stop, "irc42-own-service-stop"));
+    return own;
+  }
+
+  /**
    * @param serviceJvmArgs more arguments for the service's JVM; a system property is a
    *     configuration property of the service
    */
@@ -169,7 +180,7 @@ final class IrcReadTestServiceProcess {
     return started;
   }
 
-  private void stop() {
+  void stop() {
     try {
       process.getOutputStream().close();
       if (!process.waitFor(30, TimeUnit.SECONDS)) {

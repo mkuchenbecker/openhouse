@@ -6,10 +6,14 @@ import com.linkedin.openhouse.tables.authorization.Privileges;
 import io.swagger.v3.oas.annotations.Hidden;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.rest.PlanStatus;
 import org.apache.iceberg.rest.requests.PlanTableScanRequest;
 import org.apache.iceberg.rest.responses.ImmutableLoadCredentialsResponse;
+import org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
@@ -28,11 +32,12 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <ul>
  *   <li>{@code POST .../tables/{table}/plan}: planned synchronously, answered {@code completed}
- *       with every file scan task ({@link IcebergRestScanPlanner}). Nothing is stored, so the
- *       routes that read or cancel a stored plan, and the one that pages its tasks, are not served
- *       and not listed: they answer the 406 every unserved spec route answers. Iceberg's client
- *       calls them only for a {@code submitted} plan, for {@code plan-tasks}, or when the cancel
- *       route is listed, none of which this server produces.
+ *       with every file scan task ({@link IcebergRestScanPlanner}), or {@code failed} when the scan
+ *       plans more tasks than the cluster property {@value #MAX_FILE_SCAN_TASKS} allows. Nothing is
+ *       stored, so the routes that read or cancel a stored plan, and the one that pages its tasks,
+ *       are not served and not listed: they answer the 406 every unserved spec route answers.
+ *       Iceberg's client calls them only for a {@code submitted} plan, for {@code plan-tasks}, or
+ *       when the cancel route is listed, none of which this server produces.
  *   <li>{@code GET .../tables/{table}/credentials}: an empty {@code storage-credentials} list. The
  *       service holds no credential it could narrow to one table; the specification lets a server
  *       supply access "via any or none". The {@code planId} parameter is accepted and ignored.
@@ -48,6 +53,7 @@ import org.springframework.web.bind.annotation.RestController;
  * are.
  */
 @Hidden
+@Slf4j
 @RestController
 @ConditionalOnClass(name = IcebergRestScanController.SCAN_API_CLASS)
 public class IcebergRestScanController {
@@ -57,7 +63,17 @@ public class IcebergRestScanController {
 
   private static final String V1 = IcebergRestCatalogController.BASE_PATH + "/v1";
 
+  /**
+   * The cluster property bounding the file scan tasks of one plan (work item V11c). A scan that
+   * plans more is answered {@code failed}; not set, or not positive, means {@link
+   * IcebergRestScanPlanner#DEFAULT_MAX_FILE_SCAN_TASKS}.
+   */
+  static final String MAX_FILE_SCAN_TASKS = "cluster.tables.irc.scan-planning.max-file-scan-tasks";
+
   @Autowired private IcebergRestApiHandler handler;
+
+  @Value("${" + MAX_FILE_SCAN_TASKS + ":0}")
+  private int maxFileScanTasks;
 
   /**
    * Plans a scan of a table. Secured like the load route; the parameter names are the ones the
@@ -75,7 +91,12 @@ public class IcebergRestScanController {
     // the body says.
     Table table = handler.loadIcebergTable(database, tableId, extractAuthenticatedUserPrincipal());
     PlanTableScanRequest request = IcebergRestJson.read(body, PlanTableScanRequest.class);
-    return IcebergRestJson.ok(IcebergRestScanPlanner.plan(table, request));
+    int bound = IcebergRestScanPlanner.bound(maxFileScanTasks);
+    PlanTableScanResponse response = IcebergRestScanPlanner.plan(table, request, bound);
+    if (response.planStatus() == PlanStatus.FAILED) {
+      log.warn("IRC plan of {}.{} refused: more than {} file scan tasks", database, tableId, bound);
+    }
+    return IcebergRestJson.ok(response);
   }
 
   /**

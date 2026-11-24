@@ -55,6 +55,7 @@ final class SmokeSpark {
             .config(prefix + ".type", "rest")
             .config(prefix + ".uri", service.uri() + "/iceberg")
             .config(prefix + ".token", service.token());
+        ServerPlanning.apply(prefix, builder::config);
       }
       builder.config("spark.sql.catalog." + OPENHOUSE_VIEWS + ".cache-enabled", "false");
       builder

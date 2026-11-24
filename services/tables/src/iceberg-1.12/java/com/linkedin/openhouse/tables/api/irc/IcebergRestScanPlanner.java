@@ -14,6 +14,7 @@ import org.apache.iceberg.TableScan;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.rest.PlanStatus;
 import org.apache.iceberg.rest.requests.PlanTableScanRequest;
+import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.PlanTableScanResponse;
 
 /**
@@ -51,16 +52,48 @@ import org.apache.iceberg.rest.responses.PlanTableScanResponse;
  * requires one with {@code completed}, and Iceberg's client uses it only to cancel a plan (a route
  * this server does not list, so the client never calls it) and to name the plan when credentials
  * come with it (this server sends none).
+ *
+ * <p>One plan is bounded (work item V11c): it holds at most a configured number of file scan tasks,
+ * and a scan that plans more is answered {@code failed} ({@link #plan}). The bound is on what one
+ * request makes the service hold; it does not bound the time spent reading manifests of a scan
+ * whose filter prunes most files.
  */
 final class IcebergRestScanPlanner {
 
   private IcebergRestScanPlanner() {}
 
-  static PlanTableScanResponse plan(Table table, PlanTableScanRequest request) {
+  /**
+   * The bound on file scan tasks in one plan when the cluster property sets none, or sets one that
+   * is not positive. See the V11c measurement: on the local test fixture, a plan of 10,000 tasks
+   * answered 2.8 MB and the heap's high-water mark while writing it was about 25 MB.
+   */
+  static final int DEFAULT_MAX_FILE_SCAN_TASKS = 10_000;
+
+  /** The error type of a plan answered {@code failed} for having more tasks than the bound. */
+  static final String TOO_LARGE = "ScanPlanTooLargeException";
+
+  /** {@code configured}, or the default when it is not positive. */
+  static int bound(int configured) {
+    return configured > 0 ? configured : DEFAULT_MAX_FILE_SCAN_TASKS;
+  }
+
+  /**
+   * Plans the scan {@code request} describes on {@code table}. At most {@code maxTasks} file scan
+   * tasks are held: when the scan plans one more, planning stops, what was planned is dropped, and
+   * the answer is {@code failed} with no task and no plan id (decision of V11c: Iceberg 1.12's
+   * client then fails the scan with an {@code IllegalStateException} that carries the message, and
+   * does not retry or fall back, so a client never reads part of a table as if it were all).
+   */
+  static PlanTableScanResponse plan(Table table, PlanTableScanRequest request, int maxTasks) {
     Scan<?, FileScanTask, ?> scan = configure(scanOf(table, request), request);
     List<FileScanTask> tasks = new ArrayList<>();
     try (CloseableIterable<FileScanTask> planned = scan.planFiles()) {
-      planned.forEach(tasks::add);
+      for (FileScanTask task : planned) {
+        if (tasks.size() >= maxTasks) {
+          return tooLarge(table, maxTasks);
+        }
+        tasks.add(task);
+      }
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
@@ -68,6 +101,24 @@ final class IcebergRestScanPlanner {
         .withPlanStatus(PlanStatus.COMPLETED)
         .withPlanId(UUID.randomUUID().toString())
         .withFileScanTasks(tasks)
+        .build();
+  }
+
+  private static PlanTableScanResponse tooLarge(Table table, int maxTasks) {
+    return PlanTableScanResponse.builder(table.specs())
+        .withPlanStatus(PlanStatus.FAILED)
+        .withErrorResponse(
+            ErrorResponse.builder()
+                .responseCode(422)
+                .withType(TOO_LARGE)
+                .withMessage(
+                    String.format(
+                        "The scan plans more than %d file scan tasks, the most this service plans"
+                            + " in one request (cluster property %s). Plan it on the client"
+                            + " (catalog property scan-planning-mode=client), or narrow it with a"
+                            + " filter.",
+                        maxTasks, IcebergRestScanController.MAX_FILE_SCAN_TASKS))
+                .build())
         .build();
   }
 
