@@ -72,21 +72,28 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Autowired PreCommitCheckRunner preCommitCheckRunner;
 
+  /** Absent where a catalog is built without the cluster's configuration: the default widths. */
+  @Autowired(required = false)
+  HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
+
   @Override
   protected TableOperations newTableOps(TableIdentifier tableIdentifier) {
     FileIO fileIO = resolveFileIO(tableIdentifier);
     MetricsReporter metricsReporter =
         new MetricsReporter(this.meterRegistry, METRICS_PREFIX, Lists.newArrayList());
-    return new OpenHouseInternalTableOperations(
-        houseTableRepository,
-        fileIO,
-        houseTableMapper,
-        tableIdentifier,
-        metricsReporter,
-        fileIOManager,
-        tableMetadataCache,
-        postCommitOperationRunner,
-        preCommitCheckRunner);
+    OpenHouseInternalTableOperations operations =
+        new OpenHouseInternalTableOperations(
+            houseTableRepository,
+            fileIO,
+            houseTableMapper,
+            tableIdentifier,
+            metricsReporter,
+            fileIOManager,
+            tableMetadataCache,
+            postCommitOperationRunner,
+            preCommitCheckRunner);
+    operations.houseTableRowLimits = houseTableRowLimits;
+    return operations;
   }
 
   @Override

@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.tables.mock.properties;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,16 @@ public class DefaultClusterPropertiesTest {
   @Test
   public void testClusterPropertiesIcebergOrcCompressionCodecDefaultsToNull() {
     Assertions.assertNull(clusterProperties.getClusterIcebergWriteOrcCompressionCodec());
+  }
+
+  /** The default is the production store's column, which {@link HouseTableRowLimits} states. */
+  @Test
+  public void testHouseTablesMetadataLocationMaxLengthDefaultsToTheProductionColumn() {
+    Assertions.assertEquals(
+        HouseTableRowLimits.DEFAULT_METADATA_LOCATION_MAX_LENGTH,
+        clusterProperties.getClusterHouseTablesMetadataLocationMaxLength());
+    Assertions.assertEquals(
+        255, new HouseTableRowLimits(clusterProperties).getMetadataLocationMaxLength());
   }
 
   @AfterAll

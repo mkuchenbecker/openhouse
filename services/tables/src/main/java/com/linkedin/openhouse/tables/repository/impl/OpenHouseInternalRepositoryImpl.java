@@ -23,7 +23,9 @@ import com.linkedin.openhouse.common.exception.UnsupportedClientOperationExcepti
 import com.linkedin.openhouse.common.metrics.MetricsConstant;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
+import com.linkedin.openhouse.internal.catalog.OpenHouseInternalTableOperations;
 import com.linkedin.openhouse.internal.catalog.SnapshotsUtil;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
@@ -124,6 +126,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   @Autowired SchemaValidator schemaValidator;
 
   @Autowired ClusterProperties clusterProperties;
+
+  @Autowired(required = false)
+  HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 
   @Autowired PreservedKeyChecker preservedKeyChecker;
 
@@ -289,6 +294,11 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     // staged metadata may be at its format version, as the create that completes it will.
     new FormatVersionCommitPolicy(formatVersionRule())
         .check(tableIdentifier, null, staged, staged.properties());
+    // Nothing is written here, so the commit that completes this create is the first to learn
+    // that its House Tables row would not fit; say so now, before the client writes its data.
+    // Last, as in the catalog's commit path.
+    OpenHouseInternalTableOperations.rejectIfFirstMetadataLocationWillNotFit(
+        tableIdentifier, staged, houseTableRowLimits);
     return staged;
   }
 
