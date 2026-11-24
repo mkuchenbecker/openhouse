@@ -14,14 +14,17 @@ import com.linkedin.openhouse.housetables.client.invoker.ApiClient;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tag;
+import io.swagger.v3.oas.models.media.Schema;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -188,6 +191,38 @@ public class MainApplicationConfig extends BaseApplicationConfig {
                               operation.setOperationId(
                                   sanitizeOpId(operation.getOperationId())
                                       + pathToPostfix.get(path))));
+    };
+  }
+
+  /**
+   * Writes the properties of the schemas springdoc makes from Spring Data's {@code Page} (named
+   * {@code Page<content type>}) in alphabetical order, so that two builds of the same sources write
+   * the same spec (work item C15). springdoc lists a schema's properties in the order Jackson finds
+   * them, which for {@code Page}, an interface with getters and no fields, is the order of {@code
+   * Class.getDeclaredMethods()} on {@code Page} and {@code Slice}: the JVM does not fix that order,
+   * and it changed from one spec generation to the next. The schemas of the service's own classes
+   * keep their field order, which is fixed. Only the order changes; the generated clients' models
+   * of these schemas have the same fields.
+   */
+  @Bean
+  OpenApiCustomiser pageSchemaPropertyOrderCustomizer() {
+    return openApi -> {
+      if (openApi.getComponents() == null || openApi.getComponents().getSchemas() == null) {
+        return;
+      }
+      openApi
+          .getComponents()
+          .getSchemas()
+          .forEach(
+              (name, schema) -> {
+                Map<String, Schema> properties = schema.getProperties();
+                if (name.startsWith("Page")
+                    && properties != null
+                    && properties.containsKey("pageable")
+                    && properties.containsKey("totalPages")) {
+                  schema.setProperties(new LinkedHashMap<>(new TreeMap<>(properties)));
+                }
+              });
     };
   }
 
