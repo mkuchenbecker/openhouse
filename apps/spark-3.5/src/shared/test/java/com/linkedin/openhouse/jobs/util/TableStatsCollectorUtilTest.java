@@ -87,6 +87,56 @@ public class TableStatsCollectorUtilTest {
   }
 
   @Test
+  public void testTransformPartitionRowToColumnData_labelsByTheStructNotTheCurrentSpec() {
+    // A table whose spec went from (day(ts), identity(category)) to (day(ts), identity(region)):
+    // the metadata tables' partition struct is the union (ts_day, category, region), while the
+    // current spec's names are (ts_day, region). A file written under the first spec has a
+    // category and no region; it must not be reported as region=b.
+    StructType union =
+        new StructType()
+            .add("ts_day", DataTypes.StringType)
+            .add("category", DataTypes.StringType)
+            .add("region", DataTypes.StringType);
+    List<String> currentSpec = Arrays.asList("ts_day", "region");
+
+    List<ColumnData> oldSpecFile =
+        TableStatsCollectorUtil.transformPartitionRowToColumnData(
+            new GenericRowWithSchema(new Object[] {"2026-11-24", "b", null}, union), currentSpec);
+    Assertions.assertEquals(
+        Arrays.asList(
+            new ColumnData.StringColumnData("ts_day", "2026-11-24"),
+            new ColumnData.StringColumnData("category", "b")),
+        oldSpecFile);
+
+    List<ColumnData> newSpecFile =
+        TableStatsCollectorUtil.transformPartitionRowToColumnData(
+            new GenericRowWithSchema(new Object[] {"2026-11-24", null, "r1"}, union), currentSpec);
+    Assertions.assertEquals(
+        Arrays.asList(
+            new ColumnData.StringColumnData("ts_day", "2026-11-24"),
+            new ColumnData.StringColumnData("region", "r1")),
+        newSpecFile);
+  }
+
+  @Test
+  public void testTransformPartitionRowToColumnData_singleSpecSameWithOrWithoutSchema() {
+    // With one spec the struct is the spec's fields in order: labels from the struct equal the
+    // positional labels from the spec's names (what a row without a schema still gets).
+    StructType spec =
+        new StructType()
+            .add("ts_day", DataTypes.StringType)
+            .add("bucket", DataTypes.IntegerType)
+            .add("name", DataTypes.StringType);
+    Object[] values = {"2026-11-24", 3, "x"};
+    List<String> names = Arrays.asList("ts_day", "bucket", "name");
+    Assertions.assertEquals(
+        TableStatsCollectorUtil.transformPartitionRowToColumnData(
+            org.apache.spark.sql.RowFactory.create(values), names),
+        TableStatsCollectorUtil.transformPartitionRowToColumnData(
+            new GenericRowWithSchema(values, spec), names));
+  }
+
+  @Test
   public void testTransformPartitionRowToColumnData_withIntegerType() {
     // Test: Partition column with Integer value (converted to Long)
     StructType schema = new StructType().add("day", DataTypes.IntegerType);

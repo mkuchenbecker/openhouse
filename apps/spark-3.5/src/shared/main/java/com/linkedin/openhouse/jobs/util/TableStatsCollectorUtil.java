@@ -22,6 +22,7 @@ import com.linkedin.openhouse.common.stats.model.ReplicationPolicyStatsSchema;
 import com.linkedin.openhouse.common.stats.model.RetentionStatsSchema;
 import com.linkedin.openhouse.tables.client.model.TimePartitionSpec;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -1320,14 +1321,26 @@ public final class TableStatsCollectorUtil {
    *
    * <p><b>Visibility:</b> Package-private for testing purposes.
    *
+   * <p>Each value is labeled with the name of its own field in {@code partitionRow}'s schema when
+   * the row carries one (rows collected from a DataFrame do). The {@code partition} struct of
+   * Iceberg's metadata tables is the union of the fields of every partition spec the table has had,
+   * not the current spec's, so on a table whose spec evolved, mapping values to the current spec's
+   * names by position mislabels them. On a table with one spec that struct is exactly the spec's
+   * fields in order, so the labels are the same either way. A row without a schema falls back to
+   * {@code columnNames} by position.
+   *
    * @param partitionRow Spark Row containing partition column values
-   * @param columnNames List of partition column names (in spec order)
+   * @param columnNames List of partition column names (in spec order), used when the row has no
+   *     schema
    * @return List of ColumnData with typed values
    */
   static List<ColumnData> transformPartitionRowToColumnData(
       Row partitionRow, List<String> columnNames) {
 
     List<ColumnData> result = new ArrayList<>();
+    if (partitionRow.schema() != null) {
+      columnNames = Arrays.asList(partitionRow.schema().fieldNames());
+    }
 
     for (int i = 0; i < columnNames.size(); i++) {
       String colName = columnNames.get(i);
