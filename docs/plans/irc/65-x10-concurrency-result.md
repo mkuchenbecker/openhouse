@@ -29,10 +29,10 @@ CONFLICT is a visible failure with the table as the winner left it. SERIAL is a 
 | Case (loser against winner) | Native path | REST path (Spark 4.2) |
 | --- | --- | --- |
 | Compaction against DELETE | CONFLICT (rewrite: new deletes for replaced files) | same |
-| Compaction against INSERT | SERIAL | same |
+| Compaction against INSERT | SERIAL | not run |
 | DELETE, UPDATE, MERGE against compaction | CONFLICT (missing data files) | same |
-| DELETE against DELETE on the same data file | v2 SERIAL (two position delete files); v3 CONFLICT ("Found concurrently added DV") | not run |
-| UPDATE against DELETE | CONFLICT (conflicting delete files) | not run |
+| DELETE against DELETE on the same data file | v2 SERIAL (two position delete files); v3 CONFLICT ("Found concurrently added DV") | same: v2 SERIAL, v3 CONFLICT |
+| UPDATE against DELETE | CONFLICT (conflicting delete files) | same |
 | DELETE, UPDATE against snapshot expiry | SERIAL, no snapshot resurrected | not run |
 | Expiry against DELETE | SERIAL | not run |
 | Write whose scan snapshot an INSERT and expiry removed | CONFLICT (IllegalArgumentException, "not an ancestor") | not run |
@@ -43,7 +43,10 @@ CONFLICT is a visible failure with the table as the winner left it. SERIAL is a 
 | Orphan removal with age 0 through the constructor | all in-flight files deleted; the UPDATE commits and its manifest list is missing (pinned) | not run |
 
 Over REST the raced request is refused by the requirement check ("Requirement failed: branch main has changed").
-Natively the refusal is 409 "Conflict detected". The 12 REST cases are the first three rows of this table.
+Natively the refusal is 409 "Conflict detected". The 12 REST cases are four rows of this table, on v2 and v3: compaction against DELETE, DELETE, UPDATE or MERGE against
+compaction, DELETE against DELETE, and UPDATE against DELETE. Compaction against INSERT, expiry, retention, row ids and
+orphan removal were not run over REST.
+Note 2026-11-24: the REST column was corrected from the author's final report; an earlier version said the first three rows.
 
 ## Where each conflict check runs [read]
 
