@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 59 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 139, merge
-commit e6c52c21) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 60 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 137, merge
+commit 461ae437) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -69,6 +69,7 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 136 | C12: Java compile and Javadoc use UTF-8 in the root build, so a build under the `C` locale no longer fails on non-ASCII sources; C8 and T12 needed no change (`dec16c80`, `98328ea2`) | 4b696a5562c27faf268b15908e64d3cfd6b91ad4 |
 | 138 | C16 fix-forward: the step that prints failed tests also reads the build's console log, so a job whose test process died no longer prints zero failures; 62 printed on the real failed log (`75-n8-v18-c15-and-ci-fix-result.md`) | c2c5214482a365ce3aaded99766266793a811724 |
 | 139 | N8, V18, C15: policy tags in one stored order, the Iceberg 1.2 guards removed, byte-stable OpenAPI specs (`75-n8-v18-c15-and-ci-fix-result.md`) | e6c52c21dcb4df4dc037803e35d86450a71656c6 |
+| 137 | X10 (rest), X15: every maintenance job loses no live data on format v3 tables with branches and tags, evolved partition specs and equality deletes, on both jobs lines; partition stats label values by the partition struct's own fields (`76-x10-shapes-result.md`) | 461ae4378a059621db6bf84a88469fa1d2c0eb95 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

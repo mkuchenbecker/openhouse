@@ -2,11 +2,12 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 136, 138 and 139 are merged (139 is N8, V18 and C15; 138 is the CI print
-fix; 136 is C12). Two pieces of work are in flight: the rest of X10, and grants and write checks (T6, N10). View rename
-stopped on D47. Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known
-red; post-merge CI for 134, 135, 136 and 138 was read and passed, and for 139 it is not read yet. An audit of the open
-work items found 8 of 62 already true and 8 partly done (`74-work-table-audit.md`; N8, V18 and C15 have closed since).
+checks pass in CI. Pull requests 121 and 124 to 139 are merged (137 is the rest of X10 and X15; 139 is N8, V18 and C15; 138 is the CI
+print fix). Two pieces of work are in flight: the jobs catalog leak with X9 (N16), and grants and write checks (T6,
+N10). View rename stopped on D47. Nothing is merged into either fork's main or into LinkedIn's or Apache's
+repositories. Nothing is known red; post-merge CI for 134, 135, 136 and 138 was read and passed, and for 139 and 137 it
+is not read yet. An audit of the open
+work items found 8 of 62 already true and 8 partly done (`74-work-table-audit.md`; N8, V18, C15, the rest of X10 and X15 have closed since).
 This is the single place for current state. Dated 2026-11-24.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
@@ -25,7 +26,8 @@ This is the single place for current state. Dated 2026-11-24.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
   work on them. Spark 3.5 and 4.2 read old files through native defaults (`61-w7-x4-result.md`). Every maintenance job
   runs on a v3 table without losing live data (`63-x6-maintenance-v3-result.md`), and row-level writes racing the jobs
-  lose none either (`65-x10-concurrency-result.md`); the retention backup's handling of deletes is put to Mike (D46).
+  lose none either (`65-x10-concurrency-result.md`), nor do tables with branches, evolved specs or equality deletes
+  (`76-x10-shapes-result.md`); the retention backup's handling of deletes is put to Mike (D46).
   Column types are decided type by type (`68-x5-v3-types-result.md`). Replication and the defaults migration remain
   (`57-x1-format-v3-result.md`).
 - One data-loss risk remains, natively only: a create naming a renamed-away table's directory is closed over IRC and
@@ -40,10 +42,6 @@ This is the single place for current state. Dated 2026-11-24.
   Spark 3.5 and on Spark 4.2, where the engine holds no OpenHouse catalog or client class
   (`33-v5-policies-over-irc-result.md`, `35-n3x1-spark42-extensions-result.md`, `36-v5-3-grants-unlock-endpoints-result.md`,
   `38-c2-3-rest-capability-client-result.md`). Failures keep the native message but arrive as Iceberg exception types.
-- The server tells newer clients exactly which routes it serves, so they use HEAD checks and views.
-- An IRC create ignores a location the client names (D30); the other spec deviations are in `42-v13b-spec-deviations-result.md`.
-- Policy tags are stored and answered in one order, PII then HC (pull request 139, N8).
-- Metrics reports and register table are served (pull request 112, D34).
 - An IRC create can no longer be given another table's directory: a completion naming a directory in use is refused
   with 400, and `openhouse.tableUUID` in a create is ignored (D36, `48-v16-directory-reuse-result.md`).
 - Spark 4.2 over IRC passes the Spark SQL smoke suite (177 statements) and 18 write statements, all storing what they
@@ -52,13 +50,15 @@ This is the single place for current state. Dated 2026-11-24.
   rename, drop, register, metrics report, one-table transactions, views except rename, and the OpenHouse capability
   routes (policies, grants, unlock). On the Iceberg 1.12 line also the synchronous plan route and the credentials
   route, which answers an empty list (pull request 127, `62-v11a-v12a-result.md`); the 1.5.2 line answers 406 for both.
-- Not served: the stored-plan routes, real credential vending and signing (Mike's), view rename, and namespace
-  create, alter and drop (D20).
 - Not atomic: multi-table transactions. A transaction of one table commits; several tables are refused whole with
   400 (D39, pull request 120, `53-v8-multi-table-commit-result.md`). Real atomicity is put to Mike (D40).
 
 ## How far from the goal
 
+- Maintenance jobs: proven on format v3 tables in every shape examined: plain, under concurrent row-level writes, with
+  the new column types, with branches and tags, with evolved partition specs and with equality deletes, on Spark 3.5
+  and on Spark 4.2 over the REST routes (`63-`, `65-`, `68-` and `76-` result files) [ran]. Not covered: a job run
+  against a branch, a table built by a replace, HDFS and object stores.
 - Conformance: of the kit's 95 failures, 76 are OpenHouse's own rules, 9 are routes not served and 10 are kit
   assumptions (D32; `60-v11-v12-investigation-result.md`).
 - Iceberg 1.12 as the default: done, and the 1.2 and Spark 3.1 projects are deleted. Open: the default build cannot
@@ -66,9 +66,9 @@ This is the single place for current state. Dated 2026-11-24.
 
 ## Merged pull requests
 
-59 pull requests are merged into `irc-integration` (the last is 139, merge commit e6c52c21) and 10 into the Iceberg
+60 pull requests are merged into `irc-integration` (the last is 137, merge commit 461ae437) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 139 (N8, V18, C15) and 138 (CI print fix), both in `75-n8-v18-c15-and-ci-fix-result.md`; 136 (C12).
+The latest: 137 in `76-x10-shapes-result.md`; 139 and 138 in `75-n8-v18-c15-and-ci-fix-result.md`.
 
 ## Done
 
@@ -77,42 +77,42 @@ C2-1, C2-2, C2-3, N8, V18, C15, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green p
 
 ## How to resume
 
-Bottom line: pull requests 121, 124 to 136, 138 and 139 are merged, and `irc-integration` is at `e6c52c21`. Two pieces of
+Bottom line: pull requests 121 and 124 to 139 are merged, and `irc-integration` is at `461ae437`. Two pieces of
 work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- The rest of X10 (maintenance on format v3 tables with branches and tags, evolved partition specs and equality
-  deletes): pull request 137, draft; worktree `/home/user/oh-x10b`, branch `irc/x10b-v3-maintenance-branches-evolution`,
-  record `x10b-v3-maintenance-branches-evolution.md` in the reports directory. Its first CI run failed because its new
-  tests pushed the jobs test process out of memory (the failure that pull request 138 made visible); its second head is
-  green.
+- The jobs catalog leak with X9 (N16): every table load in the jobs builds a catalog whose client creates a connection
+  pool that is never disposed; worktree `/home/user/oh-n16`, branch `irc/n16-jobs-catalog-leak`, record
+  `n16-jobs-catalog-leak.md` in the reports directory. Done when one catalog is used per job run and closed at its end,
+  with the jobs' behavior shown unchanged.
 - Grants observable through Spark SQL and the write checks on the Spark 3.5 plain REST path (T6 and N10): worktree
   `/home/user/oh-t6`, branch `irc/t6-n10-grants-and-rest-write-checks`, record `t6-n10-grants-and-rest-write-checks.md`
   in the reports directory.
 - View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
 - Post-merge CI [read 2026-11-24]: passed for the merges of 134, 135, 136 and 138. For 135 the main build job took 53
-  minutes, now that it carries the Spark 4.2 jobs suite. Post-merge runs queue one behind another, so confirmations lag
-  when merges land close together. Not read yet for 139: read it first (D33).
+  minutes, now that it carries the Spark 4.2 jobs suite. Not read yet for 139 and 137: read them first (D33).
 - Audit of the open work items: `74-work-table-audit.md` (62 open at the time: 8 already true, 8 partly done, 16 waiting
-  on Mike, 2 cannot be settled by reading, 28 still open; N8, V18 and C15 closed since). Read it before launching any
+  on Mike, 2 cannot be settled by reading, 28 still open; N8, V18, C15, the rest of X10 and X15 closed since). Read it before launching any
   small item.
 - Hazard: orphaned test processes from a finished agent (a Gradle test worker and three test service processes of the
   format v3 types work, started about 07:10 UTC on 2026-11-24) hold about 3 GB of the machine's 15 GB. The orchestrator's
   attempt to stop them was denied by the permission system and Mike was told; builds have less headroom until they are
   gone or the container restarts.
+- Hazard: the jobs test suite ends a full run at about 373 of 512 MB of heap, so new jobs tests can run it out of memory
+  until N16 lands.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X15 from X6, X10 and V14 (X14 needs Mike's say), X8 once D46 is decided, and N16 (one catalog per job run); N12 to N15 are Mike's.
+1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X9 to X14 from X6, X10 and V14 (X14 needs Mike's say), X8 once D46 is decided, and the work after N16; N12 to N15 are Mike's.
 2. V11d and V12b to V12e are Mike's; see `41-work-platforms-v3.md`.
 3. The small follow-ups: V17 to V20, V22, C11, C13, C17 (first lead from C15), C18, T8, T11, C7. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
 Nothing known red at this time. Post-merge CI for pull requests 121, 124 to 136 and 138 was read on 2026-11-24 and every
-job passed; 139's is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+job passed; those of 139 and 137 are not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). Open product defects found by pull request 121: V19 (rename to 129 to 255 characters) and V20
 (FileIO of a table on a non-default storage type).
@@ -131,8 +131,7 @@ failures (not yet seen on a red job).
 Post-merge results are read after every merge, not assumed (D33). Under D18, before a merge an agent runs the test classes it touched plus the black-box suite of the module it
 changed, and Claude merges on that without waiting for the pull request's CI. The full build runs on
 `irc-integration` after each merge and a failure is fixed forward, so work that starts from the branch checks the
-known-red list above first. Heavy runs, such as the full delta-harness and the full Iceberg Spark suites, run after
-merges when memory is free. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
+known-red list above first. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
 now requires (`21-findings-continued.md`); D33: a suite counts only if it ran on the 1.12 line.
 
 ## Waiting on Mike

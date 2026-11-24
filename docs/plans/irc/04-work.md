@@ -3,7 +3,7 @@
 Bottom line: 146 items in two repos (C16 is new on 2026-11-24; N11 is new on 2026-11-24 and is in `41-work-platforms-v3.md`; V11e is new on 2026-11-24 and is in `41-work-platforms-v3.md`; V21 is new on 2026-11-24; X13 and X14 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; N8 to N10 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; X8 to X12 are new on 2026-11-24 and are in `41-work-platforms-v3.md`; W14 is new on 2026-11-24; N6, N7, C10, V18, V19, V20 and C11 to C15 are new; N6 and N7 are in `41-work-platforms-v3.md`; the nine rows V11a to V11d and V12a to V12e replace V11 and V12 and are in that file too), counted across this file, `30-work-defaults.md` and
 `41-work-platforms-v3.md`; V9 is a pointer and is not counted. Each names what it needs and how it is proven. There
 is no order beyond the "Needs" column: an item can land whenever its needs are in, and landing it leaves a valid
-state. All of it is Claude's judgement, built on `03-inferred.md`. After the audit of 2026-11-24 (`74-work-table-audit.md`), 52 of the items are still open, 8 of them partly done (N8, V18 and C15 closed since the audit; V22 added).
+state. All of it is Claude's judgement, built on `03-inferred.md`. After the audit of 2026-11-24 (`74-work-table-audit.md`), 50 of the items are still open, 8 of them partly done (N8, V18 and C15 closed since the audit; V22 added).
 
 Reading the tables: `oh` is the openhouse fork, `ib` is the iceberg fork. `J`, `Q` refer to
 `03-inferred.md`. "Paths" means the catalog paths selectable by config: legacy, REST-shaped over legacy,
