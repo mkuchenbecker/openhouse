@@ -92,10 +92,21 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
   recording the deletes. This is true on v2 today. On v3 the deletion vectors are not in the backup at all. No restore
   code exists in this repository; the history (pull requests 384, 408 and 418) names an external uploader that reads
   the manifests.
-- Options: the author's recommendation is D, rewrite the expiring partitions with deletes applied before backing up.
-  Its cost is an extra rewrite of those partitions and a behavior change on v2. The record of the work (`x6-maintenance-v3.md`)
-  says the options go to the orchestrator in the author's final report and does not list A to C; they are not
-  reproduced here and are to be added from that report.
+- Supporting facts the author measured: on v2 the position-delete files are moved into the backup directory but no
+  manifest lists them. On v3 Spark writes Puffin files at the root of the data directory, so a Puffin file that served
+  only expired partitions is deleted rather than backed up. The history of the backup feature (pull requests 384, 408
+  and 418 of the upstream repository) names an external uploader that finds partitions through the data manifest.
+- Options:
+  - A. Keep the behavior and document that a backup of a merge-on-read table restores rows that were deleted before
+    retention (true on v2 today).
+  - B. Skip or refuse the backup when the expired partitions carry delete files. Refusing retention itself is worse,
+    because retention is a compliance deletion; skipping only the backup is silent unless it is logged and counted.
+  - C. Add the delete files or deletion vectors to the backup manifest. This changes the backup format, and the
+    external uploader would have to support it.
+  - D. When backup is enabled and the expired partitions carry deletes, first rewrite those partitions with the deletes
+    applied, then back up. The backup then holds only live rows and its format is unchanged, but it adds a rewrite and
+    changes v2 job behavior.
+- Recommendation of the author: D, for v2 and v3 alike. Cost: an extra rewrite and a behavior change on v2.
 - Why it is Mike's: it changes the behavior of a job on v2 tables and touches a contract with a system outside this
   repository (the external uploader).
 - Until decided: nothing changes. The behavior is pinned by `retentionBackupOfPartitionsWithDeleteFiles`.
