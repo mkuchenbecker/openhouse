@@ -171,9 +171,9 @@ public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
   /**
    * A table with a variant column (made through the Iceberg API, as Spark 4 makes one over the
    * Iceberg REST routes; Spark 3.5 can neither declare nor write one): the jobs that read only
-   * metadata run (stats collection, snapshot expiry, and compaction of an empty table); retention
-   * cannot load the table into Spark 3.5. That is why the tables service refuses a retention policy
-   * on such a table.
+   * metadata run (stats collection, snapshot expiry, and compaction of an empty table), on both
+   * lines. Retention cannot load the table into Spark 3.5, which has no variant type; that is why
+   * the tables service refuses a retention policy on such a table. On Spark 4.2 retention runs.
    */
   @Test
   void theSparkThreeFiveJobsOnAV3TableWithAVariantColumn() throws Exception {
@@ -208,6 +208,11 @@ public class FormatV3TypesJobsTest extends OpenHouseSparkITest {
     ops.expireSnapshots(fqtn, 1, "days", 1);
     RetentionSparkApp retention =
         new RetentionSparkApp("x5-retention-v", null, fqtn, "ts", "", "day", 3, otelEmitter, ".bk");
+    if (JobsLine.sparkReadsVariant()) {
+      retention.runInner(ops);
+      retention.runValidations(ops);
+      return;
+    }
     Throwable failed = Assertions.assertThrows(Throwable.class, () -> retention.runInner(ops));
     Assertions.assertTrue(chain(failed).contains("Unsupported type: variant"), chain(failed));
   }

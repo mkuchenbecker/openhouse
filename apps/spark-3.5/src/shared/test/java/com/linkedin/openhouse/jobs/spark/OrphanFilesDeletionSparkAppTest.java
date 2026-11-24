@@ -4,15 +4,27 @@ import com.linkedin.openhouse.common.metrics.DefaultOtelConfig;
 import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.util.AppConstants;
 import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
+import com.linkedin.openhouse.tables.client.api.TableApi;
+import com.linkedin.openhouse.tables.client.invoker.ApiClient;
+import com.linkedin.openhouse.tables.client.model.CreateUpdateTableRequestBody;
+import com.linkedin.openhouse.tables.client.model.TimePartitionSpec;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 @Slf4j
 public class OrphanFilesDeletionSparkAppTest extends OpenHouseSparkITest {
@@ -127,16 +139,77 @@ public class OrphanFilesDeletionSparkAppTest extends OpenHouseSparkITest {
     ops.spark().sql(String.format("SHOW TBLPROPERTIES %s", tableName)).show(false);
   }
 
-  private static void prepareReplicaTable(Operations ops, String tableName) {
+  private void prepareReplicaTable(Operations ops, String tableName) {
     ops.spark().sql(String.format("DROP TABLE IF EXISTS %s", tableName)).show();
-    ops.spark()
-        .sql(
-            String.format(
-                "CREATE TABLE %s (data string, ts timestamp) partitioned by (days(ts)) "
-                    + "TBLPROPERTIES ('openhouse.tableType' = 'REPLICA_TABLE')",
-                tableName))
-        .show();
+    if (JobsLine.restCatalog(ops.spark())) {
+      // The Iceberg REST routes (Spark 4.2 line) refuse to set the table type: a replica table is
+      // created by the replication flow through the native API, so the setup does that here; the
+      // job then runs on it over the REST routes like on any other table.
+      createReplicaTableThroughNativeApi(ops, tableName);
+    } else {
+      ops.spark()
+          .sql(
+              String.format(
+                  "CREATE TABLE %s (data string, ts timestamp) partitioned by (days(ts)) "
+                      + "TBLPROPERTIES ('openhouse.tableType' = 'REPLICA_TABLE')",
+                  tableName))
+          .show();
+    }
     ops.spark().sql(String.format("SHOW TBLPROPERTIES %s", tableName)).show(false);
+    Assertions.assertEquals(
+        AppConstants.TABLE_TYPE_REPLICA,
+        ops.getTable(tableName).properties().get(AppConstants.OPENHOUSE_TABLE_TYPE_KEY),
+        "a replica table");
+  }
+
+  private void createReplicaTableThroughNativeApi(Operations ops, String tableName) {
+    TableIdentifier id = TableIdentifier.parse(tableName);
+    Schema schema =
+        new Schema(
+            Types.NestedField.optional(1, "data", Types.StringType.get()),
+            Types.NestedField.optional(2, "ts", Types.TimestampType.withZone()));
+    ApiClient client = new ApiClient();
+    client.setBasePath(getOpenHouseLocalServerURI().toString());
+    client.addDefaultHeader(
+        "Authorization",
+        "Bearer " + ops.spark().conf().get("spark.sql.catalog.openhouse.auth-token"));
+    try {
+      createReplicaTableThroughNativeApi(client, id, schema, ops);
+    } catch (WebClientResponseException e) {
+      throw new IllegalStateException(
+          "native create of " + tableName + ": " + e.getResponseBodyAsString(), e);
+    }
+  }
+
+  private static void createReplicaTableThroughNativeApi(
+      ApiClient client, TableIdentifier id, Schema schema, Operations ops) {
+    new TableApi(client)
+        .createTableV1(
+            id.namespace().toString(),
+            new CreateUpdateTableRequestBody()
+                .tableId(id.name())
+                .databaseId(id.namespace().toString())
+                .clusterId(
+                    ops.spark().conf().get("spark.sql.catalog.openhouse.cluster", "local-cluster"))
+                .schema(SchemaParser.toJson(schema, false))
+                .timePartitioning(
+                    new TimePartitionSpec()
+                        .columnName("ts")
+                        .granularity(TimePartitionSpec.GranularityEnum.DAY))
+                .baseTableVersion("INITIAL_VERSION")
+                .tableType(CreateUpdateTableRequestBody.TableTypeEnum.REPLICA_TABLE)
+                // A replica table names its UUID (the primary's) and its identity, as the
+                // replication flow does.
+                .tableProperties(replicaProperties(id)))
+        .block();
+  }
+
+  private static Map<String, String> replicaProperties(TableIdentifier id) {
+    Map<String, String> properties = new HashMap<>();
+    properties.put("openhouse.tableUUID", UUID.randomUUID().toString());
+    properties.put("openhouse.databaseId", id.namespace().toString());
+    properties.put("openhouse.tableId", id.name());
+    return properties;
   }
 
   private OrphanFilesDeletionSparkApp newApp(String tableName) {
