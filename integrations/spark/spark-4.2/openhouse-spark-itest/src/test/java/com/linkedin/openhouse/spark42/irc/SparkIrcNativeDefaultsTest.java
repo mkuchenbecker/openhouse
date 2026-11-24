@@ -335,7 +335,23 @@ public class SparkIrcNativeDefaultsTest {
         rows("SELECT id, c_int, c_str, c_bool, later, c_late, s.b FROM %s ORDER BY id", table));
     assertIds(table, "c_str = 'US'", 1, 2);
     assertIds(table, "c_int = 7", 1, 2);
-    assertIds(table, "c_late = 9", 1, 2, 3, 4);
+    if (ServerPlanning.selected()) {
+      // The one statement of the suite that differs with server planning (V11b). Spark 4.2 pins a
+      // read of main to the current snapshot (useSnapshot), so Iceberg 1.12's RESTTableScan sends
+      // use-snapshot-schema=true with the filter and names of the table's current schema. The
+      // service, as Iceberg's reference handler does, scans with the snapshot's schema, written
+      // before c_late was added, and the filter does not bind: a visible 400, never wrong rows.
+      // Client planning binds the filter to the table's schema. Pinned in
+      // SparkIrcServerPlanningReadsTest#aFilterOnAColumnAddedAfterTheCurrentSnapshotFails.
+      Throwable thrown =
+          thrown(() -> rows("SELECT id FROM " + t(table) + " WHERE c_late = 9 ORDER BY id"));
+      Assertions.assertTrue(
+          chain(thrown).contains("BadRequestException")
+              && chain(thrown).contains("Cannot find field 'c_late'"),
+          chain(thrown));
+    } else {
+      assertIds(table, "c_late = 9", 1, 2, 3, 4);
+    }
     Assertions.assertEquals(
         Collections.singletonList("[3,22,7,8]"),
         rows("SELECT count(c_int), sum(c_int), min(c_int), max(c_int) FROM %s", table));

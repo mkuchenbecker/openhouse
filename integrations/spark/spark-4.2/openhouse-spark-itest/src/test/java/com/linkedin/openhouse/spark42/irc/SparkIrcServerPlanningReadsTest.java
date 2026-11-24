@@ -330,4 +330,50 @@ public class SparkIrcServerPlanningReadsTest {
       Assertions.assertEquals(Math.min(limit, allInB), inB.size(), "b " + limit);
     }
   }
+
+  /**
+   * Pins the one read that differs (V11b): a filter on a column added after the table's current
+   * snapshot was written. Spark 4.2 pins a read of main to the current snapshot ({@code
+   * useSnapshot}), so Iceberg 1.12's {@code RESTTableScan} sends {@code use-snapshot-schema=true}
+   * with the names and the filter of the table's current schema. The service, as Iceberg's own
+   * reference handler ({@code CatalogHandlers.planTableScan}) does, scans with the snapshot's
+   * schema, and the filter does not bind: a 400, visible, never fewer rows. Client planning binds
+   * the filter to the table's schema. Selecting the column without filtering on it reads the same,
+   * and once a snapshot is written with the new schema (and the catalog's cached table refreshed)
+   * the filter plans.
+   */
+  @Test
+  void aFilterOnAColumnAddedAfterTheCurrentSnapshotFails() throws Exception {
+    String table = DB + ".r_evolve";
+    rows("DROP TABLE IF EXISTS " + CLIENT + "." + table);
+    rows("CREATE TABLE " + CLIENT + "." + table + " (id bigint) USING iceberg");
+    rows("INSERT INTO " + CLIENT + "." + table + " VALUES (1), (2)");
+    rows("ALTER TABLE " + CLIENT + "." + table + " ADD COLUMN extra int");
+    try {
+      String filtered = "SELECT id FROM %s WHERE extra IS NULL ORDER BY id";
+      Assertions.assertEquals(
+          Arrays.asList(Arrays.asList((Object) 1L), Arrays.asList((Object) 2L)),
+          rows(String.format(filtered, CLIENT + "." + table)));
+      Throwable failure =
+          Assertions.assertThrows(
+              Throwable.class, () -> rows(String.format(filtered, SERVER + "." + table)));
+      StringBuilder chain = new StringBuilder();
+      for (Throwable t = failure; t != null; t = t.getCause()) {
+        chain.append(t.getClass().getName()).append(": ").append(t.getMessage()).append(" <- ");
+      }
+      Assertions.assertTrue(
+          chain.toString().contains("org.apache.iceberg.exceptions.BadRequestException")
+              && chain.toString().contains("Cannot find field 'extra'"),
+          chain.toString());
+      assertSame("SELECT id, extra FROM %s ORDER BY id", table);
+      rows("INSERT INTO " + CLIENT + "." + table + " VALUES (3, 7)");
+      // The server catalog's cached table is still pinned to the old snapshot: refreshed, it reads
+      // the snapshot written with the new schema.
+      rows("REFRESH TABLE " + SERVER + "." + table);
+      assertSame(filtered, table);
+      assertSame("SELECT id FROM %s WHERE extra = 7", table);
+    } finally {
+      rows("DROP TABLE IF EXISTS " + CLIENT + "." + table);
+    }
+  }
 }
