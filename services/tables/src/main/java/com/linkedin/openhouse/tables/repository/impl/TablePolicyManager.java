@@ -67,7 +67,11 @@ public class TablePolicyManager {
   protected boolean alterPoliciesIfNeeded(
       UpdateProperties updateProperties, String policiesFromRequest, String policiesFromTable) {
     boolean policiesUpdated = false;
-    if (!policiesFromRequest.equals(policiesFromTable)) {
+    // The same tags in another order are the same policy: text stored before the tag order was
+    // fixed may hold them in another order (PoliciesSpecMapper.withTagsInDeclarationOrder).
+    if (!policiesFromRequest.equals(policiesFromTable)
+        && !policiesFromRequest.equals(
+            policiesMapper.withTagsInDeclarationOrder(policiesFromTable))) {
       updateProperties.set(InternalRepositoryUtils.POLICIES_KEY, policiesFromRequest);
       policiesUpdated = true;
     }
