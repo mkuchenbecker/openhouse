@@ -58,4 +58,7 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   OpenHouse catalog the table is created and the statement then fails with 403, because the catalog reads the new table
   back and the creator holds nothing on its own table in the test authorization model. Does a deployed policy grant a
   creator access to its own table? Only he can say. Nothing waits on it; a test pins it (`77-t6-n10-result.md`).
+- The OpenHouse Java client's connection pool (N17, N16, `78-v19-v20-v22-n16-x9-result.md`) can only be fixed by changing the
+  client for every user of it. The jobs now create one pool per job run instead of one per table load, so nothing
+  waits on it.
 - Item order: D29.

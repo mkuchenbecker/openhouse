@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 61 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 140, merge
-commit dfcd15a0) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 63 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 141, merge
+commit 3079859d) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-24.
 
@@ -71,6 +71,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 139 | N8, V18, C15: policy tags in one stored order, the Iceberg 1.2 guards removed, byte-stable OpenAPI specs (`75-n8-v18-c15-and-ci-fix-result.md`) | e6c52c21dcb4df4dc037803e35d86450a71656c6 |
 | 137 | X10 (rest), X15: every maintenance job loses no live data on format v3 tables with branches and tags, evolved partition specs and equality deletes, on both jobs lines; partition stats label values by the partition struct's own fields (`76-x10-shapes-result.md`) | 461ae4378a059621db6bf84a88469fa1d2c0eb95 |
 | 140 | T6, N10: test services store grants, so SHOW GRANTS and the effect of a grant are observed on every path (scenario 17, 22 statements); the 19 write checks are one list run by Spark 4.2 and by Spark 3.5 on the plain REST path, which now runs on both Iceberg lines; smoke 210 statements (`77-t6-n10-result.md`) | dfcd15a0487f70ca893be907da9a20618a008630 |
+| 142 | V19, V20, V22: the rename target limit is a cluster property; the FileIO class of a table's own storage type in its Iceberg REST responses; the last Iceberg 1.2 leftover removed (`78-v19-v20-v22-n16-x9-result.md`) | af210f1b107ed04ce5401843911e3b7cfa95bf47 |
+| 141 | N16, X9: the jobs build one catalog per job run and not one per table load; retention signals delete files in backups (`78-v19-v20-v22-n16-x9-result.md`) | 3079859d591364df54fe29fadb82d32bf17c10c2 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
