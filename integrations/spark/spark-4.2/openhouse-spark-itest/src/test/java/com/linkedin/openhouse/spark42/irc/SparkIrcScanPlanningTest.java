@@ -21,9 +21,10 @@ import org.junit.jupiter.api.Test;
  * Spark 4.2 reads the same rows whether Iceberg plans its scans on the client (catalog {@code irc},
  * the default) or on the server (catalog {@code irc_plan}: the same service and token, with the
  * catalog property {@code scan-planning-mode=server}), for SELECTs with filters, projections, a
- * LIMIT and time travel, on a format v2 table with position deletes (merge-on-read DELETE) and, on
- * the format v3 service, a table with deletion vectors. The service's access log shows that the
- * server-planning catalog sent plan requests and the client-planning one sent none.
+ * LIMIT and time travel, on a format v2 table with position deletes (merge-on-read DELETE). On the
+ * format v3 service, a table with deletion vectors is refused with server planning (V11e). The
+ * service's access log shows that the server-planning catalog sent plan requests and the
+ * client-planning one sent none.
  *
  * <p>Every table is in {@value #DB}, so that {@link SparkIrcNoPlanRequestTest} can tell this test's
  * plan requests from any other.
@@ -186,25 +187,44 @@ public class SparkIrcScanPlanningTest {
         11, rows("SELECT * FROM irc_plan." + V2 + " VERSION AS OF " + beforeDelete).size());
   }
 
+  /**
+   * The service refuses to plan a format v3 table (V11e): every server-planned read of the table
+   * with deletion vectors fails visibly with the refusal, and client planning reads it. Until V11e
+   * this test compared the rows read either way; a server-planned v3 read is no longer served.
+   */
   @Test
-  void aFormatV3TableWithDeletionVectorsReadsTheSameRows() throws Exception {
+  void aFormatV3TableIsRefusedWithServerPlanning() throws Exception {
     Path work = IrcReadTestServiceProcess.getWithFormatV3().work();
     int before = planRequests(work, "deletes_v3").size();
     List<List<Object>> deletes =
         rows("SELECT file_format FROM ircv3_client." + V3 + ".delete_files");
     Assertions.assertFalse(deletes.isEmpty(), "the table has deletion vectors");
-    for (List<Object> delete : deletes) {
-      Assertions.assertEquals(Arrays.asList("PUFFIN"), delete);
-    }
-    assertSameRows("ircv3_client", "ircv3_plan", V3);
-    assertLimitWithoutOrder("ircv3_client", "ircv3_plan", V3);
     Assertions.assertEquals(
         Arrays.asList(
             Arrays.asList(3L, "n3", "a"),
             Arrays.asList(4L, "n4", "b"),
             Arrays.asList(5L, "n5", "a"),
             Arrays.asList(7L, "n7", "b")),
-        rows("SELECT * FROM ircv3_plan." + V3 + " ORDER BY id"));
+        rows("SELECT * FROM ircv3_client." + V3 + " ORDER BY id"));
+    for (String query : QUERIES) {
+      assertRefusedAsFormatV3(String.format(query, "ircv3_plan." + V3));
+    }
     Assertions.assertTrue(planRequests(work, "deletes_v3").size() > before);
+  }
+
+  /** {@code sql} fails visibly with the service's refusal of format v3 tables. */
+  static void assertRefusedAsFormatV3(String sql) {
+    Throwable failure = Assertions.assertThrows(Throwable.class, () -> rows(sql), sql);
+    StringBuilder all = new StringBuilder();
+    for (Throwable t = failure; t != null; t = t.getCause()) {
+      all.append(t.getClass().getName()).append(": ").append(t.getMessage()).append(" <- ");
+    }
+    String chain = all.toString();
+    Assertions.assertTrue(
+        chain.contains("java.lang.IllegalStateException")
+            && chain.contains("Remote scan planning failed")
+            && chain.contains("ScanPlanFormatVersionException")
+            && chain.contains("scan-planning-mode=client"),
+        chain);
   }
 }

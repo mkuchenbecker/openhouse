@@ -33,7 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
  * <ul>
  *   <li>{@code POST .../tables/{table}/plan}: planned synchronously, answered {@code completed}
  *       with every file scan task ({@link IcebergRestScanPlanner}), or {@code failed} when the scan
- *       plans more tasks than the cluster property {@value #MAX_FILE_SCAN_TASKS} allows. Nothing is
+ *       plans more tasks than the cluster property {@value #MAX_FILE_SCAN_TASKS} allows, or when
+ *       the table is format version 3 (its scan tasks would carry no sequence number). Nothing is
  *       stored, so the routes that read or cancel a stored plan, and the one that pages its tasks,
  *       are not served and not listed: they answer the 406 every unserved spec route answers.
  *       Iceberg's client calls them only for a {@code submitted} plan, for {@code plan-tasks}, or
@@ -94,7 +95,12 @@ public class IcebergRestScanController {
     int bound = IcebergRestScanPlanner.bound(maxFileScanTasks);
     PlanTableScanResponse response = IcebergRestScanPlanner.plan(table, request, bound);
     if (response.planStatus() == PlanStatus.FAILED) {
-      log.warn("IRC plan of {}.{} refused: more than {} file scan tasks", database, tableId, bound);
+      log.warn(
+          "IRC plan of {}.{} refused ({}): {}",
+          database,
+          tableId,
+          response.errorResponse().type(),
+          response.errorResponse().message());
     }
     return IcebergRestJson.ok(response);
   }

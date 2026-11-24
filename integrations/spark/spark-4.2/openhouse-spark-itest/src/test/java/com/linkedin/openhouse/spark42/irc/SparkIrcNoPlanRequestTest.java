@@ -61,9 +61,16 @@ public class SparkIrcNoPlanRequestTest {
             .collect(Collectors.toList()),
         "requests for stored plans or plan tasks");
     if (ServerPlanning.selected()) {
-      // The suite's own run with server planning (testServerPlanning): every catalog asked for it,
-      // so the other tests' reads and writes did plan on the server.
+      // The suite's own run with server planning (testServerPlanning): every catalog asked for it
+      // but those declared with the reason (format v3 tables, which the route refuses), so the
+      // other tests' reads and writes did plan on the server.
       Assertions.assertFalse(others.isEmpty(), "no plan request from the other tests");
+      List<String> declared = ServerPlanning.notApplied();
+      Assertions.assertFalse(declared.isEmpty(), "the format v3 catalogs are declared");
+      for (String line : declared) {
+        Assertions.assertTrue(line.endsWith(ServerPlanning.FORMAT_V3), line);
+      }
+      System.out.println("Catalogs that kept client planning, declared: " + declared);
       System.out.println(
           "Plan requests in this JVM (server planning selected): "
               + plans.size()

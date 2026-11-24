@@ -7,6 +7,7 @@ import static com.linkedin.openhouse.tables.e2e.h2.ScanPlanning.planRequests;
 import static com.linkedin.openhouse.tables.e2e.h2.ScanPlanning.record;
 import static com.linkedin.openhouse.tables.e2e.h2.ScanPlanning.rows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -32,10 +33,13 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * Scan planning on the server equals scan planning on the client for a format v3 table with
- * deletion vectors (the cluster switch {@code cluster.iceberg.format-v3.enabled} on): each data
- * file comes with its deletion vector, a Puffin blob named by content offset and size and by the
- * data file it applies to, and the rows read are the same.
+ * The service refuses to plan a scan of a format v3 table (work item V11e; the cluster switch
+ * {@code cluster.iceberg.format-v3.enabled} on). A scan task in the specification carries no
+ * sequence number, so a server-planned read of a v3 table would return a null inherited {@code
+ * _last_updated_sequence_number}, and a server-planned copy-on-write rewrite would store wrong row
+ * lineage. The plan is answered {@code failed}, and an Iceberg 1.12 client fails the scan visibly;
+ * client planning reads the table as before. Until V11e this class compared a v3 plan with deletion
+ * vectors to client planning; that subject no longer exists.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
@@ -69,7 +73,7 @@ class IrcScanPlanningFormatV3Test {
   }
 
   @Test
-  void deletionVectorsArePlannedTheSame() {
+  void aFormatV3TableWithDeletionVectorsIsRefused() {
     TableIdentifier id = TableIdentifier.of(DB, "dv");
     Table table =
         client
@@ -100,29 +104,88 @@ class IrcScanPlanningFormatV3Test {
     delta.commit();
     assertEquals(FileFormat.PUFFIN, onB.get(0).format());
 
+    // Client planning reads the deletion vectors and the row lineage.
     int before = planRequests().size();
     List<String> onClient = plan(client.loadTable(id).newScan());
     assertEquals(before, planRequests().size());
-    List<String> onServer = plan(server.loadTable(id).newScan());
-    assertEquals(before + 1, planRequests().size());
-    assertEquals(onClient, onServer);
-    assertEquals(3, onServer.size());
-    assertEquals(
-        2, onServer.stream().filter(t -> t.contains("PUFFIN") && t.contains("offset=")).count());
-    for (String task : onServer) {
-      if (task.contains("PUFFIN")) {
-        assertTrue(task.contains("referenced=" + task.substring(0, task.indexOf(" | "))), task);
-      }
-    }
-
+    assertEquals(3, onClient.size());
     List<String> read = rows(client.loadTable(id), Expressions.alwaysTrue());
     assertEquals(3, read.size(), read.toString());
-    assertEquals(read, rows(server.loadTable(id), Expressions.alwaysTrue()));
+
+    // The service refuses to plan it: every server-planned scan fails, and none returns rows.
+    Table onServer = server.loadTable(id);
+    for (Runnable scan :
+        new Runnable[] {
+          () -> plan(onServer.newScan()),
+          () -> plan(onServer.newScan().filter(Expressions.equal("p", "p1"))),
+          () -> rows(onServer, Expressions.alwaysTrue()),
+          () -> rows(onServer, Expressions.greaterThan("id", 1L), "id")
+        }) {
+      IllegalStateException refused = assertThrows(IllegalStateException.class, scan::run);
+      assertTrue(
+          refused.getMessage().contains("Remote scan planning failed")
+              && refused.getMessage().contains("ScanPlanFormatVersionException (code=422)")
+              && refused.getMessage().contains("format version 3")
+              && refused.getMessage().contains("scan-planning-mode=client"),
+          refused.getMessage());
+    }
+    assertEquals(before + 4, planRequests().size());
+    // Nothing changed: the table reads as before through client planning.
+    assertEquals(read, rows(client.loadTable(id), Expressions.alwaysTrue()));
+  }
+
+  /** The answer on the wire: failed, the error, and no plan id and no task. */
+  @Test
+  void theAnswerIsFailedWithNoTask() throws Exception {
+    TableIdentifier id = TableIdentifier.of(DB, "dv");
+    Table table =
+        client
+            .buildTable(id, IrcScanPlanningTest.SCHEMA)
+            .withProperty("format-version", "3")
+            .create();
+    table
+        .newAppend()
+        .appendFile(dataFile(table, record(IrcScanPlanningTest.SCHEMA, 1L, "a", "p0")))
+        .commit();
+    java.net.http.HttpResponse<String> response =
+        java.net.http.HttpClient.newHttpClient()
+            .send(
+                java.net.http.HttpRequest.newBuilder(
+                        java.net.URI.create(
+                            "http://localhost:"
+                                + port
+                                + "/iceberg/v1/namespaces/"
+                                + DB
+                                + "/tables/dv/plan"))
+                    .header("Authorization", "Bearer " + ScanPlanning.token("irc_planner"))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{}"))
+                    .build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, response.statusCode(), response.body());
+    com.fasterxml.jackson.databind.JsonNode answer =
+        new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.body());
+    assertEquals("failed", answer.get("status").asText(), response.body());
+    assertEquals(422, answer.get("error").get("code").asInt());
+    assertEquals("ScanPlanFormatVersionException", answer.get("error").get("type").asText());
+    assertTrue(!answer.has("plan-id") && !answer.has("file-scan-tasks"), response.body());
+    // The load's checks come first: a table that does not exist is still the load's 404.
     assertEquals(
-        plan(client.loadTable(id).newScan().filter(Expressions.equal("p", "p1"))),
-        plan(server.loadTable(id).newScan().filter(Expressions.equal("p", "p1"))));
-    assertEquals(
-        rows(client.loadTable(id), Expressions.greaterThan("id", 1L), "id"),
-        rows(server.loadTable(id), Expressions.greaterThan("id", 1L), "id"));
+        404,
+        java.net.http.HttpClient.newHttpClient()
+            .send(
+                java.net.http.HttpRequest.newBuilder(
+                        java.net.URI.create(
+                            "http://localhost:"
+                                + port
+                                + "/iceberg/v1/namespaces/"
+                                + DB
+                                + "/tables/missing/plan"))
+                    .header("Authorization", "Bearer " + ScanPlanning.token("irc_planner"))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString("{}"))
+                    .build(),
+                java.net.http.HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 }

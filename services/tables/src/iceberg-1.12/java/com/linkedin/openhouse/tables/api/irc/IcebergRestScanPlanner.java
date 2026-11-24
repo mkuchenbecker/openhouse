@@ -12,6 +12,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableScan;
+import org.apache.iceberg.TableUtil;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.rest.PlanStatus;
 import org.apache.iceberg.rest.requests.PlanTableScanRequest;
@@ -75,6 +76,9 @@ final class IcebergRestScanPlanner {
   /** The error type of a plan answered {@code failed} for having more tasks than the bound. */
   static final String TOO_LARGE = "ScanPlanTooLargeException";
 
+  /** The error type of a plan answered {@code failed} because the table is format version 3. */
+  static final String FORMAT_V3 = "ScanPlanFormatVersionException";
+
   /** {@code configured}, or the default when it is not positive. */
   static int bound(int configured) {
     return configured > 0 ? configured : DEFAULT_MAX_FILE_SCAN_TASKS;
@@ -88,6 +92,9 @@ final class IcebergRestScanPlanner {
    * does not retry or fall back, so a client never reads part of a table as if it were all).
    */
   static PlanTableScanResponse plan(Table table, PlanTableScanRequest request, int maxTasks) {
+    if (TableUtil.formatVersion(table) >= 3) {
+      return formatV3(table);
+    }
     Scan<?, FileScanTask, ?> scan = configure(table, scanOf(table, request), request);
     List<FileScanTask> tasks = new ArrayList<>();
     try (CloseableIterable<FileScanTask> planned = scan.planFiles()) {
@@ -104,6 +111,31 @@ final class IcebergRestScanPlanner {
         .withPlanStatus(PlanStatus.COMPLETED)
         .withPlanId(UUID.randomUUID().toString())
         .withFileScanTasks(tasks)
+        .build();
+  }
+
+  /**
+   * A format v3 table is not planned (work item V11e): the specification's scan task carries no
+   * data or file sequence number, and Iceberg 1.12's client reads none, so a server-planned read
+   * would return a null inherited {@code _last_updated_sequence_number} and a copy-on-write rewrite
+   * planned here would store the rewrite's sequence number for every row it keeps. The answer is
+   * {@code failed}, as for a plan above the bound: the client fails the scan, and a write fails
+   * before it writes anything.
+   */
+  private static PlanTableScanResponse formatV3(Table table) {
+    return PlanTableScanResponse.builder(table.specs())
+        .withPlanStatus(PlanStatus.FAILED)
+        .withErrorResponse(
+            ErrorResponse.builder()
+                .responseCode(422)
+                .withType(FORMAT_V3)
+                .withMessage(
+                    "This service does not plan scans of format version 3 tables: a planned scan"
+                        + " task carries no sequence number, so row lineage"
+                        + " (_last_updated_sequence_number) would be read as null and a"
+                        + " copy-on-write rewrite would store wrong lineage for the rows it keeps."
+                        + " Plan it on the client (catalog property scan-planning-mode=client).")
+                .build())
         .build();
   }
 
