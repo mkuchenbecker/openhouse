@@ -48,7 +48,9 @@ public class IcebergRestWriteController {
     CreateTableRequest request = IcebergRestJson.read(body, CreateTableRequest.class);
     String principal = extractAuthenticatedUserPrincipal();
     if (request.stageCreate()) {
-      return IcebergRestJson.staged(writeHandler.stageCreateTable(databaseId, request, principal));
+      return IcebergRestJson.staged(
+          writeHandler.stageCreateTable(databaseId, request, principal),
+          writeHandler.stagedTableConfig(databaseId, request.name()));
     }
     return IcebergRestJson.loadTable(writeHandler.createTable(databaseId, request, principal));
   }

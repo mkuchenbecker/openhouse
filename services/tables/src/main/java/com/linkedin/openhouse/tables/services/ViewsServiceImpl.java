@@ -49,7 +49,6 @@ import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.view.ViewMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -79,7 +78,6 @@ import org.springframework.stereotype.Component;
  * internal classification and never rendered to the caller.
  */
 @Component
-@ConditionalOnClass(name = "org.apache.iceberg.view.ViewMetadata")
 public class ViewsServiceImpl implements ViewsService {
 
   private static final String VIEWS_DISABLED_MESSAGE = "Views are disabled";

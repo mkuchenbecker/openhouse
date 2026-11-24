@@ -69,4 +69,26 @@ class HouseTableRowLimitsTest {
             + " 255 (user_table_row.table_id).",
         rejected.getMessage());
   }
+
+  /** A store whose name column is narrower states it, and the check uses it (work item V19). */
+  @Test
+  void aConfiguredNameWidthIsTheLimitAndNotPositiveMeansTheDefault() {
+    HouseTableRowLimits narrower = new HouseTableRowLimits(255, 128);
+    assertEquals(128, narrower.getTableIdMaxLength());
+    assertEquals(255, narrower.getMetadataLocationMaxLength());
+    assertDoesNotThrow(() -> narrower.requireTableNameFits("Table db.t", ofLength(128)));
+    CommitRejectedException rejected =
+        assertThrows(
+            CommitRejectedException.class,
+            () -> narrower.requireTableNameFits("Table db.t", ofLength(129)));
+    assertEquals(
+        "Table db.t cannot be written under a name of 129 characters: House Tables holds at most"
+            + " 128 (user_table_row.table_id).",
+        rejected.getMessage());
+
+    assertEquals(255, HouseTableRowLimits.DEFAULT.getTableIdMaxLength());
+    assertEquals(255, new HouseTableRowLimits(512).getTableIdMaxLength());
+    assertEquals(255, new HouseTableRowLimits(255, 0).getTableIdMaxLength());
+    assertEquals(255, new HouseTableRowLimits(255, -1).getTableIdMaxLength());
+  }
 }

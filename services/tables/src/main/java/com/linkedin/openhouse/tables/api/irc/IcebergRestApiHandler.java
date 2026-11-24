@@ -87,6 +87,8 @@ public class IcebergRestApiHandler {
 
   @Autowired private StorageManager storageManager;
 
+  @Autowired private IcebergRestTableFileIo tableFileIo;
+
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
 
@@ -142,7 +144,8 @@ public class IcebergRestApiHandler {
    * client's own configuration, as on the native path: nothing from the cluster's storage
    * parameters is sent. A storage type not listed here gets no {@code io-impl}, and the client
    * keeps its own default, rather than a class that cannot read the cluster's tables. A table the
-   * storage selector places on another storage type than the default gets the default's class too.
+   * storage selector places on another storage type than the default is given its own storage's
+   * class in its responses ({@link IcebergRestTableFileIo}).
    */
   static Optional<String> clientFileIo(StorageType.Type defaultStorageType) {
     if (StorageType.HDFS.equals(defaultStorageType)
@@ -245,7 +248,7 @@ public class IcebergRestApiHandler {
     return new IcebergRestLoadedTable(
         tableDto.getTableLocation(),
         loaded.getMetadata(),
-        readBridgeConfigResolver.resolve(tableDto),
+        tableFileIo.withConfig(readBridgeConfigResolver.resolve(tableDto), loaded.getTable()),
         refsOnly);
   }
 

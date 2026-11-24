@@ -207,6 +207,30 @@ Never set it above the column's real width: the row write would then fail after 
 is written, and the caller would be told the commit's state is unknown. A value that is not positive
 means the default. Changing it requires restarting or redeploying the tables service.
 
+#### Table name length limit
+
+The tables service refuses, with HTTP 400 and before it writes anything, a rename whose target name
+would not fit the HouseTables column that stores a table's name (`user_table_row.table_id`). A
+create's name is at most 128 characters by request validation; only a rename can be longer.
+
+`cluster.housetables.table-id-max-length` in the tables-service `cluster.yaml` states that column's
+width. The default is `255`, the width in `services/housetables/ddl/` (the production schema); leave
+it there for such a store.
+
+Set it to `128` when the HouseTables store's tables were created by that service's bootstrap
+`schema.sql`, which declares the column as `VARCHAR(128)`. Without it, a rename to a name of 129 to
+255 characters writes its metadata file on such a store and then fails to write its row, and the
+caller is told the commit's state is unknown:
+
+```yaml
+cluster:
+  housetables:
+    table-id-max-length: 128
+```
+
+Never set it above the column's real width. A value that is not positive means the default.
+Changing it requires restarting or redeploying the tables service.
+
 #### MySQL for HouseTables Service
 
 To use MySQL, update [cluster.yaml](infra/recipes/k8s/config/housetables/minikube/housetables.yaml). Sample

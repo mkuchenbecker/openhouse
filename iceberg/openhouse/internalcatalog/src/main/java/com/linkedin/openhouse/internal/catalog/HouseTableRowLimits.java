@@ -26,8 +26,9 @@ import org.springframework.stereotype.Component;
  *       VARCHAR(512)}, {@code table_id VARCHAR(128)}.
  * </ul>
  *
- * <p>The metadata location's width is therefore the deployment's to state ({@code
- * cluster.housetables.metadata-location-max-length}, {@link ClusterProperties}); it defaults to the
+ * <p>Both widths are therefore the deployment's to state ({@code
+ * cluster.housetables.metadata-location-max-length} and {@code
+ * cluster.housetables.table-id-max-length}, {@link ClusterProperties}); each defaults to the
  * production store's. Only the columns a request can overflow are limited here: the database name
  * is at most 128 characters in every request that writes it, and the storage type, entity type,
  * version and creation time are the server's.
@@ -43,17 +44,19 @@ public class HouseTableRowLimits {
   public static final int DEFAULT_METADATA_LOCATION_MAX_LENGTH = 255;
 
   /**
-   * {@code user_table_row.table_id VARCHAR(255)} in the production DDL: the table's or view's name.
-   * Not configurable: a create's name is at most 128 characters on every store, and only a rename
-   * can exceed that.
+   * {@code user_table_row.table_id VARCHAR(255)} in the production DDL: the default width of the
+   * table's or view's name, and the default of {@code cluster.housetables.table-id-max-length}. A
+   * create's name is at most 128 characters on every store, so only a rename can exceed it.
    */
-  public static final int TABLE_ID_MAX_LENGTH = 255;
+  public static final int DEFAULT_TABLE_ID_MAX_LENGTH = 255;
 
   /** The limits of a store with the production DDL's widths. */
   public static final HouseTableRowLimits DEFAULT =
-      new HouseTableRowLimits(DEFAULT_METADATA_LOCATION_MAX_LENGTH);
+      new HouseTableRowLimits(DEFAULT_METADATA_LOCATION_MAX_LENGTH, DEFAULT_TABLE_ID_MAX_LENGTH);
 
   private final int metadataLocationMaxLength;
+
+  private final int tableIdMaxLength;
 
   /**
    * The limits of the cluster's House Tables store, as its configuration states them; the default
@@ -61,16 +64,18 @@ public class HouseTableRowLimits {
    */
   @Autowired
   public HouseTableRowLimits(ObjectProvider<ClusterProperties> clusterProperties) {
-    this(
-        clusterProperties.stream()
-            .findFirst()
-            .map(ClusterProperties::getClusterHouseTablesMetadataLocationMaxLength)
-            .orElse(DEFAULT_METADATA_LOCATION_MAX_LENGTH));
+    this(clusterProperties.stream().findFirst().orElse(null));
   }
 
-  /** The limits {@code clusterProperties} states. */
+  /** The limits {@code clusterProperties} states; the defaults for {@code null}. */
   public HouseTableRowLimits(ClusterProperties clusterProperties) {
-    this(clusterProperties.getClusterHouseTablesMetadataLocationMaxLength());
+    this(
+        clusterProperties == null
+            ? DEFAULT_METADATA_LOCATION_MAX_LENGTH
+            : clusterProperties.getClusterHouseTablesMetadataLocationMaxLength(),
+        clusterProperties == null
+            ? DEFAULT_TABLE_ID_MAX_LENGTH
+            : clusterProperties.getClusterHouseTablesTableIdMaxLength());
   }
 
   /**
@@ -78,14 +83,28 @@ public class HouseTableRowLimits {
    *     that is not positive means the default
    */
   public HouseTableRowLimits(int metadataLocationMaxLength) {
+    this(metadataLocationMaxLength, DEFAULT_TABLE_ID_MAX_LENGTH);
+  }
+
+  /**
+   * @param metadataLocationMaxLength the width of {@code user_table_row.metadata_location}
+   * @param tableIdMaxLength the width of {@code user_table_row.table_id}
+   *     <p>A value that is not positive means that column's default.
+   */
+  public HouseTableRowLimits(int metadataLocationMaxLength, int tableIdMaxLength) {
     this.metadataLocationMaxLength =
         metadataLocationMaxLength > 0
             ? metadataLocationMaxLength
             : DEFAULT_METADATA_LOCATION_MAX_LENGTH;
+    this.tableIdMaxLength = tableIdMaxLength > 0 ? tableIdMaxLength : DEFAULT_TABLE_ID_MAX_LENGTH;
   }
 
   public int getMetadataLocationMaxLength() {
     return metadataLocationMaxLength;
+  }
+
+  public int getTableIdMaxLength() {
+    return tableIdMaxLength;
   }
 
   /**
@@ -106,17 +125,29 @@ public class HouseTableRowLimits {
   }
 
   /**
+   * The check of {@link #requireTableNameFits} against the production store's width, {@value
+   * #DEFAULT_TABLE_ID_MAX_LENGTH}.
+   *
    * @param entity what is written, as the message names it, for example {@code Table db.t}
    * @param tableId the name the write would store in the row
    * @throws CommitRejectedException if the row cannot hold {@code tableId}
    */
   public static void requireTableIdFits(String entity, String tableId) {
-    if (tableId.length() > TABLE_ID_MAX_LENGTH) {
+    DEFAULT.requireTableNameFits(entity, tableId);
+  }
+
+  /**
+   * @param entity what is written, as the message names it, for example {@code Table db.t}
+   * @param tableId the name the write would store in the row
+   * @throws CommitRejectedException if this store's row cannot hold {@code tableId}
+   */
+  public void requireTableNameFits(String entity, String tableId) {
+    if (tableId.length() > tableIdMaxLength) {
       throw new CommitRejectedException(
           String.format(
               "%s cannot be written under a name of %d characters: House Tables holds at most %d"
                   + " (user_table_row.table_id).",
-              entity, tableId.length(), TABLE_ID_MAX_LENGTH));
+              entity, tableId.length(), tableIdMaxLength));
     }
   }
 }

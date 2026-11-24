@@ -174,6 +174,8 @@ public class IcebergRestWriteHandler {
 
   @Autowired private FileIOManager fileIOManager;
 
+  @Autowired private IcebergRestTableFileIo tableFileIo;
+
   @Autowired private PoliciesSpecMapper policiesSpecMapper;
 
   // ---------------------------------------------------------------- create
@@ -267,7 +269,7 @@ public class IcebergRestWriteHandler {
         : new IcebergRestLoadedTable(
             base.getTableDto().getTableLocation(),
             base.getMetadata(),
-            Collections.emptyMap(),
+            tableFileIo.config(base.getTable()),
             false);
   }
 
@@ -1086,7 +1088,16 @@ public class IcebergRestWriteHandler {
     return new IcebergRestLoadedTable(
         stored.getTableDto().getTableLocation(),
         stored.getMetadata(),
-        Collections.emptyMap(),
+        tableFileIo.config(stored.getTable()),
         false);
+  }
+
+  /**
+   * The per-table config of a staged create's response: the FileIO class of the storage the create
+   * would place the table on ({@link IcebergRestTableFileIo}), which the client writes the table's
+   * data with before the commit that completes the create.
+   */
+  public Map<String, String> stagedTableConfig(String databaseId, String tableId) {
+    return tableFileIo.config(storageSelector.selectStorage(databaseId, tableId).getType());
   }
 }
