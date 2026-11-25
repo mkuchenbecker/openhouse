@@ -13,9 +13,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -58,9 +62,20 @@ public abstract class SparkSqlSmokeScenarios {
   protected static final String VIEWS_DB = "smoke_t1_views";
   protected static final String VIEWS_CATALOG = "openhouse_views";
 
+  /**
+   * A second catalog of the same path in the session of {@link #sparkSession()}, against the same
+   * service, with table caching off, whose table commits call {@link CommitRace#beforeCommit} right
+   * before they reach the service (work items C3 and C4). Every platform configures it: s32 reads
+   * through it what a refused replace left, and s33 commits through it from a stale base.
+   */
+  protected static final String SECOND_CATALOG = "openhouse_second";
+
   // ---------- what a platform supplies ----------
 
-  /** A session whose catalog {@code openhouse} is the platform's catalog path. */
+  /**
+   * A session whose catalog {@code openhouse} is the platform's catalog path, and whose catalog
+   * {@value #SECOND_CATALOG} is a second catalog of that path, as {@link #SECOND_CATALOG} says.
+   */
   protected abstract SparkSession sparkSession() throws Exception;
 
   /**
@@ -232,6 +247,19 @@ public abstract class SparkSqlSmokeScenarios {
   }
 
   /**
+   * The statement returns exactly the rows {@code earlier} returned, in the same order: for a value
+   * of this run (a snapshot id, a metadata file) that a statement must not change.
+   */
+  protected static Expectation sameRowsAs(Outcome earlier) {
+    return new Expectation("the same rows as before") {
+      @Override
+      boolean holds(Outcome outcome) {
+        return !outcome.failed() && !earlier.failed() && earlier.rows().equals(outcome.rows());
+      }
+    };
+  }
+
+  /**
    * The statement fails with an exception of exactly this class whose message contains the
    * fragment.
    */
@@ -385,7 +413,31 @@ public abstract class SparkSqlSmokeScenarios {
    */
   protected final Outcome sqlShownAs(
       String shown, SparkSession spark, String statement, Expectation... baseline) {
-    Outcome actual = run(spark, statement);
+    return check(shown, run(spark, statement), baseline);
+  }
+
+  /**
+   * Checks something the scenario observes outside Spark SQL (the files under a table's location,
+   * the commit attempts of a race) as if it were a statement's outcome: {@code observed} gives one
+   * row per value, and {@code shown} names what is observed, for differences and the outcomes file.
+   */
+  protected final Outcome observe(
+      String shown, Callable<List<String>> observed, Expectation... baseline) {
+    Outcome actual;
+    try {
+      actual =
+          new Outcome(
+              observed.call().stream()
+                  .map(value -> RowFactory.create(value))
+                  .collect(Collectors.toList()),
+              null);
+    } catch (Throwable failure) {
+      actual = new Outcome(null, failure);
+    }
+    return check(shown, actual, baseline);
+  }
+
+  private Outcome check(String shown, Outcome actual, Expectation... baseline) {
     statementNumber++;
     int occurrence = occurrences.merge(shown, 1, Integer::sum);
     String key = Difference.key(scenario, shown, occurrence);
@@ -1280,6 +1332,132 @@ public abstract class SparkSqlSmokeScenarios {
                 + "    \"columnPattern\": {\n      \"columnName\": \"name\",\n"
                 + "      \"pattern\": \"yyyy-MM-dd\"\n    },\n"
                 + "    \"timeZone\": \"America/Los_Angeles\"\n  },\n  \"sharingEnabled\": false\n}"));
+  }
+
+  // ---------- s32 (work item C3): a refused replace writes nothing ----------
+
+  private static final String BAD_REQUEST = "org.apache.iceberg.exceptions.BadRequestException";
+
+  private static String second(String name) {
+    return SECOND_CATALOG + "." + DB + "." + name;
+  }
+
+  /** The location of {@code table}, as DESCRIBE TABLE EXTENDED gives it, without a file scheme. */
+  private static String location(SparkSession spark, String table) {
+    for (Row row : spark.sql("DESCRIBE TABLE EXTENDED " + table).collectAsList()) {
+      if ("Location".equals(row.getString(0))) {
+        String location = row.getString(1);
+        return location.startsWith("file:")
+            ? Paths.get(java.net.URI.create(location)).toString()
+            : location;
+      }
+    }
+    throw new IllegalStateException("No location for " + table);
+  }
+
+  /** Every file under {@code location}, as paths relative to it, sorted. */
+  private static List<String> filesUnder(String location) throws IOException {
+    Path root = Paths.get(location);
+    if (!Files.isDirectory(root)) {
+      return Collections.emptyList();
+    }
+    try (Stream<Path> walk = Files.walk(root)) {
+      return walk.filter(Files::isRegularFile)
+          .map(path -> root.relativize(path).toString())
+          .sorted()
+          .collect(Collectors.toList());
+    }
+  }
+
+  /**
+   * The files under {@code location} that are not in {@code before}, counted by kind, one row
+   * {@code kind,count} per kind, sorted: {@code data file}, {@code manifest}, {@code manifest
+   * list}, {@code metadata file}, {@code checksum of <kind>} for the local file system's {@code
+   * .crc} files, {@code other <name>} for anything else.
+   */
+  private static Callable<List<String>> filesAdded(String location, List<String> before) {
+    return () -> {
+      Map<String, Integer> kinds = new TreeMap<>();
+      for (String file : filesUnder(location)) {
+        if (!before.contains(file)) {
+          kinds.merge(fileKind(Paths.get(file).getFileName().toString()), 1, Integer::sum);
+        }
+      }
+      return kinds.entrySet().stream()
+          .map(e -> e.getKey() + "," + e.getValue())
+          .collect(Collectors.toList());
+    };
+  }
+
+  private static String fileKind(String name) {
+    if (name.startsWith(".") && name.endsWith(".crc")) {
+      return "checksum of " + fileKind(name.substring(1, name.length() - ".crc".length()));
+    }
+    if (name.endsWith(".metadata.json")) {
+      return "metadata file";
+    }
+    if (name.startsWith("snap-") && name.endsWith(".avro")) {
+      return "manifest list";
+    }
+    if (name.endsWith(".avro")) {
+      return "manifest";
+    }
+    if (name.endsWith(".orc") || name.endsWith(".parquet")) {
+      return "data file";
+    }
+    return "other " + name;
+  }
+
+  /**
+   * Work item C3. A replace of a table that has not opted in ({@code replace.enabled}) is refused,
+   * and the refused statement leaves nothing behind: no data file, no manifest, no metadata file
+   * under the table's location, and the table keeps its rows, snapshots and metadata file. Next to
+   * it, the allowed replace of an opted-in table writes, so the listing would notice a write. What
+   * the table holds afterwards is read through {@value #SECOND_CATALOG}, which caches nothing.
+   */
+  @Test
+  public void s32_replace_refusedWritesNothing() throws Exception {
+    SparkSession spark = sparkSession();
+    String gated = table("s32_gated");
+    String allowed = table("s32_allowed");
+    fresh(spark, gated, allowed);
+    String refusal = "REPLACE TABLE AS SELECT is not enabled for table ";
+
+    sql(spark, "CREATE TABLE " + gated + " (id bigint, name string)");
+    sql(spark, "INSERT INTO " + gated + " VALUES (1,'a')");
+    String location = location(spark, gated);
+    String snapshots = "SELECT snapshot_id FROM " + second("s32_gated") + ".snapshots";
+    String metadata =
+        "SELECT file FROM " + second("s32_gated") + ".metadata_log_entries ORDER BY timestamp";
+    Outcome snapshotsBefore = sql(spark, snapshots);
+    Outcome metadataBefore = sql(spark, metadata);
+
+    for (String replace :
+        new String[] {
+          "CREATE OR REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " (id bigint, x string)"
+        }) {
+      List<String> before = filesUnder(location);
+      sql(spark, replace, fails(BAD_REQUEST, refusal + gated));
+      observe("files added by: " + replace, filesAdded(location, before), rows());
+      sql(spark, "SELECT * FROM " + second("s32_gated"), rows("1,a"));
+      sql(spark, snapshots, sameRowsAs(snapshotsBefore));
+      sql(spark, metadata, sameRowsAs(metadataBefore));
+    }
+
+    sql(spark, "CREATE TABLE " + allowed + " (id bigint, name string)");
+    sql(spark, "INSERT INTO " + allowed + " VALUES (1,'a')");
+    sql(spark, "ALTER TABLE " + allowed + " SET TBLPROPERTIES ('replace.enabled'='true')");
+    String allowedLocation = location(spark, allowed);
+    String replace = "CREATE OR REPLACE TABLE " + allowed + " AS SELECT 7 AS id, 'z' AS name";
+    List<String> before = filesUnder(allowedLocation);
+    sql(spark, replace);
+    observe(
+        "files added by: " + replace,
+        filesAdded(allowedLocation, before),
+        hasRowStartingWith("data file,"));
+    sql(spark, "SELECT * FROM " + second("s32_allowed"), rows("7,z"));
   }
 
   @Test

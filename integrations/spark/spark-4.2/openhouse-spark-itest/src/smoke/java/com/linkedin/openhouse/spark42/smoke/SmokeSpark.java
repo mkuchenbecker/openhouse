@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.spark42.smoke;
 
+import com.linkedin.openhouse.spark.smoke.CommitRaceRestCatalog;
 import org.apache.spark.sql.SparkSession;
 
 /**
@@ -14,6 +15,9 @@ import org.apache.spark.sql.SparkSession;
  *   <li>{@code openhouse_views}: the same with {@code cache-enabled=false}, as the Spark 3.5 suite
  *       configures the catalog of its views scenarios. The service has one database with views
  *       enabled.
+ *   <li>{@code openhouse_second}: the smoke suite's second catalog (work items C3, C4): Iceberg's
+ *       {@code RESTCatalog} over the same routes, with no table caching, whose table commits run
+ *       the step a scenario armed first ({@code CommitRaceRestCatalog}).
  *   <li>{@code local}: Iceberg's Hadoop catalog on a local directory. It has nothing of OpenHouse,
  *       so what a statement does there is what Spark 4.2 and Iceberg 1.12 do by themselves.
  * </ul>
@@ -23,6 +27,7 @@ final class SmokeSpark {
   static final String OPENHOUSE = "openhouse";
   static final String OPENHOUSE_VIEWS = "openhouse_views";
   static final String LOCAL = "local";
+  static final String OPENHOUSE_SECOND = "openhouse_second";
 
   private static SparkSession spark;
 
@@ -58,6 +63,14 @@ final class SmokeSpark {
         ServerPlanning.apply(prefix, builder::config);
       }
       builder.config("spark.sql.catalog." + OPENHOUSE_VIEWS + ".cache-enabled", "false");
+      String second = "spark.sql.catalog." + OPENHOUSE_SECOND;
+      builder
+          .config(second, "org.apache.iceberg.spark.SparkCatalog")
+          .config(second + ".catalog-impl", CommitRaceRestCatalog.class.getName())
+          .config(second + ".uri", service.uri() + "/iceberg")
+          .config(second + ".token", service.token())
+          .config(second + ".cache-enabled", "false");
+      ServerPlanning.apply(second, builder::config);
       builder
           .config("spark.sql.catalog." + LOCAL, "org.apache.iceberg.spark.SparkCatalog")
           .config("spark.sql.catalog." + LOCAL + ".type", "hadoop")
