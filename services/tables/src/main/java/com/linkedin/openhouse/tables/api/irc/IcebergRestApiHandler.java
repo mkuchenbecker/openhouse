@@ -215,7 +215,8 @@ public class IcebergRestApiHandler {
     tablesApiValidator.validateSearchTables(databaseId);
     List<TableDto> tables = tablesService.searchTables(databaseId);
     if (tables.isEmpty()) {
-      requireNamespace(databaseId);
+      // The listing just read is the table probe: no table, so only the database list is left.
+      requireListedDatabase(databaseId);
     }
     return ListTablesResponse.builder()
         .addAll(
@@ -377,10 +378,26 @@ public class IcebergRestApiHandler {
   /**
    * Fails unless the native API reports {@code databaseId}: it holds a table, or the database list
    * shows it (which also counts databases holding only views).
+   *
+   * <p>Whether it holds a table is one row of the native paged table search, which reads the same
+   * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
+   * listing of every table of the database (V17). The database list is read only when it holds
+   * none; that list has no lookup by name in House Tables, so a miss still reads it.
    */
   void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);
-    if (tablesService.searchTables(databaseId).isEmpty() && !databaseIds().contains(databaseId)) {
+    if (!holdsATable(databaseId)) {
+      requireListedDatabase(databaseId);
+    }
+  }
+
+  private boolean holdsATable(String databaseId) {
+    return tablesService.searchTables(databaseId, 0, 1, null, null, null).hasContent();
+  }
+
+  /** Fails unless the native database list shows {@code databaseId}, spelled exactly so. */
+  private void requireListedDatabase(String databaseId) {
+    if (!databaseIds().contains(databaseId)) {
       throw new NoSuchNamespaceException("Namespace does not exist: %s", databaseId);
     }
   }
