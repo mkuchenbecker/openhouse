@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
 @ComponentScan(
@@ -44,6 +45,7 @@ import org.springframework.context.annotation.Primary;
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
 @Import(SparkItestColumnDefaults.class)
+@PropertySource("classpath:tables-test-fixtures-h2.properties")
 public class SpringH2TestApplication {
 
   public static void main(String[] args) {
