@@ -6,6 +6,7 @@ import static com.linkedin.openhouse.internal.catalog.mapper.HouseTableSerdeUtil
 import com.linkedin.openhouse.cluster.storage.Storage;
 import com.linkedin.openhouse.cluster.storage.selector.StorageSelector;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.internal.catalog.fileio.FileIOManager;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
@@ -14,25 +15,35 @@ import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableCo
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableRepositoryStateUnknownException;
 import com.linkedin.openhouse.internal.catalog.view.ViewMetadataCodec;
 import com.linkedin.openhouse.internal.catalog.view.ViewSystemProperties;
+import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
+import com.linkedin.openhouse.tables.audit.ViewAuditAspect;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
 import com.linkedin.openhouse.tables.exception.ViewErrorCode;
 import com.linkedin.openhouse.tables.exception.ViewFailureTranslator;
+import com.linkedin.openhouse.tables.model.ReservedViewProperties;
 import com.linkedin.openhouse.tables.services.ViewWritePrivilegeMapper;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.catalog.TableIdentifier;
-import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NotFoundException;
 import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.rest.responses.ImmutableLoadViewResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
 import org.apache.iceberg.view.ViewMetadata;
+import org.apache.iceberg.view.ViewVersion;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -52,18 +63,25 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>a {@code .metadata.json} file directly in the directory the server allocates to the view
  *       for the UUID in the directory's name ({@code <view>-<uuid>}), as the table register
- *       requires of a table;
+ *       requires of a table, spelled as the engine stores it (as the load route returns it);
  *   <li>no House Tables row (a table, live or soft-deleted, or a view) points into that directory
  *       or has that UUID, as for the table register: a table renamed away keeps its directory, and
  *       a soft-deleted one can be restored into it;
  *   <li>view metadata, whose location is that directory and whose UUID is that UUID, and whose
  *       OpenHouse properties name this view (database, name, UUID), this file as its own pointer,
- *       its creator and its source dialect, as the view commit engine writes them. So the view can
- *       be loaded and replaced like one the engine created.
+ *       its creator, source dialect and times, without a case-duplicated OpenHouse key, as the view
+ *       commit engine writes them. So the view can be loaded and replaced like one the engine
+ *       created;
+ *   <li>its current version passes the native create's validation, and its location fits the House
+ *       Tables row, as the engine requires of a create.
  * </ul>
  *
- * A refusal of the file is 400 {@code BadRequestException} and does not tell what the file holds.
- * The row is written once, as the engine writes a create's: a concurrent create of the name is 409.
+ * The file's content is trusted only as far as these checks go: that nobody but the service writes
+ * into a view's directory rests on storage permissions. Older files of a dropped view register too
+ * (decision B). A refusal of the file is 400 {@code BadRequestException} and does not tell what the
+ * file holds. The row is written once, as the engine writes a create's: a concurrent create of the
+ * name is 409, naming the kind that won. The registration is audited as a CREATE by the caller
+ * ({@link ViewAuditAspect#auditCreate}), and the view keeps the creator its file records.
  *
  * <p>Compiled on the Iceberg 1.12 line only, with its route ({@link
  * IcebergRestRegisterViewController}).
@@ -93,20 +111,28 @@ public class IcebergRestViewRegistration {
 
   @Autowired private ViewMetadataCodec viewMetadataCodec;
 
-  @Autowired private IcebergRestViewHandler viewHandler;
+  @Autowired private ViewAuditAspect viewAudit;
+
+  @Autowired private ObjectProvider<HouseTableRowLimits> houseTableRowLimits;
 
   public LoadViewResponse registerView(
       String namespace, String viewId, String metadataLocation, String actingPrincipal) {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
-    IcebergRestViewHandler.onNamespace(
-        () -> {
-          register(databaseId, viewId, metadataLocation, actingPrincipal);
-          return null;
-        });
-    return viewHandler.loadView(namespace, viewId, actingPrincipal);
+    // Audited as a native create is: a CREATE by the caller, success or failure (decision A).
+    return IcebergRestViewHandler.onNamespace(
+        () ->
+            viewAudit.auditCreate(
+                databaseId,
+                viewId,
+                () -> register(databaseId, viewId, metadataLocation, actingPrincipal),
+                LoadViewResponse::metadataLocation));
   }
 
-  private void register(
+  /**
+   * Checks, then writes the row; answers the metadata already read, which is what a load of the row
+   * reads (the file at the row's pointer), so nothing can fail after the row is written.
+   */
+  private LoadViewResponse register(
       String databaseId, String viewId, String metadataLocation, String actingPrincipal) {
     viewsApiValidator.validateGetView(databaseId, viewId);
     TableIdentifier identifier = TableIdentifier.of(databaseId, viewId);
@@ -139,8 +165,16 @@ public class IcebergRestViewRegistration {
       refuseADirectoryInUse(identifier, storage, directory, uuid);
       ViewMetadata metadata = read(identifier, storage, metadataLocation);
       requireWrittenForThisView(identifier, storage, directory, uuid, metadataLocation, metadata);
+      requireWhatACreateAccepts(identifier, metadata);
+      houseTableRowLimits
+          .getIfAvailable(() -> HouseTableRowLimits.DEFAULT)
+          .requireMetadataLocationFits("View " + identifier, metadataLocation);
       save(identifier, storage, uuid, metadataLocation, metadata);
-    } catch (ViewApiException | BadRequestException e) {
+      return ImmutableLoadViewResponse.builder()
+          .metadataLocation(metadataLocation)
+          .metadata(metadata)
+          .build();
+    } catch (ViewApiException e) {
       throw e;
     } catch (RuntimeException e) {
       throw ViewFailureTranslator.translateWriteFailureTo(e);
@@ -174,6 +208,17 @@ public class IcebergRestViewRegistration {
                   actingPrincipal,
                   new HashMap<>());
           if (directory.equals(withoutEndpoint(storage, allocated))) {
+            String stored = allocated + path.substring(fileAt);
+            if (!stored.equals(metadataLocation)) {
+              // The same file spelled otherwise (with or without the storage's endpoint): the row
+              // keeps the spelling the engine stores, which is the load route's.
+              throw refused(
+                  identifier,
+                  "%s is not spelled as OpenHouse stores it: name the file as the view's load "
+                      + "returned it, %s",
+                  metadataLocation,
+                  stored);
+            }
             return directory;
           }
         } catch (IllegalArgumentException e) {
@@ -299,10 +344,26 @@ public class IcebergRestViewRegistration {
       mismatch = "its OpenHouse properties name another view";
     } else if (!metadataLocation.equals(properties.get(getCanonicalFieldName("tableLocation")))) {
       mismatch = "its OpenHouse properties name another file as the view's metadata";
-    } else if (isBlank(properties.get(getCanonicalFieldName("tableCreator")))
-        || isBlank(properties.get(ViewSystemProperties.SOURCE_DIALECT))
-        || !isLong(properties.get(getCanonicalFieldName("creationTime")))) {
-      mismatch = "it lacks the creator, source dialect or creation time OpenHouse records";
+    } else if (isBlank(properties.get(getCanonicalFieldName("tableCreator")))) {
+      mismatch = "it records no creator";
+    } else if (isBlank(properties.get(ViewSystemProperties.SOURCE_DIALECT))) {
+      mismatch = "it records no source dialect";
+    } else if (!isLong(properties.get(getCanonicalFieldName("creationTime")))) {
+      mismatch = "its creation time is not a number";
+    } else if (properties.get(getCanonicalFieldName("lastModifiedTime")) != null
+        && !isLong(properties.get(getCanonicalFieldName("lastModifiedTime")))) {
+      // The view's load reads it as a number.
+      mismatch = "its last modified time is not a number";
+    } else {
+      Set<String> systemKeys = new HashSet<>();
+      for (String key : properties.keySet()) {
+        if (ViewSystemProperties.isSystemProperty(key)
+            && !systemKeys.add(key.toLowerCase(Locale.ROOT))) {
+          // Every later replace of such a view fails the engine's system-property check.
+          mismatch = "it holds the OpenHouse property " + key + " twice, in different cases";
+          break;
+        }
+      }
     }
     if (mismatch != null) {
       throw refused(
@@ -310,6 +371,49 @@ public class IcebergRestViewRegistration {
           "the metadata at %s is not what OpenHouse wrote for this view: %s",
           metadataLocation,
           mismatch);
+    }
+  }
+
+  /**
+   * Runs the native create's validation ({@link ViewsApiValidator#validateCreateView}: schema,
+   * dialects and their uniqueness, representations, default namespace, properties, source dialect)
+   * on the create that would make the file's current version, so a registration admits no view a
+   * create would refuse. The engine's own create checks (duplicate dialects, server-owned keys,
+   * required inputs) are within it or above; the location's length is checked by the caller. Older
+   * versions are history, not checked.
+   */
+  private void requireWhatACreateAccepts(TableIdentifier identifier, ViewMetadata metadata) {
+    ViewVersion version = metadata.currentVersion();
+    Map<String, String> properties = new LinkedHashMap<>();
+    metadata
+        .properties()
+        .forEach(
+            (key, value) -> {
+              if (!ViewSystemProperties.isSystemProperty(key)) {
+                properties.put(key, value);
+              }
+            });
+    properties.put(
+        ReservedViewProperties.SOURCE_DIALECT,
+        metadata.properties().get(ViewSystemProperties.SOURCE_DIALECT));
+    CreateUpdateViewRequestBody body =
+        CreateUpdateViewRequestBody.builder()
+            .viewId(identifier.name())
+            .databaseId(identifier.namespace().toString())
+            .schema(SchemaParser.toJson(metadata.schema(), false))
+            .representations(IcebergRestViewSpelling.representations(version))
+            .defaultCatalog(version.defaultCatalog())
+            .defaultNamespace(IcebergRestViewSpelling.levels(version.defaultNamespace()))
+            .viewProperties(properties)
+            .build();
+    try {
+      viewsApiValidator.validateCreateView(body);
+    } catch (ViewApiException e) {
+      throw new ViewApiException(
+          e.getErrorCode(),
+          String.format(
+              "Cannot register view %s: its current version is not one a create accepts: %s",
+              identifier, e.getMessage()));
     }
   }
 
@@ -335,9 +439,21 @@ public class IcebergRestViewRegistration {
     try {
       houseTableRepository.saveView(row);
     } catch (HouseTableConcurrentUpdateException e) {
-      // A create of the name landed since the capture.
+      // A create of the name landed since the capture: say which kind won, as the capture would.
+      Optional<HouseTable> winner = Optional.empty();
+      try {
+        winner = houseTableRepository.findEntityById(key(row.getDatabaseId(), row.getTableId()));
+      } catch (RuntimeException lookup) {
+        // unknown kind: the neutral answer below
+      }
+      if (winner.filter(w -> !ENTITY_TYPE_VIEW.equals(w.getEntityType())).isPresent()) {
+        throw new ViewApiException(
+            ViewErrorCode.NAME_ALREADY_EXISTS_AS_TABLE,
+            "Name already exists as a table: " + identifier);
+      }
       throw new ViewApiException(
-          ViewErrorCode.VIEW_ALREADY_EXISTS, "View already exists: " + identifier, e);
+          ViewErrorCode.VIEW_ALREADY_EXISTS,
+          (winner.isPresent() ? "View already exists: " : "Name already exists: ") + identifier);
     } catch (HouseTableRepositoryStateUnknownException e) {
       throw ViewFailureTranslator.translateWriteFailureTo(new CommitStateUnknownException(e));
     }
@@ -360,9 +476,14 @@ public class IcebergRestViewRegistration {
     return HouseTablePrimaryKey.builder().databaseId(databaseId).tableId(viewId).build();
   }
 
-  private static BadRequestException refused(
+  /**
+   * A refusal of the file: 400, as a create's invalid definition (so the view audit names it as
+   * such), with the route's message.
+   */
+  private static ViewApiException refused(
       TableIdentifier identifier, String reason, Object... args) {
-    return new BadRequestException(
-        "Cannot register view %s: %s", identifier, String.format(reason, args));
+    return new ViewApiException(
+        ViewErrorCode.INVALID_VIEW_DEFINITION,
+        String.format("Cannot register view %s: %s", identifier, String.format(reason, args)));
   }
 }

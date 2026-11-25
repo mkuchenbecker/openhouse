@@ -12,7 +12,6 @@ import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitial
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
-import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
 import java.util.Collections;
@@ -45,7 +44,7 @@ public class IrcRegisterViewRaceTest {
 
   @Autowired MockMvc mvc;
   @Autowired ToggleStatusesRepository toggles;
-  @SpyBean HouseTableRepository houseTables;
+  @SpyBean HouseTablesH2Repository houseTables;
 
   @AfterEach
   void cleanUp() throws Exception {
