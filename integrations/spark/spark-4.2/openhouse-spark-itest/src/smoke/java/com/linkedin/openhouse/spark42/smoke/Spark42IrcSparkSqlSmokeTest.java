@@ -203,7 +203,7 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                         "The goal excludes the Java client's exception class from the engine. The IRC"
                             + " routes answer a native 400 as Iceberg's BadRequestException with the native"
                             + " message (decision D16, V3 error mapping).")));
-    // ---- s32, s33: what a refused replace leaves.
+    // ---- s32, s33: what a refused replace leaves, and how a stale commit is applied.
     differences.addAll(
         refusedReplaceLeavesItsDataFile(
             IRC_UNDECIDED,
@@ -212,6 +212,14 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                 + " Spark wrote the data. The service can refuse no earlier; the GET carries no"
                 + " intent. The same on Spark 3.5 over the same routes. The file is left for the"
                 + " orphan files job."));
+    differences.addAll(
+        staleCommitMeetsNoConflict(
+            IRC_UNDECIDED,
+            "Work item C4: the Iceberg REST client sends the changed keys with only an"
+                + " assert-table-uuid requirement, and the service applies them onto the stored"
+                + " table, merging a policy patch onto the stored policies (PolicyPatch). Nothing"
+                + " to refuse; the table ends with both changes, as on the baseline. The same on"
+                + " Spark 3.5 over the same routes."));
     return differences;
   }
 

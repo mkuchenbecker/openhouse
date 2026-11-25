@@ -156,7 +156,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
                 TYPE_OR_WORDING,
                 "No OpenHouse Java client on this catalog: the IRC routes answer a native 400 as"
                     + " Iceberg's BadRequestException, prefixed \"Malformed request: \" (D16)."));
-    // ---- s32, s33: what a refused replace leaves.
+    // ---- s32, s33: what a refused replace leaves, and how a stale commit is applied.
     differences.addAll(
         refusedReplaceLeavesItsDataFile(
             REFUSED_AT_COMMIT,
@@ -164,6 +164,14 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
                 + " table (GET), and the first request that says \"replace\" is the commit, after"
                 + " Spark wrote the data. The service can refuse no earlier; the GET carries no"
                 + " intent. Same on Spark 4.2. The file is left for the orphan files job."));
+    differences.addAll(
+        staleCommitMeetsNoConflict(
+            NO_CONFLICT,
+            "Work item C4: the Iceberg REST client sends the changed keys with only an"
+                + " assert-table-uuid requirement, and the service applies them onto the stored"
+                + " table, merging a policy patch onto the stored policies (PolicyPatch). Nothing"
+                + " to refuse; the table ends with both changes, as on the baseline. Same on"
+                + " Spark 4.2."));
     return differences;
   }
 }

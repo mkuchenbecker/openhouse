@@ -332,6 +332,9 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   /** The category of the files a replace leaves when the gate refuses only its commit (C3). */
   protected static final String REFUSED_AT_COMMIT = "replace refused at commit, data file left";
 
+  /** The category of the commit attempts of a stale commit that meets no conflict (C4). */
+  protected static final String NO_CONFLICT = "stale commit applied without a conflict";
+
   /** The category of a difference that the Iceberg 1.12 line makes on every Spark 3.5 path. */
   protected static final String ICEBERG_112 = "(c) Iceberg 1.12 line";
 

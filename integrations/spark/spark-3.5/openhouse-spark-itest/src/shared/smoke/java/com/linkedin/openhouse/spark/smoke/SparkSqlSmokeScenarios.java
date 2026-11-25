@@ -1558,6 +1558,26 @@ public abstract class SparkSqlSmokeScenarios {
     return differences;
   }
 
+  /**
+   * The differences of a path on which a stale property or policy commit meets no conflict (work
+   * item C4): the commit carries only the changed keys (a policy statement's patch is one such key)
+   * and asserts only the table's UUID, as Iceberg's REST client builds it, and the service applies
+   * it onto the table as stored. So the first attempt commits, where the baseline's commit, which
+   * carries its base version and every property, is refused with a conflict and succeeds after a
+   * refresh. The table ends as on the baseline: both changes kept.
+   */
+  protected static List<Difference> staleCommitMeetsNoConflict(String kind, String why) {
+    List<Difference> differences = new ArrayList<>();
+    for (String[] race : s33Races()) {
+      differences.add(
+          Difference.on("s33", "commit attempts of: " + race[1])
+              .baseline(rows("CommitFailedException", "committed"))
+              .here(rows("committed"))
+              .because(kind, why));
+    }
+    return differences;
+  }
+
   /** The other client's change and the stale statement of race {@code number} (from 1). */
   private void race(SparkSession spark, int number) {
     String[] race = s33Races().get(number - 1);
