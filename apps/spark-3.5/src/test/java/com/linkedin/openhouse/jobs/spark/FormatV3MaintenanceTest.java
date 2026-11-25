@@ -35,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.FileSystem;
@@ -949,6 +950,98 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     assertNoLiveDataLost(formatVersion, fqtn, before, before.perSnapshot);
   }
 
+  /**
+   * Work item X12: the delete-file numbers of table stats count each delete file once and add its
+   * size once, on v3 as on v2. On v3 one Puffin file holds the deletion vectors of several data
+   * files, and the files metadata tables list one row per deletion vector, each with the Puffin
+   * file's path and whole size; the collectors drop duplicate (content, path, size) rows before
+   * counting, so a Puffin file counts once. Expected values come from the snapshots' delete
+   * manifests and the file system, not from the collectors. The table has position deletes only
+   * (Spark writes no equality deletes).
+   */
+  @ParameterizedTest(name = "format v{0}")
+  @ValueSource(ints = {2, 3})
+  void tableStatsCountEachDeleteFileOnceWithItsSize(int formatVersion) throws Exception {
+    String fqtn = createTable(formatVersion, "stats_deletes", "orc");
+    Operations ops = ops(formatVersion);
+    Table table = ops.getTable(fqtn);
+    FileSystem fs = ops.fs();
+
+    List<DeleteFile> current = liveDeleteFiles(table, table.currentSnapshot());
+    Map<String, Long> currentFiles = new TreeMap<>();
+    for (DeleteFile d : current) {
+      currentFiles.put(
+          d.path().toString(), fs.getFileStatus(new Path(d.path().toString())).getLen());
+      Assertions.assertEquals(
+          (long) currentFiles.get(d.path().toString()),
+          d.fileSizeInBytes(),
+          "a delete file entry carries its file's whole size: " + d.path());
+    }
+    Map<String, Long> allFiles = new TreeMap<>();
+    for (Snapshot snapshot : table.snapshots()) {
+      for (DeleteFile d : liveDeleteFiles(table, snapshot)) {
+        allFiles.put(d.path().toString(), d.fileSizeInBytes());
+      }
+    }
+    for (String path : allFiles.keySet()) {
+      Assertions.assertTrue(fs.exists(new Path(path)), path);
+      Assertions.assertEquals((long) allFiles.get(path), fs.getFileStatus(new Path(path)).getLen());
+    }
+    if (formatVersion == 3) {
+      // Not vacuous: some Puffin file holds several deletion vectors, so a count per vector, or the
+      // Puffin size added per vector, would be larger than a count per file.
+      Map<String, Long> vectorsPerFile =
+          current.stream()
+              .collect(Collectors.groupingBy(d -> d.path().toString(), Collectors.counting()));
+      Assertions.assertTrue(
+          vectorsPerFile.values().stream().anyMatch(n -> n > 1),
+          "one Puffin file holds several deletion vectors: " + vectorsPerFile);
+      Assertions.assertTrue(current.size() > currentFiles.size());
+    } else {
+      Assertions.assertEquals(current.size(), currentFiles.size(), "v2: one entry per file");
+    }
+
+    IcebergTableStats stats = ops.collectTableStats(fqtn);
+    Assertions.assertNotNull(stats, "stats collection failed (it returns null on an exception)");
+    System.out.println(
+        "X12 v"
+            + formatVersion
+            + " current: entries="
+            + current.size()
+            + " files="
+            + currentFiles.size()
+            + " bytes="
+            + currentFiles.values().stream().mapToLong(Long::longValue).sum()
+            + " entryBytes="
+            + current.stream().mapToLong(DeleteFile::fileSizeInBytes).sum()
+            + " stats="
+            + stats.getNumCurrentSnapshotPositionDeleteFiles()
+            + "/"
+            + stats.getTotalCurrentSnapshotPositionDeleteFileSizeInBytes()
+            + "; all: files="
+            + allFiles.size()
+            + " bytes="
+            + allFiles.values().stream().mapToLong(Long::longValue).sum()
+            + " stats="
+            + stats.getNumPositionDeleteFiles()
+            + "/"
+            + stats.getTotalPositionDeleteFileSizeInBytes());
+    Assertions.assertEquals(
+        (long) currentFiles.size(), (long) stats.getNumCurrentSnapshotPositionDeleteFiles());
+    Assertions.assertEquals(
+        currentFiles.values().stream().mapToLong(Long::longValue).sum(),
+        (long) stats.getTotalCurrentSnapshotPositionDeleteFileSizeInBytes());
+    Assertions.assertEquals((long) allFiles.size(), (long) stats.getNumPositionDeleteFiles());
+    Assertions.assertEquals(
+        allFiles.values().stream().mapToLong(Long::longValue).sum(),
+        (long) stats.getTotalPositionDeleteFileSizeInBytes());
+    Assertions.assertEquals(0L, (long) stats.getNumCurrentSnapshotEqualityDeleteFiles());
+    Assertions.assertEquals(
+        0L, (long) stats.getTotalCurrentSnapshotEqualityDeleteFileSizeInBytes());
+    Assertions.assertEquals(0L, (long) stats.getNumEqualityDeleteFiles());
+    Assertions.assertEquals(0L, (long) stats.getTotalEqualityDeleteFileSizeInBytes());
+  }
+
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
   void dataLayoutStrategyGenerationReadsAV3TableAndChangesNoData(int formatVersion)
@@ -1101,21 +1194,11 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
 
     SortStatsCollectionSparkApp app =
         new SortStatsCollectionSparkApp("x6-sort-stats", null, fqtn, otelEmitter);
-    if (icebergCanWriteV3()) {
-      app.runInner(ops);
-      app.runValidations(ops);
-      Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
-    } else {
-      // On LinkedIn's Iceberg 1.5.2 the sort strategy of rewrite_data_files needs the session's
-      // outermost parser to be Iceberg's, and the OpenHouse extensions wrap it (the order every
-      // deployment uses, jobs.yaml), so the job fails before it rewrites anything. This exists
-      // before format v3 and is pinned, not changed, here; the table must still be untouched.
-      Throwable failure = Assertions.assertThrows(Exception.class, () -> app.runInner(ops));
-      Assertions.assertTrue(
-          String.valueOf(failure.getMessage()).contains("parser is not an Iceberg ExtendedParser"),
-          String.valueOf(failure));
-      Assertions.assertNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
-    }
+    // On both Iceberg lines (X11): on 1.5.2 the app parses its sort order with Iceberg's parser
+    // below OpenHouse's, where rewrite_data_files would look at the outermost parser only and fail.
+    app.runInner(ops);
+    app.runValidations(ops);
+    Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
     Reading after = readingIn(spark, formatVersion, fqtn);
     Assertions.assertEquals(before.live, after.live, "live rows, full contents");
     Assertions.assertEquals(before.lineage, after.lineage, "_row_id and sequence numbers");
