@@ -590,6 +590,8 @@ public class IrcReadRoutesTest {
     if (!IrcPlanCredentialsRoutesTest.served()) {
       routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"});
       routes.add(new Object[] {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"});
+    }
+    if (!IrcConfigEndpointsTest.registerViewServed()) {
       routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"});
     }
     for (Object[] route : routes) {

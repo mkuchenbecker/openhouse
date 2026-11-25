@@ -38,6 +38,7 @@ import org.springframework.test.web.servlet.MvcResult;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.context.annotation.Import(IrcViewRoutesTest.ViewAudit.class)
 @ContextConfiguration(
     initializers = {
       PropertyOverrideContextInitializer.class,
@@ -49,6 +50,11 @@ public class IrcRegisterViewAuthTest {
   @Autowired MockMvc mvc;
   @Autowired ToggleStatusesRepository toggles;
   @MockBean AuthorizationHandler authorizationHandler;
+
+  @Autowired
+  com.linkedin.openhouse.common.audit.AuditHandler<
+          com.linkedin.openhouse.tables.audit.model.ViewAuditEvent>
+      viewAuditHandler;
 
   private String location;
 
@@ -121,5 +127,119 @@ public class IrcRegisterViewAuthTest {
     verify(authorizationHandler)
         .checkAccessDecision(any(), any(DatabaseDto.class), eq(Privileges.CREATE_TABLE));
     assertEquals(200, code(get(mvc, DB, "v")));
+  }
+
+  private MvcResult register(String name, String file) throws Exception {
+    return IrcHttp.perform(
+        mvc,
+        IrcWrite.post(
+            IrcRegisterViewRouteTest.registerPath(DB),
+            IrcRegisterViewRouteTest.request(name, file)));
+  }
+
+  /**
+   * Nothing is read before the decision: a denied caller gets the same 403 whether the file is
+   * valid, missing or garbage, and on a name that is already a view (not the 409).
+   */
+  @Test
+  void aDeniedCallerLearnsNothingAboutTheFileOrTheName() throws Exception {
+    stubDecision(false);
+    String denied = assertIrcError(register("v"), 403, "ForbiddenException").message();
+    String directory = location.substring(0, location.lastIndexOf('/'));
+    String missing = directory + "/00009-" + java.util.UUID.randomUUID() + ".metadata.json";
+    assertEquals(
+        denied, assertIrcError(register("v", missing), 403, "ForbiddenException").message());
+    String garbage = directory + "/00008-" + java.util.UUID.randomUUID() + ".metadata.json";
+    java.nio.file.Path garbagePath =
+        java.nio.file.Paths.get(
+            garbage.startsWith("file:") ? garbage.substring("file:".length()) : garbage);
+    java.nio.file.Files.write(
+        garbagePath, "not json".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals(
+        denied, assertIrcError(register("v", garbage), 403, "ForbiddenException").message());
+    stubDecision(true);
+    assertEquals(200, register("v").getResponse().getStatus());
+    stubDecision(false);
+    assertEquals(denied, assertIrcError(register("v"), 403, "ForbiddenException").message());
+  }
+  // ---------------------------------------------------------------- who (decision A, U3)
+
+  private static String bearer(String user) throws Exception {
+    return "Bearer "
+        + new com.linkedin.openhouse.common.security.DummyTokenInterceptor.DummySecurityJWT(user)
+            .buildNoopJWT();
+  }
+
+  /**
+   * Created by one principal, dropped, registered by another: the view keeps its creator and
+   * creation time (the file's), and the view audit names the registrant, as a CREATE.
+   */
+  @Test
+  void theRegistrantIsAuditedAndTheViewKeepsItsCreatorAndCreationTime() throws Exception {
+    String location =
+        IrcViewWrite.parsed(
+                IrcHttp.perform(
+                    mvc,
+                    IrcWrite.post(
+                            IrcViewWrite.views(DB),
+                            IrcViewWrite.createRequest(
+                                "w",
+                                IrcViewRoutesTest.SCHEMA,
+                                "SELECT 1",
+                                Namespace.of(DB),
+                                Collections.emptyMap()))
+                        .header("Authorization", bearer("irc_rv_alice"))))
+            .metadataLocation();
+    MvcResult before = get(mvc, DB, "w");
+    assertEquals("irc_rv_alice", JsonPath.read(IrcHttp.body(before), "$.viewCreator"));
+    Object creationTime = JsonPath.read(IrcHttp.body(before), "$.creationTime");
+    assertEquals(204, IrcViewWrite.drop(mvc, DB, "w").getResponse().getStatus());
+    org.mockito.Mockito.clearInvocations(viewAuditHandler);
+
+    MvcResult registered =
+        IrcHttp.perform(
+            mvc,
+            IrcWrite.post(
+                    IrcRegisterViewRouteTest.registerPath(DB),
+                    IrcRegisterViewRouteTest.request("w", location))
+                .header("Authorization", bearer("irc_rv_bob")));
+    assertEquals(location, IrcViewWrite.parsed(registered).metadataLocation());
+
+    MvcResult after = get(mvc, DB, "w");
+    assertEquals("irc_rv_alice", JsonPath.read(IrcHttp.body(after), "$.viewCreator"));
+    assertEquals(creationTime, JsonPath.read(IrcHttp.body(after), "$.creationTime"));
+    verify(viewAuditHandler)
+        .audit(
+            org.mockito.ArgumentMatchers.argThat(
+                (com.linkedin.openhouse.tables.audit.model.ViewAuditEvent event) ->
+                    event != null
+                        && DB.equals(event.getDatabaseName())
+                        && "w".equals(event.getViewName())
+                        && "irc_rv_bob".equals(event.getUser())
+                        && event.getOperationType()
+                            == com.linkedin.openhouse.tables.audit.model.ViewOperationType.CREATE
+                        && event.getOperationStatus()
+                            == com.linkedin.openhouse.tables.audit.model.OperationStatus.SUCCESS
+                        && location.equals(event.getNewMetadataLocation())));
+
+    // A refused registration is audited as a failed create of the caller's.
+    org.mockito.Mockito.clearInvocations(viewAuditHandler);
+    IrcHttp.perform(
+        mvc,
+        IrcWrite.post(
+                IrcRegisterViewRouteTest.registerPath(DB),
+                IrcRegisterViewRouteTest.request("w", location))
+            .header("Authorization", bearer("irc_rv_bob")));
+    verify(viewAuditHandler)
+        .audit(
+            org.mockito.ArgumentMatchers.argThat(
+                (com.linkedin.openhouse.tables.audit.model.ViewAuditEvent event) ->
+                    event != null
+                        && "irc_rv_bob".equals(event.getUser())
+                        && event.getOperationType()
+                            == com.linkedin.openhouse.tables.audit.model.ViewOperationType.CREATE
+                        && event.getOperationStatus()
+                            == com.linkedin.openhouse.tables.audit.model.OperationStatus.FAILED
+                        && "VIEW_ALREADY_EXISTS".equals(event.getFailureCode())));
   }
 }

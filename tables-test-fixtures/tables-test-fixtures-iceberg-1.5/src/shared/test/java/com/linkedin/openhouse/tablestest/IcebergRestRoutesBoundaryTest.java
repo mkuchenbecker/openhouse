@@ -137,11 +137,13 @@ public class IcebergRestRoutesBoundaryTest {
         endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials"),
         endpoints.toString());
     // So is the view register route, which reads Iceberg 1.12's RegisterViewRequest.
+    boolean registerView = classPresent("org.apache.iceberg.rest.requests.RegisterViewRequest");
     Assertions.assertEquals(
-        classPresent("org.apache.iceberg.rest.requests.RegisterViewRequest"),
+        registerView,
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register-view"),
         endpoints.toString());
-    Assertions.assertEquals(planning ? 22 : 19, endpoints.size(), endpoints.toString());
+    Assertions.assertEquals(
+        19 + (planning ? 2 : 0) + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 
