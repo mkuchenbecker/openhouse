@@ -59,7 +59,7 @@ record does not describe the construction of the stale handle further than this,
 | legacy | 298 / 2 | 300 / 0 |
 | rest-shim | 296 / 4 | 298 / 2 |
 | rest-http | 276 / 24 | 276 / 24 |
-| Spark 4.2 (smokeTest) | 274 / 26 | not run |
+| Spark 4.2 (smokeTest) | 274 / 26 | no Spark 4.2 projects exist on that line (see `18-state.md`) |
 
 Local runs all had 0 failed: 103 tests in the Spark 3.5 classes on each line; Spark 4.2 smokeTest 67 and
 smokeTestServerPlanning 67. The pull request build was green on head `8de993f6` on both lines [read by the orchestrator].

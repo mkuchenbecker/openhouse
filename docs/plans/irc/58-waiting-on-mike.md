@@ -64,4 +64,7 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
 - The jobs' deployment configuration (X17, `79-c20-x11-x12-x13-result.md`): `jobs.yaml` in the docker-compose recipe defines no
   `spark_catalog`, and sort stats collection copies its sample from it. Nothing waits on it; the job's tests point that
   catalog at OpenHouse, as a deployment that runs the job must.
+- V23 and V24 (`81-v17-x16-result.md`): two House Tables lookups would remove the listings that remain over the Iceberg
+  REST routes: "does any row have exactly this database id" and "rows of a database, live and soft-deleted, with this
+  table UUID or a location under this prefix". Nothing waits on them; today's cost is pinned by a test.
 - Item order: D29.

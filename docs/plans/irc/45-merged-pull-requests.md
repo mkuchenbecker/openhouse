@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 67 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 146, merge
-commit 22017134) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 69 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 148, merge
+commit 886b660b) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-25.
 
@@ -77,6 +77,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 144 | C20: the post-merge build runs the pull request's parallel split on both lines, merges' runs overlap, one Gradle cache writer per line; first real run 31 minutes from merge to last job (`79-c20-x11-x12-x13-result.md`) | 7c9fa9582bedbcb6ee5a59323ecad25158fadd0c |
 | 145 | X11, X12, X13: sort stats collection works on the Iceberg 1.5.2 line; v3 delete-file stats and dangling deletion vectors pinned, no change needed (`79-c20-x11-x12-x13-result.md`) | 9dfbbca7be1f50e798a8d4a6b11468c065212144 |
 | 146 | C3, C4: tests only; a gated replace-as-select leaves the one data file Spark wrote on rest-shim, rest-http and Spark 4.2 (pinned, not fixed), and a stale property, policy or column tag commit loses no change on any path (`80-c3-c4-result.md`) | 2201713482e66d68ba232041fcddfa1f9ac69523 |
+| 147 | V17: the namespace check of six Iceberg REST routes reads one House Tables row, not the database's table list; a missing namespace and the directory-in-use check still list (`81-v17-x16-result.md`) | 2ba15929a2da01b5740fefd4e91b508aecf31f8c |
+| 148 | X16: the 409 that cost a compaction one file group was the H2 House Tables stand-in serving a stale row; H2 result reuse is off in the shared stand-in, no production code changed (`81-v17-x16-result.md`) | 886b660b48c753ae111c5b781178613d8dea6578 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
