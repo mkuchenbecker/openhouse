@@ -195,7 +195,7 @@ public class IrcHouseTableReadsTest {
     threeTables();
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=3"),
+        list("findAllByDatabaseId[page0x1]=1"),
         readsOf(IrcHttp.head(mvc, "/v1/namespaces/" + DB), 204));
   }
 
@@ -203,7 +203,7 @@ public class IrcHouseTableReadsTest {
   void namespaceExistsMissing() throws Exception {
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=0", "findAll[all databases]"),
+        list("findAllByDatabaseId[page0x1]=0", "findAll[all databases]"),
         readsOf(IrcHttp.head(mvc, "/v1/namespaces/" + NONE), 404));
   }
 
@@ -212,7 +212,7 @@ public class IrcHouseTableReadsTest {
     threeTables();
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=3"),
+        list("findAllByDatabaseId[page0x1]=1"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + DB), 200));
   }
 
@@ -221,7 +221,7 @@ public class IrcHouseTableReadsTest {
     threeTables();
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=3"),
+        list("findAllByDatabaseId[page0x1]=1"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces?parent=" + DB), 200));
   }
 
@@ -274,8 +274,7 @@ public class IrcHouseTableReadsTest {
   void listTablesMissing() throws Exception {
     reads();
     assertEquals(
-        list(
-            "findAllByDatabaseId[list]=0", "findAllByDatabaseId[list]=0", "findAll[all databases]"),
+        list("findAllByDatabaseId[list]=0", "findAll[all databases]"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + NONE + "/tables"), 404));
   }
 
@@ -295,7 +294,7 @@ public class IrcHouseTableReadsTest {
     threeTables();
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=3"),
+        list("findAllByDatabaseId[page0x1]=1"),
         readsOf(IrcHttp.get(mvc, IrcViewWrite.views(DB)), 200));
   }
 
@@ -308,7 +307,7 @@ public class IrcHouseTableReadsTest {
     reads();
     MvcResult result =
         IrcWrite.rename(mvc, TableIdentifier.of(NONE, "x"), TableIdentifier.of(DB, "y"));
-    assertEquals(list("findAllByDatabaseId[list]=3"), readsOf(result, 406));
+    assertEquals(list("findAllByDatabaseId[page0x1]=1"), readsOf(result, 406));
   }
 
   /**
