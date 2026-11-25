@@ -3,7 +3,7 @@
 Bottom line: these 78 files (77 markdown records and one build log) are the raw, unedited records written by the
 agents that did each piece of work. They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
-container. The line limit and wording rules of the notes do not apply to them, so they use "PR" and other
+container. The line limit and wording rules of the notes do not apply to them, so they use abbreviations and other
 shorthand. Where they and a note disagree, the record and the merge commit message are closer to the source.
 
 - A note that cites `scratchpad/reports/<name>.md`, or that full path, means `records/<name>.md` here.

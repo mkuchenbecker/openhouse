@@ -1,13 +1,18 @@
 # Current state
 
+Paused: the owner paused all work on 2026-11-25 about 05:10 UTC. Nothing is running. Two items resume: X2 with X3 (branch
+`irc/x2-x3-v3-row-level`, pushed head `1892643c`, tests only; remaining: the final 1.5.2 run, the test-groups check, open
+the pull request, wait for CI) and W13, W14, N9 (only W13 read; a decision is needed before any change). The map of every
+artifact is `00-map.md`; the raw agent records are in `records/`.
+
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
 checks pass in CI. Pull requests 121 and 124 to 150 are merged: 71 in all, and `irc-integration` is at `81b4cd4d`. The latest two are 150
 (X18: H2 result reuse off in the tables service's test stand-in) and 149 (the rest of V10: register-view is served on the
-Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). Two pieces of work are in flight: the wider X2 and X3 scenarios on
+Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). Two pieces of work are paused (see Paused below): the wider X2 and X3 scenarios on
 format v3, and the small batch W13, W14 and N9. View rename stopped on D47. Nothing is merged into either fork's main
 or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI passed on both lines for every merge up to
-and including 148 and for 150, and for 149 it is not read yet. An audit of the open work items found 8 of 62 already true
+and including 148 and for 150, and for 149 it was read at 07:30 UTC on 2026-11-25: 16 jobs completed, 15 success, 1 skipped by design, none failed. An audit of the open work items found 8 of 62 already true
 and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and ten more since). This is the single place for current state. Dated 2026-11-25.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
@@ -79,17 +84,16 @@ C2-1, C2-2, C2-3, V10, X18, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, 
 ## How to resume
 
 Bottom line: pull requests 121 and 124 to 150 are merged, and `irc-integration` is at `81b4cd4d`. Two pieces of
-work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
+work are paused (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
-- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
-  model down.
-- In flight, X2 and X3: the wider row-level scenarios on format v3. Worktree `/home/user/oh-x23`, branch
+- Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC.
+- Paused, X2 and X3: the wider row-level scenarios on format v3. Worktree `/home/user/oh-x23`, branch
   `irc/x2-x3-v3-row-level`, record `x2-x3-v3-row-level.md` in the reports directory.
-- In flight, W13, W14 and N9 together: worktree `/home/user/oh-small2`, branch `irc/small-batch-w13-w14-n9`, record
+- Paused, W13, W14 and N9 together: worktree `/home/user/oh-small2`, branch `irc/small-batch-w13-w14-n9`, record
   `small-batch-w13-w14-n9.md` in the reports directory.
 - Post-merge CI [read 2026-11-25]: it passed on both lines for the merges of 147 (28 minutes), 148 (32 minutes) and 150
-  (30 minutes); for 149 it is not read yet: read it first (D33). The pull request builds of 149 (head `1ae8e370`) and
+  (30 minutes); for 149 it passed too (read 07:30 UTC: 15 of 16 jobs success, 1 skipped by design). The pull request builds of 149 (head `1ae8e370`) and
   150 (head `ad50d763`) were green on both lines. Before merging 149 the orchestrator read the diff to shared main
   sources: one new method in the native view audit, one visibility change, comments.
 - Hazard: the build of the notes pull request had one red job on 2026-11-25 at head `b1c9d0f3` because Maven Central
@@ -97,8 +101,7 @@ reads each record below and the branch's log, and resumes from what they say.
   not re-run; the post-merge builds on `irc-integration` afterwards were not affected.
 - Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 closed by 2026-11-24 and ten since).
   Read it before launching any small item.
-- The container has restarted twice (2026-11-24 and 2026-11-25) with nothing lost, because agents push after every commit
-  and keep a record file. The second restart cleared the orphaned test processes that held about 3 GB of memory.
+- The container restarted twice (2026-11-24 and 2026-11-25) with nothing lost: agents push after every commit and keep a record file.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
@@ -108,8 +111,8 @@ What comes next, after the work in flight:
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for every merge up to and including 148, and for 150, was read and every job passed;
-that of 149 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+Nothing known red at this time. Post-merge CI for every merge up to and including 150 was read and every job passed;
+that of 149 passed (read 07:30 UTC 2026-11-25). Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test); the compaction failure seen once locally was X16, a fixture defect, fixed. V19 and V20, found by pull request 121, are fixed (pull request 142).
 

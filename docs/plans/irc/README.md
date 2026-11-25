@@ -7,6 +7,8 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 
 | File | What it is | Whose voice |
 | --- | --- | --- |
+| `00-map.md` | Map of every artifact: read order, where the code and branches live, how a claim is backed, what is paused, what is not in git | Claude |
+| `records/` | The agents' raw working records, unedited, with `records/README.md` mapping each to work items, pull requests and result files | Delegated agents |
 | `18-state.md` | Start here. Current state: how far from the goal, what is known red, what is running, and how to audit | Claude |
 | `45-merged-pull-requests.md` | The tables of merged pull requests on both integration branches, with merge commits | Claude |
 | `01-stated.md` | What Mike said | Mike |
