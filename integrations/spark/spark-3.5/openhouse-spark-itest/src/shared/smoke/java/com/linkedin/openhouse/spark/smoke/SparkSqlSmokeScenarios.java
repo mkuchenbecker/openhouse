@@ -13,9 +13,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
@@ -58,9 +62,20 @@ public abstract class SparkSqlSmokeScenarios {
   protected static final String VIEWS_DB = "smoke_t1_views";
   protected static final String VIEWS_CATALOG = "openhouse_views";
 
+  /**
+   * A second catalog of the same path in the session of {@link #sparkSession()}, against the same
+   * service, with table caching off, whose table commits call {@link CommitRace#beforeCommit} right
+   * before they reach the service (work items C3 and C4). Every platform configures it: s32 reads
+   * through it what a refused replace left, and s33 commits through it from a stale base.
+   */
+  protected static final String SECOND_CATALOG = "openhouse_second";
+
   // ---------- what a platform supplies ----------
 
-  /** A session whose catalog {@code openhouse} is the platform's catalog path. */
+  /**
+   * A session whose catalog {@code openhouse} is the platform's catalog path, and whose catalog
+   * {@value #SECOND_CATALOG} is a second catalog of that path, as {@link #SECOND_CATALOG} says.
+   */
   protected abstract SparkSession sparkSession() throws Exception;
 
   /**
@@ -232,6 +247,19 @@ public abstract class SparkSqlSmokeScenarios {
   }
 
   /**
+   * The statement returns exactly the rows {@code earlier} returned, in the same order: for a value
+   * of this run (a snapshot id, a metadata file) that a statement must not change.
+   */
+  protected static Expectation sameRowsAs(Outcome earlier) {
+    return new Expectation("the same rows as before") {
+      @Override
+      boolean holds(Outcome outcome) {
+        return !outcome.failed() && !earlier.failed() && earlier.rows().equals(outcome.rows());
+      }
+    };
+  }
+
+  /**
    * The statement fails with an exception of exactly this class whose message contains the
    * fragment.
    */
@@ -385,7 +413,31 @@ public abstract class SparkSqlSmokeScenarios {
    */
   protected final Outcome sqlShownAs(
       String shown, SparkSession spark, String statement, Expectation... baseline) {
-    Outcome actual = run(spark, statement);
+    return check(shown, run(spark, statement), baseline);
+  }
+
+  /**
+   * Checks something the scenario observes outside Spark SQL (the files under a table's location,
+   * the commit attempts of a race) as if it were a statement's outcome: {@code observed} gives one
+   * row per value, and {@code shown} names what is observed, for differences and the outcomes file.
+   */
+  protected final Outcome observe(
+      String shown, Callable<List<String>> observed, Expectation... baseline) {
+    Outcome actual;
+    try {
+      actual =
+          new Outcome(
+              observed.call().stream()
+                  .map(value -> RowFactory.create(value))
+                  .collect(Collectors.toList()),
+              null);
+    } catch (Throwable failure) {
+      actual = new Outcome(null, failure);
+    }
+    return check(shown, actual, baseline);
+  }
+
+  private Outcome check(String shown, Outcome actual, Expectation... baseline) {
     statementNumber++;
     int occurrence = occurrences.merge(shown, 1, Integer::sum);
     String key = Difference.key(scenario, shown, occurrence);
@@ -1280,6 +1332,437 @@ public abstract class SparkSqlSmokeScenarios {
                 + "    \"columnPattern\": {\n      \"columnName\": \"name\",\n"
                 + "      \"pattern\": \"yyyy-MM-dd\"\n    },\n"
                 + "    \"timeZone\": \"America/Los_Angeles\"\n  },\n  \"sharingEnabled\": false\n}"));
+  }
+
+  // ---------- s32 (work item C3): a refused replace writes nothing ----------
+
+  private static final String BAD_REQUEST = "org.apache.iceberg.exceptions.BadRequestException";
+
+  private static String second(String name) {
+    return SECOND_CATALOG + "." + DB + "." + name;
+  }
+
+  /** The location of {@code table}, as DESCRIBE TABLE EXTENDED gives it, without a file scheme. */
+  private static String location(SparkSession spark, String table) {
+    for (Row row : spark.sql("DESCRIBE TABLE EXTENDED " + table).collectAsList()) {
+      if ("Location".equals(row.getString(0))) {
+        String location = row.getString(1);
+        return location.startsWith("file:")
+            ? Paths.get(java.net.URI.create(location)).toString()
+            : location;
+      }
+    }
+    throw new IllegalStateException("No location for " + table);
+  }
+
+  /** Every file under {@code location}, as paths relative to it, sorted. */
+  private static List<String> filesUnder(String location) throws IOException {
+    Path root = Paths.get(location);
+    if (!Files.isDirectory(root)) {
+      return Collections.emptyList();
+    }
+    try (Stream<Path> walk = Files.walk(root)) {
+      return walk.filter(Files::isRegularFile)
+          .map(path -> root.relativize(path).toString())
+          .sorted()
+          .collect(Collectors.toList());
+    }
+  }
+
+  /**
+   * The files under {@code location} that are not in {@code before}, counted by kind, one row
+   * {@code kind,count} per kind, sorted: {@code data file}, {@code manifest}, {@code manifest
+   * list}, {@code metadata file}, {@code checksum of <kind>} for the local file system's {@code
+   * .crc} files, {@code other <name>} for anything else.
+   */
+  private static Callable<List<String>> filesAdded(String location, List<String> before) {
+    return () -> {
+      Map<String, Integer> kinds = new TreeMap<>();
+      for (String file : filesUnder(location)) {
+        if (!before.contains(file)) {
+          kinds.merge(fileKind(Paths.get(file).getFileName().toString()), 1, Integer::sum);
+        }
+      }
+      return kinds.entrySet().stream()
+          .map(e -> e.getKey() + "," + e.getValue())
+          .collect(Collectors.toList());
+    };
+  }
+
+  private static String fileKind(String name) {
+    if (name.startsWith(".") && name.endsWith(".crc")) {
+      return "checksum of " + fileKind(name.substring(1, name.length() - ".crc".length()));
+    }
+    if (name.endsWith(".metadata.json")) {
+      return "metadata file";
+    }
+    if (name.startsWith("snap-") && name.endsWith(".avro")) {
+      return "manifest list";
+    }
+    if (name.endsWith(".avro")) {
+      return "manifest";
+    }
+    if (name.endsWith(".orc") || name.endsWith(".parquet")) {
+      return "data file";
+    }
+    return "other " + name;
+  }
+
+  /**
+   * Work item C3. A replace of a table that has not opted in ({@code replace.enabled}) is refused,
+   * and the refused statement leaves nothing behind: no data file, no manifest, no metadata file
+   * under the table's location, and the table keeps its rows, snapshots and metadata file. Next to
+   * it, the allowed replace of an opted-in table writes, so the listing would notice a write. What
+   * the table holds afterwards is read through {@value #SECOND_CATALOG}, which caches nothing.
+   */
+  @Test
+  public void s32_replace_refusedWritesNothing() throws Exception {
+    SparkSession spark = sparkSession();
+    String gated = table("s32_gated");
+    String allowed = table("s32_allowed");
+    fresh(spark, gated, allowed);
+    String refusal = "REPLACE TABLE AS SELECT is not enabled for table ";
+
+    sql(spark, "CREATE TABLE " + gated + " (id bigint, name string)");
+    sql(spark, "INSERT INTO " + gated + " VALUES (1,'a')");
+    String location = location(spark, gated);
+    String snapshots = "SELECT snapshot_id FROM " + second("s32_gated") + ".snapshots";
+    String metadata =
+        "SELECT file FROM " + second("s32_gated") + ".metadata_log_entries ORDER BY timestamp";
+    Outcome snapshotsBefore = sql(spark, snapshots);
+    Outcome metadataBefore = sql(spark, metadata);
+
+    for (String replace :
+        new String[] {
+          "CREATE OR REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " (id bigint, x string)"
+        }) {
+      List<String> before = filesUnder(location);
+      sql(spark, replace, fails(BAD_REQUEST, refusal + gated));
+      observe("files added by: " + replace, filesAdded(location, before), rows());
+      sql(spark, "SELECT * FROM " + second("s32_gated"), rows("1,a"));
+      sql(spark, snapshots, sameRowsAs(snapshotsBefore));
+      sql(spark, metadata, sameRowsAs(metadataBefore));
+    }
+
+    sql(spark, "CREATE TABLE " + allowed + " (id bigint, name string)");
+    sql(spark, "INSERT INTO " + allowed + " VALUES (1,'a')");
+    sql(spark, "ALTER TABLE " + allowed + " SET TBLPROPERTIES ('replace.enabled'='true')");
+    String allowedLocation = location(spark, allowed);
+    String replace = "CREATE OR REPLACE TABLE " + allowed + " AS SELECT 7 AS id, 'z' AS name";
+    List<String> before = filesUnder(allowedLocation);
+    sql(spark, replace);
+    observe(
+        "files added by: " + replace,
+        filesAdded(allowedLocation, before),
+        hasRowStartingWith("data file,"));
+    sql(spark, "SELECT * FROM " + second("s32_allowed"), rows("7,z"));
+  }
+
+  // ---------- s33 (work item C4): a commit from a stale base keeps the other client's change ----
+
+  /**
+   * The statements s33 runs from a stale base, in order, each with the statement the other client
+   * commits first: a platform's differences can name them.
+   */
+  public static List<String[]> s33Races() {
+    String p = DB + ".s33_props";
+    String q = DB + ".s33_policy";
+    return Arrays.asList(
+        // Properties, while the other client sets another property, the same one, or a policy.
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('other1'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('stale1'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('same2'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('same2'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET POLICY (RETENTION=30d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('stale3'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('other4'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('gone4')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('same5'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('same5')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET POLICY (SHARING=true)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('gone6')"
+        },
+        // Policies, while the other client sets a property, the same policy, or another policy.
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET TBLPROPERTIES ('other7'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (RETENTION=30d)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (RETENTION=7d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (RETENTION=14d)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (HISTORY MAX_AGE=3d VERSIONS=5)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " MODIFY COLUMN name SET TAG = (PII)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " MODIFY COLUMN name SET TAG = (HC)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (SHARING=true)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (SHARING=false)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (HISTORY MAX_AGE=2d VERSIONS=4)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET TBLPROPERTIES ('other12'='o')",
+          "ALTER TABLE "
+              + SECOND_CATALOG
+              + "."
+              + q
+              + " SET POLICY (REPLICATION=({destination:'a', interval:12h}))"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (RETENTION=3d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " UNSET POLICY (REPLICATION)"
+        });
+  }
+
+  /** The files a refused replace that wrote its data first leaves under the table's location. */
+  private static final String[] DATA_FILE_LEFT = {"checksum of data file,1", "data file,1"};
+
+  /**
+   * The differences of a path on which the replace gate refuses only the commit (work item C3): the
+   * two refused forms that write data, CREATE OR REPLACE TABLE ... AS SELECT and REPLACE TABLE ...
+   * AS SELECT, leave the data file Spark wrote (one, for the one row) under the table's location.
+   * The statement still fails with the native refusal, the table is unchanged, and the manifests
+   * the write made are gone (Iceberg's transaction removes them when the commit fails); REPLACE
+   * TABLE without a query writes nothing on every path.
+   */
+  protected static List<Difference> refusedReplaceLeavesItsDataFile(String kind, String why) {
+    List<Difference> differences = new ArrayList<>();
+    String gated = table("s32_gated");
+    for (String replace :
+        new String[] {
+          "CREATE OR REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name"
+        }) {
+      differences.add(
+          Difference.on("s32", "files added by: " + replace)
+              .baseline(rows())
+              .here(rows(DATA_FILE_LEFT))
+              .because(kind, why));
+    }
+    return differences;
+  }
+
+  /**
+   * The differences of a path on which a stale property or policy commit meets no conflict (work
+   * item C4): the commit carries only the changed keys (a policy statement's patch is one such key)
+   * and asserts only the table's UUID, as Iceberg's REST client builds it, and the service applies
+   * it onto the table as stored. So the first attempt commits, where the baseline's commit, which
+   * carries its base version and every property, is refused with a conflict and succeeds after a
+   * refresh. The table ends as on the baseline: both changes kept.
+   */
+  protected static List<Difference> staleCommitMeetsNoConflict(String kind, String why) {
+    List<Difference> differences = new ArrayList<>();
+    for (String[] race : s33Races()) {
+      differences.add(
+          Difference.on("s33", "commit attempts of: " + race[1])
+              .baseline(rows("CommitFailedException", "committed"))
+              .here(rows("committed"))
+              .because(kind, why));
+    }
+    return differences;
+  }
+
+  /** The other client's change and the stale statement of race {@code number} (from 1). */
+  private void race(SparkSession spark, int number) {
+    String[] race = s33Races().get(number - 1);
+    String other = race[0];
+    String stale = race[1];
+    String table = stale.split(" ")[2].substring(SECOND_CATALOG.length() + 1);
+    CommitRace.arm(table, () -> spark.sql(other).collectAsList());
+    try {
+      sql(spark, stale);
+    } finally {
+      CommitRace.disarm(table);
+    }
+    observe(
+        "the other client committed inside the commit of: " + stale,
+        () -> Collections.singletonList(String.valueOf(CommitRace.stepRan(table))),
+        rows("true"));
+    observe(
+        "commit attempts of: " + stale,
+        () -> CommitRace.attempts(table),
+        rows("CommitFailedException", "committed"));
+  }
+
+  /**
+   * Work item C4. A property or policy statement whose commit was built on version N of a table
+   * while another client committed N+1 to it: the commit runs through {@value #SECOND_CATALOG},
+   * whose hook ({@link CommitRace}) runs the other client's statement, through {@code openhouse},
+   * right before the stale commit reaches the service. Each race checks that the other client's
+   * commit landed inside the stale one, how the stale commit's attempts ended, and that the table
+   * then holds both changes, the stale statement's last, as a serial order gives (for the same key,
+   * the stale value). A stale commit that silently replaced the other client's change (a lost
+   * update) fails the readback.
+   *
+   * <p>A cached Spark table alone is no stale handle at commit: Iceberg's property update refreshes
+   * the table before it builds its commit (PropertiesUpdate.apply), on both Iceberg lines, and the
+   * policy statements commit through that update. So the only window is the one the hook pins.
+   */
+  @Test
+  public void s33_staleHandle_propertyAndPolicyKeepTheOtherChange() throws Exception {
+    SparkSession spark = sparkSession();
+    String p = table("s33_props");
+    String q = table("s33_policy");
+    fresh(spark, p, q);
+    String readP = "SHOW TBLPROPERTIES " + second("s33_props");
+    String readQ = "SHOW TBLPROPERTIES " + second("s33_policy");
+    String policies = " ('policies')";
+    String columns = " (id bigint, name string, ts timestamp) PARTITIONED BY (days(ts))";
+    sql(spark, "CREATE TABLE " + p + columns);
+    sql(spark, "CREATE TABLE " + q + columns);
+    sql(
+        spark,
+        "ALTER TABLE "
+            + p
+            + " SET TBLPROPERTIES ('same2'='before', 'gone4'='x', 'same5'='before', 'gone6'='x')");
+
+    race(spark, 1);
+    sql(spark, readP + " ('other1')", rows("other1,o"));
+    sql(spark, readP + " ('stale1')", rows("stale1,s"));
+
+    race(spark, 2);
+    sql(spark, readP + " ('same2')", rows("same2,s"));
+
+    race(spark, 3);
+    sql(spark, readP + " ('stale3')", rows("stale3,s"));
+    String retention30 =
+        "  \"retention\": {\n    \"count\": 30,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readP + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 4);
+    sql(spark, readP + " ('other4')", rows("other4,o"));
+    sql(spark, readP, noRowStartingWith("gone4,"));
+
+    race(spark, 5);
+    sql(spark, readP, noRowStartingWith("same5,"));
+
+    race(spark, 6);
+    sql(spark, readP, noRowStartingWith("gone6,"));
+    sql(
+        spark,
+        readP + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": true\n}"));
+    // Nothing a race before lost.
+    sql(spark, readP + " ('other1')", rows("other1,o"));
+    sql(spark, readP + " ('stale1')", rows("stale1,s"));
+
+    race(spark, 7);
+    sql(spark, readQ + " ('other7')", rows("other7,o"));
+    sql(
+        spark,
+        readQ + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 8);
+    String retention14 =
+        "  \"retention\": {\n    \"count\": 14,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows("policies,{\n" + retention14 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 9);
+    String tagPii =
+        "  \"columnTags\": {\n    \"name\": {\n      \"tags\": [\n        \"PII\"\n      ]\n"
+            + "    }\n  },\n";
+    String history35 =
+        "  \"history\": {\n    \"maxAge\": 3,\n    \"granularity\": \"DAY\",\n"
+            + "    \"versions\": 5\n  }\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": false,\n"
+                + tagPii
+                + history35
+                + "}"));
+
+    race(spark, 10);
+    String tagHc =
+        "  \"columnTags\": {\n    \"name\": {\n      \"tags\": [\n        \"HC\"\n      ]\n"
+            + "    }\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": true,\n"
+                + tagHc
+                + history35
+                + "}"));
+
+    race(spark, 11);
+    String history24 =
+        "  \"history\": {\n    \"maxAge\": 2,\n    \"granularity\": \"DAY\",\n"
+            + "    \"versions\": 4\n  }\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": false,\n"
+                + tagHc
+                + history24
+                + "}"));
+
+    race(spark, 12);
+    sql(spark, readQ + " ('other12')", rows("other12,o"));
+    // The service draws the replication schedule's minute at random (as in s31).
+    sql(
+        spark,
+        readQ + policies,
+        rowsMatching(
+            Pattern.quote(
+                    "policies,{\n"
+                        + retention14
+                        + "  \"sharingEnabled\": false,\n"
+                        + tagHc
+                        + "  \"replication\": {\n    \"config\": [\n      {\n"
+                        + "        \"destination\": \"'A'\",\n        \"interval\": \"12H\",\n"
+                        + "        \"cronSchedule\": \"")
+                + "0 [0-9]+ [0-9]+/12 \\? \\* \\* \\*"
+                + Pattern.quote("\"\n      }\n    ]\n  },\n" + history24 + "}")));
+
+    race(spark, 13);
+    String retention3 =
+        "  \"retention\": {\n    \"count\": 3,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention3
+                + "  \"sharingEnabled\": false,\n"
+                + tagHc
+                + "  \"replication\": {\n    \"config\": []\n  },\n"
+                + history24
+                + "}"));
+    // Nothing a race before lost.
+    sql(spark, readQ + " ('other7')", rows("other7,o"));
+    sql(spark, readQ + " ('other12')", rows("other12,o"));
   }
 
   @Test

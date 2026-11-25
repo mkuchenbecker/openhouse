@@ -1,8 +1,11 @@
 package com.linkedin.openhouse.spark.catalogtest;
 
 import com.linkedin.openhouse.housetables.client.model.ToggleStatus;
+import com.linkedin.openhouse.javaclient.CommitRaceCatalog;
+import com.linkedin.openhouse.javaclient.CommitRaceRestShimCatalog;
 import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.spark.grants.GrantStoringAuthorization;
+import com.linkedin.openhouse.spark.smoke.CommitRaceRestCatalog;
 import com.linkedin.openhouse.spark.smoke.SparkSqlSmokeScenarios;
 import com.linkedin.openhouse.tables.exception.ViewExceptionHandler;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
@@ -52,6 +55,10 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   private static final String REST_SHIM_CATALOG_IMPL =
       "com.linkedin.openhouse.spark.OpenHouseRestCatalog";
 
+  private static final String LEGACY_SECOND_CATALOG_IMPL = CommitRaceCatalog.class.getName();
+  private static final String REST_SHIM_SECOND_CATALOG_IMPL =
+      CommitRaceRestShimCatalog.class.getName();
+
   private static final String UNSUPPORTED = "java.lang.UnsupportedOperationException";
 
   /**
@@ -98,6 +105,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
       if (legacySession == null || legacySession.sparkContext() != base.sparkContext()) {
         SparkSession spark = base.newSession();
         spark.conf().set("spark.sql.catalog.openhouse.uri", smokeServerUri());
+        openHouseSecondCatalog(spark, LEGACY_SECOND_CATALOG_IMPL, base);
         legacySession = spark;
       }
       return legacySession;
@@ -115,6 +123,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
         SparkSession spark = base.newSession();
         spark.conf().set("spark.sql.catalog.openhouse.uri", smokeServerUri());
         spark.conf().set("spark.sql.catalog.openhouse.catalog-impl", REST_SHIM_CATALOG_IMPL);
+        openHouseSecondCatalog(spark, REST_SHIM_SECOND_CATALOG_IMPL, base);
         restShimSession = spark;
       }
       return restShimSession;
@@ -133,10 +142,36 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
       if (restHttpSession == null || restHttpSession.sparkContext() != base.sparkContext()) {
         SparkSession spark = base.newSession();
         restCatalog(spark, "openhouse", smokeServerUri(), base);
+        restCatalog(spark, SECOND_CATALOG, smokeServerUri(), base);
+        spark.conf().unset("spark.sql.catalog." + SECOND_CATALOG + ".type");
+        spark
+            .conf()
+            .set(
+                "spark.sql.catalog." + SECOND_CATALOG + ".catalog-impl",
+                CommitRaceRestCatalog.class.getName());
+        spark.conf().set("spark.sql.catalog." + SECOND_CATALOG + ".cache-enabled", "false");
         restHttpSession = spark;
       }
       return restHttpSession;
     }
+  }
+
+  /**
+   * The suite's second catalog ({@link #SECOND_CATALOG}) on an OpenHouse catalog path: the class
+   * {@code catalogImpl} (the path's catalog class, with the commit hook), the suite's service, the
+   * same principal, and no table caching.
+   */
+  private static void openHouseSecondCatalog(
+      SparkSession spark, String catalogImpl, SparkSession base) {
+    String prefix = "spark.sql.catalog." + SECOND_CATALOG;
+    spark.conf().set(prefix, "org.apache.iceberg.spark.SparkCatalog");
+    spark.conf().set(prefix + ".catalog-impl", catalogImpl);
+    spark.conf().set(prefix + ".uri", smokeServerUri());
+    spark.conf().set(prefix + ".cluster", "local-cluster");
+    spark
+        .conf()
+        .set(prefix + ".auth-token", base.conf().get("spark.sql.catalog.openhouse.auth-token"));
+    spark.conf().set(prefix + ".cache-enabled", "false");
   }
 
   /** Makes {@code catalog} of {@code spark} Iceberg's REST catalog at {@code uri}'s IRC routes. */
@@ -250,6 +285,19 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     if (IcebergLine.current() == IcebergLine.V3 && !REST_HTTP.equals(catalogPath())) {
       differences.addAll(namespaceExistsCheckOnIceberg112());
     }
+    if (REST_SHIM.equals(catalogPath())) {
+      differences.addAll(
+          refusedReplaceLeavesItsDataFile(
+              REFUSED_AT_COMMIT,
+              "Work item C3: Iceberg's RESTCatalog stages a replace on the client (it loads the"
+                  + " table, and no request carries the replace intent before Spark writes), so the"
+                  + " gate runs when the adapter commits the replace, after the data file is"
+                  + " written. The legacy catalog sends a native stage-replace first. Sending one"
+                  + " here too would refuse before the write, but every allowed replace would then"
+                  + " leave the native stage's metadata file as well (the legacy path's allowed"
+                  + " replace adds 2 metadata files, this path's 1): not done, put to a decision."
+                  + " The file is left for the orphan files job."));
+    }
     if (REST_HTTP.equals(catalogPath())) {
       differences.addAll(RestHttpPathSparkSqlSmokeTest.restHttpDifferences());
     }
@@ -280,6 +328,12 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
             .because(ICEBERG_112, why));
     return Collections.unmodifiableList(differences);
   }
+
+  /** The category of the files a replace leaves when the gate refuses only its commit (C3). */
+  protected static final String REFUSED_AT_COMMIT = "replace refused at commit, data file left";
+
+  /** The category of the commit attempts of a stale commit that meets no conflict (C4). */
+  protected static final String NO_CONFLICT = "stale commit applied without a conflict";
 
   /** The category of a difference that the Iceberg 1.12 line makes on every Spark 3.5 path. */
   protected static final String ICEBERG_112 = "(c) Iceberg 1.12 line";
