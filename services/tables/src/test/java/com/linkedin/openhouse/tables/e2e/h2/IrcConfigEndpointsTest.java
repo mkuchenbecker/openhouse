@@ -83,9 +83,9 @@ public class IrcConfigEndpointsTest {
 
   /**
    * What this service serves on the Iceberg 1.12 line (the default build): the routes above, and
-   * the scan planning route (synchronous, D44) and the credentials route (an empty list, D45),
-   * which LinkedIn's Iceberg 1.5.2 reference line has no classes for
-   * (IrcPlanCredentialsRoutesTest).
+   * the scan planning route (synchronous, D44), the credentials route (an empty list, D45) and the
+   * view register route (in place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2
+   * reference line has no classes for (IrcPlanCredentialsRoutesTest).
    */
   static final List<String> SERVED_ON_ICEBERG_1_12 =
       Arrays.asList(
@@ -93,6 +93,7 @@ public class IrcConfigEndpointsTest {
           "GET /v1/{prefix}/namespaces/{namespace}",
           "HEAD /v1/{prefix}/namespaces/{namespace}",
           "POST /v1/{prefix}/namespaces/{namespace}/register",
+          "POST /v1/{prefix}/namespaces/{namespace}/register-view",
           "GET /v1/{prefix}/namespaces/{namespace}/tables",
           "POST /v1/{prefix}/namespaces/{namespace}/tables",
           "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
@@ -278,6 +279,26 @@ public class IrcConfigEndpointsTest {
                 "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/openhouse/lock/{reason}",
                 "POST /v1/{prefix}/views/rename")),
         accounted);
+  }
+
+  /**
+   * The view register route: served and listed on the Iceberg 1.12 line, whose client has {@code
+   * registerView}; on LinkedIn's 1.5.2 reference line, which has no {@code RegisterViewRequest} and
+   * whose client cannot call the route, the spec's 406 as before, and not listed.
+   */
+  @Test
+  void registerViewIsServedOnTheIceberg112LineOnly() throws Exception {
+    String route = "POST /v1/{prefix}/namespaces/{namespace}/register-view";
+    MvcResult result = call(route);
+    if (IrcPlanCredentialsRoutesTest.served()) {
+      assertTrue(endpoints().contains(route));
+      assertFalse(unserved(result), result.getResponse().getStatus() + body(result));
+    } else {
+      assertFalse(endpoints().contains(route));
+      assertEquals(406, result.getResponse().getStatus(), body(result));
+      assertTrue(
+          body(result).contains("This server does not support POST /v1/namespaces/"), body(result));
+    }
   }
 
   /**
