@@ -61,4 +61,7 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
 - The OpenHouse Java client's connection pool (N17, N16, `78-v19-v20-v22-n16-x9-result.md`) can only be fixed by changing the
   client for every user of it. The jobs now create one pool per job run instead of one per table load, so nothing
   waits on it.
+- The jobs' deployment configuration (X17, `79-c20-x11-x12-x13-result.md`): `jobs.yaml` in the docker-compose recipe defines no
+  `spark_catalog`, and sort stats collection copies its sample from it. Nothing waits on it; the job's tests point that
+  catalog at OpenHouse, as a deployment that runs the job must.
 - Item order: D29.

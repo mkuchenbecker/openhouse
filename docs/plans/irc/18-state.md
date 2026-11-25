@@ -2,13 +2,13 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 143 are merged (143 is C19, the jobs tests close what their fixtures build and the Spark 3.5
-jobs tests have a 1 GB heap; 142 is V19, V20 and V22; 141 is N16 and X9). Two pieces of work are in flight: the post-merge
-build (C20) and one batch of jobs work (X11, X12, X13). View rename stopped on D47. Nothing is merged into either fork's
-main or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for every merge up to and including
-141 was read and passed, and for 143 it is not read yet. An audit of the open work items found 8 of 62 already true and
-8 partly done (`74-work-table-audit.md`; 14 of the open items have closed since).
-This is the single place for current state. Dated 2026-11-24.
+checks pass in CI. Pull requests 121 and 124 to 145 are merged (145 is X11, X12 and X13, sort stats collection on the Iceberg 1.5.2 line
+fixed and two suspected defects found harmless; 144 is C20, the post-merge build run as the pull request's split; 143 is
+C19). Two pieces of work are in flight: a compaction conflict found by 145 (X16), and C3 with C4. View rename stopped on
+D47. Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories. Nothing is known red;
+post-merge CI for every merge up to and including 144 was read and passed, and for 145 it is not read yet. An audit of
+the open work items found 8 of 62 already true and 8 partly done (`74-work-table-audit.md`; 14 of the open items had
+closed by 2026-11-24 and four more since). This is the single place for current state. Dated 2026-11-25.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
   rename, and namespace create, alter and drop (OpenHouse has no such operations). The compatibility kit passes 42 of
@@ -67,51 +67,52 @@ This is the single place for current state. Dated 2026-11-24.
 
 ## Merged pull requests
 
-64 pull requests are merged into `irc-integration` (the last is 143, merge commit f07a92e1) and 10 into the Iceberg
+66 pull requests are merged into `irc-integration` (the last is 145, merge commit 9dfbbca7) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 143, 142 and 141 in `78-v19-v20-v22-n16-x9-result.md`; 140 in `77-t6-n10-result.md`; 137 in `76-x10-shapes-result.md`.
+The latest: 145 and 144 in `79-c20-x11-x12-x13-result.md`; 143, 142 and 141 in `78-v19-v20-v22-n16-x9-result.md`; 140 in `77-t6-n10-result.md`.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6e, N1, N2, C8, C12, T12, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, C20, X11, X12, X13, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 to 143 are merged, and `irc-integration` is at `f07a92e1`. Two pieces of
+Bottom line: pull requests 121 and 124 to 145 are merged, and `irc-integration` is at `9dfbbca7`. Two pieces of
 work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- In flight, the post-merge build (C20): split it or bring it under about 30 minutes. Worktree `/home/user/oh-c20`, branch
-  `irc/ci-post-merge-split`, record `ci-post-merge-split.md` in the reports directory.
-- In flight, one batch of jobs work (X11 sort stats collection on the Iceberg 1.5.2 line, X12 delete-file stats on format
-  v3, X13 dangling deletion vectors after retention). Worktree `/home/user/oh-jobs3`, branch
-  `irc/jobs-batch-x11-x12-x13`, record `jobs-batch-x11-x12-x13.md` in the reports directory.
+- In flight, X16: on the 1.5.2 line one of four compaction group commits got a 409 from the tables service after
+  retries. Do the group commits conflict with each other, and does a production compaction see it? Worktree
+  `/home/user/oh-flake`, branch `irc/compaction-partial-progress-409`, record `compaction-partial-progress-409.md`.
+- In flight, C3 and C4 together (the REST-shaped path: a gated replace-as-select writes no data file before the server
+  rejects it; property and policy commits from a stale handle fail as on the legacy path). Worktree `/home/user/oh-c34`,
+  branch `irc/c3-c4-rest-shaped-path`, record `c3-c4-rest-shaped-path.md` in the reports directory.
 - View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
-- Post-merge CI [read 2026-11-24]: passed for the merges of 142 and 141, so every merge up to and including 141 is
-  confirmed green after landing. Not read yet for 143: read it first (D33). The post-merge job takes 67 minutes and runs
-  queue one behind another, so the result can lag by hours (C20).
-- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 items closed since). Read it before
-  launching any small item.
-- Hazard: orphaned test processes from a finished agent (a Gradle test worker and three test service processes of the
-  format v3 types work, started about 07:10 UTC on 2026-11-24) hold about 3 GB of the machine's 15 GB. The orchestrator's
-  attempt to stop them was denied by the permission system and Mike was told; builds have less headroom until they are
-  gone or the container restarts.
-- The jobs test heap hazard is resolved by pull request 143 (about 728 MB of margin under a 1 GB heap, computed). A future
-  author should watch the heap after a full collection at the end of the suite and how many `Operations` a fixture builds.
+- Post-merge CI [read 2026-11-25]: passed for the merge of 143 (the last run through the old single jobs). The first run
+  through the new split path, for the merge of 144, passed: 13 jobs green and one skipped by design, 31 minutes from
+  merge to last job; the two `rest` jobs each saved a Gradle home cache entry keyed by the merge commit and another job
+  checked reported a read-only cache. A pull request restoring that entry has not been looked at yet. Not read yet for
+  145: read it first (D33).
+- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 closed by 2026-11-24 and four since).
+  Read it before launching any small item.
+- The container has restarted twice (2026-11-24 and 2026-11-25) with nothing lost, because agents push after every commit
+  and keep a record file. The second restart cleared the orphaned test processes that held about 3 GB of memory.
+- The jobs test heap hazard is resolved by pull request 143 (about 728 MB of margin under 1 GB, computed); a future author
+  should watch the heap after a full collection at the end of the suite and how many `Operations` a fixture builds.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X11 to X14 from X6, X10 and V14 (X14 needs Mike's say), X8 once D46 is decided, and the work after N16 (N17, Mike's); N12 to N15 are Mike's.
+1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X14 (needs Mike's say) and X17 (the job configuration's missing catalog, Mike's), X8 once D46 is decided, and the work after N16 (N17, Mike's); N12 to N15 are Mike's.
 2. V11d and V12b to V12e are Mike's; see `41-work-platforms-v3.md`.
 3. The small follow-ups: V17, C11, C13, C17 (first lead from C15), C18, T8, T11, C7. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for every merge up to and including 141 was read on 2026-11-24 and every
-job passed; that of 143 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+Nothing known red at this time. Post-merge CI for every merge up to and including 144 was read and every job passed;
+that of 145 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test). V19 and V20, found by pull request 121, are fixed (pull request 142).
 
@@ -119,11 +120,12 @@ failure names its test). V19 and V20, found by pull request 121, are fixed (pull
 
 A pull request's CI is the split build from C16 (`71-c16-ci-split-result.md`): parallel jobs, about 22 minutes, with
 check names like `build-run-tests / Default build, apps-spark-3.5`, running the same tests as before. Since pull request
-135 it has a job for the Spark 4.2 jobs project, `Default build, apps-spark-4.2`, about 17 minutes. Post-merge runs
-are still the two single jobs (default and reference line); they run everything and write the Gradle cache, and the
-default one took 67 minutes on 2026-11-24 (C20). Since pull
-request 138 the print-failed-tests step also reads the build's console log, so a dead test process still lists its
-failures (not yet seen on a red job).
+135 it has a job for the Spark 4.2 jobs project, `Default build, apps-spark-4.2`, about 17 minutes. Since pull request
+144 (C20) the build after a merge is the same split on both lines plus the Docker steps, about 31 to 34 minutes from merge
+to answer, and runs for different merges overlap; only the `rest` job of each line writes the Gradle cache. The old
+single jobs remain only for the release workflow (`79-c20-x11-x12-x13-result.md`). Since pull request 138 the
+print-failed-tests step also reads the build's console log, so a dead test process still lists its failures (not yet
+seen on a red job).
 
 ## How work is tested
 

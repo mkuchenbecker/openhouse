@@ -1,9 +1,9 @@
 # Merged pull requests
 
-Bottom line: 64 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 143, merge
-commit f07a92e1) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 66 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 145, merge
+commit 9dfbbca7) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
-lines; the current state is there. Dated 2026-11-24.
+lines; the current state is there. Dated 2026-11-25.
 
 `irc-integration` in mkuchenbecker/openhouse is LinkedIn main (bb8929e1) plus these pull requests. Each is a
 merge commit whose message states why the change exists, the evidence, and the known gaps.
@@ -74,6 +74,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 142 | V19, V20, V22: the rename target limit is a cluster property; the FileIO class of a table's own storage type in its Iceberg REST responses; the last Iceberg 1.2 leftover removed (`78-v19-v20-v22-n16-x9-result.md`) | af210f1b107ed04ce5401843911e3b7cfa95bf47 |
 | 141 | N16, X9: the jobs build one catalog per job run and not one per table load; retention signals delete files in backups (`78-v19-v20-v22-n16-x9-result.md`) | 3079859d591364df54fe29fadb82d32bf17c10c2 |
 | 143 | C19: the jobs tests close the `Operations` their fixtures build, and the Spark 3.5 jobs tests have an explicit 1 GB heap; heap after a full collection 369 MB before, 296 MB after, about 728 MB of margin under 1 GB (computed) (`78-v19-v20-v22-n16-x9-result.md`) | f07a92e10c19d7d4006903802f4aa84eeed9181a |
+| 144 | C20: the post-merge build runs the pull request's parallel split on both lines, merges' runs overlap, one Gradle cache writer per line; first real run 31 minutes from merge to last job (`79-c20-x11-x12-x13-result.md`) | 7c9fa9582bedbcb6ee5a59323ecad25158fadd0c |
+| 145 | X11, X12, X13: sort stats collection works on the Iceberg 1.5.2 line; v3 delete-file stats and dangling deletion vectors pinned, no change needed (`79-c20-x11-x12-x13-result.md`) | 9dfbbca7be1f50e798a8d4a6b11468c065212144 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 
