@@ -1460,6 +1460,263 @@ public abstract class SparkSqlSmokeScenarios {
     sql(spark, "SELECT * FROM " + second("s32_allowed"), rows("7,z"));
   }
 
+  // ---------- s33 (work item C4): a commit from a stale base keeps the other client's change ----
+
+  /**
+   * The statements s33 runs from a stale base, in order, each with the statement the other client
+   * commits first: a platform's differences can name them.
+   */
+  public static List<String[]> s33Races() {
+    String p = DB + ".s33_props";
+    String q = DB + ".s33_policy";
+    return Arrays.asList(
+        // Properties, while the other client sets another property, the same one, or a policy.
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('other1'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('stale1'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('same2'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('same2'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET POLICY (RETENTION=30d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " SET TBLPROPERTIES ('stale3'='s')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('other4'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('gone4')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET TBLPROPERTIES ('same5'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('same5')"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + p + " SET POLICY (SHARING=true)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + p + " UNSET TBLPROPERTIES ('gone6')"
+        },
+        // Policies, while the other client sets a property, the same policy, or another policy.
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET TBLPROPERTIES ('other7'='o')",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (RETENTION=30d)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (RETENTION=7d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (RETENTION=14d)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (HISTORY MAX_AGE=3d VERSIONS=5)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " MODIFY COLUMN name SET TAG = (PII)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " MODIFY COLUMN name SET TAG = (HC)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (SHARING=true)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (SHARING=false)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " SET POLICY (HISTORY MAX_AGE=2d VERSIONS=4)"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET TBLPROPERTIES ('other12'='o')",
+          "ALTER TABLE "
+              + SECOND_CATALOG
+              + "."
+              + q
+              + " SET POLICY (REPLICATION=({destination:'a', interval:12h}))"
+        },
+        new String[] {
+          "ALTER TABLE openhouse." + q + " SET POLICY (RETENTION=3d)",
+          "ALTER TABLE " + SECOND_CATALOG + "." + q + " UNSET POLICY (REPLICATION)"
+        });
+  }
+
+  /** The other client's change and the stale statement of race {@code number} (from 1). */
+  private void race(SparkSession spark, int number) {
+    String[] race = s33Races().get(number - 1);
+    String other = race[0];
+    String stale = race[1];
+    String table = stale.split(" ")[2].substring(SECOND_CATALOG.length() + 1);
+    CommitRace.arm(table, () -> spark.sql(other).collectAsList());
+    try {
+      sql(spark, stale);
+    } finally {
+      CommitRace.disarm(table);
+    }
+    observe(
+        "the other client committed inside the commit of: " + stale,
+        () -> Collections.singletonList(String.valueOf(CommitRace.stepRan(table))),
+        rows("true"));
+    observe(
+        "commit attempts of: " + stale,
+        () -> CommitRace.attempts(table),
+        rows("CommitFailedException", "committed"));
+  }
+
+  /**
+   * Work item C4. A property or policy statement whose commit was built on version N of a table
+   * while another client committed N+1 to it: the commit runs through {@value #SECOND_CATALOG},
+   * whose hook ({@link CommitRace}) runs the other client's statement, through {@code openhouse},
+   * right before the stale commit reaches the service. Each race checks that the other client's
+   * commit landed inside the stale one, how the stale commit's attempts ended, and that the table
+   * then holds both changes, the stale statement's last, as a serial order gives (for the same key,
+   * the stale value). A stale commit that silently replaced the other client's change (a lost
+   * update) fails the readback.
+   *
+   * <p>A cached Spark table alone is no stale handle at commit: Iceberg's property update refreshes
+   * the table before it builds its commit (PropertiesUpdate.apply), on both Iceberg lines, and the
+   * policy statements commit through that update. So the only window is the one the hook pins.
+   */
+  @Test
+  public void s33_staleHandle_propertyAndPolicyKeepTheOtherChange() throws Exception {
+    SparkSession spark = sparkSession();
+    String p = table("s33_props");
+    String q = table("s33_policy");
+    fresh(spark, p, q);
+    String readP = "SHOW TBLPROPERTIES " + second("s33_props");
+    String readQ = "SHOW TBLPROPERTIES " + second("s33_policy");
+    String policies = " ('policies')";
+    String columns = " (id bigint, name string, ts timestamp) PARTITIONED BY (days(ts))";
+    sql(spark, "CREATE TABLE " + p + columns);
+    sql(spark, "CREATE TABLE " + q + columns);
+    sql(
+        spark,
+        "ALTER TABLE "
+            + p
+            + " SET TBLPROPERTIES ('same2'='before', 'gone4'='x', 'same5'='before', 'gone6'='x')");
+
+    race(spark, 1);
+    sql(spark, readP + " ('other1')", rows("other1,o"));
+    sql(spark, readP + " ('stale1')", rows("stale1,s"));
+
+    race(spark, 2);
+    sql(spark, readP + " ('same2')", rows("same2,s"));
+
+    race(spark, 3);
+    sql(spark, readP + " ('stale3')", rows("stale3,s"));
+    String retention30 =
+        "  \"retention\": {\n    \"count\": 30,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readP + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 4);
+    sql(spark, readP + " ('other4')", rows("other4,o"));
+    sql(spark, readP, noRowStartingWith("gone4,"));
+
+    race(spark, 5);
+    sql(spark, readP, noRowStartingWith("same5,"));
+
+    race(spark, 6);
+    sql(spark, readP, noRowStartingWith("gone6,"));
+    sql(
+        spark,
+        readP + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": true\n}"));
+    // Nothing a race before lost.
+    sql(spark, readP + " ('other1')", rows("other1,o"));
+    sql(spark, readP + " ('stale1')", rows("stale1,s"));
+
+    race(spark, 7);
+    sql(spark, readQ + " ('other7')", rows("other7,o"));
+    sql(
+        spark,
+        readQ + policies,
+        rows("policies,{\n" + retention30 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 8);
+    String retention14 =
+        "  \"retention\": {\n    \"count\": 14,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows("policies,{\n" + retention14 + "  \"sharingEnabled\": false\n}"));
+
+    race(spark, 9);
+    String tagPii =
+        "  \"columnTags\": {\n    \"name\": {\n      \"tags\": [\n        \"PII\"\n      ]\n"
+            + "    }\n  },\n";
+    String history35 =
+        "  \"history\": {\n    \"maxAge\": 3,\n    \"granularity\": \"DAY\",\n"
+            + "    \"versions\": 5\n  }\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": false,\n"
+                + tagPii
+                + history35
+                + "}"));
+
+    race(spark, 10);
+    String tagHc =
+        "  \"columnTags\": {\n    \"name\": {\n      \"tags\": [\n        \"HC\"\n      ]\n"
+            + "    }\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": true,\n"
+                + tagHc
+                + history35
+                + "}"));
+
+    race(spark, 11);
+    String history24 =
+        "  \"history\": {\n    \"maxAge\": 2,\n    \"granularity\": \"DAY\",\n"
+            + "    \"versions\": 4\n  }\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention14
+                + "  \"sharingEnabled\": false,\n"
+                + tagHc
+                + history24
+                + "}"));
+
+    race(spark, 12);
+    sql(spark, readQ + " ('other12')", rows("other12,o"));
+    // The service draws the replication schedule's minute at random (as in s31).
+    sql(
+        spark,
+        readQ + policies,
+        rowsMatching(
+            Pattern.quote(
+                    "policies,{\n"
+                        + retention14
+                        + "  \"sharingEnabled\": false,\n"
+                        + tagHc
+                        + "  \"replication\": {\n    \"config\": [\n      {\n"
+                        + "        \"destination\": \"'A'\",\n        \"interval\": \"12H\",\n"
+                        + "        \"cronSchedule\": \"")
+                + "0 [0-9]+ [0-9]+/12 \\? \\* \\* \\*"
+                + Pattern.quote("\"\n      }\n    ]\n  },\n" + history24 + "}")));
+
+    race(spark, 13);
+    String retention3 =
+        "  \"retention\": {\n    \"count\": 3,\n    \"granularity\": \"DAY\"\n  },\n";
+    sql(
+        spark,
+        readQ + policies,
+        rows(
+            "policies,{\n"
+                + retention3
+                + "  \"sharingEnabled\": false,\n"
+                + tagHc
+                + "  \"replication\": {\n    \"config\": []\n  },\n"
+                + history24
+                + "}"));
+    // Nothing a race before lost.
+    sql(spark, readQ + " ('other7')", rows("other7,o"));
+    sql(spark, readQ + " ('other12')", rows("other12,o"));
+  }
+
   @Test
   public void s20_missingTable_select() throws Exception {
     SparkSession spark = sparkSession();
