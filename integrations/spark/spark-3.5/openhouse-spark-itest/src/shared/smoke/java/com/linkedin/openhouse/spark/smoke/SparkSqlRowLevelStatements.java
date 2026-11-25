@@ -288,6 +288,21 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
         expect().insert(8, "h", "y"))) {
       return;
     }
+    checkPositionDeleteFiles(model);
+  }
+
+  /**
+   * For a v2 table: the live position delete files after each statement. On the Iceberg 1.12 line
+   * one per data file that lost rows (the Spark writer rewrites a file-scoped one); an Avro table,
+   * whose position delete files are partition-scoped, one per statement that deleted.
+   */
+  private void checkPositionDeleteFiles(Model model) {
+    if (model.shape.formatVersion == 2) {
+      check(
+          "live position delete files after each statement",
+          model.expectedPositionDeleteFiles,
+          model.positionDeleteFiles);
+    }
   }
 
   // ---------------------------------------------------------------- time travel and rollback
@@ -406,6 +421,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
           true,
           rowIdOf4 >= nextRowIdAfterUpdate);
     }
+    checkPositionDeleteFiles(model);
   }
 
   // ---------------------------------------------------------------- a table upgraded from v2
@@ -436,11 +452,12 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
       return;
     }
 
+    checkPositionDeleteFiles(model);
     sql("ALTER TABLE " + name + " SET TBLPROPERTIES ('format-version'='3')");
     check("format version after the upgrade", 3, formatVersion(table));
     check(
         "deletes a reader applies after the upgrade",
-        Collections.singletonList("ids [1, 3, 4] of 4 rows: 1 PARQUET, 1 deleted"),
+        Collections.singletonList("ids [1, 3, 4] of 4 rows: 1 PARQUET holding 1 positions"),
         observe(model).appliedDeletes());
 
     // From here the table is v3: one deletion vector per data file, which takes in the position
@@ -510,6 +527,16 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     final Map<Long, String> rows = new TreeMap<>();
     /** For a v3 table: id to {@code row id/sequence number}, as the last statement left it. */
     Map<Long, String> lineage = new TreeMap<>();
+    /** The statements run so far, and at which of them each data file appeared. */
+    int statements;
+
+    final Map<String, Integer> dataFileAddedAt = new HashMap<>();
+    /** Partition-scoped position delete files: the statement that wrote each, and its rows. */
+    final List<long[]> partitionScoped = new ArrayList<>();
+    /** For a v2 table: the live position delete files after each statement, and the expected. */
+    final List<Long> positionDeleteFiles = new ArrayList<>();
+
+    final List<Long> expectedPositionDeleteFiles = new ArrayList<>();
 
     Model(Shape shape, String table) {
       this.shape = shape;
@@ -559,24 +586,61 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
           rows(liveRowsQuery(reader + "." + DB + "." + model.table)));
     }
 
-    // The deletes a reader applies to each data file, and the delete manifests: one delete file
-    // per data file that lost rows, holding every row it lost. On v3 a deletion vector (Puffin);
-    // on v2 a position delete file in the table's format, which Iceberg 1.12's Spark writer also
-    // rewrites rather than adds to (file-scoped position deletes).
+    // The deletes a reader applies to each data file, and the delete manifests. On v3: one
+    // deletion vector (Puffin) per data file that lost rows, holding every row it lost. On v2: a
+    // position delete file in the table's format, file-scoped where the file's column bounds name
+    // its one data file (Parquet, ORC), and Iceberg 1.12's Spark writer then rewrites it rather
+    // than adds another; an Avro delete file has no column bounds, so it is partition-scoped: each
+    // statement adds one, and a reader applies every one to every data file of the table that is
+    // not newer than it.
+    model.statements++;
+    long deletedByStatement = 0;
+    for (Map.Entry<String, DataFileState> file : after.dataFiles.entrySet()) {
+      model.dataFileAddedAt.putIfAbsent(file.getKey(), model.statements);
+      DataFileState previous = before.dataFiles.get(file.getKey());
+      long deletedNow = file.getValue().recordCount - file.getValue().liveIds.size();
+      long deletedBefore = previous == null ? 0 : previous.recordCount - previous.liveIds.size();
+      deletedByStatement += deletedNow - deletedBefore;
+    }
+    boolean fileScoped = model.shape.formatVersion == 3 || !"avro".equals(model.shape.fileFormat);
+    if (!fileScoped && model.shape.mergeOnRead() && deletedByStatement > 0) {
+      model.partitionScoped.add(new long[] {model.statements, deletedByStatement});
+    }
+    // How many delete files a reader applies per data file is checked per statement on v3 and
+    // for partition-scoped files; for file-scoped v2 position delete files it is checked once,
+    // over all the statements (#checkPositionDeleteFiles), as the one place where the Iceberg
+    // lines differ (1.5.2 adds a file per statement).
+    boolean count = model.shape.formatVersion == 3 || !fileScoped;
     List<String> expectedDeletes = new ArrayList<>();
     long filesWithDeletes = 0;
-    for (DataFileState state : after.dataFiles.values()) {
+    String deleteFormat =
+        model.shape.formatVersion == 3 ? "PUFFIN" : formatName(model.shape.fileFormat);
+    for (Map.Entry<String, DataFileState> file : after.dataFiles.entrySet()) {
+      DataFileState state = file.getValue();
       long deleted = state.recordCount - state.liveIds.size();
       filesWithDeletes += deleted > 0 ? 1 : 0;
-      expectedDeletes.add(
-          describe(
-              state,
-              deleted > 0 ? 1 : 0,
-              model.shape.formatVersion == 3 ? "PUFFIN" : formatName(model.shape.fileFormat),
-              deleted));
+      if (fileScoped) {
+        expectedDeletes.add(describe(state, deleted > 0 ? 1 : 0, deleteFormat, deleted, count));
+      } else {
+        int applied = 0;
+        long rows = 0;
+        for (long[] scoped : model.partitionScoped) {
+          if (scoped[0] >= model.dataFileAddedAt.get(file.getKey())) {
+            applied++;
+            rows += scoped[1];
+          }
+        }
+        expectedDeletes.add(describe(state, applied, deleteFormat, rows, count));
+      }
+    }
+    if (!fileScoped) {
+      filesWithDeletes = model.partitionScoped.size();
     }
     Collections.sort(expectedDeletes);
-    check(at + "deletes a reader applies, per data file", expectedDeletes, after.appliedDeletes());
+    check(
+        at + "deletes a reader applies, per data file",
+        expectedDeletes,
+        after.appliedDeletes(count));
     if (model.shape.formatVersion == 3) {
       check(at + "position delete files live", 0L, after.positionDeleteFiles);
       check(
@@ -612,7 +676,8 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
       lineageChecks(model, change, before, after, at);
     } else {
       check(at + "deletion vectors live", 0L, after.deletionVectors);
-      check(at + "position delete files live", filesWithDeletes, after.positionDeleteFiles);
+      model.positionDeleteFiles.add(after.positionDeleteFiles);
+      model.expectedPositionDeleteFiles.add(filesWithDeletes);
     }
     return true;
   }
@@ -688,8 +753,13 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     return Long.parseLong(observed.summary.getOrDefault(key, "0"));
   }
 
+  /**
+   * A data file as a reader sees it: its live ids and row count, and the delete files applied to it
+   * with the positions they hold (for a file-scoped delete file or a deletion vector, the rows
+   * deleted from this data file).
+   */
   private static String describe(
-      DataFileState state, int deleteFiles, String format, long deleted) {
+      DataFileState state, int deleteFiles, String format, long positions, boolean count) {
     return "ids "
         + state.liveIds
         + " of "
@@ -697,7 +767,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
         + " rows: "
         + (deleteFiles == 0
             ? "no deletes"
-            : deleteFiles + " " + format + ", " + deleted + " deleted");
+            : (count ? deleteFiles + " " : "") + format + " holding " + positions + " positions");
   }
 
   private static String formatName(String fileFormat) {
@@ -737,6 +807,11 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     }
 
     List<String> appliedDeletes() {
+      return appliedDeletes(true);
+    }
+
+    /** Per data file, the delete files a reader applies; their number only if {@code count}. */
+    List<String> appliedDeletes(boolean count) {
       List<String> described = new ArrayList<>();
       for (DataFileState state : dataFiles.values()) {
         String format = state.deletes.isEmpty() ? "" : state.deletes.get(0).split(":")[0];
@@ -746,7 +821,8 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
                 state,
                 state.deletes.size(),
                 oneFormat ? format : state.deletes.toString(),
-                state.deletedByDeleteFiles));
+                state.deletedByDeleteFiles,
+                count));
       }
       Collections.sort(described);
       return described;

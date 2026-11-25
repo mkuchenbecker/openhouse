@@ -139,7 +139,7 @@ public abstract class RowLevelStatementsTest extends SparkSqlRowLevelStatements 
   /** A difference of this itest's JVM, not of a catalog path: the same on all three. */
   static final String TEST_JVM = "the Spark 3.5 itest's JVM";
 
-  /** Iceberg 1.12's Avro writer in a JVM that also has the embedded service's thin jars. */
+  /** Iceberg's Avro writer in a JVM that also has the embedded service's thin jars. */
   static final String AVRO_CLASS_CAST =
       "java.lang.ClassCastException: class org.apache.avro.Schema$RecordSchema cannot be cast to"
           + " class org.apache.iceberg.shaded.org.apache.avro.Schema"
@@ -148,32 +148,80 @@ public abstract class RowLevelStatementsTest extends SparkSqlRowLevelStatements 
           + " 'app')";
 
   /**
-   * The checks on which the Spark 3.5 paths differ from the baseline. On the Iceberg 1.12 line,
-   * Spark cannot write an Avro data file in this test JVM: the embedded tables service needs the
-   * fork's thin iceberg-core (with unshaded Avro) on the classpath, next to Iceberg's Spark
-   * runtime, which carries the same Iceberg Avro classes against its shaded Avro, and the writer
-   * gets classes from both. A Spark 3.5 engine has only the runtime jar; the Spark 4.2 run of the
-   * same list, whose JVM has only the runtime, writes and reads Avro tables. The classpath is the
-   * reason the build already excludes the thin iceberg-data, iceberg-orc and iceberg-parquet here.
+   * The checks on which the Spark 3.5 paths differ from the baseline, the same on all three. On
+   * both Iceberg lines, Spark cannot write an Avro data file in this test JVM: the embedded tables
+   * service needs the thin iceberg-core of the line (with unshaded Avro) on the classpath, next to
+   * Iceberg's Spark runtime, which carries the same Iceberg Avro classes against its shaded Avro,
+   * and the writer gets classes from both. A Spark 3.5 engine has only the runtime jar; the Spark
+   * 4.2 run of the same list, whose JVM has only the runtime, writes and reads Avro tables. The
+   * classpath is the reason the build already excludes the thin iceberg-data (and, on 1.12,
+   * iceberg-orc and iceberg-parquet) here.
    */
   @Override
   protected List<Difference> differences() {
     List<Difference> differences = new ArrayList<>();
-    if (IcebergLine.current() == IcebergLine.V3) {
-      for (String test :
-          Arrays.asList("v3MergeOnReadAvro", "v2MergeOnReadAvro", "v3CopyOnWriteAvro")) {
-        differences.add(
-            Difference.on(test, "INSERT: the statement")
-                .baseline("succeeds")
-                .here(AVRO_CLASS_CAST)
-                .because(
-                    TEST_JVM,
-                    "Iceberg 1.12's Avro writer meets the unshaded Avro of the embedded service's"
-                        + " thin iceberg-core next to the shaded runtime (both jars hold"
-                        + " org.apache.iceberg.avro.AvroFormatModel). Not a catalog path or an"
-                        + " engine difference; Avro is proven by the Spark 4.2 run."));
-      }
+    boolean v3Line = IcebergLine.current() == IcebergLine.V3;
+    // The v3 Avro cases do not run on the 1.5.2 line, so only the v2 one is declared there.
+    List<String> avro =
+        v3Line
+            ? Arrays.asList("v3MergeOnReadAvro", "v2MergeOnReadAvro", "v3CopyOnWriteAvro")
+            : Arrays.asList("v2MergeOnReadAvro");
+    for (String test : avro) {
+      differences.add(
+          Difference.on(test, "INSERT: the statement")
+              .baseline("succeeds")
+              .here(AVRO_CLASS_CAST)
+              .because(
+                  TEST_JVM,
+                  "Iceberg's Avro writer meets the unshaded Avro of the embedded service's thin"
+                      + " iceberg-core next to the shaded Spark runtime (both jars hold"
+                      + " org.apache.iceberg.avro.AvroFileAppender). Not a catalog path or an"
+                      + " engine difference; Avro is proven by the Spark 4.2 run."));
     }
+    if (!v3Line) {
+      differences.addAll(positionDeletesAccumulateOn152());
+    }
+    return differences;
+  }
+
+  /** A difference of LinkedIn's Iceberg 1.5.2 line, on every Spark 3.5 path. */
+  static final String ICEBERG_152 = "LinkedIn's Iceberg 1.5.2 line";
+
+  /**
+   * On LinkedIn's Iceberg 1.5.2 line, Spark's merge-on-read writer on a v2 table adds a position
+   * delete file per statement and data file and never rewrites an earlier one, so they accumulate;
+   * the Iceberg 1.12 writer replaces the data file's file-scoped one, holding the earlier positions
+   * too. The rows and the positions a reader applies are the same on both lines.
+   */
+  private static List<Difference> positionDeletesAccumulateOn152() {
+    String why =
+        "Iceberg 1.5.2's SparkPositionDeltaWrite has no rewritten delete files: every statement"
+            + " writes new position delete files next to the earlier ones. Iceberg 1.12's writer"
+            + " loads a data file's file-scoped position deletes and replaces them with one file"
+            + " (RowDelta.removeDeletes). Rows and applied positions are the same on both lines;"
+            + " format v3 (one deletion vector per data file) is not on 1.5.2 at all.";
+    String check = "live position delete files after each statement";
+    List<Difference> differences = new ArrayList<>();
+    differences.add(
+        Difference.on("v2MergeOnReadParquet", check)
+            .baseline(Arrays.asList(0L, 1L, 1L, 1L, 1L, 1L, 1L))
+            .here(Arrays.asList(0L, 1L, 2L, 3L, 4L, 5L, 5L))
+            .because(ICEBERG_152, why));
+    differences.add(
+        Difference.on("v2MergeOnReadOrc", check)
+            .baseline(Arrays.asList(0L, 1L, 1L, 1L, 1L, 1L, 1L))
+            .here(Arrays.asList(0L, 1L, 2L, 3L, 4L, 5L, 5L))
+            .because(ICEBERG_152, why));
+    differences.add(
+        Difference.on("v2MergeOnReadParquetPartitioned", check)
+            .baseline(Arrays.asList(0L, 1L, 1L, 2L, 2L, 2L, 2L))
+            .here(Arrays.asList(0L, 1L, 2L, 4L, 5L, 6L, 6L))
+            .because(ICEBERG_152, why));
+    differences.add(
+        Difference.on("v2TimeTravelAndRollbackAroundARowLevelStatement", check)
+            .baseline(Arrays.asList(0L, 1L, 1L, 1L, 1L))
+            .here(Arrays.asList(0L, 1L, 2L, 2L, 2L))
+            .because(ICEBERG_152, why));
     return differences;
   }
 
