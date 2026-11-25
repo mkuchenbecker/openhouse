@@ -2,13 +2,13 @@
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 148 are merged (148 is X16: the compaction 409 was the test fixture's H2 stand-in serving a
-stale row, no production code changed; 147 is V17: the Iceberg REST namespace check reads one row, two listings remain
-and need House Tables queries that are Mike's; 146 is C3 and C4, D51). Two pieces of work are in flight: an H2 follow-up
-(X18) and the register-view route (the rest of V10). View rename stopped on D47. Nothing is merged into either fork's main
-or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI for every merge up to and including 146
-was read and passed, and for 147 and 148 it is not read yet. An audit of the open work items found 8 of 62 already true
-and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and eight more since). This is the single place for current state. Dated 2026-11-25.
+checks pass in CI. Pull requests 121 and 124 to 150 are merged: 71 in all, and `irc-integration` is at `81b4cd4d`. The latest two are 150
+(X18: H2 result reuse off in the tables service's test stand-in) and 149 (the rest of V10: register-view is served on the
+Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). Two pieces of work are in flight: the wider X2 and X3 scenarios on
+format v3, and the small batch W13, W14 and N9. View rename stopped on D47. Nothing is merged into either fork's main
+or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI passed on both lines for every merge up to
+and including 148 and for 150, and for 149 it is not read yet. An audit of the open work items found 8 of 62 already true
+and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and ten more since). This is the single place for current state. Dated 2026-11-25.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
   rename, and namespace create, alter and drop (OpenHouse has no such operations). The compatibility kit passes 42 of
@@ -48,7 +48,7 @@ and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 
 - Spark 4.2 over IRC passes the Spark SQL smoke suite (210 statements) and 19 write statements, all storing what they
   should (pull request 117, 140); renaming to a target that names the catalog works since N6 (pull request 119).
 - Served over IRC now: config with the endpoint list, namespace reads, table create, staged create, load, commit,
-  rename, drop, register, metrics report, one-table transactions, views except rename, and the OpenHouse capability
+  rename, drop, register, metrics report, one-table transactions, views except rename (register-view on the 1.12 line only, 406 on 1.5.2), and the OpenHouse capability
   routes (policies, grants, unlock). On the Iceberg 1.12 line also the synchronous plan route and the credentials
   route, which answers an empty list (pull request 127, `62-v11a-v12a-result.md`); the 1.5.2 line answers 406 for both.
 - Not atomic: multi-table transactions. A transaction of one table commits; several tables are refused whole with
@@ -67,51 +67,49 @@ and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 
 
 ## Merged pull requests
 
-69 pull requests are merged into `irc-integration` (the last is 148, merge commit 886b660b) and 10 into the Iceberg
+71 pull requests are merged into `irc-integration` (the last is 149, merge commit 81b4cd4d) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
-The latest: 147 and 148 in `81-v17-x16-result.md`; 146 in `80-c3-c4-result.md`; 145 and 144 in `79-c20-x11-x12-x13-result.md`; 143, 142 and 141 in `78-v19-v20-v22-n16-x9-result.md`.
+The latest: 150 and 149 in `82-v10-x18-result.md`; 147 and 148 in `81-v17-x16-result.md`; 146 in `80-c3-c4-result.md`; 145 and 144 in `79-c20-x11-x12-x13-result.md`.
 
 ## Done
 
 P1, P2, I1 to I5, I8, I6e, N1, N2, C8, C12, T12, I6a to I6c, I6g, I6h, T1 to T5, T2b, C1, V1, V2, V3, V4, V5-0, V5-gap, V5-1, V5-2, V5-3, V10a,
-C2-1, C2-2, C2-3, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, C20, X11, X12, X13, C3, C4, V17, X16, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
+C2-1, C2-2, C2-3, V10, X18, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, C20, X11, X12, X13, C3, C4, V17, X16, N3-x1, N3-x2, N3a, N3b, N3, N6, T10, C9 (green parts), C5, I6f, V13a, V13b, I11, V9a, V9b, V9c, V9e, C6, T9, V6, V7, V8, V9d, V16, T13, C10, C14, X1, W6, W7, X4, X5, X6, V15, V3b, V3c, V11a, V11b, V11c, V11e, V12a, V14, C16, N11 (landable part), N1-c, N7, W1 to W4, W12, I10, the two CI fix-forwards of pull requests 107 and 108, and the X0 design. The meaning of each item is in `04-work.md`.
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 to 148 are merged, and `irc-integration` is at `886b660b`. Two pieces of
+Bottom line: pull requests 121 and 124 to 150 are merged, and `irc-integration` is at `81b4cd4d`. Two pieces of
 work are in flight (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC; code agents use the next
   model down.
-- In flight, X18: the same H2 setting for the tables service's own test copy of the stand-in, and a check of every
-  other embedded H2 in the tests. Worktree `/home/user/oh-h2`, branch `irc/h2-standin-reuse-results`.
-- In flight, the rest of V10: the register-view route. Worktree `/home/user/oh-regview`, branch `irc/v10-register-view`,
-  record `v10-register-view.md` in the reports directory.
-- View rename (V21) stopped on D47: House Tables has no atomic view rename, and a new House Tables API is Mike's.
-- Post-merge CI [read 2026-11-25]: for the merge of 146 (`22017134`) it passed on both lines, 28 minutes from merge to
-  last job. The pull request builds of 147 (head `f6f9aaed`) and 148 (head `2519945f`) were green on both lines;
-  post-merge CI for 147 and 148 is not read yet: read it first (D33). Before merging, the orchestrator read the changed
-  files and the production or fixture diff of each: 147 changes 19 lines of `IcebergRestApiHandler` and adds one test
-  class; 148 changes two lines of the stand-in's application class and adds a properties file and a test class.
+- In flight, X2 and X3: the wider row-level scenarios on format v3. Worktree `/home/user/oh-x23`, branch
+  `irc/x2-x3-v3-row-level`, record `x2-x3-v3-row-level.md` in the reports directory.
+- In flight, W13, W14 and N9 together: worktree `/home/user/oh-small2`, branch `irc/small-batch-w13-w14-n9`, record
+  `small-batch-w13-w14-n9.md` in the reports directory.
+- Post-merge CI [read 2026-11-25]: it passed on both lines for the merges of 147 (28 minutes), 148 (32 minutes) and 150
+  (30 minutes); for 149 it is not read yet: read it first (D33). The pull request builds of 149 (head `1ae8e370`) and
+  150 (head `ad50d763`) were green on both lines. Before merging 149 the orchestrator read the diff to shared main
+  sources: one new method in the native view audit, one visibility change, comments.
 - Hazard: the build of the notes pull request had one red job on 2026-11-25 at head `b1c9d0f3` because Maven Central
   answered "429 Too Many Requests" while the job downloaded jars. A job that dies this way ran no test and is reported,
   not re-run; the post-merge builds on `irc-integration` afterwards were not affected.
-- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 closed by 2026-11-24 and eight since).
+- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 closed by 2026-11-24 and ten since).
   Read it before launching any small item.
 - The container has restarted twice (2026-11-24 and 2026-11-25) with nothing lost, because agents push after every commit
   and keep a record file. The second restart cleared the orphaned test processes that held about 3 GB of memory.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
-1. The rest of format v3: the wider X2 and X3 scenarios, W8, X7 (refused today; investigated first), X14 (needs Mike's say) and X17 (the job configuration's missing catalog, Mike's), X8 once D46 is decided, and the work after N16 (N17, Mike's); N12 to N15 are Mike's.
+1. The rest of format v3: W8, X7 (refused today; investigated first), X14 (needs Mike's say) and X17 (the job configuration's missing catalog, Mike's), X8 once D46 is decided, and the work after N16 (N17, Mike's); N12 to N15 are Mike's.
 2. V11d and V12b to V12e are Mike's; see `41-work-platforms-v3.md`.
 3. The small follow-ups: C11, C13, C17 (first lead from C15), C18, T8, T11, C7. The order of the large work is D29.
 
 ## Known red on `irc-integration`
 
-Nothing known red at this time. Post-merge CI for every merge up to and including 146 was read and every job passed;
-that of 147 and 148 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
+Nothing known red at this time. Post-merge CI for every merge up to and including 148, and for 150, was read and every job passed;
+that of 149 is not read yet. Unexplained and not red: the Spark 4.2 `test` task failed once in six runs, and
 `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log early (T8, open until a CI
 failure names its test); the compaction failure seen once locally was X16, a fixture defect, fixed. V19 and V20, found by pull request 121, are fixed (pull request 142).
 
@@ -131,7 +129,7 @@ seen on a red job).
 Post-merge results are read after every merge, not assumed (D33). Under D18, before a merge an agent runs the test classes it touched plus the black-box suite of the module it
 changed, and Claude merges on that without waiting for the pull request's CI. The full build runs on
 `irc-integration` after each merge and a failure is fixed forward, so work that starts from the branch checks the
-known-red list above first. An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
+known-red list above first. A new write route, or a change with authorization consequences, gets an independent read-only review before merge (done for X6 and for register-view; both found real gaps). An item whose claim is "no behavior change" runs the full suite before merge. D26 adds the cheap checks every brief
 now requires (`21-findings-continued.md`); D33: a suite counts only if it ran on the 1.12 line.
 
 ## Waiting on Mike
@@ -144,6 +142,6 @@ Three questions from X5's column types are there too, and X14 (an age floor in o
 ## How to audit
 
 - Decisions are in `13-decisions.md`, `16-decisions-continued.md`, `22-decisions-continued-2.md` and
-  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D47) and `67-decisions-continued-6.md` (D48 to D51).
+  `37-decisions-continued-3.md` (D30 to D36) and `51-decisions-continued-4.md` (D37 to D42, with dated addenda) and `56-decisions-continued-5.md` (D43 to D47) and `67-decisions-continued-6.md` (D48 to D52).
 - Findings are in `08-findings.md` and the numbered result files listed in `README.md`.
 - Only `01-stated.md` carries Mike's authority.

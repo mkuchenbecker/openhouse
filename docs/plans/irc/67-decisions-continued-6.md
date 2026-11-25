@@ -86,3 +86,25 @@ Mike. Claude wrote the entries.
   abort deleting what the failed replace wrote (an empty method in the fork's 1.12 code [read]), which would remove the
   leftover on every REST path. That is a change in the Iceberg fork and is open work item N18, not started.
 - Reference: `80-c3-c4-result.md`, scenario s32, merge `22017134`.
+
+## D52. Register-view over the Iceberg REST routes keeps the view in place and is audited as a create
+
+- Date: 2026-11-25. The orchestrator's decision, two-way doors, each revisitable until release. Work item V10; pull
+  request 149 (merge commit `81b4cd4d`).
+- Decided:
+  (a) A registration keeps the view in place: the metadata file named becomes the view's current metadata, with its UUID,
+  versions, history, creator and creation time as the file records them. Rewriting through a create would produce a fresh
+  version 1 and lose the history.
+  (b) A registration is audited as a CREATE by the acting principal, as the table register route is. The view keeps the
+  original creator from the file, so the registrant must be accountable.
+  (c) Older metadata files of a dropped view stay registrable. There is no "latest file only" rule and no restriction to
+  the original creator. The SQL in an older file is SQL that view once had, the registrant could create any SQL natively
+  with the same privilege, and the audit names who did it. This is put to Mike as a design question
+  (`58-waiting-on-mike.md`) and nothing is blocked on him.
+  (d) The file's current version must pass the validations a native view create runs, so register cannot admit a view
+  that create would refuse, whatever the storage permissions on view directories are.
+  (e) Nothing is read from storage before the caller is authorized.
+- What would change it: Mike deciding that bringing back a dropped view needs a stronger right, the original creator, or
+  the latest file only.
+- Reference: merge `81b4cd4d`, `82-v10-x18-result.md`, tests `IrcRegisterViewRouteTest`, `IrcRegisterViewAuthTest` and
+  `IrcRegisterViewRaceTest`.

@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 69 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 148, merge
-commit 886b660b) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 71 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 149, merge
+commit 81b4cd4d) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-25.
 
@@ -79,6 +79,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 146 | C3, C4: tests only; a gated replace-as-select leaves the one data file Spark wrote on rest-shim, rest-http and Spark 4.2 (pinned, not fixed), and a stale property, policy or column tag commit loses no change on any path (`80-c3-c4-result.md`) | 2201713482e66d68ba232041fcddfa1f9ac69523 |
 | 147 | V17: the namespace check of six Iceberg REST routes reads one House Tables row, not the database's table list; a missing namespace and the directory-in-use check still list (`81-v17-x16-result.md`) | 2ba15929a2da01b5740fefd4e91b508aecf31f8c |
 | 148 | X16: the 409 that cost a compaction one file group was the H2 House Tables stand-in serving a stale row; H2 result reuse is off in the shared stand-in, no production code changed (`81-v17-x16-result.md`) | 886b660b48c753ae111c5b781178613d8dea6578 |
+| 150 | X18: H2 result reuse is off in the tables service tests' House Tables stand-in; every other embedded H2 in the tests listed as safe, test sources only (`82-v10-x18-result.md`) | cafcc9dac45d186c008cf63d502f9807397b01ec |
+| 149 | V10 (remainder): register-view served in place on the Iceberg 1.12 line, audited as a create by the caller; 406 on 1.5.2 (`82-v10-x18-result.md`, D52) | 81b4cd4d5dacfa796a29ee2b4176ab82261f7b09 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

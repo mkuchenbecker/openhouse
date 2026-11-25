@@ -67,4 +67,16 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
 - V23 and V24 (`81-v17-x16-result.md`): two House Tables lookups would remove the listings that remain over the Iceberg
   REST routes: "does any row have exactly this database id" and "rows of a database, live and soft-deleted, with this
   table UUID or a location under this prefix". Nothing waits on them; today's cost is pinned by a test.
+- Register-view (V10, D52, `82-v10-x18-result.md`): anyone with CREATE_TABLE on a database can bring back a view another
+  principal dropped, from any of its metadata files, older ones too (a view drop removes only the row; the files stay).
+  It is audited under the registrant and the view keeps its original creator. If he wants it tighter: the latest file only,
+  the original creator only, a stronger privilege, or a cluster switch for the route. Recommendation: leave as is. Nothing waits.
+- Register-view content checks (V10): they assume nobody but the service can write into a view directory, which rests on
+  storage permissions outside the repository. Question: can a client principal create or write a directory next to a
+  table's under the database directory on his storage? Nothing waits on this.
+- The House Tables service's default database URL in main source is an embedded H2 (`JdbcProviderConfiguration`), and H2
+  2.1 with its default settings can serve a session a row older than a commit that already returned (X16,
+  `81-v17-x16-result.md`; X18, `82-v10-x18-result.md`). The test stand-ins are fixed; the default is not touched. Question:
+  does any real deployment run House Tables on that default, and should the default URL get the same setting? Recommendation:
+  add the setting to the default (one line); his say, because it is main-source configuration. Nothing waits on this.
 - Item order: D29.
