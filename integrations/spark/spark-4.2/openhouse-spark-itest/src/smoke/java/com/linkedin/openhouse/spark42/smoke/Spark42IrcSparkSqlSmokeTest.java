@@ -1,6 +1,7 @@
 package com.linkedin.openhouse.spark42.smoke;
 
 import com.linkedin.openhouse.spark.smoke.SparkSqlSmokeScenarios;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import org.apache.spark.sql.SparkSession;
@@ -73,122 +74,153 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   protected List<Difference> differences() {
     String s26 = CAT_DB + ".s26_describe";
     String s29 = CAT_DB + ".s29_rename";
-    return Arrays.asList(
-        // ---- s19, s24: namespace statements.
-        Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
-            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-            .here(
-                fails(
-                    UNSUPPORTED, "Server does not support endpoint: POST /v1/{prefix}/namespaces"))
-            .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
-        // Baseline: refused. Here it answers.
-        Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
-            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-            .here(rows("Catalog Name,openhouse", "Namespace Name," + DB))
-            .because(
-                IRC_UNDECIDED,
-                "The IRC namespace route answers for a database that has tables (V2), so"
-                    + " RESTCatalog loads the namespace. OpenHouseCatalog refused the call in the"
-                    + " engine. Iceberg's Hadoop catalog answers the statement as well."),
-        Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
-            .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
-            .here(
-                fails(
-                    UNSUPPORTED,
-                    "Server does not support endpoint:"
-                        + " POST /v1/{prefix}/namespaces/{namespace}/properties"))
-            .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
-        Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
-            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-            .here(
-                fails(
-                    UNSUPPORTED,
-                    "Server does not support endpoint: DELETE /v1/{prefix}/namespaces/{namespace}"))
-            .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
-        // Baseline: refused. Here it answers, with no row.
-        Difference.on("s24", "SHOW NAMESPACES IN " + CAT_DB)
-            .baseline(fails(UNSUPPORTED, "Openhouse supports 2-lvl namespace <schema>.<table>"))
-            .here(rows())
-            .because(
-                IRC_UNDECIDED,
-                "The IRC namespace list answers an empty list under an existing database (V2;"
-                    + " pinned for Spark 4.2 since N3a). OpenHouseCatalog refused the call in the"
-                    + " engine. Iceberg's Hadoop catalog answers an empty list as well."),
+    List<Difference> differences =
+        new ArrayList<>(
+            Arrays.asList(
+                // ---- s19, s24: namespace statements.
+                Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
+                    .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+                    .here(
+                        fails(
+                            UNSUPPORTED,
+                            "Server does not support endpoint: POST /v1/{prefix}/namespaces"))
+                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                // Baseline: refused. Here it answers.
+                Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
+                    .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+                    .here(rows("Catalog Name,openhouse", "Namespace Name," + DB))
+                    .because(
+                        IRC_UNDECIDED,
+                        "The IRC namespace route answers for a database that has tables (V2), so"
+                            + " RESTCatalog loads the namespace. OpenHouseCatalog refused the call in the"
+                            + " engine. Iceberg's Hadoop catalog answers the statement as well."),
+                Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
+                    .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
+                    .here(
+                        fails(
+                            UNSUPPORTED,
+                            "Server does not support endpoint:"
+                                + " POST /v1/{prefix}/namespaces/{namespace}/properties"))
+                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
+                    .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+                    .here(
+                        fails(
+                            UNSUPPORTED,
+                            "Server does not support endpoint: DELETE /v1/{prefix}/namespaces/{namespace}"))
+                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                // Baseline: refused. Here it answers, with no row.
+                Difference.on("s24", "SHOW NAMESPACES IN " + CAT_DB)
+                    .baseline(
+                        fails(UNSUPPORTED, "Openhouse supports 2-lvl namespace <schema>.<table>"))
+                    .here(rows())
+                    .because(
+                        IRC_UNDECIDED,
+                        "The IRC namespace list answers an empty list under an existing database (V2;"
+                            + " pinned for Spark 4.2 since N3a). OpenHouseCatalog refused the call in the"
+                            + " engine. Iceberg's Hadoop catalog answers an empty list as well."),
 
-        // ---- s22: the snapshot a replace adds. Baseline: an append.
-        Difference.on(
-                "s22",
-                "SELECT operation FROM " + CAT_DB + ".s22_rtas.snapshots ORDER BY committed_at")
-            .baseline(rows("append", "append"))
-            .here(rows("append", "overwrite"))
-            .because(
-                SPARK_4,
-                "Spark 4 plans the write of a REPLACE TABLE AS SELECT as an overwrite, where Spark"
-                    + " 3.5 plans an append (V2CreateTableAsSelectBaseExec.writeToTable), and"
-                    + " Iceberg names the snapshot after it. The rows, schema and properties after"
-                    + " the replace are the baseline's. The same on Iceberg's Hadoop catalog."),
+                // ---- s22: the snapshot a replace adds. Baseline: an append.
+                Difference.on(
+                        "s22",
+                        "SELECT operation FROM "
+                            + CAT_DB
+                            + ".s22_rtas.snapshots ORDER BY committed_at")
+                    .baseline(rows("append", "append"))
+                    .here(rows("append", "overwrite"))
+                    .because(
+                        SPARK_4,
+                        "Spark 4 plans the write of a REPLACE TABLE AS SELECT as an overwrite, where Spark"
+                            + " 3.5 plans an append (V2CreateTableAsSelectBaseExec.writeToTable), and"
+                            + " Iceberg names the snapshot after it. The rows, schema and properties after"
+                            + " the replace are the baseline's. The same on Iceberg's Hadoop catalog."),
 
-        // ---- s25: SHOW TABLES without a database. Baseline: refused by the OpenHouse catalog.
-        Difference.on("s25", "SHOW TABLES IN openhouse")
-            .baseline(showTablesNeedsADatabase())
-            .here(invalidEmptyNamespace())
-            .because(
-                IRC_UNDECIDED,
-                "Still refused, with another class and message: Iceberg's RESTCatalog refuses an"
-                    + " empty namespace in the engine, where OpenHouseCatalog.listTables did."),
-        Difference.on("s25", "SHOW TABLES")
-            .baseline(showTablesNeedsADatabase())
-            .here(invalidEmptyNamespace())
-            .because(IRC_UNDECIDED, "As SHOW TABLES IN openhouse."),
+                // ---- s25: SHOW TABLES without a database. Baseline: refused by the OpenHouse
+                // catalog.
+                Difference.on("s25", "SHOW TABLES IN openhouse")
+                    .baseline(showTablesNeedsADatabase())
+                    .here(invalidEmptyNamespace())
+                    .because(
+                        IRC_UNDECIDED,
+                        "Still refused, with another class and message: Iceberg's RESTCatalog refuses an"
+                            + " empty namespace in the engine, where OpenHouseCatalog.listTables did."),
+                Difference.on("s25", "SHOW TABLES")
+                    .baseline(showTablesNeedsADatabase())
+                    .here(invalidEmptyNamespace())
+                    .because(IRC_UNDECIDED, "As SHOW TABLES IN openhouse."),
 
-        // ---- s26: DESCRIBE TABLE EXTENDED. Baseline: a row "Name,<catalog>.<db>.<table>,".
-        Difference.on("s26", "DESCRIBE TABLE EXTENDED " + s26)
-            .baseline(
-                hasRow("Name," + s26 + ","),
-                hasRow("Type,MANAGED,"),
-                hasRow("Provider,iceberg,"),
-                hasRowStartingWith("Location," + storageRoot() + "/" + DB + "/s26_describe-"))
-            .here(
-                noRowStartingWith("Name,"),
-                hasRow("Catalog,openhouse,"),
-                hasRow("Namespace," + DB + ","),
-                hasRow("Table,s26_describe,"),
-                hasRow("Type,MANAGED,"),
-                hasRow("Provider,iceberg,"),
-                hasRowStartingWith("Location," + storageRoot() + "/" + DB + "/s26_describe-"))
-            .because(
-                SPARK_4,
-                "Spark 4 describes a table's name as the rows Catalog, Namespace and Table, where"
-                    + " Spark 3.5 has one Name row. Type, Provider and Location are the baseline's."
-                    + " The same on Iceberg's Hadoop catalog."),
+                // ---- s26: DESCRIBE TABLE EXTENDED. Baseline: a row
+                // "Name,<catalog>.<db>.<table>,".
+                Difference.on("s26", "DESCRIBE TABLE EXTENDED " + s26)
+                    .baseline(
+                        hasRow("Name," + s26 + ","),
+                        hasRow("Type,MANAGED,"),
+                        hasRow("Provider,iceberg,"),
+                        hasRowStartingWith(
+                            "Location," + storageRoot() + "/" + DB + "/s26_describe-"))
+                    .here(
+                        noRowStartingWith("Name,"),
+                        hasRow("Catalog,openhouse,"),
+                        hasRow("Namespace," + DB + ","),
+                        hasRow("Table,s26_describe,"),
+                        hasRow("Type,MANAGED,"),
+                        hasRow("Provider,iceberg,"),
+                        hasRowStartingWith(
+                            "Location," + storageRoot() + "/" + DB + "/s26_describe-"))
+                    .because(
+                        SPARK_4,
+                        "Spark 4 describes a table's name as the rows Catalog, Namespace and Table, where"
+                            + " Spark 3.5 has one Name row. Type, Provider and Location are the baseline's."
+                            + " The same on Iceberg's Hadoop catalog."),
 
-        // ---- s27, s29: failures the baseline raises as a class of the OpenHouse Java client.
-        Difference.on("s27", "ALTER TABLE " + CAT_DB + ".s27_missing UNLOCK")
-            .baseline(
-                fails(JAVA_CLIENT_FAILURE, "User table " + DB + ".s27_missing cannot be found"))
-            .here(
-                fails(
-                    "org.apache.iceberg.exceptions.NoSuchTableException",
-                    "User table " + DB + ".s27_missing cannot be found"))
-            .because(
-                DECIDED,
-                "The goal excludes the Java client's exception class from the engine. The"
-                    + " capability client (decision D23) raises Iceberg's type for a 404 with the"
-                    + " same native message (difference 1 of the C2-3 result)."),
-        Difference.on("s29", "ALTER TABLE " + s29 + " RENAME TO " + DB + ".s29_rename")
-            .baseline(
-                fails(
-                    JAVA_CLIENT_FAILURE,
-                    "Cannot rename a table to the same current db name and table name: s29_rename"))
-            .here(
-                fails(
-                    BAD_REQUEST,
-                    "Cannot rename a table to the same current db name and table name: s29_rename"))
-            .because(
-                DECIDED,
-                "The goal excludes the Java client's exception class from the engine. The IRC"
-                    + " routes answer a native 400 as Iceberg's BadRequestException with the native"
-                    + " message (decision D16, V3 error mapping)."));
+                // ---- s27, s29: failures the baseline raises as a class of the OpenHouse Java
+                // client.
+                Difference.on("s27", "ALTER TABLE " + CAT_DB + ".s27_missing UNLOCK")
+                    .baseline(
+                        fails(
+                            JAVA_CLIENT_FAILURE,
+                            "User table " + DB + ".s27_missing cannot be found"))
+                    .here(
+                        fails(
+                            "org.apache.iceberg.exceptions.NoSuchTableException",
+                            "User table " + DB + ".s27_missing cannot be found"))
+                    .because(
+                        DECIDED,
+                        "The goal excludes the Java client's exception class from the engine. The"
+                            + " capability client (decision D23) raises Iceberg's type for a 404 with the"
+                            + " same native message (difference 1 of the C2-3 result)."),
+                Difference.on("s29", "ALTER TABLE " + s29 + " RENAME TO " + DB + ".s29_rename")
+                    .baseline(
+                        fails(
+                            JAVA_CLIENT_FAILURE,
+                            "Cannot rename a table to the same current db name and table name: s29_rename"))
+                    .here(
+                        fails(
+                            BAD_REQUEST,
+                            "Cannot rename a table to the same current db name and table name: s29_rename"))
+                    .because(
+                        DECIDED,
+                        "The goal excludes the Java client's exception class from the engine. The IRC"
+                            + " routes answer a native 400 as Iceberg's BadRequestException with the native"
+                            + " message (decision D16, V3 error mapping).")));
+    // ---- s32, s33: what a refused replace leaves, and how a stale commit is applied.
+    differences.addAll(
+        refusedReplaceLeavesItsDataFile(
+            IRC_UNDECIDED,
+            "Work item C3: Iceberg's RESTCatalog stages a replace on the client: it loads the"
+                + " table (GET), and the first request that says \"replace\" is the commit, after"
+                + " Spark wrote the data. The service can refuse no earlier; the GET carries no"
+                + " intent. The same on Spark 3.5 over the same routes. The file is left for the"
+                + " orphan files job."));
+    differences.addAll(
+        staleCommitMeetsNoConflict(
+            IRC_UNDECIDED,
+            "Work item C4: the Iceberg REST client sends the changed keys with only an"
+                + " assert-table-uuid requirement, and the service applies them onto the stored"
+                + " table, merging a policy patch onto the stored policies (PolicyPatch). Nothing"
+                + " to refuse; the table ends with both changes, as on the baseline. The same on"
+                + " Spark 3.5 over the same routes."));
+    return differences;
   }
 
   private static Expectation showTablesNeedsADatabase() {
