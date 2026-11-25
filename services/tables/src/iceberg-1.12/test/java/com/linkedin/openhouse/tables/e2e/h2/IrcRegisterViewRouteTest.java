@@ -25,9 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.rest.requests.ImmutableRegisterViewRequest;
@@ -161,6 +159,14 @@ public class IrcRegisterViewRouteTest {
     assertEquals(404, IrcHttp.head(mvc, IrcViewWrite.view(db, view)).getResponse().getStatus());
   }
 
+  /** Schemas have no equals: the same ids, each the same schema. */
+  private static void assertSameSchemas(ViewMetadata expected, ViewMetadata actual) {
+    assertEquals(expected.schemasById().keySet(), actual.schemasById().keySet());
+    expected
+        .schemasById()
+        .forEach((id, schema) -> assertTrue(schema.sameSchema(actual.schemasById().get(id))));
+  }
+
   private static String message(MvcResult result) throws Exception {
     return JsonPath.read(IrcHttp.body(result), "$.message");
   }
@@ -186,7 +192,7 @@ public class IrcRegisterViewRouteTest {
     ViewMetadata registered = response.metadata();
     assertEquals(created.uuid(), registered.uuid());
     assertEquals(created.location(), registered.location());
-    assertEquals(created.schemas(), registered.schemas());
+    assertSameSchemas(created, registered);
     assertTrue(created.schema().sameSchema(registered.schema()));
     assertEquals(created.versions(), registered.versions());
     assertEquals(created.currentVersion(), registered.currentVersion());
@@ -239,7 +245,7 @@ public class IrcRegisterViewRouteTest {
             .metadata();
     assertEquals(replaced.versions(), registered.versions());
     assertEquals(replaced.history(), registered.history());
-    assertEquals(replaced.schemas(), registered.schemas());
+    assertSameSchemas(replaced, registered);
     assertEquals(replaced.currentVersionId(), registered.currentVersionId());
     assertEquals(replaced.properties(), registered.properties());
   }
@@ -440,48 +446,88 @@ public class IrcRegisterViewRouteTest {
     String directory = directoryOf(location);
     drop("irc_rv_ident", "v");
 
-    Map<String, String> otherUuid = new HashMap<>(created.properties());
-    otherUuid.put("openhouse.tableUUID", UUID.randomUUID().toString());
     assertRefused(
-        "irc_rv_ident", directory, ViewMetadata.buildFrom(created).setProperties(otherUuid));
-
-    Map<String, String> otherName = new HashMap<>(created.properties());
-    otherName.put("openhouse.tableId", "w");
+        location,
+        json -> properties(json).put("openhouse.tableUUID", UUID.randomUUID().toString()),
+        "its OpenHouse properties name another view");
     assertRefused(
-        "irc_rv_ident", directory, ViewMetadata.buildFrom(created).setProperties(otherName));
-
+        location,
+        json -> properties(json).put("openhouse.tableId", "w"),
+        "its OpenHouse properties name another view");
     assertRefused(
-        "irc_rv_ident",
-        directory,
-        ViewMetadata.buildFrom(created).setLocation(directoryOf(directory) + "/elsewhere"));
-
+        location,
+        json -> properties(json).put("openhouse.databaseId", "irc_rv_other"),
+        "its OpenHouse properties name another view");
     assertRefused(
-        "irc_rv_ident",
-        directory,
-        ViewMetadata.buildFrom(created).assignUUID(UUID.randomUUID().toString()));
+        location,
+        json -> json.put("location", directoryOf(directory) + "/elsewhere"),
+        "its location is not the directory it lies in");
+    assertRefused(
+        location,
+        json -> json.put("view-uuid", UUID.randomUUID().toString()),
+        "its UUID is not the one its directory is named for");
+    assertRefused(
+        location,
+        json -> properties(json).remove("openhouse.view.sourceDialect"),
+        "it lacks the creator, source dialect or creation time OpenHouse records");
+    assertRefused(
+        location,
+        json -> properties(json).remove("openhouse.tableCreator"),
+        "it lacks the creator, source dialect or creation time OpenHouse records");
 
+    // A copy under another name: its pointer property names the original.
     String copy = directory + "/00007-" + UUID.randomUUID() + ".metadata.json";
     write(copy, new String(Files.readAllBytes(path(location)), StandardCharsets.UTF_8));
-    assertIrcError(register("irc_rv_ident", "v", copy), 400, "BadRequestException");
+    String message =
+        assertIrcError(register("irc_rv_ident", "v", copy), 400, "BadRequestException").message();
+    assertTrue(
+        message.endsWith("its OpenHouse properties name another file as the view's metadata"),
+        message);
     assertAbsent("irc_rv_ident", "v");
-    // The original file still registers.
-    IrcViewWrite.parsed(register("irc_rv_ident", "v", location));
+    // The control: the same copy pointing at itself, with nothing else changed, registers.
+    String control = edited(location, json -> {});
+    assertEquals(
+        control, IrcViewWrite.parsed(register("irc_rv_ident", "v", control)).metadataLocation());
   }
 
-  private void assertRefused(String db, String directory, ViewMetadata.Builder builder)
+  private static com.fasterxml.jackson.databind.node.ObjectNode properties(
+      com.fasterxml.jackson.databind.node.ObjectNode json) {
+    return (com.fasterxml.jackson.databind.node.ObjectNode) json.get("properties");
+  }
+
+  /**
+   * A copy of the metadata at {@code location}, next to it, edited by {@code edit}, and with its
+   * pointer property naming the copy, so that only the edit differs from what OpenHouse writes.
+   */
+  private static String edited(
+      String location,
+      java.util.function.Consumer<com.fasterxml.jackson.databind.node.ObjectNode> edit)
       throws Exception {
-    String file = directory + "/00005-" + UUID.randomUUID() + ".metadata.json";
-    ViewMetadata metadata = builder.build();
-    Map<String, String> properties = new HashMap<>(metadata.properties());
-    String json = ViewMetadataParser.toJson(metadata);
-    if (file.equals(properties.get("openhouse.tableLocation"))) {
-      throw new AssertionError("unexpected");
-    }
-    // Pointing the pointer property at the file itself, so only the change under test differs.
-    json = json.replace(properties.get("openhouse.tableLocation"), file);
-    write(file, json);
-    String message = assertIrcError(register(db, "v", file), 400, "BadRequestException").message();
-    assertTrue(message.startsWith("Cannot register view " + db + ".v: "), message);
+    String file = directoryOf(location) + "/00005-" + UUID.randomUUID() + ".metadata.json";
+    com.fasterxml.jackson.databind.node.ObjectNode json =
+        (com.fasterxml.jackson.databind.node.ObjectNode)
+            StoredMetadata.MAPPER.readTree(Files.readAllBytes(path(location)));
+    properties(json).put("openhouse.tableLocation", file);
+    edit.accept(json);
+    write(file, StoredMetadata.MAPPER.writeValueAsString(json));
+    return file;
+  }
+
+  private void assertRefused(
+      String location,
+      java.util.function.Consumer<com.fasterxml.jackson.databind.node.ObjectNode> edit,
+      String reason)
+      throws Exception {
+    String file = edited(location, edit);
+    String message =
+        assertIrcError(register("irc_rv_ident", "v", file), 400, "BadRequestException").message();
+    assertEquals(
+        "Cannot register view irc_rv_ident.v: the metadata at "
+            + file
+            + " is not what OpenHouse wrote for this view: "
+            + reason,
+        message);
+    assertAbsent("irc_rv_ident", "v");
   }
 
   /**
