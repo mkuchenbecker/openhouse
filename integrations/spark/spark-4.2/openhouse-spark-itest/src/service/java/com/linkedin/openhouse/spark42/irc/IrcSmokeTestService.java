@@ -75,7 +75,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  * </ul>
  *
  * <p>It writes {@code ready.json} (both ports, the warehouse and the token) and serves until its
- * standard input closes. Usage: {@code IrcSmokeTestService <work directory>}.
+ * standard input closes. Usage: {@code IrcSmokeTestService <work directory> [<Spring
+ * argument>...]}: the Spring arguments after the work directory are added to the service's own, as
+ * for the row-level statements' service, which turns on {@code cluster.iceberg.format-v3.enabled}.
  */
 public final class IrcSmokeTestService {
 
@@ -90,25 +92,32 @@ public final class IrcSmokeTestService {
     Path work = Paths.get(args[0]).toAbsolutePath();
     // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
     Path warehouse = ServiceWarehouse.create();
+    List<String> arguments = new ArrayList<>();
+    Collections.addAll(
+        arguments,
+        "--server.port=0",
+        "--server.shutdown=immediate",
+        "--server.tomcat.basedir=" + work.resolve("tomcat"),
+        "--cluster.security.token.interceptor.classname=" + DummyTokenInterceptor.class.getName(),
+        "--cluster.storages.default-type=local",
+        "--cluster.storages.types.local.endpoint=file://",
+        "--cluster.storages.types.local.rootpath=" + warehouse,
+        // Every request, unbuffered, so a test can see which routes the suite called.
+        "--server.tomcat.accesslog.enabled=true",
+        "--server.tomcat.accesslog.directory=" + work.resolve("access"),
+        "--server.tomcat.accesslog.prefix=access",
+        "--server.tomcat.accesslog.suffix=.log",
+        "--server.tomcat.accesslog.rotate=false",
+        "--server.tomcat.accesslog.buffered=false",
+        "--server.tomcat.accesslog.pattern=%m %U %s");
+    // Further Spring arguments after the work directory, for a second service with other cluster
+    // settings (the row-level statements' service has the format v3 switch on).
+    for (int i = 1; i < args.length; i++) {
+      arguments.add(args[i]);
+    }
     ConfigurableApplicationContext context =
         new SpringApplication(SpringH2TestApplication.class, GrantStoringAuthorization.Config.class)
-            .run(
-                "--server.port=0",
-                "--server.shutdown=immediate",
-                "--server.tomcat.basedir=" + work.resolve("tomcat"),
-                "--cluster.security.token.interceptor.classname="
-                    + DummyTokenInterceptor.class.getName(),
-                "--cluster.storages.default-type=local",
-                "--cluster.storages.types.local.endpoint=file://",
-                "--cluster.storages.types.local.rootpath=" + warehouse,
-                // Every request, unbuffered, so a test can see which routes the suite called.
-                "--server.tomcat.accesslog.enabled=true",
-                "--server.tomcat.accesslog.directory=" + work.resolve("access"),
-                "--server.tomcat.accesslog.prefix=access",
-                "--server.tomcat.accesslog.suffix=.log",
-                "--server.tomcat.accesslog.rotate=false",
-                "--server.tomcat.accesslog.buffered=false",
-                "--server.tomcat.accesslog.pattern=%m %U %s");
+            .run(arguments.toArray(new String[0]));
     context
         .getBean(ToggleStatusesRepository.class)
         .save(
