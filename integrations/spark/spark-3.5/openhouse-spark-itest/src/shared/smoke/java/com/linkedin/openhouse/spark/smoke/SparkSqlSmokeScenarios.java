@@ -1530,6 +1530,34 @@ public abstract class SparkSqlSmokeScenarios {
         });
   }
 
+  /** The files a refused replace that wrote its data first leaves under the table's location. */
+  private static final String[] DATA_FILE_LEFT = {"checksum of data file,1", "data file,1"};
+
+  /**
+   * The differences of a path on which the replace gate refuses only the commit (work item C3): the
+   * two refused forms that write data, CREATE OR REPLACE TABLE ... AS SELECT and REPLACE TABLE ...
+   * AS SELECT, leave the data file Spark wrote (one, for the one row) under the table's location.
+   * The statement still fails with the native refusal, the table is unchanged, and the manifests
+   * the write made are gone (Iceberg's transaction removes them when the commit fails); REPLACE
+   * TABLE without a query writes nothing on every path.
+   */
+  protected static List<Difference> refusedReplaceLeavesItsDataFile(String kind, String why) {
+    List<Difference> differences = new ArrayList<>();
+    String gated = table("s32_gated");
+    for (String replace :
+        new String[] {
+          "CREATE OR REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name",
+          "REPLACE TABLE " + gated + " AS SELECT 7 AS id, 'z' AS name"
+        }) {
+      differences.add(
+          Difference.on("s32", "files added by: " + replace)
+              .baseline(rows())
+              .here(rows(DATA_FILE_LEFT))
+              .because(kind, why));
+    }
+    return differences;
+  }
+
   /** The other client's change and the stale statement of race {@code number} (from 1). */
   private void race(SparkSession spark, int number) {
     String[] race = s33Races().get(number - 1);

@@ -285,6 +285,19 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     if (IcebergLine.current() == IcebergLine.V3 && !REST_HTTP.equals(catalogPath())) {
       differences.addAll(namespaceExistsCheckOnIceberg112());
     }
+    if (REST_SHIM.equals(catalogPath())) {
+      differences.addAll(
+          refusedReplaceLeavesItsDataFile(
+              REFUSED_AT_COMMIT,
+              "Work item C3: Iceberg's RESTCatalog stages a replace on the client (it loads the"
+                  + " table, and no request carries the replace intent before Spark writes), so the"
+                  + " gate runs when the adapter commits the replace, after the data file is"
+                  + " written. The legacy catalog sends a native stage-replace first. Sending one"
+                  + " here too would refuse before the write, but every allowed replace would then"
+                  + " leave the native stage's metadata file as well (the legacy path's allowed"
+                  + " replace adds 2 metadata files, this path's 1): not done, put to a decision."
+                  + " The file is left for the orphan files job."));
+    }
     if (REST_HTTP.equals(catalogPath())) {
       differences.addAll(RestHttpPathSparkSqlSmokeTest.restHttpDifferences());
     }
@@ -315,6 +328,9 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
             .because(ICEBERG_112, why));
     return Collections.unmodifiableList(differences);
   }
+
+  /** The category of the files a replace leaves when the gate refuses only its commit (C3). */
+  protected static final String REFUSED_AT_COMMIT = "replace refused at commit, data file left";
 
   /** The category of a difference that the Iceberg 1.12 line makes on every Spark 3.5 path. */
   protected static final String ICEBERG_112 = "(c) Iceberg 1.12 line";
