@@ -1,8 +1,8 @@
 # Decision log, continued a sixth time
 
-Continues `56-decisions-continued-5.md` (141 lines, D43 to D47). D48 was numbered by the orchestrator; D49 and D50 follow it.
+Continues `56-decisions-continued-5.md` (141 lines, D43 to D47). D48 was numbered by the orchestrator; D49 to D51 follow it.
 
-Bottom line: three decisions, all made by the orchestrator on 2026-11-24. D48 and D49 are two-way doors; D50 splits the
+Bottom line: four decisions, all made by the orchestrator (D48 to D50 on 2026-11-24, D51 on 2026-11-25; D51 is last in the file and keeps the rest-shim refusing a gated replace at commit). D48 and D49 are two-way doors; D50 splits the
 Spark 4.2 jobs into a two-way part that lands and a one-way part that goes to Mike. D48 puts the `variant`
 column type behind its own cluster property, off by default, so that turning on format v3 does not by itself open a
 one-way door with degraded maintenance. D49 makes the scan planning route refuse format v3 tables until scan tasks carry
@@ -69,3 +69,20 @@ Mike. Claude wrote the entries.
 - Status: implemented by pull request 135, merge commit `e2823b69` (`73-n11-jobs-spark42-result.md`), 2026-11-24. One detail
   was decided during implementation: the catalog is still built on every table load (241 config requests in one suite).
   It is left as is because changing it could not be shown to leave the Spark 3.5 path unchanged; it is work item N16.
+
+## D51. The rest-shim path keeps refusing a gated replace at commit
+
+- Date: 2026-11-25. The orchestrator's decision, a two-way door. Work item C3; found by pull request 146 (merge commit
+  `22017134`).
+- Decided: a gated replace-as-select on the rest-shim path is refused at commit, as on the plain REST paths. The shim is
+  not changed to send the native stage-replace first, which would refuse before any write as the legacy path does.
+- Why: (1) the paths the work is heading to, the plain Iceberg REST catalog on Spark 3.5 and Spark 4.2, cannot refuse
+  earlier, because Iceberg's REST client first tells the server about a replace at commit, after Spark wrote the data;
+  making only the intermediate shim match the legacy path buys nothing lasting. (2) The change would add an unreferenced
+  metadata file to every allowed replace on that path: the legacy path writes two metadata files per allowed replace and
+  the others one (scenario s32) [ran]. (3) What a refusal leaves is one data file under the table's location, invisible
+  to SQL, and the orphan files job removes it at its age threshold.
+- What would change it: a refusal-before-write requirement on the REST paths, or the Iceberg fork's Spark staged-table
+  abort deleting what the failed replace wrote (an empty method in the fork's 1.12 code [read]), which would remove the
+  leftover on every REST path. That is a change in the Iceberg fork and is open work item N18, not started.
+- Reference: `80-c3-c4-result.md`, scenario s32, merge `22017134`.
