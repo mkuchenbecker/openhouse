@@ -40,8 +40,8 @@ import org.springframework.test.context.ContextConfiguration;
  * came back to every request on that thread: a compaction's file-group commit was refused (409)
  * through all of Iceberg's retries, the service comparing against a version two seconds old. Seen
  * once in a full apps suite; these cases open the window by repetition and, with result reuse on,
- * fail on every run (602 old reads through findById, 761334 through JDBC, in the run that pinned
- * it).
+ * fail on every run (819 old reads through findById, 380178 through JDBC, in the run that pinned it
+ * here).
  */
 @SpringBootTest(classes = SpringH2Application.class)
 @ContextConfiguration(initializers = PropertyOverrideContextInitializer.class)
