@@ -51,6 +51,9 @@ import org.springframework.stereotype.Component;
  *       native PUT of the complete definition on the stored metadata location, so the native
  *       base-version check refuses a base that moved meanwhile.
  *   <li>The native view API has no rename, so the rename route answers the spec's 406.
+ *   <li>A registration (Iceberg 1.12 line only) is {@code IcebergRestViewRegistration}'s: it runs
+ *       the native create's gate, database, name and authorization checks, then stores the view row
+ *       pointing at the metadata file named, in place.
  * </ul>
  *
  * <p>Failures keep the native status and message; the type is the Iceberg exception {@code
@@ -197,7 +200,8 @@ public class IcebergRestViewHandler {
     return translate(call, false);
   }
 
-  private static <T> T onNamespace(Supplier<T> call) {
+  /** Also the register route's ({@code IcebergRestViewRegistration}, on the Iceberg 1.12 line). */
+  static <T> T onNamespace(Supplier<T> call) {
     return translate(call, true);
   }
 

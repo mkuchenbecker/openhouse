@@ -83,9 +83,9 @@ public class IrcConfigEndpointsTest {
 
   /**
    * What this service serves on the Iceberg 1.12 line (the default build): the routes above, and
-   * the scan planning route (synchronous, D44) and the credentials route (an empty list, D45),
-   * which LinkedIn's Iceberg 1.5.2 reference line has no classes for
-   * (IrcPlanCredentialsRoutesTest).
+   * the scan planning route (synchronous, D44), the credentials route (an empty list, D45) and the
+   * view register route (in place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2
+   * reference line has no classes for (IrcPlanCredentialsRoutesTest).
    */
   static final List<String> SERVED_ON_ICEBERG_1_12 =
       Arrays.asList(
@@ -93,6 +93,7 @@ public class IrcConfigEndpointsTest {
           "GET /v1/{prefix}/namespaces/{namespace}",
           "HEAD /v1/{prefix}/namespaces/{namespace}",
           "POST /v1/{prefix}/namespaces/{namespace}/register",
+          "POST /v1/{prefix}/namespaces/{namespace}/register-view",
           "GET /v1/{prefix}/namespaces/{namespace}/tables",
           "POST /v1/{prefix}/namespaces/{namespace}/tables",
           "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}",
@@ -111,9 +112,25 @@ public class IrcConfigEndpointsTest {
           "POST /v1/{prefix}/tables/rename",
           "POST /v1/{prefix}/transactions/commit");
 
-  /** The routes this server serves on the Iceberg line of this build. */
+  /**
+   * The routes this server serves on the Iceberg line of this build: the 1.12 list, less each group
+   * whose Iceberg classes this build lacks, each decided by its own class (the scan planning and
+   * credentials routes by the planning request, the view register by its request), so the
+   * expectation holds if the two ever diverge. Without either it is the 1.5.2 list.
+   */
   static List<String> served() {
-    return IrcPlanCredentialsRoutesTest.served() ? SERVED_ON_ICEBERG_1_12 : SERVED_ON_ICEBERG_1_5;
+    List<String> served = new ArrayList<>(SERVED_ON_ICEBERG_1_12);
+    if (!IrcPlanCredentialsRoutesTest.served()) {
+      served.remove("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials");
+      served.remove("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan");
+    }
+    if (!registerViewServed()) {
+      served.remove("POST /v1/{prefix}/namespaces/{namespace}/register-view");
+    }
+    if (!IrcPlanCredentialsRoutesTest.served() && !registerViewServed()) {
+      assertEquals(SERVED_ON_ICEBERG_1_5, served);
+    }
+    return served;
   }
 
   /** Every route of Iceberg 1.12's {@code Endpoint} (its public constants, as strings). */
@@ -278,6 +295,36 @@ public class IrcConfigEndpointsTest {
                 "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/openhouse/lock/{reason}",
                 "POST /v1/{prefix}/views/rename")),
         accounted);
+  }
+
+  /**
+   * The view register route: served and listed on the Iceberg 1.12 line, whose client has {@code
+   * registerView}; on LinkedIn's 1.5.2 reference line, which has no {@code RegisterViewRequest} and
+   * whose client cannot call the route, the spec's 406 as before, and not listed.
+   */
+  @Test
+  void registerViewIsServedOnTheIceberg112LineOnly() throws Exception {
+    String route = "POST /v1/{prefix}/namespaces/{namespace}/register-view";
+    MvcResult result = call(route);
+    if (registerViewServed()) {
+      assertTrue(endpoints().contains(route));
+      assertFalse(unserved(result), result.getResponse().getStatus() + body(result));
+    } else {
+      assertFalse(endpoints().contains(route));
+      assertEquals(406, result.getResponse().getStatus(), body(result));
+      assertTrue(
+          body(result).contains("This server does not support POST /v1/namespaces/"), body(result));
+    }
+  }
+
+  /** Whether this build's Iceberg has the class the view register route reads. */
+  static boolean registerViewServed() {
+    try {
+      Class.forName("org.apache.iceberg.rest.requests.RegisterViewRequest");
+      return true;
+    } catch (ClassNotFoundException e) {
+      return false;
+    }
   }
 
   /**
