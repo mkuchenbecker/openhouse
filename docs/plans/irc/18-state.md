@@ -4,7 +4,7 @@ Paused: the owner paused all work on 2026-11-25 about 05:10 UTC. Nothing is runn
 `irc/x2-x3-v3-row-level`, pushed head `1892643c`, tests only; remaining: the final 1.5.2 run, the test-groups check, open
 the pull request, wait for CI) and W13, W14, N9 (only W13 read; a decision is needed before any change). The map of every
 artifact is `00-map.md`; the raw agent records are in `records/`.
-The plan for resuming (checklist, work list, what waits on the owner) is `83-resume-checklist-and-plan.md`.
+The plan for resuming is `83-resume-checklist-and-plan.md`; the self review that corrects it is `84-self-review.md`.
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
