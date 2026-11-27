@@ -18,6 +18,10 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
    `67-decisions-continued-6.md` (D48 to D52).
 6. Work tables: `04-work.md`, `30-work-defaults.md`, `41-work-platforms-v3.md`, and `74-work-table-audit.md`.
 7. `45-merged-pull-requests.md`, then result files (`NN-...-result.md`) and `records/` as needed.
+8. The retroactive review of 2026-11-27: `88-review-summary.md` first, then `85-behavior-change-ledger.md` (the
+   behavior changes against LinkedIn main and what to do with each), `86-review-findings-and-fix-forward.md` (the
+   defects and the fix-forward work list, where fixes start) and `87-clean-reimplementation-guide.md`. The nine
+   reviewers' reports and their brief are `records/review-*.md`.
 
 ## 2. Where everything lives
 
@@ -47,7 +51,7 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 
 ## 3. The notes by kind
 
-`README.md` is the index with one row per file; do not read all 84 files in order.
+`README.md` is the index with one row per file; do not read all 88 files in order.
 - Stated by the owner: `01-stated.md`. Requirements and inferences: `02-facts.md`, `03-inferred.md`.
 - Designs: `07`, `14`, `28`, `29`, `05` (patch ledger), `06` (smoke suite proposal), `24` (commit rule inventory).
 - Decisions: D1 to D52 in the seven files listed in section 1. Waiting on the owner: `58`.
@@ -56,6 +60,10 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 - Result files, one per merged group of work: `15`, `19`, `23`, `25`, `26`, `27`, `31` to `36`, `38` to `40`,
   `42` to `44`, `46` to `50`, `52` to `55`, `57`, `59` to `66`, `68` to `73`, `75` to `82`. File 60 and 70 are scouts.
 - The raw records: `records/` with its own `README.md`: record, work item, pull request, result file.
+- The retroactive review of 2026-11-27: the ledger `85`, the findings and fix-forward list `86`, the re-implementation
+  guide `87` and the summary `88`; its records are `records/review-brief-common.md` and the nine `records/review-*.md`
+  (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
+  jobs, build-deployables, ci-fixtures-tests).
 
 ## 4. The code on `irc-integration`, by area
 

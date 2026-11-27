@@ -1,14 +1,19 @@
 # Current state
 
-Work resumed on 2026-11-27 about 22:30 UTC on the owner's direction (`01-stated.md` S55 to S61). Running now: nine
-read-only reviewers of the 71 merges by area (reports will be at `records/review-<area>.md`: irc-commit-write,
-irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning, jobs, build-deployables,
-ci-fixtures-tests); one scout reading the owner's namespace pull requests and the earlier drafts
-(`records/scout-namespace-and-prior-work.md`); and the X2 with X3 work finishing its pull request (branch
-`irc/x2-x3-v3-row-level`). Held: W13, W14 and N9; W13 is a change on the wire, so it waits for the behavior-change
-ledger. Next: consolidate the reviews into the ledger and a fix-forward work list, then build on the owner's namespace
-line. The map of every artifact is `00-map.md`; the raw agent records are in `records/`. The plan for resuming is
-`83-resume-checklist-and-plan.md`, and the owner's answer to the self review is the last section of `84-self-review.md`.
+Work resumed on 2026-11-27 about 22:30 UTC on the owner's direction (`01-stated.md` S55 to S61). The retroactive
+reviews are done: nine read-only reviewers covered the 71 merges by area, and their reports and brief are kept in
+`records/review-*.md`. They are consolidated into four files: `85-behavior-change-ledger.md` (43 behavior changes
+against LinkedIn main: 26 visible on the reference line, 7 only on the default line, 10 in CI, release, build and
+published fixtures; RESTORE 19, GATE 4, KEEP-FIX 12, KEEP-DIRECTED 1, OWNER 7), `86-review-findings-and-fix-forward.md`
+(68 defects: 5 BLOCKER, 24 SHOULD FIX, 39 MINOR, 7 of them inherited from main; and 45 fix-forward items),
+`87-clean-reimplementation-guide.md` and `88-review-summary.md`. Fixes start from `86-...`, section 3: FF-01, FF-02,
+FF-09 and FF-10 are decided by the orchestrator and ready; FF-03 (view reads) waits for the scout reading the owner's
+namespace pull requests and earlier drafts (`records/scout-namespace-and-prior-work.md`); seven ledger rows wait on the
+owner. Also in flight: the X2 with X3 work finishing its pull request (branch `irc/x2-x3-v3-row-level`). Held: W13, W14
+and N9; the ledger decides W13 as "no change on the wire" (BC-021, FF-14). Next: the fix-forward items in order, then
+build on the owner's namespace line. The map of every artifact is `00-map.md`; the raw agent records are in `records/`.
+The plan for resuming is `83-resume-checklist-and-plan.md`, and the owner's answer to the self review is the last
+section of `84-self-review.md`.
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
@@ -31,7 +36,7 @@ and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 
   stores. The OpenHouse catalog and the REST-shaped shim give 208 of 210 on 1.12 and 210 of 210 on 1.5.2 [ran]
   (`64-n1c-n7-result.md`, `77-t6-n10-result.md`). Grants are listed after GRANT and gone after REVOKE on every path.
 - Maintenance jobs: they pass their whole suite on Spark 4.2 over the REST catalog (395 tests, 0 failed, 5 skipped); the
-  Spark 3.5 jobs are unchanged. Deploying them is Mike's (N12 to N15) (`73-n11-jobs-spark42-result.md`) [ran].
+  Spark 3.5 jobs are unchanged (false by the review: BC-016 to BC-023 in `85-behavior-change-ledger.md`). Deploying them is Mike's (N12 to N15) (`73-n11-jobs-spark42-result.md`) [ran].
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes
@@ -46,7 +51,8 @@ and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 
 
 ## What works today
 
-- The native API and Spark 3.5 with the OpenHouse catalog are unchanged.
+- The native API and Spark 3.5 with the OpenHouse catalog are unchanged. The review of 2026-11-27 found this false:
+  26 behavior changes are visible on the reference line (`85-behavior-change-ledger.md`, part A).
 - Over the Iceberg REST Catalog, an unmodified Iceberg client and Spark 3.5 can read and write tables and views
   (`27-v3-irc-write-result.md`, `31-v4-irc-views-result.md`). Views cannot be renamed.
 - Every OpenHouse statement (policies, column tags, grants, unlock) works through an unmodified Iceberg `RESTCatalog` on

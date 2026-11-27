@@ -93,6 +93,10 @@ There is no line limit on these files: the owner lifted the 150-line limit on 20
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
 | `83-resume-checklist-and-plan.md` | Checklist and plan for resuming paused work, with what waits on the owner | Orchestrator |
 | `84-self-review.md` | Orchestrator's self review: six faults and the corrected order of work | Orchestrator |
+| `85-behavior-change-ledger.md` | Every behavior change against LinkedIn main found by the nine retroactive reviews: 43 rows with stable ids (BC-001 to BC-043), split by the build line that shows them (26 on the reference line), each with its justification or "none found" and a proposed disposition; the false claims in merge messages | Consolidated from delegated reviewers' reports, with ten rows checked against the code |
+| `86-review-findings-and-fix-forward.md` | The 68 defects of the nine reviews (RF-001 to RF-068), the unpinned claims and weak tests, and the fix-forward work list of 45 pull-request-sized items (FF-01 to FF-46), ordered and marked ready or waiting | Consolidated from delegated reviewers' reports |
+| `87-clean-reimplementation-guide.md` | What must survive per area, what must not be carried over, one upstream commit sequence of 48 commits, the cruft kinds and the duplication to collapse | Consolidated from delegated reviewers' reports, with the consolidator's choices where they conflicted |
+| `88-review-summary.md` | Two-screen summary of the review: counts, the ten findings that matter most, what was confirmed sound, what nobody checked, and a verdict for each of the 71 pull requests | Consolidated from delegated reviewers' reports |
 
 Suggested reading order for review: `03-inferred.md`, then `04-work.md`. A judgement rejected in the
 first changes the second.
