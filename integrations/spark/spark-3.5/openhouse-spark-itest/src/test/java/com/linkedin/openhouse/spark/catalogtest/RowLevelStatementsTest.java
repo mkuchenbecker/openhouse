@@ -16,12 +16,12 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 
 /**
- * The row-level statements on format v3 tables ({@link SparkSqlRowLevelStatements}, work items X2
- * and X3) on the Spark 3.5 catalog paths, against a tables service of their own with the cluster
- * switch on ({@link FormatV3Server}), one per test class. A concrete subclass names its path in
- * {@link #catalogPath()}; the session has a catalog for each of the three paths on that service,
- * and the statements' rows are also read through the two paths not under test ({@link
- * #otherReaders()}). What the service stored is loaded through the OpenHouse Java client.
+ * The row-level statements on format v3 tables ({@link SparkSqlRowLevelStatements}) on the Spark
+ * 3.5 catalog paths, against a tables service of their own with the cluster switch on ({@link
+ * FormatV3Server}), one per test class. A concrete subclass names its path in {@link
+ * #catalogPath()}; the session has a catalog for each of the three paths on that service, and the
+ * statements' rows are also read through the two paths not under test ({@link #otherReaders()}).
+ * What the service stored is loaded through the OpenHouse Java client.
  */
 public abstract class RowLevelStatementsTest extends SparkSqlRowLevelStatements {
 
@@ -117,6 +117,12 @@ public abstract class RowLevelStatementsTest extends SparkSqlRowLevelStatements 
     if (noCache) {
       session.conf().set(prefix + ".cache-enabled", "false");
     }
+  }
+
+  /** The build's line, as catalogTest passes it ({@code smoke.iceberg.build}). */
+  @Override
+  protected boolean buildLineHasFormatV3() {
+    return "iceberg-1.12".equals(System.getProperty("smoke.iceberg.build"));
   }
 
   @Override

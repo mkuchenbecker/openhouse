@@ -13,15 +13,14 @@ import org.junit.jupiter.api.AfterAll;
 
 /**
  * The row-level statements on format v3 tables ({@link SparkSqlRowLevelStatements}, the one list
- * the Spark 3.5 paths run too; work items X2 and X3) from Spark 4.2 on Iceberg 1.12 over IRC, with
- * Iceberg's and OpenHouse's SQL extensions in the session ({@link SmokeSpark}), against a second
- * smoke service with the format v3 switch on ({@link SmokeTestService#getWithFormatV3()}). No check
- * differs here. What the service stored is loaded through Iceberg's own {@code RESTCatalog} in this
- * JVM, without Spark.
+ * the Spark 3.5 paths run too) from Spark 4.2 on Iceberg 1.12 over IRC, with Iceberg's and
+ * OpenHouse's SQL extensions in the session ({@link SmokeSpark}), against a second smoke service
+ * with the format v3 switch on ({@link SmokeTestService#getWithFormatV3()}). No check differs here.
+ * What the service stored is loaded through Iceberg's own {@code RESTCatalog} in this JVM, without
+ * Spark.
  *
- * <p>In the server-planning run ({@code smokeTestServerPlanning}) the catalog keeps client
- * planning: the plan route refuses format v3 tables (work item V11e), which {@code
- * SparkIrcScanPlanningTest} tests.
+ * <p>Not in the server-planning run ({@code smokeTestServerPlanning}, see the build file): the plan
+ * route refuses format v3 tables, so the list would run there on client planning again.
  */
 public class SparkIrcRowLevelStatementsTest extends SparkSqlRowLevelStatements {
 
@@ -38,12 +37,6 @@ public class SparkIrcRowLevelStatementsTest extends SparkSqlRowLevelStatements {
       session.conf().set(prefix + ".type", "rest");
       session.conf().set(prefix + ".uri", service.uri() + "/iceberg");
       session.conf().set(prefix + ".token", service.token());
-      if (ServerPlanning.selected()) {
-        System.out.println(
-            "Server planning not applied to "
-                + prefix
-                + ": its tables are format v3, and the plan route refuses them (V11e)");
-      }
       Map<String, String> properties = new HashMap<>();
       properties.put("uri", service.uri() + "/iceberg");
       properties.put("token", service.token());
@@ -62,6 +55,12 @@ public class SparkIrcRowLevelStatementsTest extends SparkSqlRowLevelStatements {
   protected Table plainTable(String table) throws Exception {
     sparkSession();
     return plain.loadTable(TableIdentifier.of(DB, table));
+  }
+
+  /** This itest exists only on the Iceberg 1.12 line (not in the -PicebergLinkedIn build). */
+  @Override
+  protected boolean buildLineHasFormatV3() {
+    return true;
   }
 
   /** Next to the smoke suite's outcomes file. */

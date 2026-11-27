@@ -26,16 +26,17 @@ import org.apache.iceberg.data.Record;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
  * Spark SQL's row-level statements (DELETE, UPDATE, MERGE) on format v3 tables, with a format v2
- * table next to each v3 case, as one list that every Spark line and catalog path runs (work items
- * X2 and X3): Spark 3.5 with the OpenHouse catalog, the REST-shaped shim and plain Iceberg REST
- * over HTTP, and Spark 4.2 over the Iceberg REST routes. Each platform runs it against a tables
- * service with the cluster switch {@code cluster.iceberg.format-v3.enabled} on.
+ * table next to each v3 case, as one list that every Spark line and catalog path runs: Spark 3.5
+ * with the OpenHouse catalog, the REST-shaped shim and plain Iceberg REST over HTTP, and Spark 4.2
+ * over the Iceberg REST routes. Each platform runs it against a tables service with the cluster
+ * switch {@code cluster.iceberg.format-v3.enabled} on.
  *
  * <p>After every statement a test checks, against what the specification and the fork's Spark
  * integration require (the baseline, the same on every platform): the rows, read through the path
@@ -43,13 +44,16 @@ import org.junit.jupiter.api.TestInstance;
  * Iceberg's generic reader in the test JVM, which has no Spark in it; the delete files a reader
  * applies to each data file and the live entries of the delete manifests (on v3: one deletion
  * vector per data file, replaced and never added a second time, its cardinality the rows deleted
- * from the file; on v2: position delete files, one more per statement); the snapshot summary's
- * {@code added-dvs} and {@code removed-dvs}; and the row lineage of every live row: {@code _row_id}
- * and {@code _last_updated_sequence_number}. The lineage contract is the fork's own
- * (TestRowLevelOperationsWithLineage, the same for copy-on-write and merge-on-read, Spark 3.5 and
- * 4.x): a row the statement does not change keeps both; an updated row keeps its row id and gets
- * the statement's sequence number; an inserted row gets a fresh id from the table's next-row-id and
- * the statement's sequence number; no two live rows share an id.
+ * from the file; on v2: one file-scoped position delete file per data file in the table's format,
+ * which the Iceberg 1.12 writer replaces as the vector is replaced, except that an Avro delete file
+ * has no column bounds and so is partition-scoped, one more per statement); that a merge-on-read
+ * statement wrote deletes for exactly the rows it removed (and the table carries the shape's write
+ * modes); the snapshot summary's {@code added-dvs} and {@code removed-dvs}; and the row lineage of
+ * every live row: {@code _row_id} and {@code _last_updated_sequence_number}. The lineage contract
+ * is the fork's own (TestRowLevelOperationsWithLineage, the same for copy-on-write and
+ * merge-on-read, Spark 3.5 and 4.x): a row the statement does not change keeps both; an updated row
+ * keeps its row id and gets the statement's sequence number; an inserted row gets a fresh id from
+ * the table's next-row-id and the statement's sequence number; no two live rows share an id.
  *
  * <p>The checks use the declared-difference mechanism of {@link BaselineChecks}. The format v3
  * cases need the Iceberg 1.12 line: on LinkedIn's Iceberg 1.5.2 reference line they are skipped by
@@ -72,10 +76,17 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
   /** Why the v3 cases do not run on LinkedIn's Iceberg 1.5.2 line. */
   static final String NO_V3_ON_152 =
       "Format v3 needs the Iceberg 1.12 line: LinkedIn's Iceberg 1.5.2 cannot build format v3"
-          + " metadata (X1), so the v3 cases do not run on the -PicebergLinkedIn reference line;"
+          + " metadata, so the v3 cases do not run on the -PicebergLinkedIn reference line;"
           + " the v2 cases do.";
 
   // ---------- what a platform supplies ----------
+
+  /**
+   * Whether the build runs this on an Iceberg line with format v3 (the 1.12 line), as the build
+   * says, independent of what is on the classpath: the v3 cases are skipped exactly when it is
+   * false, and a classpath that disagrees fails them.
+   */
+  protected abstract boolean buildLineHasFormatV3();
 
   /** A session whose catalog {@value #CATALOG} is the platform's catalog path. */
   protected abstract SparkSession sparkSession() throws Exception;
@@ -224,6 +235,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     String name = fresh(table);
     sql(shape.create(name));
     check("format version", shape.formatVersion, formatVersion(table));
+    checkWriteModes(shape, table);
     Model model = new Model(shape, table);
     if (!step(
         model,
@@ -292,6 +304,26 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
   }
 
   /**
+   * The write modes the loaded table carries: what the shape asked for, so that a path that drops
+   * the properties (and so writes copy-on-write, the default) fails here and not only as missing
+   * deletes.
+   */
+  private void checkWriteModes(Shape shape, String table) throws Exception {
+    Map<String, String> properties = plainTable(table).properties();
+    List<String> modes = new ArrayList<>();
+    for (String key : new String[] {"write.delete.mode", "write.update.mode", "write.merge.mode"}) {
+      modes.add(key + "=" + properties.get(key));
+    }
+    check(
+        "write modes of the created table",
+        java.util.Arrays.asList(
+            "write.delete.mode=" + shape.mode,
+            "write.update.mode=" + shape.mode,
+            "write.merge.mode=" + shape.mode),
+        modes);
+  }
+
+  /**
    * For a v2 table: the live position delete files after each statement. On the Iceberg 1.12 line
    * one per data file that lost rows (the Spark writer rewrites a file-scoped one); an Avro table,
    * whose position delete files are partition-scoped, one per statement that deleted.
@@ -327,6 +359,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     String table = shape.table() + "_rollback";
     String name = fresh(table);
     sql(shape.create(name));
+    checkWriteModes(shape, table);
     Model model = new Model(shape, table);
     boolean v3 = shape.formatVersion == 3;
     if (!step(
@@ -440,6 +473,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     String table = "upgraded_with_position_deletes";
     String name = fresh(table);
     sql(v2.create(name));
+    checkWriteModes(v2, table);
     Model model = new Model(v2, table);
     if (!step(
         model,
@@ -448,6 +482,7 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
         expect().insert(1, "a", "x").insert(2, "b", "x").insert(3, "c", "x").insert(4, "d", "x"))) {
       return;
     }
+    long insertSequenceNumber = plainTable(table).currentSnapshot().sequenceNumber();
     if (!step(model, "DELETE on v2", "DELETE FROM " + name + " WHERE id = 2", expect().delete(2))) {
       return;
     }
@@ -464,6 +499,11 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     // delete file's position, and every live row has a row id.
     Model v3 = new Model(new Shape(3, MOR, false, "parquet"), table);
     v3.rows.putAll(model.rows);
+    // The old rows' sequence number is the v2 INSERT's (the data sequence number of their file);
+    // their row ids are given by the first commit on v3, from next-row-id 0, to all four rows of
+    // the data file.
+    v3.upgradedRowsSequenceNumber = insertSequenceNumber;
+    v3.upgradedRows = 4;
     if (!step(v3, "DELETE on v3", "DELETE FROM " + name + " WHERE id = 3", expect().delete(3))) {
       return;
     }
@@ -537,6 +577,13 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     final List<Long> positionDeleteFiles = new ArrayList<>();
 
     final List<Long> expectedPositionDeleteFiles = new ArrayList<>();
+    /**
+     * For a table upgraded from v2: the sequence number its old rows keep, and how many rows the
+     * first commit on v3 gives ids to (0 once given).
+     */
+    long upgradedRowsSequenceNumber = -1;
+
+    long upgradedRows;
 
     Model(Shape shape, String table) {
       this.shape = shape;
@@ -602,6 +649,14 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
       long deletedBefore = previous == null ? 0 : previous.recordCount - previous.liveIds.size();
       deletedByStatement += deletedNow - deletedBefore;
     }
+    // What the statement removed from existing data files must be what the model says it deletes
+    // or rewrites: on merge-on-read, the rows a reader now drops through delete files; on
+    // copy-on-write none (the files are rewritten). Independent of the table, so a merge-on-read
+    // table written copy-on-write fails here.
+    check(
+        at + "rows the statement removed from existing data files through delete files",
+        model.shape.mergeOnRead() ? (long) (change.deleted.size() + change.updated.size()) : 0L,
+        deletedByStatement);
     boolean fileScoped = model.shape.formatVersion == 3 || !"avro".equals(model.shape.fileFormat);
     if (!fileScoped && model.shape.mergeOnRead() && deletedByStatement > 0) {
       model.partitionScoped.add(new long[] {model.statements, deletedByStatement});
@@ -653,6 +708,14 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
           after.danglingVectors());
       if (!model.shape.mergeOnRead()) {
         check(at + "deletion vectors live", 0L, after.deletionVectors);
+      } else {
+        check(
+            at + "deletion vectors live, one per data file with deletes",
+            filesWithDeletes,
+            after.deletionVectors);
+        if (!change.deleted.isEmpty() || !change.updated.isEmpty()) {
+          check(at + "a deletion vector is live", true, after.deletionVectors > 0);
+        }
       }
       // Replaced, not added again: the commit removes the vector of every data file that had one
       // and lost more rows, and adds one per data file that lost rows.
@@ -696,8 +759,9 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
       } else if (earlier != null) {
         expected.put(id, earlier);
       } else {
-        // First statement after an upgrade: the old rows get ids, from the first commit on v3.
-        expected.put(id, "assigned row id/" + seqOf(now.get(id)));
+        // First statement after an upgrade: the old rows get ids from the first commit on v3, and
+        // keep the sequence number of the v2 commit that wrote them.
+        expected.put(id, "assigned row id/" + model.upgradedRowsSequenceNumber);
       }
     }
     Map<Long, String> actual = new TreeMap<>();
@@ -709,7 +773,8 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
         boolean fresh = rowId >= before.nextRowId && rowId < after.nextRowId;
         actual.put(row.getKey(), (fresh ? "fresh row id" : rowIdOf(value)) + "/" + seqOf(value));
       } else if (exp != null && exp.startsWith("assigned row id/")) {
-        boolean assigned = rowId < after.nextRowId;
+        // Not null (number() is -1 then), and among the ids the first commit on v3 gave out.
+        boolean assigned = rowId >= before.nextRowId && rowId < after.nextRowId;
         actual.put(
             row.getKey(), (assigned ? "assigned row id" : rowIdOf(value)) + "/" + seqOf(value));
       } else {
@@ -722,13 +787,33 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
       distinct.add(rowIdOf(value));
     }
     check(at + "live rows sharing a _row_id", 0, now.size() - distinct.size());
+    check(
+        at + "live rows with a null _row_id or _last_updated_sequence_number",
+        Collections.emptyList(),
+        now.entrySet().stream()
+            .filter(e -> e.getValue().contains("null"))
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList()));
     if (before.snapshotId != after.snapshotId) {
+      // The snapshot's added-rows against the data it added: the rows of its new data files, and
+      // on the first commit after an upgrade also the old rows it gives ids to.
+      long addedByFiles = model.upgradedRows;
+      for (Map.Entry<String, DataFileState> file : after.dataFiles.entrySet()) {
+        if (!before.dataFiles.containsKey(file.getKey())) {
+          addedByFiles += file.getValue().recordCount;
+        }
+      }
+      check(
+          at + "the snapshot's added-rows are the rows of the data it added",
+          addedByFiles,
+          after.addedRows);
       check(
           at + "next-row-id grew by the snapshot's added-rows",
           before.nextRowId + after.addedRows,
           after.nextRowId);
     }
     model.lineage = new TreeMap<>(now);
+    model.upgradedRows = 0;
   }
 
   private static String rowIdOf(String lineage) {
@@ -956,8 +1041,12 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
     }
   }
 
-  private static void requireFormatV3() {
-    Assumptions.assumeTrue(formatV3Available(), NO_V3_ON_152);
+  private void requireFormatV3() {
+    Assertions.assertEquals(
+        buildLineHasFormatV3(),
+        formatV3Available(),
+        "the classpath's Iceberg and the build's Iceberg line disagree on format v3");
+    Assumptions.assumeTrue(buildLineHasFormatV3(), NO_V3_ON_152);
   }
 
   /** A v3 accessor that LinkedIn's Iceberg 1.5.2 does not have, called reflectively. */

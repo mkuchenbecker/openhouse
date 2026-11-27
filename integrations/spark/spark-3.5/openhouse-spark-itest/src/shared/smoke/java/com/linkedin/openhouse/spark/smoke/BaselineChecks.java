@@ -31,8 +31,6 @@ import org.junit.jupiter.api.TestInstance;
  * Every check of a test runs even after one gave an unexpected value, and the test then fails with
  * all of them. With {@link #outcomesFile()} set, the run writes one line per check: test, check,
  * baseline, this platform's value and the verdict.
- *
- * <p>Moved out of {@link SparkSqlWriteStatements} unchanged (work items X2 and X3).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public abstract class BaselineChecks {

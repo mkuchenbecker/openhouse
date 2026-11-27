@@ -224,6 +224,11 @@ tasks.register('smokeTestServerPlanning', Test) {
   systemProperty serverPlanning, 'server'
   def serviceClasspath = sourceSets.service.runtimeClasspath
   inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+  // Not the row-level statements on v3 tables: the plan route refuses format v3 tables, so they
+  // would run on client planning again, as in smokeTest.
+  filter {
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.smoke.SparkIrcRowLevelStatementsTest'
+  }
   def outcomes = layout.buildDirectory.file('reports/smoke/spark-4.2-irc-server-planning-outcomes.tsv')
   outputs.file(outcomes).withPropertyName('smokeOutcomes')
   doFirst {
