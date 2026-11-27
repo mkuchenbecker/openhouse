@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tablestest;
 
+import com.linkedin.openhouse.tables.exception.NamespaceExceptionHandler;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.apache.hadoop.fs.Path;
@@ -44,7 +45,14 @@ import org.springframework.context.annotation.PropertySource;
     })
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
-@Import(SparkItestColumnDefaults.class)
+// The namespace stand-in, and the namespace routes' error advice, which production scans with all
+// of com.linkedin.openhouse.tables and this application's narrower scan would leave out; it
+// applies to IcebergNamespacesController only.
+@Import({
+  SparkItestColumnDefaults.class,
+  HouseNamespacesInMemoryRepository.class,
+  NamespaceExceptionHandler.class
+})
 @PropertySource("classpath:tables-test-fixtures-h2.properties")
 public class SpringH2TestApplication {
 
