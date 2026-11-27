@@ -98,3 +98,19 @@ transcription error and should be fixed here.
 - S49. Mike is fine with a bigger container if that is available.
 - S50. Selective testing is important if the build cycle is long. The full suite is only needed on merge, and that can be asynchronous with fix-forward.
 - S51. Asked for status with respect to the global task, avoiding implementation details.
+
+## Statements of 2026-11-25 and 2026-11-27
+
+- S52. [2026-11-25] "lets pause execution for now"
+- S53. [2026-11-25] "Are all the artifacts that you've produced in a state that they're reviewable by another agent? I really want to make sure that we are keeping durable records such that another agent could pick this up. But I actually want to have a high bandwidth conversation with an agent to talk about what's been produced. So if you could produce a map of all of the artifacts, that would be incredibly useful to me."
+- S54. [2026-11-25] "please add these docs to a place i can link to, such as a draft pull request"
+- S55. [2026-11-27] "Before continuing, make a checklist and plan."
+- S56. [2026-11-27] "before continuing, do a self review"
+
+### Answer to the self review in `84-self-review.md`, 2026-11-27 (his numbers are its fault numbers)
+
+- S57. [fault 1] "(1) there are in flight namespace prs authored by me. make sure you are using that and building on top of it."
+- S58. [fault 2] "(2) so do the review. all prs should have a sub agent review. this is a standing order. my expectation is you have built up a lot of cruft on the branch. we will fix forward. the biggest externality is we will need to re-implemnt once done because the linear progression will read like slop."
+- S59. [fault 3] "(3) use the duplicate work for reference."
+- S60. [fault 4] "(4) is your big miss. This is a hard requirement in that this can't be contributed upstream given behavior changes without sufficient justification. it's not a two say door to change behavior. it is a two way door when it's documented for follow up and not a foundation decision that invalidates significant work. significant is a judgement call, but if a single agent can fix it with a single pull request less than a couple thousand lines with <20 files it's easily fixable."
+- S61. [fault 6] "6 i have no line limit. i want results as effectively as possible."

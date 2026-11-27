@@ -3,7 +3,7 @@
 Bottom line: these notes plan the work. Nothing is implemented. Only `01-stated.md` carries Mike's
 authority. Everything else is Claude's observation or judgement and is not agreed.
 
-Each file is under 150 lines so it can be reviewed in one sitting.
+There is no line limit on these files: the owner lifted the 150-line limit on 2026-11-27 (`01-stated.md` S61). Say what is needed, bottom line first.
 
 | File | What it is | Whose voice |
 | --- | --- | --- |

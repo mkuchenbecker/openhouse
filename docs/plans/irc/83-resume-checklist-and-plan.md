@@ -5,6 +5,7 @@ After them, about ten more items can be done without him. Everything else that m
 Iceberg REST catalog waits on his answers, and the one answer that unlocks the most is what "conforming" means (D32).
 Written 2026-11-27 by the orchestrator at the owner's request ("Before continuing, make a checklist and plan").
 Work stays paused until he says to continue.
+Sections 3 and 4 are superseded by the owner's answer recorded in `84-self-review.md` (last section; `01-stated.md` S57 to S61).
 Corrected by `84-self-review.md`: the order in section 4 and the size of section 3c are wrong; read that file's last section.
 
 ## 1. Checklist before any work restarts (checked 2026-11-27 21:28 UTC)

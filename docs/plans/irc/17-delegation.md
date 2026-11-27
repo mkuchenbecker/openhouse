@@ -32,3 +32,15 @@ Bottom line: every brief must now say that no property is the Iceberg 1.12 line.
 - Pull request 118 made a plain build the fork's Iceberg 1.12 line (`54-v9e-flip-result.md`).
 - `-PicebergLinkedIn` selects LinkedIn's Iceberg 1.5.2 line, the reference line. `-PicebergFork` does nothing.
 - The Iceberg 1.2 fixtures project and the Spark 3.1 projects no longer exist; a brief must not name them.
+
+## Standing orders from 2026-11-27
+
+Bottom line: four orders now bind every brief. They follow the owner's answer to the self review (`01-stated.md` S58, S60,
+S61; `84-self-review.md`, last section).
+
+- (a) Every pull request gets an independent sub-agent review before merge.
+- (b) Every pull request body and merge message has a section listing behavior changes against the base, or says none.
+- (c) Existing behavior is not changed without justification written where a reviewer will find it, and each such change
+  is entered in the behavior-change ledger.
+- (d) Each agent's record is copied into `records/` in the notes commit for its work.
+- The 150-line limit on notes is lifted (S61); a brief must not impose one.

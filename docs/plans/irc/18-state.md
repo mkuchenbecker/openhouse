@@ -1,16 +1,20 @@
 # Current state
 
-Paused: the owner paused all work on 2026-11-25 about 05:10 UTC. Nothing is running. Two items resume: X2 with X3 (branch
-`irc/x2-x3-v3-row-level`, pushed head `1892643c`, tests only; remaining: the final 1.5.2 run, the test-groups check, open
-the pull request, wait for CI) and W13, W14, N9 (only W13 read; a decision is needed before any change). The map of every
-artifact is `00-map.md`; the raw agent records are in `records/`.
-The plan for resuming is `83-resume-checklist-and-plan.md`; the self review that corrects it is `84-self-review.md`.
+Work resumed on 2026-11-27 about 22:30 UTC on the owner's direction (`01-stated.md` S55 to S61). Running now: nine
+read-only reviewers of the 71 merges by area (reports will be at `records/review-<area>.md`: irc-commit-write,
+irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning, jobs, build-deployables,
+ci-fixtures-tests); one scout reading the owner's namespace pull requests and the earlier drafts
+(`records/scout-namespace-and-prior-work.md`); and the X2 with X3 work finishing its pull request (branch
+`irc/x2-x3-v3-row-level`). Held: W13, W14 and N9; W13 is a change on the wire, so it waits for the behavior-change
+ledger. Next: consolidate the reviews into the ledger and a fix-forward work list, then build on the owner's namespace
+line. The map of every artifact is `00-map.md`; the raw agent records are in `records/`. The plan for resuming is
+`83-resume-checklist-and-plan.md`, and the owner's answer to the self review is the last section of `84-self-review.md`.
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
 checks pass in CI. Pull requests 121 and 124 to 150 are merged: 71 in all, and `irc-integration` is at `81b4cd4d`. The latest two are 150
 (X18: H2 result reuse off in the tables service's test stand-in) and 149 (the rest of V10: register-view is served on the
-Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). Two pieces of work are paused (see Paused below): the wider X2 and X3 scenarios on
+Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). Two pieces of work were paused until 2026-11-27 (see the top): the wider X2 and X3 scenarios on
 format v3, and the small batch W13, W14 and N9. View rename stopped on D47. Nothing is merged into either fork's main
 or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI passed on both lines for every merge up to
 and including 148 and for 150, and for 149 it was read at 07:30 UTC on 2026-11-25: 16 jobs completed, 15 success, 1 skipped by design, none failed. An audit of the open work items found 8 of 62 already true
@@ -84,14 +88,14 @@ C2-1, C2-2, C2-3, V10, X18, N8, V18, C15, T6, N10, V19, V20, V22, N16, X9, C19, 
 
 ## How to resume
 
-Bottom line: pull requests 121 and 124 to 150 are merged, and `irc-integration` is at `81b4cd4d`. Two pieces of
-work are paused (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
+Bottom line: pull requests 121 and 124 to 150 are merged, and `irc-integration` is at `81b4cd4d`. X2 with X3 is
+finishing and W13, W14 and N9 are held (below); view rename stopped on D47 with no branch pushed. If the session stops, a future session
 reads each record below and the branch's log, and resumes from what they say.
 
 - Usage limit: subagents on the default model are unavailable until 2026-11-30 09:00 UTC.
-- Paused, X2 and X3: the wider row-level scenarios on format v3. Worktree `/home/user/oh-x23`, branch
+- Resumed 2026-11-27, X2 and X3: the wider row-level scenarios on format v3. Worktree `/home/user/oh-x23`, branch
   `irc/x2-x3-v3-row-level`, record `x2-x3-v3-row-level.md` in the reports directory.
-- Paused, W13, W14 and N9 together: worktree `/home/user/oh-small2`, branch `irc/small-batch-w13-w14-n9`, record
+- Held, W13, W14 and N9 together (W13 waits for the behavior-change ledger): worktree `/home/user/oh-small2`, branch `irc/small-batch-w13-w14-n9`, record
   `small-batch-w13-w14-n9.md` in the reports directory.
 - Post-merge CI [read 2026-11-25]: it passed on both lines for the merges of 147 (28 minutes), 148 (32 minutes) and 150
   (30 minutes); for 149 it passed too (read 07:30 UTC: 15 of 16 jobs success, 1 skipped by design). The pull request builds of 149 (head `1ae8e370`) and
