@@ -276,14 +276,18 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
 
   /**
    * The baseline is Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2. On the Iceberg 1.12
-   * line, every path differs from it on the message of two refused namespace statements; nothing
-   * else differs on the legacy and rest-shim paths.
+   * line, every path differs from it on the message of two refused namespace statements; with the
+   * owner's namespace stack the legacy and rest-shim paths differ on the namespace statements
+   * ({@link #namespaceRecords()}); nothing else differs on those two paths.
    */
   @Override
   protected List<Difference> differences() {
     List<Difference> differences = new ArrayList<>();
     if (IcebergLine.current() == IcebergLine.V3 && !REST_HTTP.equals(catalogPath())) {
       differences.addAll(namespaceExistsCheckOnIceberg112());
+    }
+    if (!REST_HTTP.equals(catalogPath())) {
+      differences.addAll(namespaceRecords());
     }
     if (REST_SHIM.equals(catalogPath())) {
       differences.addAll(
@@ -326,6 +330,57 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(fails(UNSUPPORTED, "Checking if database exists is not supported"))
             .because(ICEBERG_112, why));
+    return Collections.unmodifiableList(differences);
+  }
+
+  /** The category of a difference the owner's namespace stack (upstream 869 to 871) makes. */
+  protected static final String NAMESPACE_RECORDS = "(d) namespace records, upstream 869-871";
+
+  /**
+   * The baseline is LinkedIn main's OpenHouse catalog, which refuses every namespace statement.
+   * With the owner's in-flight namespace stack merged (upstream 869 to 871), the OpenHouse catalog
+   * implements SupportsNamespaces over a namespace record kept apart from tables: loading a
+   * namespace with no record (any database that only holds tables, as {@value #DB} here) is
+   * NoSuchNamespaceException, which Spark answers as SCHEMA_NOT_FOUND, and a create of a new name
+   * stores a record (not listed by SHOW DATABASES, which stays table-derived). Where Iceberg 1.12's
+   * SparkCatalog first calls namespaceExists, still refused, the D14b difference stands instead
+   * (CREATE and DROP NAMESPACE on 1.12).
+   */
+  protected static List<Difference> namespaceRecords() {
+    String why =
+        "Upstream 871: OpenHouseCatalog loads, creates, updates and drops the namespace record of"
+            + " upstream 870's /v1/{prefix}/namespaces routes; a database that only holds tables"
+            + " has no record, so Spark finds no schema.";
+    Expectation noRecord =
+        fails(
+            "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+            "[SCHEMA_NOT_FOUND] The schema `" + DB + "` cannot be found.");
+    List<Difference> differences = new ArrayList<>();
+    if (IcebergLine.current() != IcebergLine.V3) {
+      differences.add(
+          Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
+              .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+              .here(succeeds())
+              .because(
+                  NAMESPACE_RECORDS,
+                  "Upstream 871: Spark's default existence check loads the namespace (404: none),"
+                      + " then the catalog creates the record. SHOW DATABASES does not list it."));
+      differences.add(
+          Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
+              .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+              .here(noRecord)
+              .because(NAMESPACE_RECORDS, why));
+    }
+    differences.add(
+        Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
+            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+            .here(noRecord)
+            .because(NAMESPACE_RECORDS, why));
+    differences.add(
+        Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
+            .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
+            .here(noRecord)
+            .because(NAMESPACE_RECORDS, why));
     return Collections.unmodifiableList(differences);
   }
 

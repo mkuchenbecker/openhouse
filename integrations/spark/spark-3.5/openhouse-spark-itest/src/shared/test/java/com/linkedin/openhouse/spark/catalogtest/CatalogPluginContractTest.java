@@ -38,6 +38,8 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.types.Types;
@@ -266,40 +268,38 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     Assertions.assertTrue(namespaces.contains(Namespace.of("cpc_ns_b")), namespaces.toString());
   }
 
-  // ---------------------------------------------------- 2. unsupported namespace ops
+  // ------------------------------------------------- 2. namespace records (upstream 871)
 
+  /**
+   * Before upstream 871 every call here but listNamespaces() was refused with an
+   * UnsupportedOperationException. With it, the catalog reads and writes the namespace record the
+   * owner's /v1/{prefix}/namespaces routes keep (upstream 870), independent of tables:
+   * namespaceExists and listNamespaces(namespace) stay refused, and listNamespaces() stays the
+   * table-derived database list, so a created record is not listed. A name per path, as the paths
+   * share one service.
+   */
   @Test
-  void namespaceOperationsAreUnsupported() {
+  void namespaceOperationsUseTheNamespaceRecord() {
     SupportsNamespaces ns = (SupportsNamespaces) catalog;
-    Namespace n = Namespace.of("cpc_unsupported_ns");
+    Namespace n = Namespace.of("cpc_ns_record_" + catalogPath().replace('-', '_'));
     assertThrowsExactly(
         UnsupportedOperationException.class,
         "Checking if database exists is not supported",
         () -> ns.namespaceExists(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Create Database is not supported",
-        () -> ns.createNamespace(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Create Database is not supported",
+    Assertions.assertThrows(NoSuchNamespaceException.class, () -> ns.loadNamespaceMetadata(n));
+    ns.createNamespace(n);
+    Assertions.assertThrows(
+        AlreadyExistsException.class,
         () -> ns.createNamespace(n, Collections.singletonMap("k", "v")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Drop database is not supported",
-        () -> ns.dropNamespace(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Set properties on a database is not supported",
-        () -> ns.setProperties(n, Collections.singletonMap("k", "v")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Remove properties of a database is not supported",
-        () -> ns.removeProperties(n, Collections.singleton("k")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Describing database is not supported",
-        () -> ns.loadNamespaceMetadata(n));
+    Assertions.assertFalse(ns.listNamespaces().contains(n), ns.listNamespaces().toString());
+    Assertions.assertTrue(ns.setProperties(n, Collections.singletonMap("k", "v")));
+    Assertions.assertEquals(Collections.singletonMap("k", "v"), ns.loadNamespaceMetadata(n));
+    // The rest-shim path answers false although the property is removed (checked below).
+    Assertions.assertEquals(
+        !REST_SHIM.equals(catalogPath()), ns.removeProperties(n, Collections.singleton("k")));
+    Assertions.assertEquals(Collections.emptyMap(), ns.loadNamespaceMetadata(n));
+    Assertions.assertTrue(ns.dropNamespace(n));
+    Assertions.assertFalse(ns.dropNamespace(n));
     assertThrowsExactly(
         UnsupportedOperationException.class,
         "Openhouse supports 2-lvl namespace <schema>.<table>",
