@@ -111,6 +111,8 @@ Dates are all 2026-11-22. Claude wrote every entry.
 - References: `23-v1-commit-core-result.md`, "What V3 can rely on"; `04-work.md`, V3 and V5.
 - Reverse by: changing the mapping in the IRC layer only.
 
+- Note, 2026-11-27: the last clause ("Namespace create, update and drop stay unsupported, as natively") is withdrawn by D55 in `90-decisions-continued-7.md`.
+
 ## D21. A bigger container is not available; separate machines are Mike's call
 
 - Date: 2026-11-22.

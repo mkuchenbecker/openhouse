@@ -53,6 +53,8 @@ entry cites a statement. Claude wrote every entry.
   specification permits).
 - Reverse by: Mike's answer. If it is the second reading, the class b work items in that file become the plan.
 
+- Note, 2026-11-27: in the working reading, the item "databases that exist only while they hold tables or views" as an OpenHouse rule is withdrawn by D55 in `90-decisions-continued-7.md`; the rest stands.
+
 ## D33. A suite passes under `-PicebergFork` only if it ran there, and pull request CI runs the opt-in job
 
 - Date: 2026-11-23. The orchestrator's decision, a two-way door.

@@ -125,6 +125,8 @@ cites a statement. Claude wrote every entry.
   (`21-findings-continued.md`, ninth round). A clean 400 takes nothing away from any client that works today.
 - Reverse by: removing the check restores the 503.
 
+- Note, 2026-11-27: the row-length checks are off by default, per D58 in `90-decisions-continued-7.md`; this revises the 255-character default.
+
 ## D42. Format v3 tables are off by default, chosen per table, never implied
 
 - Date: 2026-11-23. The orchestrator's decision, given to work items X1 and W6 (branch `irc/x1-format-v3`). Upgrading a

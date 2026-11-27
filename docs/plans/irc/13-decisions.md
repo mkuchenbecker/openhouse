@@ -136,6 +136,8 @@ unless an entry says otherwise. Claude wrote every entry; "Claude's reading" mar
 - References: `14-native-defaults-design.md`, decisions 3a to 3f, and the experiment output it names.
 - Reverse by: restoring the overlay and the capability on the new-line client.
 
+- Note, 2026-11-27: the format-version answers on the reference line are settled by D57 in `90-decisions-continued-7.md`.
+
 ## D12. One-way doors from the defaults design stay with Mike
 
 - Date: 2026-11-22.

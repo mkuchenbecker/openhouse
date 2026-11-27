@@ -1,10 +1,106 @@
 # Waiting on Mike
 
-Bottom line: nothing blocks work. These are the decisions that are Mike's, most of them one-way doors that matter
-before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23. Only
+Bottom line: nothing blocks work, but the reviews of 2026-11-27 and the scout added questions that are his and that are foundations: seven rows of the behavior-change ledger, six questions about the owner's namespace line, and three more from the reviews. Until he answers, the interim in each entry holds. These are the decisions that are Mike's, most of them one-way doors that matter
+before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23, restructured 2026-11-27. Only
 `01-stated.md` carries Mike's authority.
 
-- D32: what "conforming Iceberg REST Catalog server" means. The compatibility kit's 95 failures, by cause
+Order: the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
+questions, unchanged except where marked MOOT or partly settled. Each entry is a question for him, what happens meanwhile,
+and what each answer changes.
+
+## Foundation questions from the reviews (2026-11-27)
+
+The owner's rule S60 (`01-stated.md`): a behavior change against LinkedIn main cannot be contributed upstream without
+sufficient justification. These seven ledger rows (`85-behavior-change-ledger.md`) follow from deleting the Iceberg 1.2
+and Spark 3.1 line, or from moving to Iceberg 1.12 and Java 17, and he was never told the consequences. D63
+(`90-decisions-continued-7.md`) is the orchestrator's reading of what goes upstream and is itself to be confirmed.
+
+- BC-024 (shipped artifact `com.linkedin.openhouse:datalayout`). Question: is `libs:datalayout` to stay on Spark 3.1.1 and
+  Iceberg 1.2.0.25 on the reference line, or does it now build against Spark 3.5.2 and the line's Iceberg, so that a Spark
+  3.1 consumer gets Spark 3.5 and Iceberg 1.5.2 transitively? Meanwhile: nothing changes; it is decided together with
+  BC-025. If Spark 3.1 is retired: keep the change and declare it as a POM change. If not: restore it on the reference
+  line (Spark 3.1 against Maven Central's runtime).
+- BC-025 (the Iceberg 1.2 and Spark 3.1 line). Question: does his S44 ("i don't care about spark 1.2.") mean that
+  LinkedIn's Spark 3.1 artifacts (the runtime, the apps and their uber jars, the test fixtures) are dropped from LinkedIn's
+  build, including from the reference line that was to be main's build unchanged, with the scheduler image moving to the
+  Spark 3.5 apps jar? Meanwhile: deleted on both lines as built (D3 read S44 so, "This is Claude's reading of S44"). If
+  yes: keep, and list the dropped artifacts in one upstream commit. If no: the reference line must build them again from
+  pinned copies of the shared modules (D3's "Reverse by").
+- BC-028 (bytecode target of every module). Question: does the default build drop every Java 8 and 11 consumer of the Java
+  client and the Spark runtime jars (the default line now builds Java 17; the reference line keeps Java 8)? Meanwhile: as
+  built. If yes: documented. If no: those consumers must be served from the reference line, which then has to be a release
+  line (BC-034, FF-26).
+- BC-029 (tables that require `column-defaults`). Question: may the default build stop reading and writing every existing
+  table that requires `column-defaults` (answer 422 `CLIENT_CAPABILITY_MISSING`), with no migration, on the strength of S8
+  ("Migration is not a concern. Valid state is.") and S47 (Parquet over ORC, native Iceberg default values)? Or must W8 (the
+  migration) land before the default build stops declaring the capability? Meanwhile: as built; the reference line is
+  unaffected. If yes: documented as a consequence of the move to 1.12. If no: W8 first, or the default build keeps declaring
+  the capability.
+- BC-030 (Spark SQL on the default build). Question: does he accept four Spark SQL behaviors of the default line (`CREATE
+  NAMESPACE` and `DROP NAMESPACE` messages; an RTAS dropping a column an old partition spec uses succeeds; `ALTER TABLE ...
+  ADD COLUMN ... DEFAULT` refused; one delete file after repeated DELETEs on a file), or must the fork be patched (D14 and
+  D31, "Reverse by: patching the fork")? Meanwhile: as built; declared in the smoke tests. If accepted: documented. If not:
+  fork patches.
+- BC-033 (the S3 stack of the tables service and its published POMs: the fork's `iceberg-aws`, AWS SDK 2.54.17, apache5 as
+  the HTTP client). Question: does he accept the new S3 stack on the default build without a run against real S3, or require
+  one before it is the default? Meanwhile: as built; "Not run: real S3". If accepted: documented. If a run is required: the
+  default flip waits for it.
+- BC-035 (any Gradle command on a fresh clone of the default line fails until `publish-local.sh` has built the fork). This is
+  the question already below, "where the fork's artifacts are hosted"; it is the same one. Meanwhile: the interim ready
+  without him is to fail only the tasks that need Iceberg and check `java -version` in the script. If he hosts them:
+  the failure goes away. If he does not: the default line stays a local-build line.
+
+## From the scout (2026-11-27)
+
+The scout's report is `records/scout-namespace-and-prior-work.md`; the summary is `89-scout-namespace-and-prior-work-result.md`.
+
+- (a) Where the Iceberg REST routes live. His 870 serves the namespace routes at the service root on the specification's
+  paths (`/v1/{prefix}/namespaces`); this effort's routes are under `/iceberg/v1`. Asked on 2026-11-27, unanswered. Meanwhile:
+  D64, the namespace routes are built under `/iceberg` as a thin layer over his service, cheap to move. Root only: the
+  `/iceberg` layer moves or goes. `/iceberg` only: his 871 client targets the root, so it would need to follow. Both: as built.
+- (b) May the `/iceberg` drop of a namespace refuse while the namespace holds tables, when his route allows it? His three
+  pull requests disagree with each other. The scout: "869 body and `services/housetables/NAMESPACES.md` say 'The public API
+  rejects drop while a table or view occupies the namespace'; 870 removed that check ('The review update removes the
+  namespace occupancy query') and its `services/tables/NAMESPACES.md` says drop does not inspect tables; 871 still maps DROP
+  400 to `NamespaceNotEmptyException`"; and his earlier ruling W5 (fork 56) said "the error, never a cascade". The
+  specification and the kit expect 409 `NamespaceNotEmptyException`. Meanwhile: the `/iceberg` drop is not built until he
+  answers. Refuse: two kit tests pass, and the two drop routes differ. Allow: they match, and the two kit tests stay known
+  failures.
+- (c) About 20 view tests of the kit need the native view create to accept a namespace record as proof that the database
+  exists (`ViewsServiceImpl.requireDatabaseExists`). That is a native behavior change that needs his justification (S60).
+  Meanwhile: not done; those tests stay in the known-failure list. If he agrees: about 20 more kit tests pass.
+- (d) His rename guard (upstream 700) is 97 commits behind main with conflicts, and this branch serves rename over the
+  Iceberg REST routes on the unguarded native rename. Question: will he refresh it, or may it be ported here? Meanwhile: the
+  rename race is recorded as a known inherited defect. Refreshed: merged like 869 to 871. Ported: this effort carries the
+  change and a note for him.
+- (e) His temporary-tables stack (905, 923, 906 to 909, 924) conflicts with this branch's commit core in three files
+  (923: `OpenHouseInternalRepositoryImpl.java`, `TablesServiceImpl.java`, `ExpiredTemporaryTableTest.java`; 907 adds
+  `OpenHouseInternalTableOperations.java`). Question: when it settles, may his rules that sit in the
+  native validator and repository (not in the commit path) be applied over the Iceberg REST routes? Meanwhile: nothing
+  merged; his rules in `OpenHouseInternalTableOperations` apply over the Iceberg REST routes by themselves, the others
+  only in part.
+- (f) The scout says a rule that rollback must never need a restart is in the earlier drafts 55 and 56 ("Rollback must never
+  depend on a restart; every intermediate state must be indefinitely sustainable", fork 56 rulings 1 and 1b, fork 55
+  "Owner constraint applied throughout"). Is that his rule? This effort's cluster switches (the format v3 switch, the
+  variant property) are read at startup, so rolling one back needs a restart. Meanwhile: switches stay off by default.
+  If it is his rule: the switches need a way to roll back without a restart. If not: nothing changes.
+
+## From the reviews, needing him (2026-11-27)
+
+- The privilege the scan planning route needs when it is on (FF-05, `86-review-findings-and-fix-forward.md`): it exposes
+  per-file column bounds, so a metadata privilege alone is too little; options include `SELECT` or a storage-level read
+  check; it is the same access question as credential vending (D45). Meanwhile: D56, the route is off by default.
+- The release workflow, and which line releases (FF-26): LinkedIn's release workflow now pushes a tag and then publishes
+  nothing (BC-034, RF-051), because the default line cannot publish before the fork is hosted. The orchestrator proposes that
+  the reference line is the release line until the fork is hosted; hosting stays his. Meanwhile: FF-26 waits for the orchestrator's decision that the reference line is the release line; hosting the fork stays his.
+- The inherited native defects (D62): (1) a replace commit has no version check, so an append between load and replace can be
+  lost, as natively for RTAS (RF-004); (2) after a commit fails past `failIfRetryUpdate`, a per-instance cache refuses every
+  later commit on that base for five minutes (RF-005). Fixing either changes native behavior and needs his justification
+  upstream. Meanwhile: documented, not fixed. If he asks for the fixes: new items with their own justification.
+
+## Earlier questions
+
+- D32: what "conforming Iceberg REST Catalog server" means. Part settled on 2026-11-27 by D55 (`90-decisions-continued-7.md`): the 33 namespace-model failures (a namespace cannot exist on its own; create, alter and drop are not served) follow from a rule the owner's own namespace design contradicts, so stored, possibly empty namespaces are part of OpenHouse and the routes are built over his service. What remains for him is the rest of the question: the 44 failures from OpenHouse rules the kit does not expect (replace needs `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13), the 18 small differences, and what conformance is then claimed. The compatibility kit's 95 failures, by cause
   (`60-v11-v12-investigation-result.md`): 33 are the namespace model (a namespace cannot exist on its own, and
   create, alter and drop are not served); 44 are OpenHouse rules the kit does not expect (replace needs
   `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13); the other 18 are small model
@@ -35,9 +131,9 @@ before any release outside the forks. Moved out of `18-state.md` to keep it unde
   retention and nothing records the deletes; on v3 no deletion vector is backed up. The author recommends rewriting the
   expiring partitions with deletes applied first, at the cost of an extra rewrite and a behavior change on v2. It touches
   an external uploader that reads the manifests. Nothing waits on this; behavior is pinned (X8, X9).
-- Format v3 column types (X5, pull request 129, merged 2026-11-24): on v2 tables a column of a type only format v3 has
+- MOOT (2026-11-27): FF-18 restores the 400 that LinkedIn main answered (D57), so this question no longer needs him. Format v3 column types (X5, pull request 129, merged 2026-11-24): on v2 tables a column of a type only format v3 has
   answers 500 "Invalid schema for v2". A 400 would be right but changes a v2 answer. Nothing waits on this.
-- Format v3 column types (X5): a default value on a `variant` or `unknown` column answers 500 on every table version, from
+- MOOT (2026-11-27): FF-18 also makes this a 400 (D57). Format v3 column types (X5): a default value on a `variant` or `unknown` column answers 500 on every table version, from
   Iceberg's parser. Turning it into a 400 changes v2 answers too. Nothing waits on this.
 - Format v3 column types (X5, narrowed by D48): `variant` is now off by default behind
   `cluster.iceberg.format-v3.variant.enabled`, so nothing opens by turning on the v3 switch. What is left for Mike is

@@ -15,13 +15,16 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 5. Decisions, in order: `13-decisions.md` (D1 to D12), `16-decisions-continued.md` (D13 to D21),
    `22-decisions-continued-2.md` (D22 to D29), `37-decisions-continued-3.md` (D30 to D36),
    `51-decisions-continued-4.md` (D37 to D42), `56-decisions-continued-5.md` (D43 to D47),
-   `67-decisions-continued-6.md` (D48 to D52).
+   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D64).
 6. Work tables: `04-work.md`, `30-work-defaults.md`, `41-work-platforms-v3.md`, and `74-work-table-audit.md`.
 7. `45-merged-pull-requests.md`, then result files (`NN-...-result.md`) and `records/` as needed.
 8. The retroactive review of 2026-11-27: `88-review-summary.md` first, then `85-behavior-change-ledger.md` (the
    behavior changes against LinkedIn main and what to do with each), `86-review-findings-and-fix-forward.md` (the
    defects and the fix-forward work list, where fixes start) and `87-clean-reimplementation-guide.md`. The nine
    reviewers' reports and their brief are `records/review-*.md`.
+9. The owner's namespace line and the earlier drafts: `89-scout-namespace-and-prior-work-result.md` (summary of the scout's
+   report `records/scout-namespace-and-prior-work.md`), and the decisions that follow it, `90-decisions-continued-7.md`.
+   The brief the fix-forward agents work under is `records/fix-brief-common.md`.
 
 ## 2. Where everything lives
 
@@ -64,6 +67,8 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
   guide `87` and the summary `88`; its records are `records/review-brief-common.md` and the nine `records/review-*.md`
   (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
   jobs, build-deployables, ci-fixtures-tests).
+- The scout of the owner's namespace line: `89-scout-namespace-and-prior-work-result.md`, its record
+  `records/scout-namespace-and-prior-work.md`; decisions D53 to D64 in `90-decisions-continued-7.md`.
 
 ## 4. The code on `irc-integration`, by area
 

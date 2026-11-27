@@ -55,6 +55,8 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
    code allows it behind the switch, but turning the switch on for a real cluster and upgrading a real table stay
    Mike's (D12; `58-waiting-on-mike.md`). On the 1.5.2 reference line every v3 request is refused.
 
+- Note, 2026-11-27: the format-version rule now answers as LinkedIn main with the switch off, per D57 in `90-decisions-continued-7.md`; item 5 is revised there.
+
 ## D44. Scan planning: a synchronous plan route with no state
 
 - Date: 2026-11-24. The orchestrator's decision, a two-way door. Work items V11a to V11c. Reasons and evidence in
@@ -69,6 +71,8 @@ doors, except the last, which is marked. Result: `57-x1-format-v3-result.md`.
 - Why this is a two-way door: the route can be withdrawn from the endpoint list and nothing depends on it by default.
 - Left for Mike: having the server turn server-side planning on for clients (V11d), because it changes every
   client's read path (`58-waiting-on-mike.md`).
+
+- Note, 2026-11-27: serving the scan planning route by default is withdrawn by D56 in `90-decisions-continued-7.md`; the synchronous, stateless design stands.
 
 ## D45. Credentials: an empty list, no vending yet
 
