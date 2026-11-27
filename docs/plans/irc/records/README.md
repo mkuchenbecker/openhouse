@@ -1,7 +1,8 @@
 # Records: the agents' raw working records
 
-Bottom line: these 78 files (77 markdown records and one build log) are the raw, unedited records written by the
-agents that did each piece of work. They were copied byte for byte from the orchestrator's session directory
+Bottom line: these 88 files (87 markdown records and one build log) are the raw, unedited records written by the
+agents that did each piece of work, plus the ten files of the retroactive review of 2026-11-27 (the common brief and
+the nine reviewers' reports, `review-*.md`). They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
 container. The line limit and wording rules of the notes do not apply to them, so they use abbreviations and other
 shorthand. Where they and a note disagree, the record and the merge commit message are closer to the source.
@@ -98,3 +99,13 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `x5-v3-types.md` | X5 | pull request 129 | `68-x5-v3-types-result.md` |
 | `x6-maintenance-v3.md` | X6 | pull request 125 | `63-x6-maintenance-v3-result.md` |
 | `full-rest-stub.log` | not stated | not stated | not stated |
+| `review-brief-common.md` | retroactive review brief | all 71 merged pull requests (80 to 150) | retroactive review, 2026-11-27 (the brief all nine reviewers read; summarized in `../85-` to `../88-`) |
+| `review-irc-commit-write.md` | retroactive review | pull requests 89, 94, 96, 106, 120, 134 | retroactive review, 2026-11-27 |
+| `review-irc-read-register-limits.md` | retroactive review | pull requests 88, 112, 116, 121, 139, 142, 147 | retroactive review, 2026-11-27 |
+| `review-irc-views-capabilities.md` | retroactive review | pull requests 95, 99, 102 (149 for fit only) | retroactive review, 2026-11-27 |
+| `review-client-seam-spark.md` | retroactive review | pull requests 84, 86, 92, 100, 101, 103, 107, 117, 119, 128 | retroactive review, 2026-11-27 |
+| `review-format-v3.md` | retroactive review | pull requests 124, 126, 129 (91, 97 and iceberg pull request 11 for the defaults work) | retroactive review, 2026-11-27 |
+| `review-scan-planning.md` | retroactive review | pull requests 127, 131, 132 | retroactive review, 2026-11-27 |
+| `review-jobs.md` | retroactive review | pull requests 130, 135, 137, 141, 143, 145 (125 excluded) | retroactive review, 2026-11-27 |
+| `review-build-deployables.md` | retroactive review | pull requests 87, 91, 97, 98, 105, 109, 110, 113, 114, 118, 122, 123, 136 | retroactive review, 2026-11-27 |
+| `review-ci-fixtures-tests.md` | retroactive review | pull requests 80, 81, 82, 83, 85, 90, 93, 104, 108, 111, 115, 133, 138, 140, 144, 146, 148, 150 | retroactive review, 2026-11-27 |
