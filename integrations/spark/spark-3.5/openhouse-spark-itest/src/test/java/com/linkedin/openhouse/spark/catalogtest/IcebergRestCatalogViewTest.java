@@ -271,22 +271,32 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
         rest.listTables(Namespace.of(OFF_DB)));
   }
 
+  /**
+   * A principal the service denies cannot load the view: the load hands out the definition the
+   * service reads, so it needs the read privilege, as a table load does. Nor can it drop or create
+   * one. (A client replaces a view through its load, so a denied replace is not reachable from the
+   * client here; the service's route tests cover it.) The list of names makes no decision, as
+   * natively. (Whether the client then says the view exists is the client's: Iceberg 1.5 answers it
+   * with a load, so for this principal it says no; the service's exists route makes no decision.)
+   */
   @Test
-  void aDeniedPrincipalIsForbiddenToWriteAndMayRead() throws Exception {
+  void aDeniedPrincipalIsForbiddenToReadAndWrite() throws Exception {
     rest.buildView(id("guarded"))
         .withSchema(SCHEMA)
         .withQuery("spark", "SELECT id FROM base")
         .withDefaultNamespace(NS)
         .create();
     try (RESTCatalog stranger = server.rest(IrcViewsServer.STRANGER, conf)) {
-      // Reads make no authorization decision natively.
-      Assertions.assertEquals(
-          metadata(rest.loadView(id("guarded"))).metadataFileLocation(),
-          metadata(stranger.loadView(id("guarded"))).metadataFileLocation());
-      assertThrown(
-          ForbiddenException.class,
-          "irc_stranger",
-          thrown(() -> stranger.loadView(id("guarded")).updateProperties().set("k", "v").commit()));
+      // The client raises the 403 as it is, or (Iceberg 1.5) wrapped in "Unable to load view".
+      Throwable denied = thrown(() -> stranger.loadView(id("guarded")));
+      Throwable forbidden = denied;
+      while (forbidden != null && !(forbidden instanceof ForbiddenException)) {
+        forbidden = forbidden.getCause();
+      }
+      Assertions.assertNotNull(forbidden, String.valueOf(denied));
+      assertThrown(ForbiddenException.class, "irc_stranger", forbidden);
+      Assertions.assertFalse(String.valueOf(denied.getMessage()).contains("SELECT"));
+      Assertions.assertTrue(stranger.listViews(NS).contains(id("guarded")));
       assertThrown(
           ForbiddenException.class, "irc_stranger", thrown(() -> stranger.dropView(id("guarded"))));
       assertThrown(

@@ -45,7 +45,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * Authorization on the IRC view routes, with the fixture of {@link IrcWriteRoutesAuthTest} (same
  * Spring context): only the {@link AuthorizationHandler} decision is switched. Each refusal is the
  * native view route's refusal of the same principal, as 403 {@code ForbiddenException}, and changes
- * nothing. Reads make no authorization decision natively, so none over IRC either.
+ * nothing. Native reads make no authorization decision; the IRC load, which answers the definition,
+ * is decided as the IRC table load is, and the IRC list and exists routes make none.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
