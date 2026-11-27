@@ -211,6 +211,12 @@ public class IrcViewRoutesAuthTest {
     return ofView;
   }
 
+  private static List<String> json(List<ViewAuditEvent> events) {
+    List<String> json = new ArrayList<>();
+    events.forEach(event -> json.add(event.toJson()));
+    return json;
+  }
+
   private static void assertNothingStoredIn(String body, ViewMetadata stored) {
     org.junit.jupiter.api.Assertions.assertFalse(body.contains(stored.uuid()), body);
     org.junit.jupiter.api.Assertions.assertFalse(body.contains("SELECT 1"), body);
@@ -315,7 +321,7 @@ public class IrcViewRoutesAuthTest {
       assertEquals(
           message(nativeResult), assertIrcError(result, 403, "ForbiddenException").message());
       assertNothingStoredIn(IrcHttp.body(result), base);
-      assertEquals(nativeEvents, auditEvents("v"));
+      assertEquals(json(nativeEvents), json(auditEvents("v")));
     }
     assertEquals(before, StoredViewMetadata.normalized(houseTables, DB, "v"));
   }

@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import javax.annotation.PostConstruct;
 import lombok.AllArgsConstructor;
@@ -54,6 +55,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.util.Pair;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -62,6 +64,7 @@ import org.springframework.stereotype.Component;
  *
  * <pre>
  * GET:  gate -> HTS read -> metadata read (no authorization)
+ * IRC load ({@link #loadReadableView}): gate -> HTS read -> read authorization -> metadata read
  * LIST: gate -> HTS read (no authorization)
  *
  * POST / PUT: gate -> route database existence -> prepared capture -> authorization
@@ -130,6 +133,73 @@ public class ViewsServiceImpl implements ViewsService {
    * whose disabled implementation runs where the Iceberg view types do not exist.
    */
   public LoadedView loadView(String databaseId, String viewId, String actingPrincipal) {
+    return load(databaseId, viewId, row -> {});
+  }
+
+  /**
+   * {@link #loadView} for a caller who is handed the metadata the service reads (the IRC view
+   * load): after the House Tables read, and before the metadata file is read, the caller must hold
+   * the read privilege a table load asks for ({@code GET_TABLE_METADATA}), on the view's
+   * authorization reference, as a replace or drop is decided on it. A missing view is the same 404
+   * before any decision, as for a table load.
+   */
+  public LoadedView loadReadableView(String databaseId, String viewId, String actingPrincipal) {
+    return load(
+        databaseId,
+        viewId,
+        row ->
+            authorizationUtils.checkTablePrivilege(
+                authorizationReference(row), actingPrincipal, Privileges.GET_TABLE_METADATA));
+  }
+
+  /**
+   * The view's House Tables row must exist and be a view (404 otherwise, after the views gate), and
+   * the authorization reference a replace or drop of it is decided on: no metadata is read.
+   */
+  public TableDto viewReference(String databaseId, String viewId) {
+    try {
+      requireEnabled(databaseId);
+      return authorizationReference(
+          houseTableRepository
+              .findViewById(primaryKey(databaseId, viewId))
+              .orElseThrow(() -> noSuchView(databaseId, viewId)));
+    } catch (ViewApiException e) {
+      throw e;
+    } catch (RuntimeException e) {
+      throw ViewFailureTranslator.translateReadFailureTo(e);
+    }
+  }
+
+  /**
+   * The decision {@link #putView} makes for a replace of an existing view, on its reference ({@link
+   * #viewReference}), for a caller that decides it before it checks a request against the stored
+   * view; {@code putView} still makes it. Failures are those {@code putView} gives for it.
+   */
+  public void authorizeReplace(TableDto reference, String actingPrincipal) {
+    try {
+      authorizationUtils.checkTablePrivilege(
+          reference, actingPrincipal, privilegeMapper.forPut(true));
+    } catch (RuntimeException e) {
+      throw ViewFailureTranslator.translateWriteFailureTo(e);
+    }
+  }
+
+  /** The read decision of {@link #loadReadableView}, on a view's reference. */
+  public void authorizeRead(TableDto reference, String actingPrincipal) {
+    try {
+      authorizationUtils.checkTablePrivilege(
+          reference, actingPrincipal, Privileges.GET_TABLE_METADATA);
+    } catch (RuntimeException e) {
+      throw ViewFailureTranslator.translateWriteFailureTo(e);
+    }
+  }
+
+  /**
+   * The gate, the House Tables read and the single read of the metadata file at the pointer, with
+   * {@code beforeRead} run on the row in between. An authorization failure of {@code beforeRead}
+   * keeps its own type, as on the write paths.
+   */
+  private LoadedView load(String databaseId, String viewId, Consumer<HouseTable> beforeRead) {
     try {
       requireEnabled(databaseId);
       HouseTable viewRow =
@@ -137,11 +207,12 @@ public class ViewsServiceImpl implements ViewsService {
               .findViewById(primaryKey(databaseId, viewId))
               .orElseThrow(() -> noSuchView(databaseId, viewId));
       requireCompletePersistedPointer(viewRow);
+      beforeRead.accept(viewRow);
       FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(viewRow.getStorageType()));
       ViewMetadata metadata =
           viewMetadataCodec.read(fileIO.newInputFile(viewRow.getTableLocation()));
       return new LoadedView(withClusterId(toPointerDto(viewRow, metadata.properties())), metadata);
-    } catch (ViewApiException e) {
+    } catch (ViewApiException | AccessDeniedException e) {
       throw e;
     } catch (RuntimeException e) {
       throw ViewFailureTranslator.translateReadFailureTo(e);

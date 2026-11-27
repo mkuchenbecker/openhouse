@@ -4,7 +4,10 @@ import com.linkedin.openhouse.tables.api.handler.ViewsApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateViewRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetAllViewsResponseBody;
 import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
+import com.linkedin.openhouse.tables.audit.ViewAuditAspect;
+import com.linkedin.openhouse.tables.audit.model.ViewOperationType;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
+import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.services.ViewsServiceImpl;
 import java.util.ArrayList;
@@ -44,12 +47,13 @@ import org.springframework.stereotype.Component;
  *       representation when the request does not name one. The server owns location and UUID: a
  *       location the create names is ignored, and the view is created, and returned, where the
  *       server puts it (D30).
- *   <li>A commit is checked here, against the stored view: each requirement, then each update is
- *       applied to it (an update that sets another location, UUID or format version is refused,
- *       except that a replace, which sets a new current version, ignores a set-location, which is
- *       how a client's replace that names a location arrives: D30). The result is sent as the
- *       native PUT of the complete definition on the stored metadata location, so the native
- *       base-version check refuses a base that moved meanwhile.
+ *   <li>A commit is first authorized as the native replace is, on the stored view's House Tables
+ *       row ({@link #authorizeCommit}), then checked here, against the stored view: each
+ *       requirement, then each update is applied to it (an update that sets another location, UUID
+ *       or format version is refused, except that a replace, which sets a new current version,
+ *       ignores a set-location, which is how a client's replace that names a location arrives:
+ *       D30). The result is sent as the native PUT of the complete definition on the stored
+ *       metadata location, so the native base-version check refuses a base that moved meanwhile.
  *   <li>The native view API has no rename, so the rename route answers the spec's 406.
  *   <li>A registration (Iceberg 1.12 line only) is {@code IcebergRestViewRegistration}'s: it runs
  *       the native create's gate, database, name and authorization checks, then stores the view row
@@ -78,6 +82,8 @@ public class IcebergRestViewHandler {
   @Autowired private IcebergRestApiHandler readHandler;
 
   @Autowired private ViewsFeatureGate viewsFeatureGate;
+
+  @Autowired private ViewAuditAspect viewAudit;
 
   /**
    * Every view of the namespace, through the native list, page by page. A database whose views are
@@ -116,9 +122,20 @@ public class IcebergRestViewHandler {
     return ListTablesResponse.builder().addAll(views).build();
   }
 
+  /**
+   * The view's definition, which the service reads from storage for the caller, so it is decided as
+   * the IRC table load is: the read privilege on the view, after the House Tables read (a missing
+   * view is 404 first, as a missing table is) and before the metadata file is read ({@link
+   * ViewsServiceImpl#loadReadableView}). The native GET, which answers only the pointer, makes no
+   * decision and is unchanged.
+   */
   public LoadViewResponse loadView(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
-    return onView(() -> response(load(databaseId, viewId, actingPrincipal)));
+    return onView(
+        () -> {
+          viewsApiValidator.validateGetView(databaseId, viewId);
+          return response(viewsService.loadReadableView(databaseId, viewId, actingPrincipal));
+        });
   }
 
   public void viewExists(String namespace, String viewId, String actingPrincipal) {
@@ -139,6 +156,7 @@ public class IcebergRestViewHandler {
   public LoadViewResponse commitView(
       String namespace, String viewId, UpdateTableRequest request, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
+    authorizeCommit(databaseId, viewId, request, actingPrincipal);
     ViewsServiceImpl.LoadedView base = onView(() -> load(databaseId, viewId, actingPrincipal));
     CreateUpdateViewRequestBody body =
         IcebergRestViewSpelling.replaceBody(
@@ -148,6 +166,37 @@ public class IcebergRestViewHandler {
             IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request));
     onView(() -> viewsApiHandler.updateView(body, actingPrincipal));
     return onView(() -> response(load(databaseId, viewId, actingPrincipal)));
+  }
+
+  /**
+   * Decides whether {@code principal} may make {@code request} on the stored view, before its
+   * metadata is read and the request checked against it: its requirements are answered with stored
+   * values (the view UUID) and its updates fail on what the view holds. Only what the native routes
+   * tell anyone comes first: the ids (400), the views gate and whether the view exists (404).
+   *
+   * <p>The decision is the native replace's, on the same reference ({@link
+   * ViewsServiceImpl#authorizeReplace}); the native PUT that follows makes it again. A commit with
+   * no updates changes nothing and answers the definition, so it also needs the read privilege the
+   * load needs. A refusal is audited exactly as the native replace audits its refusal.
+   */
+  private void authorizeCommit(
+      String databaseId, String viewId, UpdateTableRequest request, String principal) {
+    onView(
+        () -> {
+          viewsApiValidator.validateGetView(databaseId, viewId);
+          TableDto reference = viewsService.viewReference(databaseId, viewId);
+          viewAudit.auditRefusal(
+              databaseId,
+              viewId,
+              ViewOperationType.REPLACE,
+              () -> {
+                if (request.updates().isEmpty()) {
+                  viewsService.authorizeRead(reference, principal);
+                }
+                viewsService.authorizeReplace(reference, principal);
+              });
+          return null;
+        });
   }
 
   public void dropView(String namespace, String viewId, String actingPrincipal) {

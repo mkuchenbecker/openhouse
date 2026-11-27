@@ -3,6 +3,7 @@ package com.linkedin.openhouse.tables.services;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
+import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
@@ -102,6 +103,29 @@ public class TableCommitService {
         .findWithMetadataById(
             TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
         .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+  }
+
+  /**
+   * The privilege decisions of a table load ({@link TablesService#loadTable}), in its order: the
+   * lock administrator privilege on a table with a legacy lock, then the read privilege. For a
+   * request that answers the stored table and changes nothing, decided before anything about the
+   * table is checked or answered.
+   */
+  public void authorizeRead(TableDto base, String principal) {
+    if (LockPolicyValidator.isLegacyLocked(base)) {
+      authorizationUtils.checkLockTablePrivilege(base, principal, Privileges.LOCK_ADMIN);
+    }
+    authorizationUtils.checkTablePrivilege(base, principal, Privileges.GET_TABLE_METADATA);
+  }
+
+  /**
+   * The privilege decision the commit core makes for a write to {@code base} (the write privilege,
+   * or the system administrator privilege on a replica table), for a caller that decides it before
+   * it checks a request against the stored table. The core still makes it, in its own order.
+   */
+  public void authorizeWrite(TableDto base, String principal) {
+    authorizationUtils.checkTableWritePathPrivileges(
+        base, principal, Privileges.UPDATE_TABLE_METADATA);
   }
 
   /**

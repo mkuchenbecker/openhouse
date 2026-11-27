@@ -19,6 +19,8 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
+import com.linkedin.openhouse.tables.audit.TableAuditAspect;
+import com.linkedin.openhouse.tables.audit.model.OperationType;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
@@ -80,15 +82,16 @@ import org.springframework.stereotype.Component;
  *       names neither.
  *   <li>A staged create runs the same validation and create checks and returns the metadata the
  *       create would store, writing nothing ({@link TablesService#stageCreateTable}).
- *   <li>A commit on an existing table checks its IRC requirements against the stored table, applies
- *       its updates to it with Iceberg's own update classes, runs the native update validation on
- *       the request the OpenHouse client would send for it ({@link IcebergUpdates}), as the native
- *       table PUT and snapshots PUT do, and hands the result to {@link TableCommitService} with the
- *       stored table's version as base, so a commit that landed in between is refused by the core's
- *       guards. A replace commit (see {@link IcebergRestRequirements#isReplace}) is handed over as
- *       a replace; a set-location among its changes, which is how a client's replace that names a
- *       location arrives, is ignored (D30). An ordinary commit that changes the location is
- *       refused.
+ *   <li>A commit on an existing table is first authorized on the stored table ({@link #authorize}:
+ *       as a load when it has no updates, as the core's write otherwise), then checks its IRC
+ *       requirements against the stored table, applies its updates to it with Iceberg's own update
+ *       classes, runs the native update validation on the request the OpenHouse client would send
+ *       for it ({@link IcebergUpdates}), as the native table PUT and snapshots PUT do, and hands
+ *       the result to {@link TableCommitService} with the stored table's version as base, so a
+ *       commit that landed in between is refused by the core's guards. A replace commit (see {@link
+ *       IcebergRestRequirements#isReplace}) is handed over as a replace; a set-location among its
+ *       changes, which is how a client's replace that names a location arrives, is ignored (D30).
+ *       An ordinary commit that changes the location is refused.
  *   <li>A transaction ({@code POST /v1/transactions/commit}) with one table change is that commit,
  *       and never a create; with more than one it is refused whole and nothing is written, since
  *       two tables cannot be committed atomically ({@link #commitTransaction}).
@@ -178,6 +181,8 @@ public class IcebergRestWriteHandler {
 
   @Autowired private PoliciesSpecMapper policiesSpecMapper;
 
+  @Autowired private TableAuditAspect tableAudit;
+
   // ---------------------------------------------------------------- create
 
   /** A create ({@code stage-create} false). */
@@ -264,6 +269,7 @@ public class IcebergRestWriteHandler {
       return commitCreate(identifier, request, actingPrincipal);
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
+    authorize(identifier, base, request, actingPrincipal);
     return commitOn(identifier, base, request, actingPrincipal)
         ? loaded(identifier)
         : new IcebergRestLoadedTable(
@@ -310,7 +316,74 @@ public class IcebergRestWriteHandler {
         IcebergRestApiHandler.tableDatabaseId(namespace(change.identifier()), tableId);
     tablesApiValidator.validateGetTable(databaseId, tableId);
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
-    commitOn(identifier, tableCommitService.loadBase(identifier), change, actingPrincipal);
+    TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
+    authorize(identifier, base, change, actingPrincipal);
+    commitOn(identifier, base, change, actingPrincipal);
+  }
+
+  /**
+   * Decides whether {@code principal} may make {@code request} on the stored table {@code base},
+   * before anything of it is checked against {@code base}: its requirements are answered with
+   * stored values (the UUID, ref snapshot ids, schema and spec ids), its updates fail on what the
+   * table holds, and a request with no updates is answered with the table's metadata. So the only
+   * thing a caller learns before this decision is what the native routes tell anyone: whether the
+   * table exists (404 first, as the native load and update do).
+   *
+   * <ul>
+   *   <li>A request with no updates writes nothing and answers the stored table: it is a load, and
+   *       is decided as the table load is ({@link TableCommitService#authorizeRead}).
+   *   <li>Any other request is decided as the commit core decides the write ({@link
+   *       TableCommitService#authorizeWrite}). The core decides it again, after its lock checks, so
+   *       an allowed caller is answered exactly as before.
+   * </ul>
+   *
+   * A refusal is audited as the refusal of the operation the request would be: a READ for a load,
+   * otherwise the commit's kind as the core's audit names it ({@link #auditedKind}).
+   */
+  private void authorize(
+      TableIdentifier identifier,
+      TableDtoWithMetadata base,
+      UpdateTableRequest request,
+      String principal) {
+    String databaseId = identifier.namespace().toString();
+    String tableId = identifier.name();
+    TableDto stored = base.getTableDto();
+    if (request.updates().isEmpty()) {
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          OperationType.READ,
+          () -> tableCommitService.authorizeRead(stored, principal));
+    } else {
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          auditedKind(request),
+          () -> tableCommitService.authorizeWrite(stored, principal));
+    }
+  }
+
+  /**
+   * The audited kind of a refused commit, read from the request, since its updates are not applied
+   * for a caller who may not make it: a replace is a REPLACE_COMMIT, a commit that adds, removes or
+   * moves a snapshot is a COMMIT (the native snapshots route's), any other an UPDATE. An allowed
+   * commit is audited with the kind its applied changes have, as before.
+   */
+  private static OperationType auditedKind(UpdateTableRequest request) {
+    if (IcebergRestRequirements.isReplace(request)) {
+      return OperationType.REPLACE_COMMIT;
+    }
+    return request.updates().stream().anyMatch(IcebergRestWriteHandler::touchesSnapshots)
+        ? OperationType.COMMIT
+        : OperationType.UPDATE;
+  }
+
+  private static boolean touchesSnapshots(MetadataUpdate update) {
+    // Snapshot removal is RemoveSnapshot on one Iceberg line and RemoveSnapshots on the other.
+    return update instanceof MetadataUpdate.AddSnapshot
+        || update instanceof MetadataUpdate.SetSnapshotRef
+        || update instanceof MetadataUpdate.RemoveSnapshotRef
+        || update.getClass().getSimpleName().startsWith("RemoveSnapshot");
   }
 
   /** The tables {@code changes} name, for a refusal: the first few, and how many more. */
@@ -472,6 +545,10 @@ public class IcebergRestWriteHandler {
         tablesService.tableExists(databaseId, tableId)
             ? Optional.of(tableCommitService.loadBase(identifier).getMetadata())
             : Optional.empty();
+    // On a table that exists the completion's own assertion fails, and is answered first: it says
+    // only that the table exists, as the native create's refusal does to anyone. Another
+    // requirement, checked against the stored table, would answer its stored values.
+    existing.ifPresent(stored -> IcebergRestRequirements.validateCreate(request, stored));
     IcebergRestRequirements.validate(request, existing.orElse(null));
     TableMetadata.Builder builder = TableMetadata.buildFromEmpty();
     for (MetadataUpdate update : request.updates()) {

@@ -478,7 +478,7 @@ public class IrcWriteRoutesAuthTest {
     org.springframework.test.web.servlet.MvcResult result = IrcWrite.commit(mvc, DB, "e1", EMPTY);
     assertEquals(nativeMessage, assertIrcError(result, 403, "ForbiddenException").message());
     assertNoStoredIdIn(IrcHttp.body(result), stored);
-    assertEquals(nativeEvent, onlyAuditEvent("e1"));
+    assertEquals(nativeEvent.toJson(), onlyAuditEvent("e1").toJson());
     assertEquals(OperationType.READ, nativeEvent.getOperationType());
     assertEquals(OperationStatus.FAILED, nativeEvent.getOperationStatus());
     Mockito.verify(authorizationHandler)
