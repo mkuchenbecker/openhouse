@@ -125,6 +125,37 @@ public class ViewAuditAspect {
         ViewOperationType.DROP);
   }
 
+  /**
+   * Audits, as a CREATE, a view create made outside {@code ViewsApiHandler}: the IRC register
+   * route, which stores a view row for an existing metadata file. The event is the one a native
+   * create emits: named from the request, with the authenticated user (the registrant, not the
+   * creator the file records), the outcome, and on success the metadata location {@code
+   * newMetadataLocation} reads from the result. {@code create}'s result or failure is returned or
+   * rethrown unchanged.
+   */
+  public <T> T auditCreate(
+      String databaseId,
+      String viewId,
+      Supplier<T> create,
+      Function<T, String> newMetadataLocation) {
+    ViewAuditEvent event = namedEvent(databaseId, viewId);
+    T result;
+    try {
+      result = create.get();
+    } catch (RuntimeException e) {
+      deliver(OperationStatus.FAILED, () -> failed(event, ViewOperationType.CREATE, e));
+      throw e;
+    }
+    deliver(
+        OperationStatus.SUCCESS,
+        () ->
+            complete(event, ViewOperationType.CREATE, OperationStatus.SUCCESS)
+                .toBuilder()
+                .newMetadataLocation(newMetadataLocation.apply(result))
+                .build());
+    return result;
+  }
+
   private static ViewAuditEvent namedEvent(String databaseId, String viewId) {
     return ViewAuditEvent.builder()
         .eventTimestamp(Instant.now())

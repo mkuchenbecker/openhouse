@@ -571,7 +571,8 @@ public class IrcReadRoutesTest {
    * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
    * report, register and multi-table commit routes were among them until they were served:
    * IrcMetricsRouteTest, IrcRegisterRouteTest, IrcTransactionRouteTest; and, on the Iceberg 1.12
-   * line, the scan planning and credentials routes: IrcPlanCredentialsRoutesTest.)
+   * line, the scan planning and credentials routes, IrcPlanCredentialsRoutesTest, and the view
+   * register route, IrcRegisterViewRouteTest.)
    */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
@@ -582,7 +583,6 @@ public class IrcReadRoutesTest {
                   {HttpMethod.POST, "/v1/namespaces"},
                   {HttpMethod.DELETE, "/v1/namespaces/irc_x"},
                   {HttpMethod.POST, "/v1/namespaces/irc_x/properties"},
-                  {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"},
                   {HttpMethod.POST, "/v1/oauth/tokens"},
                   {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/plan/p1"},
                   {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/tasks"},
@@ -590,6 +590,9 @@ public class IrcReadRoutesTest {
     if (!IrcPlanCredentialsRoutesTest.served()) {
       routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"});
       routes.add(new Object[] {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"});
+    }
+    if (!IrcConfigEndpointsTest.registerViewServed()) {
+      routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"});
     }
     for (Object[] route : routes) {
       MvcResult result =
