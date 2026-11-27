@@ -11,6 +11,16 @@ lineage follows the fork's contract after every statement, in both write modes [
 production code changed. Two declared differences: Avro cannot be written in the Spark 3.5 itest JVM (harness
 classpath), and on the 1.5.2 line v2 position delete files accumulate.
 
+## State 2026-11-27 (resumed)
+
+- Merged origin/irc-integration 81b4cd4d: merge commit 47d20539 (pushed). Reran [ran]: 1.5.2 RowLevel x3
+  (17: 7 run, 10 skipped, 0 failed) + RestHttpPathWriteStatementsTest 19/0; 1.12 RowLevel x3 17/0,
+  RestHttpPathWriteStatementsTest 19/0, FormatV3SparkTest 7/0; 4.2 SparkIrcRowLevelStatementsTest 17/0,
+  SparkIrcWriteStatementsTest 19/0, SparkIrcFormatV3Test 8/0. check-test-groups: partition holds.
+- Draft pull request 151 opened; waiting for CI on 47d20539.
+- Behavior changes against the base: none, test sources only (spark-3.5 itest src/shared/smoke, src/test;
+  spark-4.2 itest src/service, src/smoke, src/test).
+
 ## State for a restart (paused 2026-11-25 by the owner's instruction)
 
 - Commits pushed: d3c35471 (3.5 tests + BaselineChecks extraction), e364a3c3 (4.2 runner, v3 smoke service),

@@ -1,0 +1,20 @@
+# Build on the owner's namespace stack (upstream 869, 870, 871) -- record
+
+## Bottom line
+In progress. Worktree /home/user/oh-ns, branch irc/build-on-owner-namespace-stack from origin/irc-integration 81b4cd4d.
+
+## Facts [ran]
+- Heads fetched 2026-11-27: 869 = 39f2324948bbb0a9c33ed5f110a98017d9e67486, 870 = e09a96252978e4e7154efc6e3572357db10ebb69, 871 = 464a220da77adffac18698c5c44df804ce9212d2 (unchanged since the scout).
+- LinkedIn main now c97c4c15. The three branches' merge base with main AND with irc-integration is bb8929e1; none contains c97c4c15. So the merge brings NO LinkedIn main commit beyond bb8929e1 (the brief's assumption that it does is not true today); upstream main commit contained after the merge: bb8929e1 (as before).
+
+## Log
+- [ran] f67e88a1 = merge of 869 (no conflict; the merge created by `git merge --no-ff` through the hook wrapper).
+- [ran] 770b8e85 = merge of 870. Conflict only in TablesServiceImpl.java import lines; resolved (both hunk-1 imports kept; hunk 2: this branch's set + Set + Collectors; BadRequestException/CommitFailedException/CommitStateUnknownException stay removed, unused). The pre-commit hook's `git stash --keep-index` dropped MERGE_HEAD; finished by hand with write-tree/commit-tree (parents f67e88a1, e09a9625), verified two parents. spotlessCheck run by hand afterwards: exit 0.
+- [ran] 32524fd2 = merge of 871, no conflict; hook dropped MERGE_HEAD again, finished by hand (parents 770b8e85, 464a220d).
+- [ran] Of the 61 files his stack changes vs bb8929e1, only 4 differ between HEAD and his 871 head, all by this branch's own earlier changes (OpenHouseCatalog 1.5, services/tables/build.gradle, MainApplicationConfig, TablesServiceImpl). No edit of his lines so far.
+- Attribution: the session system notice gives `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; used that instead of the brief's "Claude Fable 5.2".
+- [ran] Compile, no source change needed: `./gradlew compileJava compileTestJava` (default, 1.12) BUILD SUCCESSFUL; `-PicebergLinkedIn compileJava compileTestJava :services:tables:compileNamespaceIntegrationTestJava` BUILD SUCCESSFUL; default `:services:tables:compileNamespaceIntegrationTestJava` OK. His 1.5 client (OpenHouseCatalog) compiles against 1.12 unchanged.
+- [ran] His 15 test classes, both lines, identical results: PASSED HouseNamespaceDeadlineTest 3, HouseNamespaceRepositoryImplTest 10, IcebergNamespacesControllerTest 35, IcebergNamespacesH2Test 8 (namespaceIntegrationTest task), JdbcInitializationTest 2, NamespaceApiTransportTest 2, NamespaceCancellationTest 2, NamespaceMetadataTest 36, NamespaceTableIsolationTest 2, NamespacesControllerFailureTest 8, NamespacesServiceFailureTest 20, TablesServiceNamespaceTest 7; SKIPPED NamespaceMysqlWorkloadTest 2 (his own opt-in); FAILED locally NamespacesControllerTest 5 and NamespacesServiceTest 15: both extend LinkedIn main's HtsDatabaseTestBase (Testcontainers MySQL) and this container has no Docker daemon (IllegalStateException at DockerClientProviderStrategy). Environmental; left to CI.
+- [ran] 5be7b4dc: stand-in HouseNamespacesInMemoryRepository (fixtures, @Import + @Primary in SpringH2TestApplication) + its test (8 tests, written first) + NamespaceRoutesBoundaryTest (6 tests) + import of his NamespaceExceptionHandler into SpringH2TestApplication (without it his routes answered DuplicateCreationException as 500 native shape in the embedded service: found by the boundary test). Default line: 8/8 + 6/6 + IcebergRestRoutesBoundaryTest 5/5 pass. Pushed.
+- Finding [ran]: GET/DELETE /v1/databases/namespaces/tables and POST /v1/databases/namespaces/tables/properties (database literally named "namespaces", method no native route maps) now reach his controller (prefix "databases"); before, 405 [inferred for "before": the native pattern matched with another method]. Native-mapped methods keep their paths.
+- Finding [ran]: in the fixture's embedded service no token interceptor is configured by default (all routes unauthenticated); with the dummy interceptor configured, his routes run the native DummyTokenInterceptor, /iceberg routes the IcebergRestAuthenticationInterceptor.

@@ -1,8 +1,8 @@
 # Records: the agents' raw working records
 
-Bottom line: these 88 files (87 markdown records and one build log) are the raw, unedited records written by the
+Bottom line: these 92 files (91 markdown records and one build log) are the raw, unedited records written by the
 agents that did each piece of work, plus the ten files of the retroactive review of 2026-11-27 (the common brief and
-the nine reviewers' reports, `review-*.md`). They were copied byte for byte from the orchestrator's session directory
+the nine reviewers' reports, `review-*.md`), and the scout's report and the fix-forward work's brief and records of the same day. They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
 container. The line limit and wording rules of the notes do not apply to them, so they use abbreviations and other
 shorthand. Where they and a note disagree, the record and the merge commit message are closer to the source.
@@ -109,3 +109,7 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `review-jobs.md` | retroactive review | pull requests 130, 135, 137, 141, 143, 145 (125 excluded) | retroactive review, 2026-11-27 |
 | `review-build-deployables.md` | retroactive review | pull requests 87, 91, 97, 98, 105, 109, 110, 113, 114, 118, 122, 123, 136 | retroactive review, 2026-11-27 |
 | `review-ci-fixtures-tests.md` | retroactive review | pull requests 80, 81, 82, 83, 85, 90, 93, 104, 108, 111, 115, 133, 138, 140, 144, 146, 148, 150 | retroactive review, 2026-11-27 |
+| `fix-brief-common.md` | fix-forward work | the fix-forward pull requests of 2026-11-27 | the common brief every fix-forward agent works under (see `../86-review-findings-and-fix-forward.md`) |
+| `scout-namespace-and-prior-work.md` | scout of the owner's namespace line | upstream pull requests 869 to 871 and the earlier drafts on the fork | `../89-scout-namespace-and-prior-work-result.md` |
+| `authorize-first-on-rest-commits.md` | FF-01, FF-02, FF-03 | in flight (branch `irc/authorize-first-on-rest-commits`) | `../18-state.md` (in flight) |
+| `build-on-owner-namespace-stack.md` | merge of the owner's namespace stack | in flight (branch `irc/build-on-owner-namespace-stack`) | `../18-state.md` (in flight) |
