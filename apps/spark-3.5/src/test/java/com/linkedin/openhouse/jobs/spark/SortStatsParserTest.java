@@ -28,9 +28,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
- * Work item X11: what sort stats collection's {@code rewrite_data_files} call needs from the
- * session's SQL parser, on the session the apps tests use, compared with the session {@code
- * jobs.yaml} gives a production job.
+ * What sort stats collection's {@code rewrite_data_files} call needs from the session's SQL parser,
+ * on the session the apps tests use, compared with the session {@code jobs.yaml} gives a production
+ * job.
  *
  * <p>{@code rewrite_data_files} with {@code sort_order} parses the order through Iceberg's {@code
  * ExtendedParser.parseSortOrder(spark, order)} (RewriteDataFilesProcedure.checkAndApplyStrategy).
@@ -167,7 +167,7 @@ public class SortStatsParserTest extends OpenHouseSparkITest {
    * On a session configured exactly as jobs.yaml configures the job (no {@code spark_catalog}
    * pointing at OpenHouse), the job does not reach the rewrite on either line: its copy reads the
    * table through {@code spark_catalog}, Spark's built-in session catalog, which has no such table.
-   * The X6 and X11 job tests point {@code spark_catalog} at OpenHouse to get past it, as a
+   * The other sort stats job tests point {@code spark_catalog} at OpenHouse to get past it, as a
    * deployment that runs this job must.
    */
   @Test
@@ -200,51 +200,14 @@ public class SortStatsParserTest extends OpenHouseSparkITest {
   }
 
   /**
-   * Which rewrite the app runs on each line: where Iceberg's own parse works (1.12) the app's
-   * rewrite_data_files call, unchanged; on 1.5.2 the rewrite action with the order parsed by the
-   * Iceberg parser the app finds below OpenHouse's. Either way the order is the one Iceberg parses
-   * from {@code SORT_ORDER}: two fields, ascending, nulls last.
+   * The app's rewrite, the {@code rewrite_data_files} call it has always made, on a table of three
+   * data files. On Iceberg 1.12 one sorted data file replaces them in one {@code replace} snapshot,
+   * and the rows are unchanged. On LinkedIn's Iceberg 1.5.2 the call fails at parsing its sort
+   * order, as it always has on that line with the extensions in this order, and the table is
+   * untouched.
    */
   @Test
-  void theAppParsesItsSortOrderWithIcebergsParserOnEitherLine() throws Exception {
-    SparkSession spark = getSparkSession();
-    Assertions.assertEquals(SORT_ORDER, SortStatsCollectionSparkApp.SORT_ORDER);
-    Assertions.assertEquals(
-        FormatV3Tables.icebergCanWriteV3(),
-        SortStatsCollectionSparkApp.sessionParsesSortOrder(spark),
-        "the session's parse works on Iceberg 1.12 only");
-    ExtendedParser below =
-        SortStatsCollectionSparkApp.icebergParserBelow(spark.sessionState().sqlParser());
-    Assertions.assertNotNull(below);
-    Assertions.assertSame(parserChain(spark).get(1), below);
-    org.apache.iceberg.Schema schema =
-        new org.apache.iceberg.Schema(
-            org.apache.iceberg.types.Types.NestedField.optional(
-                1,
-                "header",
-                org.apache.iceberg.types.Types.StructType.of(
-                    org.apache.iceberg.types.Types.NestedField.optional(
-                        2, "memberId", org.apache.iceberg.types.Types.LongType.get()),
-                    org.apache.iceberg.types.Types.NestedField.optional(
-                        3, "time", org.apache.iceberg.types.Types.LongType.get()))));
-    org.apache.iceberg.SortOrder expected =
-        org.apache.iceberg.SortOrder.builderFor(schema)
-            .asc("header.memberId", org.apache.iceberg.NullOrder.NULLS_LAST)
-            .asc("header.time", org.apache.iceberg.NullOrder.NULLS_LAST)
-            .build();
-    Assertions.assertEquals(expected, SortStatsCollectionSparkApp.sortOrder(below, schema));
-    // A parser chain with no Iceberg parser in it gives none (the app then makes its old call).
-    Assertions.assertNull(
-        SortStatsCollectionSparkApp.icebergParserBelow(
-            parserChain(spark).get(parserChain(spark).size() - 1)));
-  }
-
-  /**
-   * The app's rewrite on the line's own path, on a table of three data files: one sorted data file
-   * replaces them in one {@code replace} snapshot, and the rows are unchanged.
-   */
-  @Test
-  void theAppsRewriteSortsTheTableOnEitherLine() throws Exception {
+  void theAppsRewriteSortsTheTableOnIceberg112AndFailsAsBeforeOn152() throws Exception {
     SparkSession spark = getSparkSession();
     String fqtn = DB + ".rewrite_sorted";
     String t = "openhouse." + fqtn;
@@ -273,7 +236,25 @@ public class SortStatsParserTest extends OpenHouseSparkITest {
             .map(Object::toString)
             .collect(java.util.stream.Collectors.toList());
     Assertions.assertEquals(3L, spark.sql("SELECT * FROM " + t + ".data_files").count());
+    Assertions.assertEquals(SORT_ORDER, SortStatsCollectionSparkApp.SORT_ORDER);
 
+    if (!FormatV3Tables.icebergCanWriteV3()) {
+      Exception e =
+          Assertions.assertThrows(
+              Exception.class, () -> SortStatsCollectionSparkApp.rewriteSorted(spark, fqtn));
+      Assertions.assertTrue(
+          String.valueOf(e.getMessage())
+              .contains("Cannot parse order: parser is not an Iceberg ExtendedParser"),
+          String.valueOf(e));
+      Assertions.assertEquals(3L, spark.sql("SELECT * FROM " + t + ".data_files").count());
+      Assertions.assertEquals(
+          before,
+          spark.sql("SELECT * FROM " + t + " ORDER BY id").collectAsList().stream()
+              .map(Object::toString)
+              .collect(java.util.stream.Collectors.toList()));
+      spark.sql("DROP TABLE IF EXISTS " + t);
+      return;
+    }
     SortStatsCollectionSparkApp.rewriteSorted(spark, fqtn);
 
     org.apache.iceberg.Table table = ops.getTable(fqtn);
