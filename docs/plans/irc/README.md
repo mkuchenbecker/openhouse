@@ -91,6 +91,7 @@ Each file is under 150 lines so it can be reviewed in one sitting.
 | `17-delegation.md` | Which kind of agent takes which work item, and the rule to commit under a shared lock | Claude |
 | `05-iceberg-patch-ledger.md` | Each LinkedIn Iceberg patch against Apache 1.12.0 | Delegated agent, spot-checked |
 | `07-seam-design.md` | Design note for the plugin seam | Delegated agent, not agreed |
+| `83-resume-checklist-and-plan.md` | Checklist and plan for resuming paused work, with what waits on the owner | Orchestrator |
 
 Suggested reading order for review: `03-inferred.md`, then `04-work.md`. A judgement rejected in the
 first changes the second.

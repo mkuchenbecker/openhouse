@@ -4,6 +4,7 @@ Paused: the owner paused all work on 2026-11-25 about 05:10 UTC. Nothing is runn
 `irc/x2-x3-v3-row-level`, pushed head `1892643c`, tests only; remaining: the final 1.5.2 run, the test-groups check, open
 the pull request, wait for CI) and W13, W14, N9 (only W13 read; a decision is needed before any change). The map of every
 artifact is `00-map.md`; the raw agent records are in `records/`.
+The plan for resuming (checklist, work list, what waits on the owner) is `83-resume-checklist-and-plan.md`.
 
 Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
 jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
@@ -99,9 +100,8 @@ reads each record below and the branch's log, and resumes from what they say.
 - Hazard: the build of the notes pull request had one red job on 2026-11-25 at head `b1c9d0f3` because Maven Central
   answered "429 Too Many Requests" while the job downloaded jars. A job that dies this way ran no test and is reported,
   not re-run; the post-merge builds on `irc-integration` afterwards were not affected.
-- Audit of the open work items: `74-work-table-audit.md` (62 open at the time; 14 closed by 2026-11-24 and ten since).
-  Read it before launching any small item.
-- The container restarted twice (2026-11-24 and 2026-11-25) with nothing lost: agents push after every commit and keep a record file.
+- Audit of the open work items: `74-work-table-audit.md` (62 open at the time). Read it before launching any small item.
+- The container restarted three times (2026-11-24, 2026-11-25 and 2026-11-27) with nothing lost each time: agents push after every commit and keep a record file.
 - The reports directory is `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports`.
 
 What comes next, after the work in flight:
