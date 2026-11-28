@@ -1007,9 +1007,12 @@ public class IrcWriteRoutesAuthTest {
       TableAuditEvent event = onlyAuditEvent("rw1");
       assertEquals(OperationType.UPDATE, event.getOperationType());
       assertEquals(OperationStatus.FAILED, event.getOperationStatus());
+      Mockito.clearInvocations(tableAuditHandler);
       result = IrcWrite.transaction(mvc, IrcWrite.change(DB, "rw1", commit));
       assertEquals(nativeMessage, assertIrcError(result, 403, "ForbiddenException").message());
       assertNoStoredIdIn(IrcHttp.body(result), stored);
+      // The one-table transaction's refusal is audited exactly as the commit's: one FAILED UPDATE.
+      assertEquals(event.toJson(), onlyAuditEvent("rw1").toJson());
     }
     stubDecision(true);
     TableMetadata after = IrcWrite.load(mvc, DB, "rw1");
