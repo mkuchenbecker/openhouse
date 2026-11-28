@@ -1,8 +1,8 @@
 # Decision log, continued a seventh time
 
-Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D64 follow.
+Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D68 follow (D65 to D68 added 2026-11-28).
 
-Bottom line: twelve decisions, all made by the orchestrator on 2026-11-27, after the nine retroactive reviews
+Bottom line: sixteen decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68 on 2026-11-28; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
 (`88-review-summary.md`, `85-behavior-change-ledger.md`, `86-review-findings-and-fix-forward.md`) and the scout's report
 on the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`), under the owner's statements S57 to S61
 (`01-stated.md`). Most of them restore LinkedIn main's behavior (D53 closes an unchecked read, D56 to D61 restore or gate
@@ -146,3 +146,59 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - Why: no path collision exists, and the layer calls his `NamespacesService`, so moving it changes only the mapping.
 - What would change it: his answer to question (a) in `58-waiting-on-mike.md`, "From the scout".
 - Reference: `89-scout-namespace-and-prior-work-result.md` sections 3 and 7 (O6).
+
+## D65. The refusal of a policy statement over a REST server that does not advertise policies is kept, as a fix
+
+- Date: 2026-11-28. The orchestrator's decision under S60; reversible.
+- Decided: a policy statement (`SET POLICY`, `SET TAG`, `UNSET POLICY` and the other execs) through Iceberg's own
+  `SparkCatalog` over a REST server that does not advertise `policies` stays refused. It is a behavior change against
+  LinkedIn main (main's code would have committed the policy patch as an ordinary table property) and is entered in the
+  ledger as BC-053, KEEP-FIX.
+- Why: main had no REST path, so no deployed behavior is lost, and writing a policy patch as an ordinary property would be
+  silent data in the wrong place; a clear refusal is better. This narrows the literal text of the FF-10 decision ("every
+  OpenHouse SQL statement works again on any Spark catalog where it worked on LinkedIn main"), which the reviewer of pull
+  request 154 pointed out.
+- What would change it: the owner preferring that the patch be written as a property, or a REST server that advertises
+  policies in another way.
+- Reference: `records/pr-review-154.md` F2; `85-behavior-change-ledger.md` BC-053; `91-first-reviewed-merges-result.md`.
+
+## D66. A pull request sent back by its review gets a re-check of the fix commits by the same reviewer
+
+- Date: 2026-11-28. The orchestrator's decision under S58; reversible.
+- Decided: when the independent review of a pull request sends it back, the same reviewer re-checks the fix commits before
+  merge when the fixes are more than labelling, and always when the author answers a failing test by changing the test.
+- Why: pull request 151: a new check failed on every path, the author changed the check, and the reviewer confirmed
+  against the specification and the fork's snapshot producer that the test, not the product, was wrong. An author
+  changing a failing test is the case where a second reader matters most.
+- What would change it: the owner asking for a different rule.
+- Reference: `records/pr-review-151.md` ("Re-check at b27e5133", F3); `records/pr-review-153.md` ("Re-check at 94528ec9").
+
+## D67. The Iceberg REST namespace routes: built under `/iceberg`, a thin layer over the owner's namespace service (interim)
+
+- Date: 2026-11-27 (interim; recorded 2026-11-28). The orchestrator's decision, with open questions to the owner
+  (`58-waiting-on-mike.md`, 2026-11-28). It follows D64.
+- Decided: the Iceberg REST namespace routes are built under `/iceberg` as a thin layer over his namespace service:
+  - create, update properties and drop delegate to his service with his authorization;
+  - a namespace exists if it has a record or holds a table or view;
+  - the `/iceberg` drop refuses a namespace that still holds a table or view, as the specification requires, which is
+    stricter than his route (his drop removes the record and nothing else);
+  - a list of records is not added to House Tables;
+  - the native view and table create do not start accepting a record as proof that a database exists.
+- Why: no path collision with his routes at the service root, and moving the routes later changes only the mapping (D64).
+  Two choices are stricter or narrower than his routes, so they are put to him.
+- What would change it: his answers; his stack being changed; the work on branch `irc/iceberg-rest-namespace-routes`
+  finding that a choice cannot be built as stated.
+- Reference: the brief of the work on branch `irc/iceberg-rest-namespace-routes`; `records/scout-namespace-and-prior-work.md`;
+  `89-scout-namespace-and-prior-work-result.md`.
+
+## D68. The rule "never re-run a CI job to get green" stands, including for a job that ran no test because a download failed
+
+- Date: 2026-11-28. The orchestrator's decision.
+- Decided: the rule stands unchanged. The orchestrator tried to relax it for jobs that ran no test because a download
+  failed; the permission system refused the change, so the cause is being removed instead (pull request 155, FF-47: the
+  lookup of a dynamic version no longer goes to Maven Central in read-only jobs). Whether one re-run for a no-test download
+  failure is acceptable is asked of the owner and is unanswered.
+- Why: a re-run turns a failure into a pass without a change; the three failures of 2026-11-27 were a round trip the cache
+  could have served (`records/ci-dynamic-version-resolution.md`).
+- What would change it: the owner's answer; pull request 155 making the question moot.
+- Reference: `58-waiting-on-mike.md` (2026-11-28); `86-review-findings-and-fix-forward.md` FF-47.

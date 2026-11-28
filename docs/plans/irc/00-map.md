@@ -1,9 +1,8 @@
 # Map of the artifacts
 
 Bottom line: yes, the work is reviewable by another agent. Every landed change is a merge commit on `irc-integration`
-(71 pull requests, 80 to 150) whose message holds the reasons, the evidence and the known gaps; the notes in this
-directory hold the decisions and the results; the raw agent records are now in `records/`. Two pieces of work are
-paused and described in section 6. Everything here was checked on 2026-11-25 against the repositories and GitHub,
+(74 pull requests, 80 to 154 and the namespace stack's 153, as of 2026-11-28) whose message holds the reasons, the evidence and the known gaps; the notes in this
+directory hold the decisions and the results; the raw agent records are now in `records/`. Section 6 describes what was paused on 2026-11-25; work resumed on 2026-11-27 and `18-state.md` is the current state. Everything here was checked on 2026-11-25 against the repositories and GitHub,
 except what is marked "[not checked]". Nothing is merged into either fork's main or into LinkedIn's repositories.
 
 ## 1. Read in this order
@@ -15,7 +14,7 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 5. Decisions, in order: `13-decisions.md` (D1 to D12), `16-decisions-continued.md` (D13 to D21),
    `22-decisions-continued-2.md` (D22 to D29), `37-decisions-continued-3.md` (D30 to D36),
    `51-decisions-continued-4.md` (D37 to D42), `56-decisions-continued-5.md` (D43 to D47),
-   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D64).
+   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D68).
 6. Work tables: `04-work.md`, `30-work-defaults.md`, `41-work-platforms-v3.md`, and `74-work-table-audit.md`.
 7. `45-merged-pull-requests.md`, then result files (`NN-...-result.md`) and `records/` as needed.
 8. The retroactive review of 2026-11-27: `88-review-summary.md` first, then `85-behavior-change-ledger.md` (the
@@ -25,12 +24,15 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 9. The owner's namespace line and the earlier drafts: `89-scout-namespace-and-prior-work-result.md` (summary of the scout's
    report `records/scout-namespace-and-prior-work.md`), and the decisions that follow it, `90-decisions-continued-7.md`.
    The brief the fix-forward agents work under is `records/fix-brief-common.md`.
+10. The first pull requests merged after an independent review (2026-11-28): `91-first-reviewed-merges-result.md`; the
+    reviewers' reports are `records/pr-review-*.md` and their common brief is `records/pr-review-brief-common.md`; the
+    ledger's parts D and E and the status at the top of `86-...` follow from them.
 
 ## 2. Where everything lives
 
-| Repository | Branch | What it is | Head (2026-11-25) | Part of this effort |
+| Repository | Branch | What it is | Head (2026-11-25; irc-integration 2026-11-28) | Part of this effort |
 | --- | --- | --- | --- | --- |
-| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `81b4cd4d` | yes |
+| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `bc0ff1e8` (2026-11-28; `81b4cd4d` on 2026-11-25) | yes |
 | openhouse | `claude/openhouse-rest-v3-planning-g42c0h` | these notes; draft pull request 79, open, never merged | this commit | yes |
 | openhouse | 72 `irc/...` branches | one per pull request, base `irc-integration` | various | yes |
 | openhouse | `irc/x2-x3-v3-row-level` | X2 and X3 tests, no pull request yet | `1892643c` | yes, paused |
@@ -54,21 +56,23 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 
 ## 3. The notes by kind
 
-`README.md` is the index with one row per file; do not read all 88 files in order.
+`README.md` is the index with one row per file; do not read every file in order.
 - Stated by the owner: `01-stated.md`. Requirements and inferences: `02-facts.md`, `03-inferred.md`.
 - Designs: `07`, `14`, `28`, `29`, `05` (patch ledger), `06` (smoke suite proposal), `24` (commit rule inventory).
-- Decisions: D1 to D52 in the seven files listed in section 1. Waiting on the owner: `58`.
+- Decisions: D1 to D68 in the eight files listed in section 1. Waiting on the owner: `58`.
 - Work tables: `04`, `30`, `41`; their audit: `74`. Merged list: `45`. State: `18`. Delegation rules: `17`.
 - Findings: `08`, `20`, `21` and the first-round results `09` to `12`.
 - Result files, one per merged group of work: `15`, `19`, `23`, `25`, `26`, `27`, `31` to `36`, `38` to `40`,
   `42` to `44`, `46` to `50`, `52` to `55`, `57`, `59` to `66`, `68` to `73`, `75` to `82`. File 60 and 70 are scouts.
-- The raw records: `records/` with its own `README.md`: record, work item, pull request, result file.
+- The raw records: `records/` with its own `README.md`: record, work item, pull request, result file. It now also holds the
+  pull request review reports (`pr-review-151.md`, `pr-review-152.md`, `pr-review-153.md`, `pr-review-154.md`) and the three
+  common briefs.
 - The retroactive review of 2026-11-27: the ledger `85`, the findings and fix-forward list `86`, the re-implementation
   guide `87` and the summary `88`; its records are `records/review-brief-common.md` and the nine `records/review-*.md`
   (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
   jobs, build-deployables, ci-fixtures-tests).
 - The scout of the owner's namespace line: `89-scout-namespace-and-prior-work-result.md`, its record
-  `records/scout-namespace-and-prior-work.md`; decisions D53 to D64 in `90-decisions-continued-7.md`.
+  `records/scout-namespace-and-prior-work.md`; decisions D53 to D68 in `90-decisions-continued-7.md`; the first reviewed merges: `91-first-reviewed-merges-result.md`.
 
 ## 4. The code on `irc-integration`, by area
 
@@ -103,9 +107,10 @@ to its merge commit message to the tests that message names. In records and resu
 [read] means read in code or logs, [inferred] means concluded without either; only [ran] was run. A suite counts only
 if it ran on the 1.12 line (D33). Post-merge results are read after each merge, not assumed.
 
-## 6. What is paused and its exact next step
+## 6. What was paused on 2026-11-25 (superseded)
 
-All work is paused by the owner since 2026-11-25 about 05:10 UTC. Nothing is running.
+Superseded: work resumed on 2026-11-27. X2 and X3 merged as pull request 151, W13 is done by pull request 154, and the post-merge
+build of 149 was read long ago; see `18-state.md`. What follows is the state of 2026-11-25. All work was paused by the owner since 2026-11-25 about 05:10 UTC. Nothing is running.
 - X2 with X3 (`records/x2-x3-v3-row-level.md`): branch `irc/x2-x3-v3-row-level`, head `1892643c`, tests only, pushed.
   They pass on the default build and found no defect. Remaining: the final run on the 1.5.2 reference line, the
   test-groups check (`python3 scripts/ci/check-test-groups.py`), open the pull request, wait for CI.

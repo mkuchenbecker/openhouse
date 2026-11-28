@@ -1,9 +1,9 @@
 # Merged pull requests
 
-Bottom line: 71 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 149, merge
-commit 81b4cd4d) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 74 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 153, merge
+commit bc0ff1e8; the last three, 154, 151 and 153, each merged after an independent review on 2026-11-28) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
-lines; the current state is there. Dated 2026-11-25.
+lines; the current state is there. Dated 2026-11-25, updated 2026-11-28.
 
 `irc-integration` in mkuchenbecker/openhouse is LinkedIn main (bb8929e1) plus these pull requests. Each is a
 merge commit whose message states why the change exists, the evidence, and the known gaps.
@@ -81,6 +81,9 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 148 | X16: the 409 that cost a compaction one file group was the H2 House Tables stand-in serving a stale row; H2 result reuse is off in the shared stand-in, no production code changed (`81-v17-x16-result.md`) | 886b660b48c753ae111c5b781178613d8dea6578 |
 | 150 | X18: H2 result reuse is off in the tables service tests' House Tables stand-in; every other embedded H2 in the tests listed as safe, test sources only (`82-v10-x18-result.md`) | cafcc9dac45d186c008cf63d502f9807397b01ec |
 | 149 | V10 (remainder): register-view served in place on the Iceberg 1.12 line, audited as a create by the caller; 406 on 1.5.2 (`82-v10-x18-result.md`, D52) | 81b4cd4d5dacfa796a29ee2b4176ab82261f7b09 |
+| 154 | FF-10, FF-14, FF-15, FF-16 (partly), W13: jobs and the Spark client back to LinkedIn main's behavior (scheduler files byte for byte main's, sort stats sends main's statements, no logging configuration in the apps jar, the capabilities module published and named in the thin runtime POM); review: merge as is, no finding that had to be fixed, one decision (D65) and unlisted changes added to the ledger (`91-first-reviewed-merges-result.md`, `records/pr-review-154.md`) | 7cf347d7dcc3a58f9217d3ec08e83335204d4706 |
+| 151 | X2, X3: row-level statements on format v3 keep one deletion vector per data file and row lineage on every Spark path; tests only; review: two rounds, the first found the key assertions could not fail (`91-...`, `records/pr-review-151.md`) | afe8d3c8fa16fc0a092618f2716c014e52d53d68 |
+| 153 | The owner's namespace stack (upstream 869, 870, 871) merged as three merge commits plus tests, D54; no `/iceberg` namespace routes yet; review: two rounds, the first found an incomplete behavior-change list and defects pinned as expected behavior (`91-...`, `records/pr-review-153.md`; ledger part D) | bc0ff1e842c564cadc24221b069ecf2a99cbd3de |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

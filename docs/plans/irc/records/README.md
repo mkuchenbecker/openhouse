@@ -115,7 +115,7 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `build-on-owner-namespace-stack.md` | merge of the owner's namespace stack, D54 | pull request 153 (merge `bc0ff1e8`) | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` part D |
 | `restore-jobs-and-client-behavior.md` | FF-10, FF-14, FF-15, FF-16, W13 | pull request 154 (merge `7cf347d7`) | `../91-first-reviewed-merges-result.md` |
 | `restore-native-service-behavior.md` | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40 | pull request 156, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
-| `ci-dynamic-version-resolution.md` | FF-41 (CI dependency resolution) | pull request 155, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `ci-dynamic-version-resolution.md` | FF-47 (CI dependency resolution) | pull request 155, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
 | `pr-review-brief-common.md` | independent review of one pull request before merge | the pull requests merged under the owner's standing order S58 | the common brief every pull request reviewer works under |
 | `pr-review-151.md` | review of pull request 151 (X2, X3) | pull request 151 | `../91-first-reviewed-merges-result.md` |
 | `pr-review-152.md` | review of pull request 152 (FF-01, FF-02, FF-03) | pull request 152, not merged | `../91-first-reviewed-merges-result.md` (What the reviews are finding) |

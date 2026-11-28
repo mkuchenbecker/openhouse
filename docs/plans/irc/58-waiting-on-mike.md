@@ -4,9 +4,64 @@ Bottom line: nothing blocks work, but the reviews of 2026-11-27 and the scout ad
 before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23, restructured 2026-11-27. Only
 `01-stated.md` carries Mike's authority.
 
-Order: the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
+Order: what was added on 2026-11-28 (the re-run question, what the review of his namespace stack observed, and two interim choices that are stricter or narrower than his routes), then the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
 questions, unchanged except where marked MOOT or partly settled. Each entry is a question for him, what happens meanwhile,
 and what each answer changes.
+
+## 2026-11-28
+
+Bottom line: three things for him. One is a question about CI (it may become moot), one is a list of what the independent
+review of pull request 153 observed in his namespace stack after it was merged (decision D54; his history is untouched and
+nothing in the list was changed by this effort), and one is the two places where the interim `/iceberg` namespace routes
+(D67) are stricter or narrower than his routes. Nothing blocks work.
+
+### (a) Re-running a CI job (D68)
+
+- Question: is one re-run acceptable for a CI job that ran no test because a download failed (for example `Repository maven
+  is disabled` or HTTP 429 from Maven Central)? Asked of him, unanswered. The orchestrator's rule is "never re-run a CI job
+  to get green"; it stands (D68).
+- Meanwhile: pull request 155 (FF-47, in review) removes the cause: read-only CI jobs take dynamic-version lookups from
+  the restored cache, and the cache writer downloads every configuration's files. If it merges and holds, the question is
+  moot. Evidence: `records/ci-dynamic-version-resolution.md`.
+
+### (b) Observed in your namespace stack (pull request 153, description section "Observed in the merged namespace stack"; `records/pr-review-153.md`)
+
+None of this was changed; the behaviors that look wrong are pinned in tests as known defects with their causes. Each is his
+to decide upstream.
+- Drop semantics disagree between 869, 870 and 871: the House Tables note says the public API rejects a drop while a table
+  or view occupies the namespace, the tables service drops the record and nothing else, and the 1.5 client maps DROP with a
+  400 to "namespace not empty"; nothing can produce that 400 (the DELETE has no body and the path variable is not validated).
+- Nothing resolves effective properties for tables, though the title of 871 says it does (his `NAMESPACES.md` disclaims it):
+  the only callers of the namespace repository are the four namespace methods of the tables service.
+- `{prefix}` is never validated, so `POST /v1/<anything>/namespaces` stores a record, and 16 measured requests that had no
+  handler (405 or 400 before) now answer from his controller, among them requests on a database named `namespaces`.
+- On Spark 3.5 with the 1.5.2 line: `USE`, `DESCRIBE NAMESPACE`, `ALTER NAMESPACE` and `DROP NAMESPACE` on a database that
+  holds tables but has no record answer `SCHEMA_NOT_FOUND`; `CREATE NAMESPACE` succeeds but `SHOW DATABASES` does not list it,
+  and it stores Spark's `owner`, `comment` and `location`; a `DROP NAMESPACE` of a database with a record and tables removes
+  the record and leaves the tables.
+- House Tables start-up creates `catalog_namespaces` with a collation only MySQL 8 has; with initialization off his DDL file
+  must be applied by hand. His deployment document omits the table, the DDL file, the MySQL 8 requirement and the second
+  namespace API (the read-only `/iceberg/v1/namespaces` next to his records-only routes); `docs/specs/catalog.md` and
+  `housetables.md` do not list his routes.
+- His own service test application (`SpringH2Application`) lacks his error advice in its component scan, the same gap this
+  effort fixed for the shared test fixtures.
+- `listNamespaces()` omits created namespaces; over the REST-shaped shim `removeProperties` answers false although the key is
+  removed.
+
+Ledger: part D of `85-behavior-change-ledger.md` (BC-044 to BC-052).
+
+### (c) Two interim choices of D67 that are stricter or narrower than his routes
+
+- The `/iceberg` drop refuses a namespace that still holds a table or view, as the Iceberg specification requires; his drop
+  removes the record and leaves the tables. Question: which should the `/iceberg` route follow, the specification (as built)
+  or his route?
+- Narrower than his routes: a list of records is not added to House Tables, and the native view and table create do not
+  start accepting a record as proof that a database exists, so a record he stores does not by itself make a database for
+  the native create. For `/iceberg` a namespace exists if it has a record or holds a table or view (wider than the
+  table-derived existence the routes had; his routes count the record alone). Question: should `/iceberg` list his records
+  (a House Tables list), and should his record count as a database for the native create?
+- Meanwhile: the interim as stated in D67, built on branch `irc/iceberg-rest-namespace-routes`; moving it later changes the
+  mapping, not the layer.
 
 ## Foundation questions from the reviews (2026-11-27)
 

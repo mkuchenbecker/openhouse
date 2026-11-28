@@ -1,39 +1,47 @@
 # Current state
 
-Bottom line (2026-11-27): the nine retroactive reviews are consolidated (`85-behavior-change-ledger.md`,
-`86-review-findings-and-fix-forward.md`, `87-clean-reimplementation-guide.md`, `88-review-summary.md`) and the scout has
-read the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`); the orchestrator decided D53 to D64
-(`90-decisions-continued-7.md`); fix-forward work is in flight and nothing from it is merged. Every pull request gets an
-independent review before merge (the owner's standing order, S58).
+Bottom line (2026-11-28): 74 pull requests are merged into `irc-integration` and its head is `bc0ff1e8`. Since the
+retroactive review of 2026-11-27 three pull requests have merged, each after an independent review (the owner's standing
+order, S58): 154 (jobs and the Spark client back to LinkedIn main's behavior, merge `7cf347d7`), 151 (X2 and X3, row-level
+statements on format v3, tests only, merge `afe8d3c8`) and 153 (the owner's namespace stack, D54, merge `bc0ff1e8`). What
+each left true, changed and left open is in `91-first-reviewed-merges-result.md`; the changes that came with his stack are
+ledger part D (BC-044 to BC-052) and those found by the review of 154 are part E (BC-053 to BC-055). Nothing is merged into
+either fork's main or into LinkedIn's or Apache's repositories.
 
-In flight now:
-- The authorization fix, branch `irc/authorize-first-on-rest-commits`: FF-01, FF-02, FF-03 (D53).
-- The merge of the owner's namespace stack (upstream pull requests 869, 870, 871), branch
-  `irc/build-on-owner-namespace-stack` (D54).
-- Two restore pull requests: `irc/restore-native-service-behavior` (FF-09, FF-12, FF-13, FF-18, FF-19, FF-40) and
-  `irc/restore-jobs-and-client-behavior` (FF-10, FF-14, FF-15, FF-16).
-- The X2 with X3 tests: draft pull request 151, awaiting its independent review.
+Post-merge CI, as read by the orchestrator on 2026-11-28: for 154, passed on both lines; for 151, running with nothing
+failed when last read at 01:21 UTC; for 153, not read. The pull request build of 153 ran before 154 and 151 landed, so the
+post-merge build is the first check of the combination. Nothing is known red; the combination is unchecked until that build
+is read.
+
+In flight now (pull requests are drafts until their independent review passes):
+- Pull request 152: authorization on the Iceberg REST commit and view routes (FF-01, FF-02, FF-03, D53), being reworked after
+  its review found a bypass through commits whose updates change nothing (`records/pr-review-152.md` F1).
+- Pull request 155: CI dependency resolution (FF-47), in review; read-only CI jobs take dynamic-version lookups from the
+  restored cache (`records/ci-dynamic-version-resolution.md`).
+- Pull request 156: restores of native service behavior (FF-09, FF-12, FF-13, FF-18, FF-19, FF-40), in review
+  (`records/restore-native-service-behavior.md`).
+- New work on branch `irc/iceberg-rest-namespace-routes`: the Iceberg REST namespace routes on the owner's service, built
+  under `/iceberg` as a thin layer (D67, with open questions to the owner).
 
 Next in the queue: scan planning off by default (FF-04, FF-06; D56); the baseline of LinkedIn main in CI (FF-20 to FF-24);
-the stand-in's fidelity (FF-32, FF-33); private ids out of user-facing messages (FF-34); then the Iceberg REST namespace
-routes on the owner's service (D64). Held and not started: W14 and N9; W13 is closed by D60 pending the pull request.
-Seven ledger rows and the scout's questions wait on the owner (`58-waiting-on-mike.md`).
+the stand-in's fidelity (FF-32, FF-33); private ids out of user-facing messages (FF-34, with FF-49); the 403-versus-503 fix
+on the Iceberg REST table routes (FF-48). Held and not started: W14 and N9. W13 is done by pull request 154, with no change
+on the wire. X2 and X3 are done (pull request 151). Seven ledger rows and the scout's questions wait on the owner, with the
+new items of 2026-11-28 (`58-waiting-on-mike.md`).
 
-Where things are: the retroactive reviews' reports and brief are in `records/review-*.md` and `records/review-brief-common.md`;
-the scout's report is `records/scout-namespace-and-prior-work.md`; the brief every fix-forward agent works under is
-`records/fix-brief-common.md`. Fixes start from `86-...`, section 3. The map of every artifact is `00-map.md`. The plan for
-resuming is `83-resume-checklist-and-plan.md`, and the owner's answer to the self review is the last section of
-`84-self-review.md`.
+Where things are: `records/` holds the authors' records and the reviewers' reports: the retroactive reviews
+(`records/review-*.md`, brief `records/review-brief-common.md`), the scout (`records/scout-namespace-and-prior-work.md`), the
+pull request reviews (`records/pr-review-*.md`, brief `records/pr-review-brief-common.md`) and the brief every fix-forward
+agent works under (`records/fix-brief-common.md`). Fixes start from `86-...`, section 3 (status at its top). The map of every
+artifact is `00-map.md`. The plan for resuming is `83-resume-checklist-and-plan.md`, and the owner's answer to the self
+review is the last section of `84-self-review.md`.
 
-Bottom line: the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the maintenance
-jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and dataloader
-checks pass in CI. Pull requests 121 and 124 to 150 are merged: 71 in all, and `irc-integration` is at `81b4cd4d`. The latest two are 150
-(X18: H2 result reuse off in the tables service's test stand-in) and 149 (the rest of V10: register-view is served on the
-Iceberg 1.12 line, in place, D52; `82-v10-x18-result.md`). The wider X2 and X3 scenarios on
-format v3 are in draft pull request 151, awaiting its independent review; of the small batch, W13 is closed by D60 pending its pull request, and W14 and N9 are open and not started. View rename stopped on D47. Nothing is merged into either fork's main
-or into LinkedIn's or Apache's repositories. Nothing is known red; post-merge CI passed on both lines for every merge up to
-and including 148 and for 150, and for 149 it was read at 07:30 UTC on 2026-11-25: 16 jobs completed, 15 success, 1 skipped by design, none failed. An audit of the open work items found 8 of 62 already true
-and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and ten more since). This is the single place for current state. Dated 2026-11-25.
+Bottom line (state of the product, last rewritten 2026-11-25; the review of 2026-11-27 and the merges of 2026-11-28 correct
+some of it, see below): the service is a nearly complete Iceberg REST Catalog server, Spark 4.2 works over it, and the
+maintenance jobs pass their whole suite on Spark 4.2 over it. Iceberg 1.12 is the default build, and the Spark image and
+dataloader checks pass in CI. View rename stopped on D47. An audit of the open work items found 8 of 62 already true and 8
+partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and ten more since). This is the single
+place for current state.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
   rename, and namespace create, alter and drop (OpenHouse has no such operations). The compatibility kit passes 42 of
@@ -46,7 +54,7 @@ and 8 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 
   stores. The OpenHouse catalog and the REST-shaped shim give 208 of 210 on 1.12 and 210 of 210 on 1.5.2 [ran]
   (`64-n1c-n7-result.md`, `77-t6-n10-result.md`). Grants are listed after GRANT and gone after REVOKE on every path.
 - Maintenance jobs: they pass their whole suite on Spark 4.2 over the REST catalog (395 tests, 0 failed, 5 skipped); the
-  Spark 3.5 jobs are unchanged (false by the review: BC-016 to BC-023 in `85-behavior-change-ledger.md`). Deploying them is Mike's (N12 to N15) (`73-n11-jobs-spark42-result.md`) [ran].
+  Spark 3.5 jobs are unchanged (false by the review: BC-016 to BC-023 in `85-behavior-change-ledger.md`; BC-019, 020, 021 and 023 restored by pull request 154). Deploying them is Mike's (N12 to N15) (`73-n11-jobs-spark42-result.md`) [ran].
 - Iceberg 1.12: the default build since pull request 118 (V9e, `54-v9e-flip-result.md`). LinkedIn's 1.5.2 line is the
   reference, selected with `-PicebergLinkedIn`.
 - Format v3: tables can be created and upgraded behind a switch that is off by default, and Spark's row-level writes

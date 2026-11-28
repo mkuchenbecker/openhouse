@@ -5,8 +5,8 @@ MINOR, of which 7 are inherited from LinkedIn main. The four new blockers are tw
 REST routes (an empty table commit returns the table's metadata; view load and list return view definitions with no
 check), LinkedIn's release workflow tagging and then publishing nothing, and the absence of any recorded baseline of
 LinkedIn main behind the claims that behavior is preserved. The inherited blocker is the native directory-reuse data
-loss (put to the owner as D35). The work list below has 45 pull-request-sized items (FF-01 to FF-46; FF-39 was folded
-into FF-35) in the order the orchestrator asked: authorization on new routes, then restores of native behavior on the reference line, then the evidence gap,
+loss (put to the owner as D35). The work list below has 49 pull-request-sized items (FF-01 to FF-50; FF-39 was folded
+into FF-35; FF-47 to FF-50 were added on 2026-11-28) in the order the orchestrator asked: authorization on new routes, then restores of native behavior on the reference line, then the evidence gap,
 then release and build, then the stand-in, then cruft, then the remaining defects. Four items are ready because the
 orchestrator already decided them (FF-01, FF-02, FF-09, FF-10); most others are ready because S60 decides them; nine
 wait on a decision (FF-25 only in part), and FF-03 waits on the scout reading the owner's earlier view decisions.
@@ -14,6 +14,28 @@ wait on a decision (FF-25 only in part), and FF-03 waits on the scout reading th
 Sources: `records/review-*.md` (reviewer ids as in `85-behavior-change-ledger.md`: CW, RR, VC, CS, FV, SP, JB, BD, CF).
 Ledger rows are `BC-NNN`, in `85-behavior-change-ledger.md`. "[checked by the consolidator]" means the statement was
 read in the code at `81b4cd4d` or at `bb8929e1` while writing this file. Certainty is the reviewer's own.
+
+## Status on 2026-11-28
+
+Bottom line: of the 49 items, three are done (FF-10, FF-14, FF-15, by pull request 154) and one is partly done (FF-16); ten
+are in review in three open pull requests (152, 155, 156); the rest are not started. Ids are stable; the work list in section 3 is unchanged except
+for the four items added at its end (FF-47 to FF-50). The independent review of each pull request is in `records/pr-review-*.md`
+and summarized in `91-first-reviewed-merges-result.md`.
+
+| Item | Status | Pull request, evidence |
+|---|---|---|
+| FF-10 | Done | Pull request 154, merge `7cf347d7` (2026-11-28). The reviewers showed the premise of the item wrong in effect: policy statements on a non-Iceberg wrapper catalog fail at planning on main too, so the resolver change cannot be reached from SQL (ledger BC-007 corrected). The refusal over a REST server that does not advertise policies stays, as a fix (D65, BC-053) |
+| FF-14 | Done | Pull request 154. Scheduler files are main's byte for byte; sort stats sends main's statements (BC-019, BC-020, BC-021, RF-046, RF-047; W13 is done with no change on the wire) |
+| FF-15 | Done | Pull request 154 (BC-023, RF-053). Side effect BC-054 (recipe and tests lose the INFO configuration); the CI jar check passes silently if `unzip` fails (FF-49) |
+| FF-16 | Partly done | Pull request 154: the capabilities module is published and the thin runtime's POM names it (BC-008 in part, BC-055). Remaining: the adapter's capability constant (still read by the opt-in seam), the Java runtime's compile dependency on the module (RF-021, deferred to FF-37), and a classpath acceptance test (a consumer of the thin jar plus the published Java runtime runs a GRANT without `NoClassDefFoundError`). `records/pr-review-154.md` finding F1. No test pins the POM dependency |
+| FF-01, FF-02, FF-03 | In review | Pull request 152. The first review found a remaining bypass (`records/pr-review-152.md` F1: a commit whose updates change nothing reads the table past the lock and read checks), being closed |
+| FF-09, FF-12, FF-13, FF-18, FF-19, FF-40 | In review | Pull request 156 (`records/restore-native-service-behavior.md`; all CI jobs green on `f2d7f6f6` as the author read them) |
+| FF-47 | In review | Pull request 155 (new item, below) |
+| FF-11 | Not started | One property for the whole Iceberg REST base; waits on the orchestrator's decision on its default |
+| FF-48, FF-49, FF-50 | Not started | New items, below |
+| every other item | Not started | |
+
+Work items closed with this: X2 and X3 (pull request 151, merge `afe8d3c8`), which are work items, not FF items.
 
 ## 1. Defects
 
@@ -409,6 +431,10 @@ the re-implementation (`87-clean-reimplementation-guide.md`).
 | FF-44 | `Operations` fails fast after `close()` instead of rebuilding a catalog | RF-050 | `Operations.java`, `OperationsCatalogTest` | FF-17 | New fix (no production caller after close) | `getTable` after `close()` throws | Ready (rule) |
 | FF-45 | CI test small fixes: the v3-types skip keyed on `IcebergLine`, not on any exception; the grant test model documented as the tests' own; optionally the kit failure listing kept | RF-067, RF-066 (doc), RF-068 | `TableStatsFormatV3TypesTest.java`, `GrantStoringAuthorization.java`, the workflows | none | None | A parse failure on the default line fails the test | Ready (rule) |
 | FF-46 | Inherited defects, each its own behavior-changing, gated change with its own justification: a base check on IRC replaces (RF-004), the retry cache's semantics after a failed write (RF-005, fault-injection test first), the native directory-reuse fix (RF-030), the soft-delete column width (RF-031, an upstream issue), sort stats on `jobs.yaml`'s session (RF-048), retention backups and deletes (RF-049) | RF-004, RF-005, RF-030, RF-031, RF-048, RF-049 | per defect | none | New fixes to main's behavior, each gated | per defect | Needs decisions: RF-004 and RF-005 the orchestrator's; RF-030 the owner's (D35); RF-048 the owner's (X17); RF-049 the owner's (D46); RF-031 an issue only |
+| FF-47 | CI dependency resolution: read-only CI jobs take dynamic-version lookups (the `[1.3.1,2.3]` range of `json-smart` through `nimbus-jose-jwt`, `mysql-connector-java:8.+`, the `log4j-core` and `logback-core` ranges) from the restored Gradle cache instead of a Maven Central round trip, by an init script that sets `cacheDynamicVersionsFor` to 20 days (a longer value overflows an int of milliseconds at 24.8 days and makes every lookup stale); the cache writer downloads every configuration's files (`ciResolveDependencies`, `scripts/ci/resolve-all-dependencies.gradle`); the same step for the dataloader integration job | CI failures of three jobs on 2026-11-27 (`Repository maven is disabled`, 429) | `scripts/ci/`, the init script, `.github/workflows` (split build, dataloader tests) | none | None for the product; CI only | Resolution identity on both lines (14 dependency reports and every resolvable configuration identical, probed); the pull request's run shows 0 maven-metadata requests in every read-only job (2 without the script) | Pull request 155 in review; cause and evidence in `records/ci-dynamic-version-resolution.md`. Known remainder: one request per reader job for the Spring Boot plugin marker of `libs/optimizer/*` (a missing artifact Gradle caches for 24 hours; not fixable by a public setting) |
+| FF-48 | The `/iceberg` table routes answer 403 where the view routes and the native routes answer 503 when the authorization service itself fails: in `IcebergRestErrors.toError` test `AuthorizationServiceException` (a subclass of `AccessDeniedException`) before `AccessDeniedException`; a test per route family | review of pull request 152, F3 (`records/pr-review-152.md`); inherited by the new early decisions | `api/irc/IcebergRestErrors.java`, route tests | FF-01 | New fix on new routes; fails closed today | An authorization backend that throws `AuthorizationServiceException` gets 503 on table load, commit, transaction and empty commit (403 today) | Not started |
+| FF-49 | Private ids out of two build files (`integrations/java/openhouse-catalog-capabilities/build.gradle:1` "(decision D23)", `apps/spark-3.5/build.gradle:77-78` "work item X5"; the test file `FormatV3MaintenanceTest` also names X6, X9, X10, X12); the CI check that the apps jar has no `log4j2.properties` fails when `unzip` fails (write `unzip -Z1 "$jar" > entries.txt` first, then `grep -qx`); the capabilities module's comment says that publishing makes its API public and that the artifact's content depends on the Iceberg line | review of pull request 154, F5, F8, F9, F1 (comment) | the two build files, `.github/actions/default-build-deployables/action.yml` | none | None | The check step fails with a missing or unreadable jar | Not started; merges with FF-34 where the files overlap |
+| FF-50 | The namespace stack's follow-up in this repository: the delta-harness expectations for the 1.5.2 line (`NegativeDdlScenarios.scala:231-241`, `SurfaceScenarios.scala:36-37`; the three cases that now fail, and the leftover `a_new_db` and `nope_ns` records on a second run); `DEPLOY.md` for the new table, the DDL, the MySQL 8 requirement and the second namespace API; the 405-versus-handler cases of the route boundary test if the prefix is ever validated | review of pull request 153, F5, F6 (`records/pr-review-153.md`) | `integrations/spark/delta-harness/`, `services/tables/DEPLOY.md` | none | None | The harness run on the 1.5.2 line passes; `DEPLOY.md` names the table | Not started. His own files (`NAMESPACES.md`, `docs/specs/catalog.md`, `housetables.md`) are put to him, not edited (`58-waiting-on-mike.md`) |
 
 FF-39 was folded into FF-35 while writing; the id is kept so later references do not shift.
 
