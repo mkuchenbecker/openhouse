@@ -276,9 +276,9 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
 
   /**
    * The baseline is Spark 3.5 with the OpenHouse catalog on Iceberg 1.5.2. On the Iceberg 1.12
-   * line, every path differs from it on the message of two refused namespace statements; with the
-   * owner's namespace stack the legacy and rest-shim paths differ on the namespace statements
-   * ({@link #namespaceRecords()}); nothing else differs on those two paths.
+   * line, the legacy and rest-shim paths differ from it on the message of four refused namespace
+   * statements; with stored namespace records they differ on the namespace statements ({@link
+   * #namespaceRecords()}); nothing else differs on those two paths.
    */
   @Override
   protected List<Difference> differences() {
@@ -330,27 +330,42 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(fails(UNSUPPORTED, "Checking if database exists is not supported"))
             .because(ICEBERG_112, why));
+    for (String use : new String[] {"s19:USE openhouse.smoke_t1_new_ns", "s24:USE " + CAT_DB}) {
+      differences.add(
+          Difference.on(use.substring(0, 3), use.substring(4))
+              .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+              .here(fails(UNSUPPORTED, "Checking if database exists is not supported"))
+              .because(ICEBERG_112, why));
+    }
     return Collections.unmodifiableList(differences);
   }
 
-  /** The category of a difference the owner's namespace stack (upstream 869 to 871) makes. */
-  protected static final String NAMESPACE_RECORDS = "(d) namespace records, upstream 869-871";
+  /** The category of a difference that stored namespace records make. */
+  protected static final String NAMESPACE_RECORDS = "(d) stored namespace records";
 
   /**
-   * The baseline is LinkedIn main's OpenHouse catalog, which refuses every namespace statement.
-   * With the owner's in-flight namespace stack merged (upstream 869 to 871), the OpenHouse catalog
-   * implements SupportsNamespaces over a namespace record kept apart from tables: loading a
-   * namespace with no record (any database that only holds tables, as {@value #DB} here) is
-   * NoSuchNamespaceException, which Spark answers as SCHEMA_NOT_FOUND, and a create of a new name
-   * stores a record (not listed by SHOW DATABASES, which stays table-derived). Where Iceberg 1.12's
-   * SparkCatalog first calls namespaceExists, still refused, the D14b difference stands instead
-   * (CREATE and DROP NAMESPACE on 1.12).
+   * The baseline OpenHouse catalog refuses every namespace statement. This catalog implements
+   * SupportsNamespaces over namespace records that the tables service stores apart from tables
+   * ({@code /v1/{prefix}/namespaces}): loading a namespace with no record, which is every database
+   * that only holds tables (as {@value #DB} here), is NoSuchNamespaceException, which Spark answers
+   * as SCHEMA_NOT_FOUND; a create of a new name stores a record. Where Iceberg 1.12's SparkCatalog
+   * first calls namespaceExists, still refused, the D14b difference stands instead (CREATE, DROP
+   * and USE on 1.12).
+   *
+   * <p>These answers hold where House Tables stores namespace records (a JDBC store with the {@code
+   * catalog_namespaces} table), as in this suite's embedded service. Without that table, or on the
+   * Iceberg-backed House Tables, every one of these statements fails with the catalog's
+   * RESTException "Namespace operation failed" instead.
+   *
+   * <p>Three of them are known defects, marked KNOWN DEFECT in their reason: a database that holds
+   * tables is reported missing (DESCRIBE, ALTER, DROP and USE of {@value #DB}), and the namespace
+   * CREATE stores is not listed by SHOW DATABASES, whose list comes from tables only.
    */
   protected static List<Difference> namespaceRecords() {
-    String why =
-        "Upstream 871: OpenHouseCatalog loads, creates, updates and drops the namespace record of"
-            + " upstream 870's /v1/{prefix}/namespaces routes; a database that only holds tables"
-            + " has no record, so Spark finds no schema.";
+    String noRecordDefect =
+        "KNOWN DEFECT: existence is the namespace record alone. OpenHouseCatalog loads the record"
+            + " through /v1/{prefix}/namespaces; a database that only holds tables has none, so"
+            + " the load is a 404 and Spark reports the schema missing although it holds tables.";
     Expectation noRecord =
         fails(
             "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
@@ -363,24 +378,41 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
               .here(succeeds())
               .because(
                   NAMESPACE_RECORDS,
-                  "Upstream 871: Spark's default existence check loads the namespace (404: none),"
-                      + " then the catalog creates the record. SHOW DATABASES does not list it."));
+                  "Spark's default existence check loads the namespace (404: no record), then the"
+                      + " catalog stores a record. KNOWN DEFECT: the namespace is then not listed"
+                      + " (SHOW DATABASES, listNamespaces), whose list comes from tables only."));
+      differences.add(
+          Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
+              .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+              .here(succeeds())
+              .because(
+                  NAMESPACE_RECORDS,
+                  "Spark's existence check loads the record CREATE NAMESPACE stored, so USE"
+                      + " succeeds."));
       differences.add(
           Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
               .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
               .here(noRecord)
-              .because(NAMESPACE_RECORDS, why));
+              .because(NAMESPACE_RECORDS, noRecordDefect));
+      differences.add(
+          Difference.on("s24", "USE " + CAT_DB)
+              .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+              .here(
+                  fails(
+                      "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+                      "[SCHEMA_NOT_FOUND] The schema `openhouse`.`" + DB + "` cannot be found."))
+              .because(NAMESPACE_RECORDS, noRecordDefect));
     }
     differences.add(
         Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(noRecord)
-            .because(NAMESPACE_RECORDS, why));
+            .because(NAMESPACE_RECORDS, noRecordDefect));
     differences.add(
         Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
             .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
             .here(noRecord)
-            .because(NAMESPACE_RECORDS, why));
+            .because(NAMESPACE_RECORDS, noRecordDefect));
     return Collections.unmodifiableList(differences);
   }
 

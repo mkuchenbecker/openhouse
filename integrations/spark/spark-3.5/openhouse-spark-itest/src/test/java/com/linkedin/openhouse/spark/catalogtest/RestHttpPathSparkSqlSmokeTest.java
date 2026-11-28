@@ -110,6 +110,26 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
                 NAMESPACE_OR_SHOW,
                 "Accepted in D37 for Spark 4.2: the IRC namespace list answers an empty list under"
                     + " an existing database; OpenHouseCatalog refused in the engine."));
+    // ---- s19, s24: USE, whose existence check the IRC routes answer from tables.
+    differences.add(
+        Difference.on("s24", "USE " + CAT_DB)
+            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+            .here(succeeds())
+            .because(
+                NAMESPACE_OR_SHOW,
+                "The IRC namespace route answers for a database that has tables, so the existence"
+                    + " check passes; OpenHouseCatalog refused it in the engine."));
+    differences.add(
+        Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
+            .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+            .here(
+                fails(
+                    "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+                    "[SCHEMA_NOT_FOUND] The schema `openhouse`.`smoke_t1_new_ns` cannot be found."))
+            .because(
+                NAMESPACE_OR_SHOW,
+                "Decision D20 refuses CREATE NAMESPACE over IRC, so the namespace does not exist;"
+                    + " OpenHouseCatalog refused the existence check in the engine."));
     // ---- s25: SHOW TABLES without a database. Still refused, by Iceberg's RESTCatalog.
     String noDatabase =
         "DatabaseId was not provided, for SQL please run \"SHOW TABLES IN <databaseId>\" instead";
