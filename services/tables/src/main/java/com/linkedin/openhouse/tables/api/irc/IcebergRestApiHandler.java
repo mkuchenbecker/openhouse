@@ -505,14 +505,17 @@ public class IcebergRestApiHandler {
   /**
    * Whether {@code databaseId}, which holds no table, exists by the rest of the existence rule: it
    * has a stored record the caller may read ({@link #readRecord}), or the database list shows it.
-   * The rule {@link #loadNamespace} applies when the record cannot be read applies here too:
+   * When the record cannot be read, the two kinds of failure are answered differently:
    *
    * <ul>
    *   <li>When the authorization service fails, whether there is a record cannot be known, so a
    *       namespace the database list does not show has no answer but that failure (503), never
-   *       "does not exist"; one the list shows exists, as before records existed.
-   *   <li>When the namespace store fails, the failure counts as no record (logged), so a namespace
-   *       that holds a view is answered as before records existed.
+   *       "does not exist"; one the list shows exists, as before records existed. This is the rule
+   *       {@link #loadNamespace} applies to every failure.
+   *   <li>When the namespace store fails, the failure counts as no record (logged), and the
+   *       database list alone decides. Here the two differ: a namespace that has only a record
+   *       answers "does not exist" (404) on these checks while its load answers the store's failure
+   *       (500).
    * </ul>
    *
    * A caller refused the read privilege on the record is answered as if there were none, as {@link
