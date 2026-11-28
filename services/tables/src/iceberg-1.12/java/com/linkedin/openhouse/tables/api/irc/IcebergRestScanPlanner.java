@@ -57,11 +57,10 @@ import org.apache.iceberg.types.Types;
  * this server does not list, so the client never calls it) and to name the plan when credentials
  * come with it (this server sends none).
  *
- * <p>One plan is bounded (work item V11c): it holds at most a configured number of file scan tasks,
- * and a scan that plans more is answered {@code failed} ({@link #plan}). The bound is on what one
- * request makes the service hold; the time one plan may take, and how many run at once, are bounded
- * where the route runs it ({@link IcebergRestBoundedPlans}): planning stops when its thread is
- * interrupted.
+ * <p>One plan is bounded: it holds at most a configured number of file scan tasks, and a scan that
+ * plans more is answered {@code failed} ({@link #plan}). The bound is on what one request makes the
+ * service hold; the time one plan may take, and how many run at once, are bounded where the route
+ * runs it ({@link IcebergRestBoundedPlans}): planning stops when its thread is interrupted.
  */
 final class IcebergRestScanPlanner {
 
@@ -69,8 +68,8 @@ final class IcebergRestScanPlanner {
 
   /**
    * The bound on file scan tasks in one plan when the cluster property sets none (its default in
-   * {@code ClusterProperties}). See the V11c measurement: on the local test fixture, a plan of
-   * 10,000 tasks answered 2.8 MB and the heap's high-water mark while writing it was about 25 MB.
+   * {@code ClusterProperties}). Measured on the local test fixture: a plan of 10,000 tasks answered
+   * 2.8 MB and the heap's high-water mark while writing it was about 25 MB.
    */
   static final int DEFAULT_MAX_FILE_SCAN_TASKS = 10_000;
 

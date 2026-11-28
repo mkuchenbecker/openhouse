@@ -87,9 +87,9 @@ public class IrcConfigEndpointsTest {
   /**
    * What this service serves on the Iceberg 1.12 line (the default build) with scan planning on
    * ({@code cluster.tables.irc.scan-planning.enabled}): the routes above, and the scan planning
-   * route (synchronous, D44), the credentials route (an empty list, D45) and the view register
-   * route (in place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2 reference line has
-   * no classes for (IrcPlanCredentialsRoutesTest).
+   * route (synchronous), the credentials route (an empty list) and the view register route (in
+   * place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2 reference line has no classes
+   * for (IrcPlanCredentialsRoutesTest).
    */
   static final List<String> SERVED_ON_ICEBERG_1_12 =
       Arrays.asList(

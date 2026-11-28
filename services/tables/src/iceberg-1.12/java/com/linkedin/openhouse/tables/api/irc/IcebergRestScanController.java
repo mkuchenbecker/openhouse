@@ -31,8 +31,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * The IRC routes that act on what a table load gives a client: scan planning (decision D44) and
- * storage credentials (decision D45). Each runs exactly the checks of a table load ({@link
+ * The IRC routes that act on what a table load gives a client: scan planning and storage
+ * credentials. Each runs exactly the checks of a table load ({@link
  * IcebergRestApiHandler#loadIcebergTable}), so a caller that cannot load a table cannot plan it or
  * ask for its credentials, and gets the load's status and message.
  *
@@ -82,8 +82,8 @@ public class IcebergRestScanController {
   private static final String V1 = IcebergRestCatalogController.BASE_PATH + "/v1";
 
   /**
-   * The cluster property bounding the file scan tasks of one plan (work item V11c). A scan that
-   * plans more is answered {@code failed}. Not set means {@link
+   * The cluster property bounding the file scan tasks of one plan. A scan that plans more is
+   * answered {@code failed}. Not set means {@link
    * IcebergRestScanPlanner#DEFAULT_MAX_FILE_SCAN_TASKS}; it must be positive.
    */
   static final String MAX_FILE_SCAN_TASKS = "cluster.tables.irc.scan-planning.max-file-scan-tasks";
