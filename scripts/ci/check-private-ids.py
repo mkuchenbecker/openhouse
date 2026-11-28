@@ -8,23 +8,28 @@ of this fork by number ("pull request 154", "#154") tells a reader outside the e
 nothing. Test data named after an id ("x6maint", "n16.fresh") is reported too.
 
 Scans every file git tracks, tests and documentation included (test names, assertion messages and
-the build's documents are read by every developer and reviewer). One directory is skipped: the
+the build's documents are read by every developer and reviewer). Two directories are skipped. The
 Spark delta harness, a standalone tool that no CI workflow and no project of settings.gradle
 builds, whose scenario and finding labels are partly local to each file and partly refer to
-documents that are not in this repository; it is left as it is until its future is decided. A
+documents that are not in this repository; it is left as it is until its future is decided. And
+docs/plans/, the planning notes themselves: they live on a branch of their own that is never
+merged, are private planning by definition and are where these ids are defined, so a draft pull
+request that only makes them linkable would otherwise fail this check on its merge ref. A
 comment wrapped over two lines is matched joined, so "work" at the end of one line and "item V1"
 at the start of the next is found. A match that is not such an id (a constant named F1, test data,
 a linter code) is listed in scripts/ci/private-ids-allowed.txt, one per line, as
 `<path> | <id> | <the line, trimmed>`, or with `*` for the line to allow that id on any line of
 that file (only for ids that cannot also be a planning id there). The whole tree is scanned, not a
 diff, so the check needs no git history and works on any base; the allow-list holds the base's own
-matches.
+matches, and an entry that matches nothing any more fails the check too, so the list cannot keep
+entries for lines that are gone.
 
   check-private-ids.py [--list | --self-test]
 
 Run from the root of the checkout. `--list` prints every match in the allow-list's format,
-allowed or not, and exits 0. `--self-test` checks the patterns on fixed examples. Exits 1 when a
-match is not in the allow-list.
+allowed or not, and exits 0. `--self-test` checks the patterns, the skipped directories and the
+allow-list rules on fixed examples. Exits 1 when a match is not in the allow-list or an entry of
+the allow-list matches nothing.
 """
 import os
 import re
@@ -33,15 +38,19 @@ import sys
 
 ALLOWED = os.path.join("scripts", "ci", "private-ids-allowed.txt")
 SKIPPED_FILES = {ALLOWED, os.path.join("scripts", "ci", "check-private-ids.py")}
-SKIPPED_DIRS = ("integrations/spark/delta-harness/",)
+SKIPPED_DIRS = ("integrations/spark/delta-harness/", "docs/plans/")
 
 # An id is a capital letter of the planning list's series followed by a number, optionally a
 # lower-case suffix and a hyphenated part (X5, V11e, D14b, C2-3, N3-x1, N1-c), standing alone: not
 # inside a word (FormatV3Types), a path or a version (v1, 1.5.2); a stated requirement is S and
-# two or more digits (S47; S3 alone is Amazon's). V0 to V3 alone are also names of Iceberg format
-# and API versions and of constants here; they count only alone in parentheses, "(V2)", or after
-# words that cite an item ("work item V1", "since V2").
-ID = r"(?:[CDFIJNPTUVWX]\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?|S\d{2,3}|(?:RF|FF|BC)-\d{1,3})"
+# two or more digits (S47; S3 alone is Amazon's), and H any number but 2 (H2 is the database the
+# tests run on). V0 to V3 alone are also names of Iceberg format and API versions and of constants
+# here; they count only alone in parentheses, "(V2)", at the start of a parenthesis that goes on,
+# "(V2; ...", or after words that cite an item ("work item V1", "since V2").
+ID = (
+    r"(?:[BCDEFGIJNOPRTUVWX]\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?|H(?!2(?!\d))\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?"
+    r"|S\d{2,3}|(?:RF|FF|BC)-\d{1,3})"
+)
 PATTERNS = [
     re.compile(r"(?<![\w$.\-/#])" + ID + r"(?![\w])"),
     re.compile(r"\bwork items?\b", re.IGNORECASE),
@@ -68,7 +77,7 @@ def matches(line):
             token = m.group(0)
             if FORMAT_VERSION.fullmatch(token):
                 before, after = line[: m.start()], line[m.end():]
-                if not (before.endswith("(") and after.startswith(")")) and not CITING.search(
+                if not (before.endswith("(") and after.startswith((")", ";"))) and not CITING.search(
                     before
                 ):
                     continue
@@ -100,6 +109,13 @@ def self_test():
         ('"n16.fresh"', None),
         ("(decision D7)", None),
         ("S47 says", None),
+        ("(V2; the route", None),
+        ("as B3 said", None),
+        ("E4 decided", None),
+        ("see G1", None),
+        ("the H7 harness", None),
+        ("(O2)", None),
+        ("R12 says", None),
     ]
     not_found = [
         "FormatV3Types.checkOnV3",
@@ -111,6 +127,7 @@ def self_test():
         "ImmutableMap.of(V3, true)",
         "pull request 12 of the Iceberg fork",
         "color: #fff",
+        "an H2 database",
     ]
     failed = 0
     for line, following in found:
@@ -122,16 +139,54 @@ def self_test():
         if matches(line):
             print("self-test: wrongly found %s in %r" % (matches(line), line))
             failed += 1
+    for path, expected in [
+        ("integrations/spark/delta-harness/run.sh", True),
+        ("docs/plans/irc/notes.md", True),
+        ("docs/development/iceberg-fork.md", False),
+        ("services/docs/plans/x.java", False),
+    ]:
+        if skipped(path) != expected:
+            print("self-test: %s skipped %s, expected %s" % (path, skipped(path), expected))
+            failed += 1
+    lines = {"a.java": ["// as D7 said", 'String db = "x6maint";'], "b.java": ["// as D7 said"]}
+    allowed = {("a.java", "D7", "// as D7 said"), ("b.java", "D7", "*"), ("gone.java", "D7", "*")}
+    refused, unused = scan(lines, allowed)
+    if refused != ['a.java:2: x6: String db = "x6maint";']:
+        print("self-test: refused %r" % refused)
+        failed += 1
+    if unused != [("gone.java", "D7", "*")]:
+        print("self-test: unused entries %r" % unused)
+        failed += 1
     print("self-test: %d failure(s)" % failed)
     return 1 if failed else 0
+
+
+def skipped(path):
+    return path in SKIPPED_FILES or path.startswith(SKIPPED_DIRS)
+
+
+def scan(lines_by_path, allowed, listing=None):
+    """The refused lines, and the allow-list entries that matched nothing, sorted."""
+    seen = set()
+    refused = []
+    for path, lines in lines_by_path.items():
+        for number, line in enumerate(lines, 1):
+            following = lines[number] if number < len(lines) else ""
+            for token in matches(line) + wrapped(line, following):
+                key = (path, token, line.strip())
+                anywhere = (path, token, "*")
+                seen.add(anywhere if anywhere in allowed else key)
+                if listing is not None:
+                    listing.append(" | ".join(key))
+                elif key not in allowed and anywhere not in allowed:
+                    refused.append("%s:%d: %s: %s" % (path, number, token, line.strip()))
+    return refused, sorted(allowed - seen)
 
 
 def tracked_files():
     out = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout
     for path in out.decode("utf-8").split("\0"):
-        if not path or path in SKIPPED_FILES:
-            continue
-        if path.startswith(SKIPPED_DIRS) or not os.path.isfile(path):
+        if not path or skipped(path) or not os.path.isfile(path):
             continue
         yield path
 
@@ -149,30 +204,21 @@ def read_allowed():
 def main(argv):
     if "--self-test" in argv:
         return self_test()
-    listing = "--list" in argv
-    allowed = set() if listing else read_allowed()
-    seen = set()
-    refused = []
+    listing = [] if "--list" in argv else None
+    allowed = set() if listing is not None else read_allowed()
+    lines_by_path = {}
     for path in tracked_files():
         try:
             with open(path, encoding="utf-8") as f:
-                lines = f.read().splitlines()
+                lines_by_path[path] = f.read().splitlines()
         except UnicodeDecodeError:
             continue
-        for number, line in enumerate(lines, 1):
-            following = lines[number] if number < len(lines) else ""
-            for token in matches(line) + wrapped(line, following):
-                key = (path, token, line.strip())
-                anywhere = (path, token, "*")
-                seen.add(anywhere if anywhere in allowed else key)
-                if listing:
-                    print(" | ".join(key))
-                elif key not in allowed and anywhere not in allowed:
-                    refused.append("%s:%d: %s: %s" % (path, number, token, line.strip()))
-    if listing:
+    refused, unused = scan(lines_by_path, allowed, listing)
+    if listing is not None:
+        print("\n".join(listing))
         return 0
-    for key in sorted(allowed - seen):
-        print("note: allow-list entry matches nothing now: %s" % " | ".join(key))
+    for key in unused:
+        print("allow-list entry matches nothing (remove it): %s" % " | ".join(key))
     if refused:
         print("Lines that cite a private planning id (say what it means in words instead):")
         print("\n".join(refused))
@@ -180,6 +226,9 @@ def main(argv):
             "%d line(s). A match that is not such an id goes in %s as `<path> | <id> | <line>`."
             % (len(refused), ALLOWED)
         )
+        return 1
+    if unused:
+        print("%d allow-list entr(ies) in %s match nothing." % (len(unused), ALLOWED))
         return 1
     print("No private planning ids outside %s." % ALLOWED)
     return 0
