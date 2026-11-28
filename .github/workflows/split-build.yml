@@ -147,13 +147,31 @@ jobs:
       # and is not part of the job's verdict (so the step's conclusion is always success: its log's
       # BUILD line and per-project lines tell); the time limit keeps a stalled download from holding
       # the job (and the post-merge run) open. Not when the build did not run (the fork failed).
+      # A request Central keeps refusing past Gradle's retries disables Central for the rest of the
+      # command, and every file still missing then fails, so the cache saved is as incomplete as
+      # before: when failures are left, the task runs once more, a minute later, in a new command,
+      # and what still fails is a warning on the run.
       - name: Fetch every configuration's files into the Gradle cache
         if: ${{ !cancelled() && env.GRADLE_CACHE_WRITER == 'true' && steps.suites.outcome != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 10
         env:
           LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
-        run: ./gradlew $LINE_FLAG -I scripts/ci/resolve-all-dependencies.gradle ciResolveDependencies
+          CI_RESOLVE_FAILURES: ${{ runner.temp }}/ci-resolve-failures
+        run: |
+          fetch() { ./gradlew $LINE_FLAG -I scripts/ci/resolve-all-dependencies.gradle ciResolveDependencies || true; }
+          fetch
+          failures="$(cat "$CI_RESOLVE_FAILURES" 2>/dev/null || echo unknown)"
+          if [ "$failures" != 0 ]; then
+            echo "Fetch left $failures failures; once more in 60 s"
+            sleep 60
+            fetch
+            failures="$(cat "$CI_RESOLVE_FAILURES" 2>/dev/null || echo unknown)"
+          fi
+          echo "Fetch failures left: $failures"
+          if [ "$failures" != 0 ]; then
+            echo "::warning::The writer's fetch left $failures resolution failures: the jobs that restore this cache download what is missing (see the fetch step's 'could not resolve' lines)."
+          fi
 
       # What the job fetched beyond the restored cache, each a request Maven Central can refuse: a
       # downloaded file lands in files-2.1 with the time of download, a restored one keeps the time
