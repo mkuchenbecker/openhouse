@@ -17,6 +17,13 @@ import org.junit.jupiter.params.provider.ValueSource;
  */
 public class LinkedInMainRecordingFilesTest {
 
+  /**
+   * The keys main answered differently in different recording runs, reviewed: none in this
+   * recording. A key with a second line was added by hand and fails.
+   */
+  private static final java.util.Map<String, java.util.Set<String>> VARYING =
+      java.util.Collections.emptyMap();
+
   @ParameterizedTest
   @ValueSource(strings = {LinkedInMainAnswers.SUITE})
   void isARecordingOfLinkedInMain(String suite) throws Exception {
@@ -52,6 +59,17 @@ public class LinkedInMainRecordingFilesTest {
     Assertions.assertEquals(sorted, body, "the lines are not sorted");
     Assertions.assertEquals(
         body.size(), new java.util.HashSet<>(body).size(), "a line is there twice");
+    java.util.Set<String> withMoreThanOne = new java.util.TreeSet<>();
+    for (String key : recording.keys()) {
+      if (recording.outcomes(key).size() > 1) {
+        withMoreThanOne.add(key);
+      }
+    }
+    Assertions.assertEquals(
+        VARYING.getOrDefault(suite, java.util.Collections.emptySet()),
+        withMoreThanOne,
+        "the keys with more than one outcome must be the reviewed ones main answered differently"
+            + " in different runs");
   }
 
   private static List<String> lines(String suite) throws Exception {
