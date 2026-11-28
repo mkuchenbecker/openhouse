@@ -107,8 +107,6 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | SPE
 
 # MSG
 category MSG | e | error type and status are right; the kit asserts the reference implementation's message text
-OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Table ns.tbl already exists" to start with: "Table already exists: ns.tbl"
-OpenHouseRestCompatibilityKitCatalogTests.testRenameTableDestinationTableAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting throwable message: "Table local-cluster.newdb.table_renamed already exists" to contain: "Table already exists"
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "No such view: ns.table" to start with: "View does not exist"
@@ -218,6 +216,7 @@ OpenHouseRestCompatibilityKitCatalogTests.renameTableNamespaceMissing() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[2] | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testAppend() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCatalogWithCustomMetricsReporter() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionCreate() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTable() | PASSED
@@ -253,6 +252,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testRegisterExistingTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespaceProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespacePropertiesNamespaceDoesNotExist() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRenameTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testRenameTableDestinationTableAlreadyExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRenameTableMissingSourceTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransactionRequiresTableExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testSetNamespaceProperties() | PASSED

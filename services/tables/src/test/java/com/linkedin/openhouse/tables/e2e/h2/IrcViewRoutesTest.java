@@ -958,18 +958,29 @@ public class IrcViewRoutesTest {
         404, IrcHttp.head(mvc, IrcWrite.table("irc_v_kinds", "v")).getResponse().getStatus());
     assertIrcError(IrcWrite.drop(mvc, "irc_v_kinds", "v"), 404, "NoSuchTableException");
     assertEquals(200, code(get(mvc, "irc_v_kinds", "v")));
-    // A table cannot be created onto a view's name.
+    // A table cannot be created onto a view's name: the native refusal, as the native create
+    // words it (only a table holding the name is worded as Iceberg's catalogs word it).
     String before = stored("irc_v_kinds", "v");
-    assertIrcError(
-        IrcWrite.create(
-            mvc,
-            "irc_v_kinds",
-            org.apache.iceberg.rest.requests.CreateTableRequest.builder()
-                .withName("v")
-                .withSchema(SCHEMA)
-                .build()),
-        409,
-        "AlreadyExistsException");
+    String nativeMsg =
+        CommitPathHttp.message(
+            CommitPathHttp.post(
+                    mvc,
+                    CommitPathHttp.newTable("irc_v_kinds", "v").toBuilder().policies(null).build())
+                .andExpect(status().is(409)));
+    assertEquals(
+        nativeMsg,
+        assertIrcError(
+                IrcWrite.create(
+                    mvc,
+                    "irc_v_kinds",
+                    org.apache.iceberg.rest.requests.CreateTableRequest.builder()
+                        .withName("v")
+                        .withSchema(SCHEMA)
+                        .build()),
+                409,
+                "AlreadyExistsException")
+            .message());
+    assertFalse(nativeMsg.startsWith("Table already exists"), nativeMsg);
     // A table renamed onto a view's name: renameOfATableOntoAViewsNameIsRefused.
     assertEquals(before, stored("irc_v_kinds", "v"));
     assertEquals(200, CommitPathHttp.status(CommitPathHttp.get(mvc, "irc_v_kinds", "t")));
