@@ -169,8 +169,48 @@ public class IcebergRestViewHandler {
     CreateUpdateViewRequestBody body =
         IcebergRestViewSpelling.replaceBody(
             databaseId, viewId, base.getView().getMetadataLocation(), candidate);
-    onView(() -> viewsApiHandler.updateView(body, actingPrincipal));
-    return onView(() -> response(loadReadable(databaseId, viewId, actingPrincipal)));
+    String committed =
+        onView(() -> viewsApiHandler.updateView(body, actingPrincipal))
+            .getResponseBody()
+            .getMetadataLocation();
+    return answered(databaseId, viewId, committed, base.getMetadata().uuid(), actingPrincipal);
+  }
+
+  /**
+   * The answer to a view commit that stored the view at {@code committed}: that version, never a
+   * later one, as a table commit is answered. The view is read back, with the read decision, and
+   * answered when its pointer is still {@code committed}; when another write moved it on, the
+   * version this commit stored is read from its own metadata file. When that file is gone, the
+   * commit landed all the same: the view as stored now is answered if it is the same view (the same
+   * view UUID), and otherwise the commit's state is unknown ({@link CommitStateUnknownException},
+   * the spec's 500), not a failure.
+   */
+  private LoadViewResponse answered(
+      String databaseId,
+      String viewId,
+      String committed,
+      String committedUuid,
+      String actingPrincipal) {
+    ViewsServiceImpl.LoadedView now =
+        onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
+    if (committed == null || committed.equals(now.getView().getMetadataLocation())) {
+      return response(now);
+    }
+    ViewMetadata stored;
+    try {
+      stored = viewsService.readViewVersion(databaseId, viewId, committed);
+    } catch (RuntimeException unreadable) {
+      if (committedUuid.equals(now.getMetadata().uuid())) {
+        return response(now);
+      }
+      throw new CommitStateUnknownException(
+          String.format(
+              "The write to view %s.%s landed, but the version it stored (%s) can no longer be"
+                  + " read, and the view of that name is now another view",
+              databaseId, viewId, committed),
+          unreadable);
+    }
+    return ImmutableLoadViewResponse.builder().metadataLocation(committed).metadata(stored).build();
   }
 
   /**

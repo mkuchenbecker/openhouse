@@ -1068,46 +1068,42 @@ public class IrcWriteRoutesAuthTest {
         storedAnswer("b3"), result.getResponse().getContentAsByteArray());
   }
 
+  /** What another writer does to the table between a commit and the commit's answer. */
+  private interface Race {
+    void run() throws Exception;
+  }
+
   /**
-   * A write that lands on the table after a commit, and before the commit's answer is written, is
-   * not answered as the commit's result: the answer is the version the commit stored, read from its
-   * own metadata file, where it was the table as stored at the time of the answer.
+   * Commits {@code user.k=v} on {@code table}; between that commit and its answer, {@code race}
+   * runs on a thread of its own, as another request would.
    */
-  @Test
-  void aCommitAnswersTheVersionItStoredNotALaterOne() throws Exception {
-    create("race1");
-    TableMetadata base = IrcWrite.load(mvc, DB, "race1");
+  private org.springframework.test.web.servlet.MvcResult commitWithARace(String table, Race race)
+      throws Exception {
     java.util.concurrent.atomic.AtomicBoolean raced =
         new java.util.concurrent.atomic.AtomicBoolean();
     Mockito.doAnswer(
             call -> {
               TableAuditEvent event = call.getArgument(0);
-              if ("race1".equals(event.getTableName())
+              if (table.equals(event.getTableName())
                   && event.getOperationStatus() == OperationStatus.SUCCESS
                   && event.getOperationType() == OperationType.UPDATE
                   && raced.compareAndSet(false, true)) {
-                // Another writer's commit, between this commit and its answer, on a thread of its
-                // own as another request would be.
+                java.util.concurrent.atomic.AtomicReference<Exception> failed =
+                    new java.util.concurrent.atomic.AtomicReference<>();
                 Thread writer =
                     new Thread(
                         () -> {
                           try {
-                            TableMetadata now = IrcWrite.load(mvc, DB, "race1");
-                            IrcWrite.commit(
-                                mvc,
-                                DB,
-                                "race1",
-                                IrcWrite.simple(
-                                    now,
-                                    Collections.singletonList(
-                                        new MetadataUpdate.SetProperties(
-                                            Collections.singletonMap("user.later", "1")))));
+                            race.run();
                           } catch (Exception e) {
-                            throw new IllegalStateException(e);
+                            failed.set(e);
                           }
                         });
                 writer.start();
                 writer.join();
+                if (failed.get() != null) {
+                  throw failed.get();
+                }
                 // The House Tables stand-in serves this request's reads from the request's own
                 // persistence context; the real House Tables service is read afresh each time.
                 entityManager.clear();
@@ -1118,25 +1114,108 @@ public class IrcWriteRoutesAuthTest {
         .audit(any(TableAuditEvent.class));
     try {
       org.springframework.test.web.servlet.MvcResult result =
-          IrcWrite.commit(mvc, DB, "race1", request(Collections.emptyList(), setUserProperty()));
+          IrcWrite.commit(mvc, DB, table, request(Collections.emptyList(), setUserProperty()));
       assertTrue(raced.get());
-      TableMetadata answered = IrcWrite.parsed(result);
-      TableMetadata now = IrcWrite.load(mvc, DB, "race1");
-      assertEquals("1", now.properties().get("user.later"));
-      assertEquals("v", answered.properties().get("user.k"));
-      assertTrue(
-          !answered.properties().containsKey("user.later"), String.valueOf(answered.properties()));
-      // The version answered is the one right after the commit's base (the metadata log names the
-      // base file, spelled with or without the storage's scheme).
-      assertEquals(
-          java.net.URI.create(base.metadataFileLocation()).getPath(),
-          java.net
-              .URI
-              .create(answered.previousFiles().get(answered.previousFiles().size() - 1).file())
-              .getPath());
+      return result;
     } finally {
       Mockito.doNothing().when(tableAuditHandler).audit(any(TableAuditEvent.class));
     }
+  }
+
+  /** Another writer's commit of {@code user.later=1} on {@code table}. */
+  private void commitLater(String table) throws Exception {
+    TableMetadata now = IrcWrite.load(mvc, DB, table);
+    assertEquals(
+        200,
+        IrcWrite.commit(
+                mvc,
+                DB,
+                table,
+                IrcWrite.simple(
+                    now,
+                    Collections.singletonList(
+                        new MetadataUpdate.SetProperties(
+                            Collections.singletonMap("user.later", "1")))))
+            .getResponse()
+            .getStatus());
+  }
+
+  /** The local file at {@code location}, spelled with or without the storage's scheme. */
+  private static java.nio.file.Path file(String location) {
+    return java.nio.file.Paths.get(java.net.URI.create(location).getPath());
+  }
+
+  /**
+   * A write that lands on the table after a commit, and before the commit's answer is written, is
+   * not answered as the commit's result: the answer is the version the commit stored, read from its
+   * own metadata file, where it was the table as stored at the time of the answer.
+   */
+  @Test
+  void aCommitAnswersTheVersionItStoredNotALaterOne() throws Exception {
+    create("race1");
+    TableMetadata base = IrcWrite.load(mvc, DB, "race1");
+    TableMetadata answered = IrcWrite.parsed(commitWithARace("race1", () -> commitLater("race1")));
+    TableMetadata now = IrcWrite.load(mvc, DB, "race1");
+    assertEquals("1", now.properties().get("user.later"));
+    assertEquals("v", answered.properties().get("user.k"));
+    assertTrue(
+        !answered.properties().containsKey("user.later"), String.valueOf(answered.properties()));
+    // The version answered is the one right after the commit's base (the metadata log names the
+    // base file, spelled with or without the storage's scheme).
+    assertEquals(
+        file(base.metadataFileLocation()),
+        file(answered.previousFiles().get(answered.previousFiles().size() - 1).file()));
+  }
+
+  /**
+   * When the version the commit stored can no longer be read (a later commit's metadata cleanup
+   * deleted it) but the table is still the same table, the commit that landed is answered with the
+   * table as stored now, which holds it, not as a failure.
+   */
+  @Test
+  void aCommitWhoseStoredVersionIsGoneIsAnsweredWithTheSameTableAsStoredNow() throws Exception {
+    create("race2");
+    org.springframework.test.web.servlet.MvcResult result =
+        commitWithARace(
+            "race2",
+            () -> {
+              commitLater("race2");
+              // The commit's own file, the later version's predecessor, deleted as a metadata
+              // cleanup deletes it.
+              TableMetadata later = IrcWrite.load(mvc, DB, "race2");
+              java.nio.file.Files.delete(
+                  file(later.previousFiles().get(later.previousFiles().size() - 1).file()));
+            });
+    assertEquals(200, result.getResponse().getStatus(), IrcHttp.body(result));
+    TableMetadata answered = IrcWrite.parsed(result);
+    TableMetadata now = IrcWrite.load(mvc, DB, "race2");
+    assertEquals(now.metadataFileLocation(), answered.metadataFileLocation());
+    assertEquals("v", answered.properties().get("user.k"));
+    assertEquals("1", answered.properties().get("user.later"));
+  }
+
+  /**
+   * When the table was dropped and another created under its name between the commit and its
+   * answer, nothing the commit was decided on can be answered: the answer is the spec's 500 for an
+   * unknown commit state, which a client reads as "the commit may have landed", not a 200 with the
+   * other table and not an unexplained server failure.
+   */
+  @Test
+  void aCommitWhoseTableWasReplacedIsAnsweredCommitStateUnknown() throws Exception {
+    create("race3");
+    TableMetadata first = IrcWrite.load(mvc, DB, "race3");
+    org.springframework.test.web.servlet.MvcResult result =
+        commitWithARace(
+            "race3",
+            () -> {
+              delete(mvc, DB, "race3");
+              post(mvc, newTable(DB, "race3").toBuilder().policies(null).build())
+                  .andExpect(status().isCreated());
+            });
+    String message = assertIrcError(result, 500, "CommitStateUnknownException").message();
+    assertTrue(message.startsWith("The write to " + DB + ".race3 landed"), message);
+    assertNoStoredIdIn(IrcHttp.body(result), IrcWrite.load(mvc, DB, "race3"));
+    assertTrue(!IrcWrite.load(mvc, DB, "race3").uuid().equals(first.uuid()));
   }
 
   /** A replica table's write decision is SYSTEM_ADMIN, as the native PUT's, decided first. */

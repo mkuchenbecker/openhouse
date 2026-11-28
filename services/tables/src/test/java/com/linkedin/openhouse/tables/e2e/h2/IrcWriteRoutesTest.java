@@ -1508,12 +1508,15 @@ public class IrcWriteRoutesTest {
     org.apache.iceberg.rest.requests.UpdateTableRequest viewUpdate =
         IrcWrite.simple(
             base, java.util.Collections.singletonList(new MetadataUpdate.SetCurrentViewVersion(1)));
+    org.mockito.Mockito.clearInvocations(tableAuditHandler);
     assertEquals(
         "Cannot apply update SetCurrentViewVersion to a table",
         assertIrcError(
                 IrcWrite.commit(mvc, "irc_w_vupd", "t", viewUpdate), 400, "BadRequestException")
             .message());
     assertEquals(before, stored("irc_w_vupd"));
+    assertOneFailedEvent(
+        "irc_w_vupd", com.linkedin.openhouse.tables.audit.model.OperationType.UPDATE);
 
     track("irc_w_vupd", "staged");
     TableMetadata staged =
@@ -1554,6 +1557,7 @@ public class IrcWriteRoutesTest {
     createNative(plainBody("irc_w_lock").toBuilder().policies(null).build());
     String before = stored("irc_w_lock");
     TableMetadata base = IrcWrite.load(mvc, "irc_w_lock", "t");
+    org.mockito.Mockito.clearInvocations(tableAuditHandler);
     assertEquals(
         "Lock state cannot be updated for Table irc_w_lock.t",
         assertIrcError(
@@ -1572,6 +1576,8 @@ public class IrcWriteRoutesTest {
                 "BadRequestException")
             .message());
     assertEquals(before, stored("irc_w_lock"));
+    assertOneFailedEvent(
+        "irc_w_lock", com.linkedin.openhouse.tables.audit.model.OperationType.UPDATE);
     TableMetadata unlocked =
         IrcWrite.parsed(
             IrcWrite.commit(
@@ -1589,5 +1595,24 @@ public class IrcWriteRoutesTest {
     assertEquals("v", unlocked.properties().get("user.k"));
     assertEquals(
         200, CommitPathHttp.status(get(mvc, "irc_w_lock", "t")), "the table is not locked");
+  }
+
+  /** The one table audit event of {@code db.t} since the last clear is a FAILED {@code type}. */
+  private void assertOneFailedEvent(
+      String db, com.linkedin.openhouse.tables.audit.model.OperationType type) {
+    org.mockito.ArgumentCaptor<TableAuditEvent> events =
+        org.mockito.ArgumentCaptor.forClass(TableAuditEvent.class);
+    verify(tableAuditHandler, org.mockito.Mockito.atLeast(0)).audit(events.capture());
+    List<TableAuditEvent> ofTable = new ArrayList<>();
+    for (TableAuditEvent event : events.getAllValues()) {
+      if (db.equals(event.getDatabaseName()) && "t".equals(event.getTableName())) {
+        ofTable.add(event);
+      }
+    }
+    assertEquals(1, ofTable.size(), String.valueOf(ofTable));
+    assertEquals(type, ofTable.get(0).getOperationType());
+    assertEquals(
+        com.linkedin.openhouse.tables.audit.model.OperationStatus.FAILED,
+        ofTable.get(0).getOperationStatus());
   }
 }

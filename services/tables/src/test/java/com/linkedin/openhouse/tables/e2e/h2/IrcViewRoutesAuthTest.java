@@ -64,6 +64,7 @@ public class IrcViewRoutesAuthTest {
   @Autowired ToggleStatusesRepository toggles;
   @MockBean AuthorizationHandler authorizationHandler;
   @Autowired AuditHandler<ViewAuditEvent> viewAuditHandler;
+  @Autowired javax.persistence.EntityManager entityManager;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -416,5 +417,85 @@ public class IrcViewRoutesAuthTest {
       assertIrcError(result, 403, "ForbiddenException");
       assertNothingStoredIn(IrcHttp.body(result), base);
     }
+  }
+
+  /**
+   * A write that lands on the view after a commit, and before the commit's answer is written, is
+   * not answered as the commit's result: the answer is the version the commit stored, read from its
+   * own metadata file, as a table commit is answered.
+   */
+  @Test
+  void aViewCommitAnswersTheVersionItStoredNotALaterOne() throws Exception {
+    ViewMetadata base = IrcViewWrite.load(mvc, DB, "v");
+    java.util.concurrent.atomic.AtomicBoolean raced =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    Mockito.doAnswer(
+            call -> {
+              ViewAuditEvent event = call.getArgument(0);
+              if ("v".equals(event.getViewName())
+                  && event.getOperationType() == ViewOperationType.REPLACE
+                  && event.getOperationStatus() == OperationStatus.SUCCESS
+                  && raced.compareAndSet(false, true)) {
+                java.util.concurrent.atomic.AtomicReference<Exception> failed =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                // Another writer's commit, on a thread of its own as another request would be.
+                Thread writer =
+                    new Thread(
+                        () -> {
+                          try {
+                            ViewMetadata now = IrcViewWrite.load(mvc, DB, "v");
+                            assertEquals(
+                                200,
+                                IrcViewWrite.commit(
+                                        mvc,
+                                        DB,
+                                        "v",
+                                        IrcViewWrite.commitRequest(
+                                            Collections.emptyList(),
+                                            IrcViewWrite.properties(
+                                                    now, Collections.singletonMap("later", "1"))
+                                                .changes()))
+                                    .getResponse()
+                                    .getStatus());
+                          } catch (Exception e) {
+                            failed.set(e);
+                          }
+                        });
+                writer.start();
+                writer.join();
+                if (failed.get() != null) {
+                  throw failed.get();
+                }
+                // The House Tables stand-in serves this request's reads from the request's own
+                // persistence context; the real House Tables service is read afresh each time.
+                entityManager.clear();
+              }
+              return null;
+            })
+        .when(viewAuditHandler)
+        .audit(any(ViewAuditEvent.class));
+    MvcResult result;
+    try {
+      result =
+          IrcViewWrite.commit(
+              mvc,
+              DB,
+              "v",
+              IrcViewWrite.commitRequest(
+                  Collections.emptyList(),
+                  IrcViewWrite.properties(base, Collections.singletonMap("k", "v")).changes()));
+    } finally {
+      Mockito.doNothing().when(viewAuditHandler).audit(any(ViewAuditEvent.class));
+    }
+    org.junit.jupiter.api.Assertions.assertTrue(raced.get());
+    assertEquals(200, result.getResponse().getStatus(), IrcHttp.body(result));
+    ViewMetadata answered = IrcViewWrite.parsed(result).metadata();
+    ViewMetadata now = IrcViewWrite.load(mvc, DB, "v");
+    assertEquals("1", now.properties().get("later"));
+    assertEquals("v", answered.properties().get("k"));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        answered.properties().containsKey("later"), String.valueOf(answered.properties()));
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        now.metadataFileLocation(), IrcViewWrite.parsed(result).metadataLocation());
   }
 }

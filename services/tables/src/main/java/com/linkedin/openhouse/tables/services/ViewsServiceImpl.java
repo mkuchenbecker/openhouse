@@ -214,6 +214,21 @@ public class ViewsServiceImpl implements ViewsService {
     }
   }
 
+  /**
+   * The metadata file at {@code metadataLocation}, a version of the view {@code databaseId.viewId}
+   * that a write stored, read with the FileIO of the view's storage: for the answer of a write
+   * whose view has moved on since. No authorization decision: the caller has made the read decision
+   * on the view. A file that cannot be read fails as the read fails.
+   */
+  public ViewMetadata readViewVersion(String databaseId, String viewId, String metadataLocation) {
+    HouseTable viewRow =
+        houseTableRepository
+            .findViewById(primaryKey(databaseId, viewId))
+            .orElseThrow(() -> noSuchView(databaseId, viewId));
+    FileIO fileIO = fileIOManager.getFileIO(storageType.fromString(viewRow.getStorageType()));
+    return viewMetadataCodec.read(fileIO.newInputFile(metadataLocation));
+  }
+
   /** A view's pointer and the metadata stored at it, read once. */
   @Getter
   @AllArgsConstructor

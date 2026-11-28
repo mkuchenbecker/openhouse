@@ -18,6 +18,7 @@ import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
+import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.audit.TableAuditAspect;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
@@ -59,6 +60,7 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NotFoundException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.rest.requests.CommitTransactionRequest;
@@ -191,12 +193,11 @@ public class IcebergRestWriteHandler {
       String databaseId, CreateTableRequest request, String actingPrincipal) {
     TableIdentifier identifier = TableIdentifier.of(databaseId, request.name());
     CreateUpdateTableRequestBody body = createBody(identifier, request);
-    String created =
+    GetTableResponseBody created =
         tablesApiHandler
             .createTable(databaseId, withPatchApplied(identifier, body, null), actingPrincipal)
-            .getResponseBody()
-            .getTableLocation();
-    return answered(identifier, created, null);
+            .getResponseBody();
+    return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
   }
 
   /**
@@ -276,7 +277,11 @@ public class IcebergRestWriteHandler {
     authorize(identifier, base, request, actingPrincipal);
     Optional<TableDto> committed = commitOn(identifier, base, request, actingPrincipal);
     if (committed.isPresent()) {
-      return answered(identifier, committed.get().getTableLocation(), base.getTable());
+      return answered(
+          identifier,
+          committed.get().getTableLocation(),
+          committed.get().getTableUUID(),
+          base.getTable());
     }
     answerAsALoad(identifier, base, request, actingPrincipal);
     return new IcebergRestLoadedTable(
@@ -492,7 +497,20 @@ public class IcebergRestWriteHandler {
                 .collect(Collectors.toList())
             : request.updates();
     TableMetadata.Builder builder = TableMetadata.buildFrom(baseMetadata);
-    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
+    Optional<String> patch;
+    try {
+      patch = applyTakingOutThePatch(builder, baseMetadata, updates);
+    } catch (NotATableUpdate refused) {
+      // Audited as the commit's refusal, as the refusals of the early decision are.
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          auditedKind(request),
+          () -> {
+            throw refused;
+          });
+      throw refused;
+    }
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
       return Optional.empty();
@@ -506,10 +524,16 @@ public class IcebergRestWriteHandler {
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
             : CommitKind.TABLE_UPDATE;
-    Policies requestedPolicies =
-        kind == CommitKind.TABLE_UPDATE
-            ? withTheLockRule(identifier, base.getTableDto(), patched)
-            : patched;
+    Policies[] judged = {patched};
+    if (kind == CommitKind.TABLE_UPDATE) {
+      // The lock rule's refusal is audited as the native PUT's refusal of it is (a FAILED UPDATE).
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          OperationType.UPDATE,
+          () -> judged[0] = withTheLockRule(identifier, base.getTableDto(), patched));
+    }
+    Policies requestedPolicies = judged[0];
     TableDto committed =
         tableCommitService
             .commit(
@@ -621,7 +645,14 @@ public class IcebergRestWriteHandler {
     try {
       update.applyTo(builder);
     } catch (UnsupportedOperationException e) {
-      throw new BadRequestException(e, "%s", e.getMessage());
+      throw new NotATableUpdate(e);
+    }
+  }
+
+  /** An update only a view takes, sent to a table: the request's fault (400). */
+  private static final class NotATableUpdate extends BadRequestException {
+    NotATableUpdate(UnsupportedOperationException cause) {
+      super(cause, "%s", cause.getMessage());
     }
   }
 
@@ -768,10 +799,8 @@ public class IcebergRestWriteHandler {
     }
     if (candidate.snapshots().isEmpty()) {
       tablesApiValidator.validateCreateTable(clusterProperties.getClusterName(), databaseId, body);
-      return answered(
-          identifier,
-          tablesService.createTable(body, actingPrincipal, tableUUID).getFirst().getTableLocation(),
-          null);
+      TableDto created = tablesService.createTable(body, actingPrincipal, tableUUID).getFirst();
+      return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
     }
     // A create with data: what the OpenHouse Java client sends for a CTAS. The table's UUID comes
     // from where the snapshot's files are, as natively; the three properties below are the ones
@@ -780,7 +809,7 @@ public class IcebergRestWriteHandler {
     withIds.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, databaseId);
     withIds.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, tableId);
     withIds.put(TABLE_LOCATION_KEY, location);
-    String created =
+    GetTableResponseBody created =
         icebergSnapshotsApiHandler
             .putIcebergSnapshots(
                 databaseId,
@@ -800,9 +829,8 @@ public class IcebergRestWriteHandler {
                     .createUpdateTableRequestBody(body.toBuilder().tableProperties(withIds).build())
                     .build(),
                 actingPrincipal)
-            .getResponseBody()
-            .getTableLocation();
-    return answered(identifier, created, null);
+            .getResponseBody();
+    return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
   }
 
   /**
@@ -1311,22 +1339,45 @@ public class IcebergRestWriteHandler {
    * now, which is that version unless another write landed after this one; then the version this
    * write stored is read from its own metadata file.
    *
+   * <p>That file can be gone: a later commit's metadata cleanup deletes old files, and a drop
+   * deletes the table's directory. The write landed all the same, so it is not answered as a
+   * failure. When the table stored now is the same table (the same UUID), it is answered: the later
+   * version, which already holds this write. When it is another table of the name, nothing that
+   * this write's decisions were made on can be answered, and the answer is the commit's state
+   * unknown ({@link CommitStateUnknownException}, the spec's 500 for an unknown commit state),
+   * which a client reads as "the commit may have landed" and does not clean up after.
+   *
+   * @param committedUuid the OpenHouse UUID of the table the write stored
    * @param written the table the write was made on, whose FileIO reads that file; {@code null} for
    *     a create, which reads it with the table's own
    */
   private IcebergRestLoadedTable answered(
-      TableIdentifier identifier, String committed, Table written) {
+      TableIdentifier identifier, String committed, String committedUuid, Table written) {
     TableDtoWithMetadata stored = tableCommitService.loadBase(identifier);
     if (stored.getTableDto().getTableLocation().equals(committed)) {
       return new IcebergRestLoadedTable(
           committed, stored.getMetadata(), tableFileIo.config(stored.getTable()), false);
     }
     Table table = written != null ? written : stored.getTable();
-    return new IcebergRestLoadedTable(
-        committed,
-        TableMetadataParser.read(table.io(), committed),
-        tableFileIo.config(table),
-        false);
+    TableMetadata metadata;
+    try {
+      metadata = TableMetadataParser.read(table.io(), committed);
+    } catch (RuntimeException unreadable) {
+      if (committedUuid != null && committedUuid.equals(stored.getTableDto().getTableUUID())) {
+        return new IcebergRestLoadedTable(
+            stored.getTableDto().getTableLocation(),
+            stored.getMetadata(),
+            tableFileIo.config(stored.getTable()),
+            false);
+      }
+      throw new CommitStateUnknownException(
+          String.format(
+              "The write to %s landed, but the version it stored (%s) can no longer be read, and"
+                  + " the table of that name is now another table",
+              identifier, committed),
+          unreadable);
+    }
+    return new IcebergRestLoadedTable(committed, metadata, tableFileIo.config(table), false);
   }
 
   /**
