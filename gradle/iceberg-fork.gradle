@@ -54,9 +54,6 @@ if (forkMissing.isEmpty()) {
 // Every iceberg_1_5_version consumer (conventions and module build files) picks this up.
 ext.iceberg_1_5_version = forkVersion
 
-// The Jackson the fork's Iceberg is built with (the tables service's forces in build.gradle).
-ext.icebergForkJacksonVersion = pin.getProperty('jacksonVersion')
-
 // The AWS SDK the fork's iceberg-aws needs (openhouse.iceberg-aws-conventions).
 ext.icebergForkAwsSdkVersion = pin.getProperty('awsSdkVersion')
 

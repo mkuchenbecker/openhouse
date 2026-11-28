@@ -95,18 +95,11 @@ allprojects {
       ':libs:datalayout'
   ]
 
-  // Jackson: LinkedIn's forces (the BOM and databind at 2.13.4), which the reference line keeps as
-  // they are. On the default line the fork's Iceberg pulls jackson-core up to 2.22, so the tables
-  // service would run databind 2.13 and the other modules 2.13 and 2.14 on a 2.22 core; there all
-  // of them are forced to the fork's Jackson (iceberg-fork.properties), one minor that the service's
-  // JacksonRuntimeVersionsTest pins on each line. The other projects keep LinkedIn's forces.
-  def jacksonForced = (icebergFork && it.path == ':services:tables') ? rootProject.ext.icebergForkJacksonVersion : '2.13.4'
-
   if (!excludedProjects.contains(it.path)) {
     configurations.all {
       resolutionStrategy {
-        force "com.fasterxml.jackson:jackson-bom:${jacksonForced}"
-        force "com.fasterxml.jackson.core:jackson-databind:${jacksonForced}"
+        force 'com.fasterxml.jackson:jackson-bom:2.13.4'
+        force 'com.fasterxml.jackson.core:jackson-databind:2.13.4'
         if (!icebergFork) {
           force 'org.apache.orc:orc-core:1.8.3'
         }
