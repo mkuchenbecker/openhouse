@@ -129,6 +129,24 @@ public class IrcNamespaceRoutesFailureTest {
     decide(new AuthorizationServiceException("authorization service unavailable"));
   }
 
+  /**
+   * The outage only on the decision that reads a namespace record (the read privilege on a
+   * database); every other decision is allowed, so a rename's own decisions do not answer the
+   * outage, and what a rename answers is what its target's existence check decided.
+   */
+  private void authorizationServiceFailsOnRecordReads() {
+    decide(null);
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(DatabaseDto.class), any(Privileges.class)))
+        .thenAnswer(
+            call -> {
+              if (call.getArgument(2) == Privileges.GET_TABLE_METADATA) {
+                throw new AuthorizationServiceException("authorization service unavailable");
+              }
+              return true;
+            });
+  }
+
   private MvcResult children(String parent) throws Exception {
     return IrcHttp.perform(
         mvc, IrcHttp.request(HttpMethod.GET, "/v1/namespaces").param("parent", parent));
@@ -278,6 +296,18 @@ public class IrcNamespaceRoutesFailureTest {
     }
     assertIrcError(
         IrcHttp.get(mvc, "/v1/namespaces/" + RECORDED), 503, "ServiceUnavailableException");
+    // The rename above may also have been refused by the native rename's own decisions. With only
+    // the record's decision failing, its 503 can come from the target's existence check alone (a
+    // target found to exist answers the native refusal of a rename across databases, 406).
+    authorizationServiceFailsOnRecordReads();
+    assertEquals(
+        "authorization service unavailable",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc, TableIdentifier.of(TABLED, "t1"), TableIdentifier.of(RECORDED, "t1")),
+                503,
+                "ServiceUnavailableException")
+            .message());
     decide(null);
     assertEquals(200, IrcHttp.get(mvc, IrcWrite.table(TABLED, "t1")).getResponse().getStatus());
   }
@@ -337,6 +367,64 @@ public class IrcNamespaceRoutesFailureTest {
           IrcClientParsers.parse(body(load), GetNamespaceResponse.class).properties());
       assertEquals(204, IrcHttp.head(mvc, "/v1/namespaces/" + db).getResponse().getStatus());
     } finally {
+      NativeViewHttp.delete(mvc, db, "v");
+    }
+  }
+
+  /**
+   * During an authorization outage, a database that holds only a view (so only the database list
+   * shows it, and no record can be read or decided on) exists, as before namespace records: HEAD,
+   * list tables, list children, list views (here with its views disabled) and load answer it as
+   * they answer it when nothing fails, and a rename into it is not refused as a missing namespace.
+   */
+  @Test
+  void whenTheAuthorizationServiceFailsADatabaseThatHoldsOnlyAViewReadsAsBefore() throws Exception {
+    String db = "irc_nsf_viewed_authz";
+    NativeViewHttp.enableViews(toggles, db);
+    CommitPathHttp.post(mvc, CommitPathHttp.newTable(db, "t")).andExpect(status().isCreated());
+    MvcResult view =
+        NativeViewHttp.post(
+            mvc,
+            NativeViewHttp.createBody(
+                db,
+                "v",
+                NativeViewHttp.SCHEMA_ID_NAME,
+                "SELECT id, name FROM " + db + ".t",
+                Collections.emptyMap()));
+    assertEquals(201, NativeViewHttp.code(view), NativeViewHttp.body(view));
+    CommitPathHttp.delete(mvc, db, "t").andExpect(status().isNoContent());
+    // Views off for the database: the view list then asks the existence rule.
+    toggles.save(
+        com.linkedin.openhouse.tables.toggle.model.TableToggleStatus.builder()
+            .databaseId(db)
+            .tableId(com.linkedin.openhouse.tables.services.ViewsFeatureGate.GATE_PROBE_TABLE_ID)
+            .featureId("views")
+            .toggleStatusEnum(
+                com.linkedin.openhouse.housetables.client.model.ToggleStatus.StatusEnum.INACTIVE)
+            .build());
+    try {
+      authorizationServiceFailsOnRecordReads();
+      assertEquals(204, IrcHttp.head(mvc, "/v1/namespaces/" + db).getResponse().getStatus());
+      MvcResult list = IrcHttp.get(mvc, "/v1/namespaces/" + db + "/tables");
+      assertEquals(200, list.getResponse().getStatus(), body(list));
+      MvcResult kids = children(db);
+      assertEquals(200, kids.getResponse().getStatus(), body(kids));
+      MvcResult views = IrcHttp.get(mvc, IrcViewWrite.views(db));
+      assertEquals(200, views.getResponse().getStatus(), body(views));
+      MvcResult load = IrcHttp.get(mvc, "/v1/namespaces/" + db);
+      assertEquals(200, load.getResponse().getStatus(), body(load));
+      assertEquals(
+          Collections.emptyMap(),
+          IrcClientParsers.parse(body(load), GetNamespaceResponse.class).properties());
+      // The rename's target exists, so the rename gets past that check to the native rename's
+      // own answer to a rename across databases.
+      assertIrcError(
+          IrcWrite.rename(mvc, TableIdentifier.of(TABLED, "t1"), TableIdentifier.of(db, "t1")),
+          406,
+          "UnsupportedOperationException");
+    } finally {
+      decide(null);
+      NativeViewHttp.enableViews(toggles, db);
       NativeViewHttp.delete(mvc, db, "v");
     }
   }
