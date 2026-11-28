@@ -343,6 +343,44 @@ public class FormatVersionSwitchOffTest {
     assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, db, "t").metadataFileLocation());
   }
 
+  /**
+   * A replace whose changes set the {@code format-version} property below the table's (raw REST;
+   * Iceberg's own client refuses to build such a replacement) is not refused: a replace keeps the
+   * table's format version, so it is made and the table stays at its version. Not a server failure.
+   */
+  @Test
+  void anIcebergRestReplaceLoweringTheFormatVersionPropertyKeepsTheTablesVersion()
+      throws Exception {
+    String db = "fvoff_irc_replace_lower";
+    make(plain(db));
+    // A replace is allowed only on a table that enables it.
+    TableMetadata before = IrcWrite.load(mvc, db, "t");
+    assertEquals(
+        200,
+        IrcWrite.commit(
+                mvc,
+                db,
+                "t",
+                IrcWrite.simple(
+                    before,
+                    Collections.singletonList(
+                        new MetadataUpdate.SetProperties(
+                            Collections.singletonMap("replace.enabled", "true")))))
+            .getResponse()
+            .getStatus());
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    UpdateTableRequest replace =
+        IrcWrite.replace(
+            base,
+            IrcWrite.replacement(base, base.schema(), base.spec(), Collections.emptyMap()),
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "1"))));
+    org.springframework.test.web.servlet.MvcResult answer = IrcWrite.commit(mvc, db, "t", replace);
+    assertEquals(200, answer.getResponse().getStatus(), IrcHttp.body(answer));
+    assertEquals(2, IrcWrite.parsed(answer).formatVersion());
+    assertEquals(2, version(db));
+  }
+
   // ---------------------------------------------------------------- unchanged answers
 
   /** A create that asks for the cluster's version, a lower one or no number: as before. */
