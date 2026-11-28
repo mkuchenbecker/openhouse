@@ -406,15 +406,20 @@ public class IrcWriteRoutesAuthTest {
     assertTrue(CommitPathHttp.status(get(mvc, DB, "t3")) == 200);
   }
 
-  // ------------------------------------------------- a rename that House Tables refuses
+  // ------------------------------------------------- the answer to a rename's commit conflict
 
   /**
-   * Makes the native rename's last decision before its write (CREATE_TABLE on the database) run
-   * {@code meanwhile} once and then fail as the rename's House Tables write fails when House Tables
-   * refuses it: the commit failure the table operations throw, caused by the repository's
-   * concurrent-update refusal. Every other decision is allowed.
+   * Makes the native rename fail, once, with the failure its House Tables write fails with when
+   * House Tables refuses it: the commit failure the table operations throw, caused by the
+   * repository's concurrent-update refusal. The failure is thrown from the first of the native
+   * rename's three decisions (CREATE_TABLE on the database), after it has looked for the source and
+   * the target and before its write, after running {@code meanwhile}; nothing of the rename's own
+   * write path runs. So these tests pin how the Iceberg REST rename answers that failure and what
+   * it looks up to choose the answer, not that a real House Tables conflict reaches the route as
+   * this failure (by reading, the table operations rethrow it as this failure after Iceberg's
+   * commit retries). Every other decision is allowed.
    */
-  private void houseTablesRefusesTheRename(Runnable meanwhile) {
+  private void theNativeRenameFailsWithACommitConflict(Runnable meanwhile) {
     java.util.concurrent.atomic.AtomicBoolean refused =
         new java.util.concurrent.atomic.AtomicBoolean();
     when(authorizationHandler.checkAccessDecision(
@@ -433,15 +438,15 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * House Tables refuses the rename's write while the target's key is free: the table was changed
+   * A rename whose commit conflicts while the target's key is free: the table was changed
    * concurrently, a conflict the client may retry, answered 409 {@code CommitFailedException} (the
    * native route answers the unmapped commit failure 500). Nothing is renamed. Both Iceberg client
    * lines read any 409 on the rename route as {@code AlreadyExistsException}.
    */
   @Test
-  void aRenameHouseTablesRefusesIs409ChangedConcurrently() throws Exception {
+  void aRenameCommitConflictOnAFreeTargetIs409ChangedConcurrently() throws Exception {
     create("rn1");
-    houseTablesRefusesTheRename(() -> {});
+    theNativeRenameFailsWithACommitConflict(() -> {});
     org.apache.iceberg.rest.responses.ErrorResponse error =
         assertIrcError(
             IrcWrite.rename(mvc, TableIdentifier.of(DB, "rn1"), TableIdentifier.of(DB, "rn2")),
@@ -457,15 +462,15 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * House Tables refuses the rename's write because a table of the target's name was created after
-   * the native rename looked for one: answered 409 {@code AlreadyExistsException} naming a table.
-   * The source is not renamed and the target is the table created meanwhile.
+   * A rename whose commit conflicts after a table of the target's name was created since the native
+   * rename looked for one: answered 409 {@code AlreadyExistsException} naming a table. The source
+   * is not renamed and the target is the table created meanwhile.
    */
   @Test
-  void aRenameHouseTablesRefusesOntoATableCreatedMeanwhileIs409AlreadyExists() throws Exception {
+  void aRenameCommitConflictOnATargetCreatedMeanwhileIs409AlreadyExists() throws Exception {
     create("rn3");
     created.add("rn4");
-    houseTablesRefusesTheRename(
+    theNativeRenameFailsWithACommitConflict(
         () -> {
           java.util.concurrent.atomic.AtomicReference<Exception> failed =
               new java.util.concurrent.atomic.AtomicReference<>();
@@ -482,10 +487,13 @@ public class IrcWriteRoutesAuthTest {
                   });
           creator.start();
           try {
-            creator.join();
+            creator.join(30_000);
           } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException(e);
+          }
+          if (creator.isAlive()) {
+            throw new IllegalStateException("the create of the target did not finish in 30 s");
           }
           if (failed.get() != null) {
             throw new IllegalStateException(failed.get());
