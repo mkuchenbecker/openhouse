@@ -11,6 +11,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * The {@link HouseNamespaceRepository} of the embedded tables service ({@link
@@ -31,14 +34,16 @@ import org.springframework.context.annotation.Primary;
  *       by one, a replace with an unchanged document included (the store's forced increment).
  *   <li>A replace is conditional on the uuid and revision the document carries: anything else is
  *       {@link EntityConcurrentModificationException}, as the store's 409 is. A document with
- *       another spelling of the name, or no properties, is refused with {@link
- *       IllegalArgumentException}, standing for the store's 400, which the client does not map.
+ *       another spelling of the name, or no properties, is refused with the store's 400, which the
+ *       client does not map and raises as {@link WebClientResponseException.BadRequest}.
  *   <li>A missing record is {@link NotFoundException} for read, replace and delete. A delete
  *       removes the record only; a create after it is a new record (new uuid, revision "0").
  *   <li>Properties are one document, copied in and answered as an unmodifiable copy.
  * </ul>
  *
- * Every operation runs under one lock, as each is one transaction in the store.
+ * Every operation runs under one lock, as each is one transaction in the store. {@link
+ * HouseNamespaceRepositoryContract} runs the same cases against this and against the real
+ * repository over a real House Tables service.
  */
 @Primary
 public class HouseNamespacesInMemoryRepository implements HouseNamespaceRepository {
@@ -99,8 +104,12 @@ public class HouseNamespacesInMemoryRepository implements HouseNamespaceReposito
       throw new EntityConcurrentModificationException(namespaceName, null);
     }
     if (!current.name.equals(document.getNamespaceName()) || document.getProperties() == null) {
-      throw new IllegalArgumentException(
-          "The namespace document must carry the stored name and a property map");
+      throw WebClientResponseException.create(
+          HttpStatus.BAD_REQUEST.value(),
+          "The namespace document must carry the stored name and a property map",
+          HttpHeaders.EMPTY,
+          new byte[0],
+          null);
     }
     Row replaced =
         new Row(current.uuid, current.name, document.getProperties(), current.version + 1);
