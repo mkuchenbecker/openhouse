@@ -7,6 +7,7 @@ import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.audit.ViewAuditAspect;
 import com.linkedin.openhouse.tables.audit.model.ViewOperationType;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
+import com.linkedin.openhouse.tables.exception.ViewRequestValidationFailureException;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.services.ViewsServiceImpl;
@@ -99,6 +100,7 @@ public class IcebergRestViewHandler {
    */
   public ListTablesResponse listViews(String namespace, String actingPrincipal) {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    readHandler.requireValidNamespaceId(databaseId);
     if (!viewsFeatureGate.isEnabled(databaseId)) {
       readHandler.requireNamespace(databaseId);
       return ListTablesResponse.builder().build();
@@ -136,18 +138,31 @@ public class IcebergRestViewHandler {
    */
   public LoadViewResponse loadView(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
+    requireValidViewIds(databaseId, viewId);
     return onView(
         databaseId,
         viewId,
-        () -> {
-          viewsApiValidator.validateGetView(databaseId, viewId);
-          return response(viewsService.loadReadableView(databaseId, viewId, actingPrincipal));
-        });
+        () -> response(viewsService.loadReadableView(databaseId, viewId, actingPrincipal)));
   }
 
   public void viewExists(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
+    requireValidViewIds(databaseId, viewId);
     onView(databaseId, viewId, () -> viewsApiHandler.getView(databaseId, viewId, actingPrincipal));
+  }
+
+  /**
+   * Fails as for a missing view unless the native rules accept both ids: no view can have an id
+   * they refuse, so the existence check and the load answer it as a missing view, where the native
+   * routes refuse it (400), as the table routes do ({@code IcebergRestApiHandler}). The writes
+   * still refuse it.
+   */
+  private void requireValidViewIds(String databaseId, String viewId) {
+    try {
+      viewsApiValidator.validateGetView(databaseId, viewId);
+    } catch (ViewRequestValidationFailureException refused) {
+      throw new NoSuchViewException("View does not exist: %s.%s", databaseId, viewId);
+    }
   }
 
   public LoadViewResponse createView(

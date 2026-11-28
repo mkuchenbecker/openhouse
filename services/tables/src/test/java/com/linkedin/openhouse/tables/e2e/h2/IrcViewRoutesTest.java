@@ -507,6 +507,46 @@ public class IrcViewRoutesTest {
     assertEquals(404, code(get(mvc, "irc_v_cdia", "v")));
   }
 
+  /**
+   * No view can have an id the native rules refuse (here a hyphen): its existence check and its
+   * load answer a missing view, and the list of a namespace whose id is refused a missing
+   * namespace, as for any name that does not exist. A create still refuses the id (400), as
+   * natively, and so does the native API.
+   */
+  @Test
+  void anIdTheNativeRulesRefuseNamesNoView() throws Exception {
+    database("irc_v_ids");
+    assertEquals(
+        404,
+        IrcHttp.head(mvc, IrcViewWrite.view("non-existing", "view")).getResponse().getStatus());
+    assertEquals(
+        404, IrcHttp.head(mvc, IrcViewWrite.view("irc_v_ids", "v-1")).getResponse().getStatus());
+    assertEquals(
+        "View does not exist: non-existing.view",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("non-existing", "view")),
+                404,
+                "NoSuchViewException")
+            .message());
+    assertEquals(
+        "View does not exist: irc_v_ids.v-1",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("irc_v_ids", "v-1")), 404, "NoSuchViewException")
+            .message());
+    assertEquals(
+        "Namespace does not exist: non-existing",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.views("non-existing")),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertIrcError(
+        IrcViewWrite.create(mvc, "irc_v_ids", ircCreate("irc_v_ids", "v-1")),
+        400,
+        "BadRequestException");
+    assertEquals(400, code(get(mvc, "irc_v_ids", "v-1")));
+  }
+
   @Test
   void createInAMultiLevelNamespaceIs400() throws Exception {
     assertIrcError(
