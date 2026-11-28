@@ -581,8 +581,9 @@ with a cause. A cause is a named category (`category RTAS | b | replace needs ..
 a reason: (a) a model difference the kit has a flag for, (b) a model difference it has none for,
 (c) a route or feature not served yet, (d) a defect, (e) an assumption that holds only for
 Iceberg's reference implementation. Each test that does not pass is filed under the first step it
-fails at, with the throwable that ended it (for a failed assertion `java.lang.AssertionError`,
-whose message names the exception the client threw; for a skip the kit's assumption,
+fails at, with the throwable that ended it (for a failed assertion `java.lang.AssertionError`, or
+`org.opentest4j.AssertionFailedError` from some AssertJ assertions, whose message names what the
+client answered; for a skip the kit's assumption,
 `org.opentest4j.TestAbortedException`, or `disabled`) and the stable start of its message: no
 paths, UUIDs, ports or times; ` ... ` stands for any text. A line holds at both configurations
 unless it starts with `default: ` or `v3: `; such a test is listed once for each.
@@ -607,7 +608,8 @@ run the task prints how many tests each cause holds.
 - **A test that passed fails, or a test is new.** It is a regression until reviewed; list it only
   with the cause it truly fails for.
 - **The actual outcomes in the list's format** are written to
-  `build/openhouse-rest-compat-kit/tmp/<task>/actual-outcomes.txt` on every run: compare it with the
+  `build/openhouse-rest-compat-kit/tmp/<task>/actual-outcomes.txt` by every run whose test JVM
+  finished (one that died writes no outcomes and fails on that): compare it with the
   list, and copy a line from it only after checking that its message prefix holds nothing that
   changes from run to run and that its category is right (a new test's category is `?`).
 - **A kit upgrade** (a new pinned Iceberg commit) can add, remove or rename tests and change the

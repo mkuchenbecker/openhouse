@@ -105,7 +105,7 @@ dependencies {
 
 def kitClasses = 'com.linkedin.openhouse.irc.rck.OpenHouseRestCompatibilityKit*'
 
-// The module's own unit tests, if any; the kit runs only in restCompatKitTest. There are none yet,
+// The module's own unit tests, if any; the kit runs only in its own tasks below. There are none yet,
 // and a filter that matches no test must not fail `./gradlew build`.
 tasks.named('test') {
   filter {

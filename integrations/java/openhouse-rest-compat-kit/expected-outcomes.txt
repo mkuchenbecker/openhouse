@@ -13,12 +13,15 @@
 # <test> is <suite class>.<test name as Gradle reports it>. A line holds at both configurations,
 # unless it starts with "default: " or "v3: "; a test listed that way is listed once for each.
 # For a test that fails, the throwable is the one that ended it: its first failing assertion
-# (java.lang.AssertionError, its message naming the exception the client threw), or an exception
-# the client threw outside an assertion. For a skip, it is the kit's assumption that did not hold
+# (java.lang.AssertionError, or org.opentest4j.AssertionFailedError from some AssertJ assertions,
+# its message naming what the client answered), or an exception the client threw outside an
+# assertion. For a skip, it is the kit's assumption that did not hold
 # (org.opentest4j.TestAbortedException), or "disabled" and the reason the kit disabled it. The
 # message must start with the prefix, compared with all whitespace as single spaces; " ... " in a
 # prefix stands for any text. A prefix holds only what is stable from run to run: no paths, UUIDs,
 # ports or times.
+#
+# The number of tests under each cause is printed by each green run; it is not kept here.
 #
 # Classes (each test is filed under the first step it fails at; a later step may fail for another
 # reason once that one is gone):
@@ -29,7 +32,7 @@
 #   d  a defect: the server breaks the spec on a route it serves
 #   e  a kit or client assumption that holds only for Iceberg's reference implementation
 
-# VIEWDB: 24 test(s)
+# VIEWDB
 category VIEWDB | d | a view create (and a view register) checks only whether the database holds a table or a view, and answers 404 NoSuchNamespace "Database not found" otherwise, while on the /iceberg routes a namespace exists when it holds something or has a record: a namespace that HEAD answers as existing (created, record only) still refuses its first view. The kit's view suite runs with requiresNamespaceCreate=false, because creating the namespace first would not help, so it creates each view in a namespace that holds nothing. The same rule is the root of LISTNS and KITNS (27 tests, one cause). Fixing it needs the owner's decision on the native view create (whether a record, or nothing, is enough for a database to take a view)
 OpenHouseRestCompatibilityKitViewCatalogTests.basicCreateView() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
@@ -56,7 +59,7 @@ OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForInvalidArguments() | FAI
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewProperties() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesErrorCases() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
 
-# RTAS: 16 test(s)
+# RTAS
 category RTAS | b | replace (a replace transaction, or create-or-replace of a table that exists) needs the table property replace.enabled=true (OpenHouse policy); refused 400
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionReplace() | FAILED | RTAS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: REPLACE TABLE AS SELECT is not enabled for table openhouse.newdb.newtable.
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteReplaceTransaction() | FAILED | RTAS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: REPLACE TABLE AS SELECT is not enabled for table openhouse.newdb.newtable.
@@ -75,7 +78,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testOverrideTablePropertiesReplaceTran
 OpenHouseRestCompatibilityKitCatalogTests.testReplaceTableKeepsSnapshotLog() | FAILED | RTAS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: REPLACE TABLE AS SELECT is not enabled for table openhouse.newdb.newtable.
 OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransaction() | FAILED | RTAS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: REPLACE TABLE AS SELECT is not enabled for table openhouse.newdb.newtable.
 
-# DIALECT: 12 test(s)
+# DIALECT
 category DIALECT | b | views accept the spark dialect only (OpenHouse view policy): a view with another dialect, the kit's trino, is refused 400. Behind VIEWDB: each of these tests creates its view in a namespace that holds no table, so allowing the dialect alone turns none green; it then fails as VIEWDB does
 OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[1].dialect : must be one of the supported dialects: spark
 OpenHouseRestCompatibilityKitViewCatalogTests.createAndReplaceViewWithLocation() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark
@@ -90,7 +93,7 @@ OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocation() | FAILED | DI
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocationConflict() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesConflict() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark
 
-# SPEC: 9 test(s)
+# SPEC
 category SPEC | b | partition spec evolution is refused 400: a partition field added to a table (not expressible as time partitioning plus clustering), or a change to the bucket spec a table was created with. A bucket spec at create is accepted (testCompleteCreateTable passes)
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSpec(boolean)[1] | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Commit on table newdb.newtable changes what an OpenHouse table commit does not store: partition spec (not expressible as time partitioning and clustering)
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSpec(boolean)[2] | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Commit on table newdb.newtable changes what an OpenHouse table commit does not store: partition spec (not expressible as time partitioning and clustering)
@@ -102,7 +105,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecServerSideRetry() |
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecThenRevert() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Evolution of table partitioning and clustering columns are not supported
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Commit on table newdb.newtable changes what an OpenHouse table commit does not store: partition spec (not expressible as time partitioning and clustering)
 
-# MSG: 8 test(s)
+# MSG
 category MSG | e | error type and status are right; the kit asserts the reference implementation's message text
 OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Table ns.tbl already exists" to start with: "Table already exists: ns.tbl"
 OpenHouseRestCompatibilityKitCatalogTests.testLoadMissingTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "User table ns.tbl cannot be found" to start with: "Table does not exist: ns.tbl"
@@ -113,68 +116,68 @@ OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExis
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "No such view: ns.table" to start with: "View does not exist"
 
-# SCHEMA: 4 test(s)
+# SCHEMA
 category SCHEMA | b | a column drop is refused 400 (OpenHouse schema evolution rules: every column of the current schema stays)
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSchemas(boolean)[1] | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col_to_delete] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSchemas(boolean)[2] | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col_to_delete] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaConflict() | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[data] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaThenRevert() | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col1] not found in newSchema
 
-# IDS: 3 test(s)
+# IDS
 category IDS | b | a namespace id with a hyphen is not an OpenHouse id: 400 BadRequest (to a HEAD, which has no body, the client says only "Bad Request"); the kit expects 404
 OpenHouseRestCompatibilityKitCatalogTests.testListNonExistingNamespace() | FAILED | IDS | java.lang.AssertionError | Expecting actual throwable to be an instance of: org.apache.iceberg.exceptions.NoSuchNamespaceException but was: org.apache.iceberg.exceptions.BadRequestException: Malformed request: databaseId : provided non-existing, Only alphanumerics and underscore supported
 OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithNonExistingNamespace() | FAILED | IDS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Bad Request
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace() | FAILED | IDS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Bad Request
 
-# DIALECTRES: 2 test(s)
+# DIALECTRES
 category DIALECTRES | b | views accept the spark dialect only and refuse reserved view properties: the kit's trino dialect and its replace.drop-dialect.allowed are refused 400. Behind VIEWDB, as DIALECT is
 OpenHouseRestCompatibilityKitViewCatalogTests.concurrentReplaceViewVersion() | FAILED | DIALECTRES | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark; viewProperties : reserved keys are not allowed: replace.drop-dialect.allowed
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersion() | FAILED | DIALECTRES | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark; viewProperties : reserved keys are not allowed: replace.drop-dialect.allowed
 
-# FMT: 2 test(s)
+# FMT
 category FMT | b | the server owns the format version: a create or staged create asking for format-version 1 is refused 400
 OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[1] | FAILED | FMT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Create of table newdb.newtable sets the table property format-version to 1: OpenHouse creates tables with format version 2
 OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[1] | FAILED | FMT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Create of table newdb.newtable sets the table property format-version to 1: OpenHouse creates tables with format version 2
 
-# FMTV3: 2 test(s) at default, 0 with v3
+# FMTV3
 category FMTV3 | b | format v3 tables are off at the default configuration (cluster.iceberg.format-v3.enabled): a create asking for format-version 3 is refused 400. With the switch on, the test passes
 default: OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | FAILED | FMTV3 | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Create of table newdb.newtable sets the table property format-version to 3: OpenHouse creates tables with format version 2
 v3: OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[3] | PASSED
 default: OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | FAILED | FMTV3 | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Create of table ns.tbl sets the table property format-version to 3: OpenHouse creates tables with format version 2
 v3: OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | PASSED
 
-# LISTNS: 2 test(s)
+# LISTNS
 category LISTNS | b | the view suite never creates the namespace (requiresNamespaceCreate=false, which VIEWDB's rule forces), and one that holds nothing and has no record does not exist: listing it is 404 NoSuchNamespace, not an empty list
 OpenHouseRestCompatibilityKitViewCatalogTests.listViews() | FAILED | LISTNS | org.apache.iceberg.exceptions.NoSuchNamespaceException | Namespace does not exist: ns1
 OpenHouseRestCompatibilityKitViewCatalogTests.listViewsAndTables() | FAILED | LISTNS | org.apache.iceberg.exceptions.NoSuchNamespaceException | Namespace does not exist: ns
 
-# LISTREC: 2 test(s)
+# LISTREC
 category LISTREC | d | a created namespace (a stored record, no table) exists but is not listed: the list is the table-derived database list, since House Tables has no list of namespace records
 OpenHouseRestCompatibilityKitCatalogTests.testCreateNamespace() | FAILED | LISTREC | java.lang.AssertionError | [Catalog should have the created namespace] Expecting RegularImmutableList: [] to contain: [newdb] but could not find the following element(s): [newdb]
 OpenHouseRestCompatibilityKitCatalogTests.testListNamespaces() | FAILED | LISTREC | java.lang.AssertionError | [Should include newdb_1] Expecting ArrayList: [] to contain only: [newdb_1] but could not find the following element(s): [newdb_1]
 
-# VRENAME: 2 test(s)
+# VRENAME
 category VRENAME | c | OpenHouse has no view rename: the server does not advertise the view rename endpoint, so the client refuses the rename before sending it (UnsupportedOperationException), where the kit expects the rename's outcome
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewSourceMissing() | FAILED | VRENAME | java.lang.AssertionError | Expecting actual throwable to be an instance of: org.apache.iceberg.exceptions.NoSuchViewException but was: java.lang.UnsupportedOperationException: Server does not support endpoint: POST /v1/{prefix}/views/rename
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewTargetAlreadyExistsAsTable() | FAILED | VRENAME | java.lang.AssertionError | Expecting actual throwable to be an instance of: org.apache.iceberg.exceptions.AlreadyExistsException but was: java.lang.UnsupportedOperationException: Server does not support endpoint: POST /v1/{prefix}/views/rename
 
-# DROPPURGE: 1 test(s)
+# DROPPURGE
 category DROPPURGE | b | the kit drops the table without purge and registers its old metadata file; OpenHouse's drop always removes the table's files with it, so register finds no file there (400)
 OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | DROPPURGE | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Cannot register table newdb.newtable: there is no file at
 
-# KITNS: 1 test(s)
+# KITNS
 category KITNS | e | with requiresNamespaceCreate=false (which VIEWDB's rule forces) the kit asserts a never-created namespace both absent and present
 OpenHouseRestCompatibilityKitViewCatalogTests.dropNonEmptyNamespace() | FAILED | KITNS | org.opentest4j.AssertionFailedError | [Namespace should exist] Expecting value to be true but was false
 
-# VIEWERRTYPE: 1 test(s)
+# VIEWERRTYPE
 category VIEWERRTYPE | e | a view version with two queries for one dialect is refused 400, as the kit expects, but as a BadRequestException that also names the trino dialect; the kit expects the reference server's error type, IllegalArgumentException, which the client maps to that exception. Behind VIEWDB: the view is created in a namespace that holds nothing
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewErrorCases() | FAILED | VIEWERRTYPE | java.lang.AssertionError | Expecting actual throwable to be an instance of: java.lang.IllegalArgumentException but was: org.apache.iceberg.exceptions.BadRequestException: Malformed request: representations[0].dialect : must be one of the supported dialects: spark; representations[1].dialect : must be one of the supported dialects: spark; representations : dialects must be unique, duplicated: trino
 
-# MISSINGMETA: 1 test(s)
+# MISSINGMETA
 category MISSINGMETA | d | a table whose metadata file is missing loads as 500 (ServiceFailureException): the server does not answer 404 NotFoundException, which the kit expects, for a metadata file that is not there
 OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithMissingMetadataFile(Path) | FAILED | MISSINGMETA | java.lang.AssertionError | Expecting actual throwable to be an instance of: org.apache.iceberg.exceptions.NotFoundException but was: org.apache.iceberg.exceptions.ServiceFailureException: Server error: ServiceFailureException: Failed to open input stream for file:
 
-# EMPTYNS: 5 test(s)
+# EMPTYNS
 category EMPTYNS | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
 OpenHouseRestCompatibilityKitCatalogTests.createAndDropEmptyNamespace() | SKIPPED | EMPTYNS | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid for catalogs that support creating/dropping empty namespaces] Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.listNamespacesWithEmptyNamespace() | SKIPPED | EMPTYNS | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid for catalogs that support empty namespaces] Expecting value to be true but was false
@@ -182,36 +185,36 @@ OpenHouseRestCompatibilityKitCatalogTests.listTablesInEmptyNamespace() | SKIPPED
 OpenHouseRestCompatibilityKitCatalogTests.namespacePropertiesOnEmptyNamespace() | SKIPPED | EMPTYNS | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid for catalogs that support properties on empty namespaces] Expecting value to be true but was false
 OpenHouseRestCompatibilityKitViewCatalogTests.listViewsInEmptyNamespace() | SKIPPED | EMPTYNS | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid for catalogs that support listing views in empty namespaces] Expecting value to be true but was false
 
-# VARIANT: 3 test(s)
+# VARIANT
 category VARIANT | a | supportsVariant=false (kit default): a variant column is refused while cluster.iceberg.format-v3.variant.enabled is off, its default (and at the default configuration format v3 tables, which variant needs, are off too)
 OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() | SKIPPED | VARIANT | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid when the catalog supports the variant type] Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | VARIANT | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid when the catalog supports the variant type] Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | VARIANT | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid when the catalog supports the variant type] Expecting value to be true but was false
 
-# DOT: 2 test(s)
+# DOT
 category DOT | a | supportsNamesWithDot=false (kit default): ids are letters, digits and underscores
 OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithDot() | SKIPPED | DOT | org.opentest4j.TestAbortedException | assumption was not met due to: Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.testTableNameWithDot() | SKIPPED | DOT | org.opentest4j.TestAbortedException | assumption was not met due to: Expecting value to be true but was false
 
-# NESTED: 2 test(s)
+# NESTED
 category NESTED | a | supportsNestedNamespaces=false (kit default): namespaces have one level
 OpenHouseRestCompatibilityKitCatalogTests.testDropNamespaceWithNestedNamespace() | SKIPPED | NESTED | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid when the catalog supports nested namespaces] Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.testListNestedNamespaces() | SKIPPED | NESTED | org.opentest4j.TestAbortedException | assumption was not met due to: [Only valid when the catalog supports nested namespaces] Expecting value to be true but was false
 
-# SLASH: 2 test(s)
+# SLASH
 category SLASH | a | supportsNamesWithSlashes=false (our answer, as the kit's): ids are letters, digits and underscores
 OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithSlash() | SKIPPED | SLASH | org.opentest4j.TestAbortedException | assumption was not met due to: Expecting value to be true but was false
 OpenHouseRestCompatibilityKitCatalogTests.testTableNameWithSlash() | SKIPPED | SLASH | org.opentest4j.TestAbortedException | assumption was not met due to: Expecting value to be true but was false
 
-# NOCREATE: 1 test(s)
+# NOCREATE
 category NOCREATE | a | requiresNamespaceCreate=false: a table create needs no namespace record; a database comes into being with its first table
 OpenHouseRestCompatibilityKitCatalogTests.tableCreationWithoutNamespace() | SKIPPED | NOCREATE | org.opentest4j.TestAbortedException | assumption was not met due to: Expecting value to be true but was false
 
-# DISABLED: 1 test(s)
+# DISABLED
 category DISABLED | e | @Disabled by the kit itself (RESTServerExtension is not configurable per test)
 OpenHouseRestCompatibilityKitCatalogTests.createTableInUniqueLocation() | SKIPPED | DISABLED | disabled | RESTServerExtension isn’t configurable per test
 
-# Passing at both configurations: 52 test(s)
+# Passing at both configurations
 OpenHouseRestCompatibilityKitCatalogTests.createTableTransaction(int)[2] | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.dropAfterRenameDoesntCorruptTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.renameTableNamespaceMissing() | PASSED
