@@ -380,6 +380,8 @@ public abstract class HouseTableRepositoryContract {
     repository().rename(db.toLowerCase(), "T", db, "u", location(db, "u", 1));
     assertFalse(repository().findEntityById(key(db, "t")).isPresent());
     HouseTable renamed = repository().findById(key(db, "u")).get();
+    // The row keeps the source's database as the caller spelled it.
+    assertEquals(db.toLowerCase(), renamed.getDatabaseId());
     assertEquals("u", renamed.getTableId());
     assertEquals(location(db, "u", 1), renamed.getTableLocation());
     assertEquals(location(db, "u", 1), renamed.getTableVersion());
@@ -634,6 +636,40 @@ public abstract class HouseTableRepositoryContract {
     Page<HouseTable> first = repository().findAllViewsByDatabaseId(db, PageRequest.of(0, 1));
     assertEquals(Collections.singletonList("v"), tableIds(first.getContent()));
     assertEquals(2, first.getTotalPages());
+  }
+
+  @Test
+  public void theDatabasePagesNameEachDatabaseOnceInNameOrder() {
+    String first = db("pages_a");
+    String second = db("pages_b");
+    createTable(first, "t1");
+    createTable(first.toUpperCase(), "t2");
+    createView(second, "v");
+    List<String> ours = new java.util.ArrayList<>();
+    long total = -1;
+    int seen = 0;
+    for (int page = 0; ; page++) {
+      Page<HouseTable> databases = repository().findAll(PageRequest.of(page, 1));
+      assertEquals(1, databases.getSize());
+      assertEquals(page, databases.getNumber());
+      if (total < 0) {
+        total = databases.getTotalElements();
+      }
+      assertEquals(total, databases.getTotalElements(), "the total holds across pages");
+      if (databases.getContent().isEmpty()) {
+        break;
+      }
+      assertEquals(1, databases.getContent().size());
+      HouseTable database = databases.getContent().get(0);
+      assertNull(database.getTableId(), "a database row names no table");
+      if (database.getDatabaseId().toLowerCase().endsWith(suffix)) {
+        ours.add(database.getDatabaseId().toLowerCase());
+      }
+      seen++;
+    }
+    assertEquals(total, seen, "every database on exactly one page");
+    // One page per database, case variants included, in the order of their names.
+    assertEquals(Arrays.asList(first, second), ours);
   }
 
   @Test
