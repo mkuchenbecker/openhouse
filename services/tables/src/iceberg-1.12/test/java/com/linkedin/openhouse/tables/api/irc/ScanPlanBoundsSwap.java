@@ -1,6 +1,9 @@
 package com.linkedin.openhouse.tables.api.irc;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -52,13 +55,39 @@ public final class ScanPlanBoundsSwap implements AutoCloseable {
   }
 
   /**
-   * A time bound of zero: the asking request stops waiting as soon as the plan is handed to its
-   * thread, before any plan can finish, so every plan is answered as one that took too long. (The
-   * route refuses to start with such a bound; it is set here past that check, only to reach the
-   * answer.)
+   * A time bound of 100 ms, and a planner thread that starts no plan before {@link #close}: every
+   * plan the route is asked for meanwhile is still waiting to start when its bound expires, so it
+   * is answered as one that took too long, whatever the scheduling.
    */
   public static ScanPlanBoundsSwap timingOut(IcebergRestScanController controller) {
-    return new ScanPlanBoundsSwap(controller, 1, 0L);
+    ScanPlanBoundsSwap swap = new ScanPlanBoundsSwap(controller, 1, 100L);
+    ThreadPoolExecutor held =
+        new ThreadPoolExecutor(
+            1,
+            1,
+            0L,
+            TimeUnit.MILLISECONDS,
+            new SynchronousQueue<>(),
+            runnable -> {
+              Thread thread = new Thread(runnable, "irc-scan-plan-held");
+              thread.setDaemon(true);
+              return thread;
+            }) {
+          @Override
+          protected void beforeExecute(Thread thread, Runnable plan) {
+            try {
+              swap.release.await();
+            } catch (InterruptedException e) {
+              // The plan was cancelled when its bound expired: it does not run.
+              Thread.currentThread().interrupt();
+            }
+          }
+        };
+    ExecutorService unused =
+        (ExecutorService) ReflectionTestUtils.getField(swap.replacement, "planners");
+    unused.shutdownNow();
+    ReflectionTestUtils.setField(swap.replacement, "planners", held);
+    return swap;
   }
 
   @Override
