@@ -4,6 +4,8 @@ Bottom line: nothing blocks work, but the reviews of 2026-11-27 and the scout ad
 before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23, restructured 2026-11-27. Only
 `01-stated.md` carries Mike's authority.
 
+Added 2026-11-28, after pull requests 163 and 164: three more inherited native defects (a null table UUID in the authorization resource, with a question about the deployed policy; the clean-up's unsupported delete; the descending page) in the entry "The inherited native defects (D62)", and two more default-line Spark SQL differences (row-lineage columns in `DESCRIBE TABLE EXTENDED`; the `DELETE` snapshot named "delete") in the entry "BC-030". None blocks work.
+
 Order: what was added on 2026-11-28, later (the audit constant, the namespace layer's three differences, the view create, the list of records, his store as a dependency, scan planning, the re-run question being moot), then what was added earlier on 2026-11-28 (the re-run question, what the review of his namespace stack observed, and two interim choices that are stricter or narrower than his routes), then the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
 questions, unchanged except where marked MOOT or partly settled. Each entry is a question for him, what happens meanwhile,
 and what each answer changes.
@@ -156,6 +158,13 @@ and Spark 3.1 line, or from moving to Iceberg 1.12 and Java 17, and he was never
   ADD COLUMN ... DEFAULT` refused; one delete file after repeated DELETEs on a file), or must the fork be patched (D14 and
   D31, "Reverse by: patching the fork")? Meanwhile: as built; declared in the smoke tests. If accepted: documented. If not:
   fork patches.
+  Added 2026-11-28, from the recording of LinkedIn main in draft pull request 161 (not yet merged) and its reviewer: two more
+  differences of the default line belong to this same question, and both come from the Iceberg fork's code, not OpenHouse's:
+  (a) `DESCRIBE TABLE EXTENDED` on a format 2 table also lists `_row_id` and `_last_updated_sequence_number` (the fork's
+  `SparkTable` lists them for every table; ledger BC-092, D81); (b) a merge-on-read `DELETE` names its snapshot "delete" where
+  main says "overwrite" (the fork's `BaseRowDelta`; BC-094; not yet in the recording). Each would need a small patch in the
+  fork to restore main's answer. Meanwhile: as built. A third new difference, the Jackson text of three 500 messages, is
+  decided as a security default (D80, BC-093) and is not put to him unless he wants the old text. Nothing blocks work.
 - BC-033 (the S3 stack of the tables service and its published POMs: the fork's `iceberg-aws`, AWS SDK 2.54.17, apache5 as
   the HTTP client). Question: does he accept the new S3 stack on the default build without a run against real S3, or require
   one before it is the default? Meanwhile: as built; "Not run: real S3". If accepted: documented. If a run is required: the
@@ -212,6 +221,18 @@ The scout's report is `records/scout-namespace-and-prior-work.md`; the summary i
   lost, as natively for RTAS (RF-004); (2) after a commit fails past `failIfRetryUpdate`, a per-instance cache refuses every
   later commit on that base for five minutes (RF-005). Fixing either changes native behavior and needs his justification
   upstream. Meanwhile: documented, not fixed. If he asks for the fixes: new items with their own justification.
+  Added 2026-11-28, from the faithful House Tables stand-in of pull request 163 (the same rule, D62 extended; the code is on
+  LinkedIn main; none blocks work): (3) authorization receives a resource with a null table UUID wherever the service builds
+  it from a House Tables row, because the real store keeps no UUID: the Iceberg REST view load, and by the reviewer's
+  reading the native DROP TABLE (RF-069). The reviewer reads the policy engine as keying table-level roles on that UUID, so
+  that on a deployment using it table-level and view-level grants would be ignored on those paths and only database-level
+  grants would decide; **this is NOT VERIFIED by anyone**. The question for him: does the deployed policy read the table UUID
+  for drop and for view load? (4) the clean-up after an I/O failure in the table commit path calls a delete that the real
+  repository refuses with `UnsupportedOperationException`, which the catch does not cover, so the caller gets a server error
+  where a 409 belongs (RF-070). (5) on the real store a descending page request comes back ascending, because the
+  repository sends only the sort's property names (RF-071); nothing in the product sends a descending sort today.
+  Meanwhile: pinned by tests (the follow-up, FF-54), documented, not fixed. If he asks for the fixes: new items with
+  their own justification.
 
 ## Earlier questions
 

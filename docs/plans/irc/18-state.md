@@ -1,13 +1,22 @@
 # Current state
 
-Bottom line (2026-11-28, third update): 81 pull requests are merged into `irc-integration` and its head is `4b9d152d` (pull
-request 158). Ten of them merged under the owner's standing order of an independent review (S58), which is every number from
-151 to 160: 154, 151, 153 (`91-first-reviewed-merges-result.md`), 152, 155, 156, 157, 159 (`92-reviewed-merges-152-to-159-result.md`)
-and, since, 160 and 158 (`93-reviewed-merges-158-and-160-result.md`). The compatibility kit is unchanged at 160 tests: 54 passed,
-90 failed, 16 skipped [ran, by the authors of 157, 160 and 158; the failed list of 158's head is identical to the base's]. What
-each merge left true, changed and left open is in those three files; the behavior changes are in `85-behavior-change-ledger.md`
-(BC-075 to BC-086 in part F and BC-087, BC-088 in part C came from the last two). The decisions of the day are D69 to D78
-(`90-decisions-continued-7.md`). Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories.
+Bottom line (2026-11-28, fourth update): 83 pull requests are merged into `irc-integration` and its head is `35bd941c` (pull
+request 164). Twelve of them merged under the owner's standing order of an independent review (S58), which is every number from
+151 to 160 and 163 and 164: 154, 151, 153 (`91-first-reviewed-merges-result.md`), 152, 155, 156, 157, 159
+(`92-reviewed-merges-152-to-159-result.md`), 160 and 158 (`93-reviewed-merges-158-and-160-result.md`) and, since, 163 and 164
+(`94-reviewed-merges-163-and-164-result.md`). The compatibility kit is unchanged at 160 tests: 54 passed, 90 failed, 16 skipped
+[ran, by the authors of 157, 160, 158 and 163]. What each merge left true, changed and left open is in those four files; the
+behavior changes are in `85-behavior-change-ledger.md` (BC-089 to BC-094 came from the last two merges and the recording of main in
+the open pull request 161). The decisions of the day are D69 to D83 (`90-decisions-continued-7.md`). Nothing is merged into either
+fork's main or into LinkedIn's or Apache's repositories.
+
+What the last two merges changed: there is one House Tables stand-in for the tests, held to the real store by one contract of 30
+cases (163; no production file changed), so a green test of the tables service now proves more than the stand-in; messages,
+comments, build files and docs no longer cite private planning ids, and a CI check keeps them out (164). The faithful stand-in
+exposed defects that were hidden: authorization receives a null table UUID where the service builds the resource from a House
+Tables row, the clean-up after an I/O failure calls a delete the real store refuses, a descending page comes back ascending (all
+inherited from LinkedIn main, pinned and reported, not fixed; RF-069 to RF-071), and the register-view directory check cannot fire in
+production (this branch's own code, RF-012, fixed in the follow-up).
 
 What the Iceberg REST routes (`/iceberg`) serve now: every route except scan planning and credentials (off by default behind
 `cluster.tables.irc.scan-planning.enabled`, since 158; D75), the stored-plan routes, credential signing and view rename; and
@@ -18,22 +27,30 @@ authorization outage answers 503 and a denial 403, a rename onto a view writes n
 Native answers are LinkedIn main's again by default (156). Nothing native changes with every new property unset (158's merge
 message; the re-check read the classes).
 
-Post-merge CI, as read by the orchestrator on 2026-11-28 UTC: green for the merges of 157 (`518a2134`) and 159 (`8a5a9980`); for
-160 (`96acfca3`) the run was in progress with nothing failed at 05:50 UTC; for 158 (`4b9d152d`) not yet read. Earlier merges
-(151 to 156) passed on both lines, as recorded in `92-reviewed-merges-152-to-159-result.md`. The orchestrator's error after 155
-(a cache warm-up reported clean from truncated output) stays recorded there.
+Post-merge CI, as read by the orchestrator on 2026-11-28 UTC: green for the merges of 157 (`518a2134`), 159 (`8a5a9980`) and 160
+(`96acfca3`); for 158 (`4b9d152d`) in progress with nothing failed at 07:10 UTC; for 163 (`a0239ad7`) and 164 (`35bd941c`) not read.
+Earlier merges (151 to 156) passed on both lines, as recorded in `92-reviewed-merges-152-to-159-result.md`. The orchestrator's error
+after 155 (a cache warm-up reported clean from truncated output) stays recorded there.
 
-In flight now (no results yet):
-- The baseline of LinkedIn main (FF-20 to FF-24): draft pull request 161, branch `irc/baseline-of-linkedin-main`. Its first CI
-  head had two failed Spark 3.5 integration-test jobs, which its author is working on.
-- House Tables stand-in fidelity (FF-32 and FF-33): branch `irc/house-tables-stand-in-fidelity`, no pull request yet.
+In flight now (no results to record as merged):
+- The baseline of LinkedIn main (FF-20 to FF-24; FF-20, FF-21 and FF-22 in part): draft pull request 161, branch
+  `irc/baseline-of-linkedin-main`. First review MERGE AFTER FIXES (findings M1 to M3 and S1 to S6); the author is closing them and
+  declaring the test-double differences that pull request 163 created. Its findings so far are in the ledger (BC-092 to BC-094):
+  reference line 9 differences from main, all the owner's namespace stack; default line 17, including two causes in no ledger row
+  and a third the reviewer found.
+- The minors of the `/iceberg` handlers: draft pull request 162, branch `irc/iceberg-rest-handler-minors` (items of FF-53 and
+  findings C1 and C3 of the re-check of 158). First review MERGE AFTER FIXES (one missing test, F1); the author is closing the
+  findings and merging the new base.
+- The follow-up to 163 (FF-54): branch `irc/stand-in-follow-up-and-register-view-uuid`, no pull request yet. It makes the
+  register-view directory check work on what production has, pins the inherited gaps, lists every place authorization receives a
+  null UUID and closes findings F2 to F8 of the review of 163.
 
-Queued next: a pull request for the minors of FF-53 on the `/iceberg` handlers, including C1 (an outage answers 404 for a
-record-only namespace on five paths) and C3 (a view commit with a null metadata location); private ids out of user-facing
-messages (FF-34, with FF-49); the compatibility kit list checking causes (FF-25); build hygiene (FF-27 to FF-31); one switch
-for the whole Iceberg REST base (FF-11); the namespace stack's follow-up (FF-50). Held and not started: W14 and N9. Eight
-ledger rows and the scout's questions wait on the owner, with the items of 2026-11-28 (`58-waiting-on-mike.md`); the scan
-planning question (FF-05) no longer exposes anything while open.
+Queued next: the compatibility kit's list checking causes (FF-25); build hygiene and CI check names (FF-27 to FF-31); one switch for
+the whole Iceberg REST base (FF-11); the namespace stack's follow-up in this repository (FF-50); a full re-record of the LinkedIn main
+recording after 161 merges (FF-55); the table-row repository's contract against MySQL with the production DDL (FF-56); renames of
+identifiers and test data that encode private ids (FF-57); the delta harness's ids and future (FF-58, needs a decision). Held and not
+started: W14 and N9. Ten ledger rows and the scout's questions wait on the owner, with the items of 2026-11-28
+(`58-waiting-on-mike.md`); the scan planning question (FF-05) no longer exposes anything while open. None blocks work.
 
 Every sub-agent runs on the larger fallback model or the small one, none on the orchestrator's model (the owner's statement of
 2026-11-28, S62).
@@ -112,7 +129,7 @@ place for current state.
 
 ## Merged pull requests
 
-81 pull requests are merged into `irc-integration` (the last is 158, merge commit 4b9d152d; older text below stops at 149) and 10 into the Iceberg
+83 pull requests are merged into `irc-integration` (the last is 164, merge commit 35bd941c; older text below stops at 149) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
 The latest: 150 and 149 in `82-v10-x18-result.md`; 147 and 148 in `81-v17-x16-result.md`; 146 in `80-c3-c4-result.md`; 145 and 144 in `79-c20-x11-x12-x13-result.md`.
 

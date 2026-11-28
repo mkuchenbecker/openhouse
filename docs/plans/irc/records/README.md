@@ -1,6 +1,6 @@
 # Records: the agents' raw working records
 
-Bottom line: these 101 files (100 markdown records and one build log) are the raw, unedited records written by the
+Bottom line: these files (119 on 2026-11-28, not counting this README; the earlier count of 101 is out of date) are the raw, unedited records written by the
 agents that did each piece of work, plus the ten files of the retroactive review of 2026-11-27 (the common brief and
 the nine reviewers' reports, `review-*.md`), and the scout's report and the fix-forward work's brief and records of the same day. Added 2026-11-28: the records of the first pull requests that were reviewed by an independent sub-agent before merge (`pr-review-*.md`, one report per pull request, with the common brief `pr-review-brief-common.md` every such reviewer works under), and the authors' records of those pull requests. They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
@@ -130,5 +130,13 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `pr-review-159.md` | review of pull request 159 (cache writer fetch) | pull request 159 (merge `8a5a9980`) | `../92-reviewed-merges-152-to-159-result.md` |
 | `iceberg-rest-namespace-routes.md` | the Iceberg REST namespace routes (157; copied again 2026-11-28, it is newer: the author's work on 160) | pull requests 157 (merge `518a2134`) and 160 (merge `96acfca3`) | `../92-reviewed-merges-152-to-159-result.md` |
 | `rest-authorization-and-exposure-gaps.md` | FF-04, FF-06 (part), FF-07, FF-08, FF-48 and review leftovers | pull request 158 (merge `4b9d152d`) | `../93-reviewed-merges-158-and-160-result.md` |
-| `baseline-of-linkedin-main.md` | FF-20 to FF-24 (baseline of LinkedIn main) | branch `irc/baseline-of-linkedin-main`, draft pull request 161, in progress (copied again 2026-11-28, newer) | `../86-review-findings-and-fix-forward.md` (status) |
-| `house-tables-stand-in-fidelity.md` | FF-32, FF-33 (House Tables stand-in fidelity) | branch `irc/house-tables-stand-in-fidelity`, no pull request yet, in progress | `../86-review-findings-and-fix-forward.md` (status) |
+| `baseline-of-linkedin-main.md` | FF-20 to FF-24 (baseline of LinkedIn main) | branch `irc/baseline-of-linkedin-main`, draft pull request 161, in flight, not merged (copied again 2026-11-28 after the review fixes, newer) | `../94-reviewed-merges-163-and-164-result.md` (in flight), `../85-behavior-change-ledger.md` (what the recording measured), `../86-review-findings-and-fix-forward.md` (status) |
+| `house-tables-stand-in-fidelity.md` | FF-32, FF-33 (House Tables stand-in fidelity) | pull request 163 (merge `a0239ad7`; copied again 2026-11-28, newer) | `../94-reviewed-merges-163-and-164-result.md` |
+| `pr-review-161.md` | review of pull request 161 (recording of LinkedIn main), first review: MERGE AFTER FIXES (M1 to M3, S1 to S6) | draft pull request 161, in flight, not merged | `../94-reviewed-merges-163-and-164-result.md` (in flight), `../85-behavior-change-ledger.md` |
+| `pr-review-162.md` | review of pull request 162 (handler minors), first review: MERGE AFTER FIXES (F1) | draft pull request 162, in flight, not merged | `../94-reviewed-merges-163-and-164-result.md` (in flight) |
+| `iceberg-rest-handler-minors.md` | items of FF-53 and findings C1 and C3 of the re-check of 158 | branch `irc/iceberg-rest-handler-minors`, draft pull request 162, in flight | `../94-reviewed-merges-163-and-164-result.md` (in flight) |
+| `pr-review-163.md` | review of pull request 163 (one House Tables stand-in), MERGE AFTER FIXES (F1 a merge-order condition; F2 to F8) | pull request 163 (merge `a0239ad7`) | `../94-reviewed-merges-163-and-164-result.md` |
+| `pr-review-164.md` | review of pull request 164 (private ids out of code), round 1: MERGE AFTER FIXES (F1, F2) | pull request 164 (merge `35bd941c`) | `../94-reviewed-merges-163-and-164-result.md` |
+| `pr-review-164-recheck.md` | re-check of pull request 164 at `f4ae7353`: MERGE, three minors can follow | pull request 164 (merge `35bd941c`) | `../94-reviewed-merges-163-and-164-result.md`, `../86-review-findings-and-fix-forward.md` (FF-53) |
+| `private-ids-out-of-code.md` | FF-34, FF-49, the comment part of FF-35 | pull request 164 (merge `35bd941c`) | `../94-reviewed-merges-163-and-164-result.md` |
+| `stand-in-follow-up.md` | follow-up to 163 (FF-54): register-view check on production's UUID, pins, findings F2 to F8 of `pr-review-163.md` | branch `irc/stand-in-follow-up-and-register-view-uuid`, no pull request yet, in flight | `../94-reviewed-merges-163-and-164-result.md` (in flight) |

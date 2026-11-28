@@ -1,8 +1,8 @@
 # Decision log, continued a seventh time
 
-Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D78 follow (D65 to D68, D69 to D76 and D77 to D78 added 2026-11-28).
+Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D83 follow (D65 to D68, D69 to D76, D77 to D78 and D79 to D83 added 2026-11-28).
 
-Bottom line: twenty-six decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68, D69 to D76 and D77 to D78 on 2026-11-28; D69, D74 and D75 are now implemented by merged pull requests 158 and 160, and D69 and D75 were extended, not duplicated, for the two decisions the merge of 158 asked for; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
+Bottom line: thirty-one decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68, D69 to D76, D77 to D78 and D79 to D83 on 2026-11-28; D62 was extended, not duplicated, for the defects the faithful House Tables stand-in exposed; D69, D74 and D75 are now implemented by merged pull requests 158 and 160, and D69 and D75 were extended, not duplicated, for the two decisions the merge of 158 asked for; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
 (`88-review-summary.md`, `85-behavior-change-ledger.md`, `86-review-findings-and-fix-forward.md`) and the scout's report
 on the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`), under the owner's statements S57 to S61
 (`01-stated.md`). Most of them restore LinkedIn main's behavior (D53 closes an unchecked read, D56 to D61 restore or gate
@@ -125,6 +125,7 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
   `86-review-findings-and-fix-forward.md`) and put to the owner (`58-waiting-on-mike.md`).
 - What would change it: the owner asking for either fix, with the justification that goes upstream.
 - Reference: `86-...` RF-004, RF-005.
+- Extension, 2026-11-28 (after pull request 163): the same rule holds for the inherited defects of LinkedIn main that the faithful House Tables stand-in exposed. They are pinned by tests and reported, not fixed, because fixing them changes native behavior, which needs its own justification upstream: RF-069 (authorization receives a resource with a null table UUID wherever the service builds it from a House Tables row: the view load and, by the reviewer's reading, the native DROP TABLE), RF-070 (the clean-up after an I/O failure calls a delete the real repository refuses with `UnsupportedOperationException`), RF-071 (a descending page request comes back ascending on the real store). They go to the owner (`58-waiting-on-mike.md`). Rests on: `records/pr-review-163.md` F3 and the merge message of `a0239ad7`; the follow-up pins them (FF-54). To undo: the owner asks for a fix; each becomes a new item with its own justification. What is NOT covered by this extension: the register-view directory check (RF-012), which is this branch's own code and is fixed in the follow-up.
 
 ## D63. What goes upstream: the orchestrator's reading, to be confirmed by the owner
 
@@ -286,3 +287,48 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - What it rests on: `records/pr-review-158-recheck.md` section 4 and section 2 (the minors); the merge message of `4b9d152d` (Known gaps).
 - What would change it: C1 or C3 being seen to leak or mislead in a deployment; the owner asking for them before the minors pull request.
 - To undo: nothing to undo; the fix of C1 is a rethrow of `AuthorizationServiceException` in `IcebergRestApiHandler.storedNamespace` (only when the namespace also holds nothing), of C3 a null check in `IcebergRestViewHandler.answered`.
+
+## D79. Pull request 163 merged before 161, so 161 declares the stand-in's answers as test-double differences, a kind of its own
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable.
+- Decided: pull request 163 (one faithful House Tables stand-in) merged before pull request 161 (the recording of LinkedIn main). Draft 161 therefore declares the commit-path answers that changed under the new stand-in (the merge message says about a dozen; the author's record says 16 declared, commit `6f2fc38d`) as TEST-DOUBLE differences, a kind kept distinct from product differences, with a cause such as "main's House Tables stand-in answered this; the real store answers ...". The stored recording is not edited by hand.
+- Why: the recording ran main's code with main's old stand-in, so those answers are the stand-in's, not main's product's (review 163 F1: certain for the lines quoted, such as the softDeletedTables page size, a case-only rename, a second restore). The honest classification is neither "main's answer" nor "a change of the product". Editing the stored file by hand is the escape hatch that review 161 M2 asked to remove.
+- What it rests on: `records/pr-review-163.md` F1; the merge message of `a0239ad7` (Known gaps); `records/pr-review-161.md` M1, M2; `records/baseline-of-linkedin-main.md`.
+- What would change it: a recording taken with the faithful stand-in on main (FF-55), after which the declarations go.
+- To undo: remove the test-double declarations once the full re-record exists; no product code is involved.
+
+## D80. The Jackson location text stays as the newer Jackson gives it
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: the three commit-path 500 messages for a body that is not JSON keep the newer text on the default line (`[Source: REDACTED ...]`, a column counted from 1) and are declared as a difference from LinkedIn main (ledger BC-093; BC-027 covers the dependency move in general).
+- Why: the cause is jackson-core's change of the default of `INCLUDE_SOURCE_IN_LOCATION` from true to false in 2.16, a security default (the source text of a rejected body is not echoed). Restoring the source text takes one line at service start but restores only the text, not the column, and gives back what upstream Jackson stopped doing on purpose.
+- What it rests on: `records/pr-review-161.md` section 3 (the jars' bytecode: true in 2.14.3 and 2.15.2, false in 2.16.0 and 2.22.2; the fork's bill of materials pins 2.22.2); not verified: which jackson-core each line's tables service resolves.
+- What would change it: the owner or a consumer needing the old text; the owner's answer to BC-030.
+- To undo: `JsonUtil.factory().enable(JsonParser.Feature.INCLUDE_SOURCE_IN_LOCATION)` at service start (the reviewer's suggestion), and remove the declaration in 161.
+
+## D81. The row-lineage columns in `DESCRIBE TABLE EXTENDED` are not restored in OpenHouse and go to the owner
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable.
+- Decided: `DESCRIBE TABLE EXTENDED` on a format 2 table on the default line also lists `_row_id` and `_last_updated_sequence_number` (ledger BC-092); OpenHouse does not restore main's answer. It joins the owner's open question about the Spark SQL differences that come with Iceberg 1.12 (BC-030, `58-waiting-on-mike.md`). The merge-on-read `DELETE` snapshot named "delete" (BC-094) has the same disposition and the same question.
+- Why: the cause is the fork's `SparkTable`, which lists the columns for every table; Iceberg's `SparkCatalog` builds that class, so nothing in OpenHouse can change it; only a small patch in the Iceberg fork (gating on format version 3 or above) would. Whether to patch the fork is the question D14 and D31 already put to the owner ("Reverse by: patching the fork").
+- What it rests on: `records/pr-review-161.md` section 3 (`SparkTable.java:276-287`, `BaseRowDelta.java:55-56`); `records/baseline-of-linkedin-main.md` (scenario s26).
+- What would change it: the owner asking for the fork patch.
+- To undo: patch the fork's `SparkTable` and move the pin of the fork commit (`scripts/iceberg-fork/iceberg-fork.properties`); remove the declaration in 161.
+
+## D82. The delta harness keeps its ids for now and is the guard's one declared skip; renames are deferred
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable.
+- Decided: pull request 164 leaves the delta harness (about 26 lines citing ids and documents not in the repository; built by no CI workflow) untouched, and the private-id check skips it, the one declared skip. Identifiers and test-data names that encode ids (five test and method names; tables, jobs and files named from work-item ids in sixteen files) are not renamed in 164; each is held by an allow-list entry "test data name, rename pending" (FF-57, FF-58).
+- Why: other open branches touch those tests, and a rename now would conflict with them; the harness is a standalone tool whose text reaches no product user (review 164 F3). The check does not look inside identifiers, so the deferral is visible only in the allow-list.
+- What it rests on: the merge message of `35bd941c` (Known gaps); `records/pr-review-164.md` F3 and F5; `records/pr-review-164-recheck.md` section 3 (the entries cannot hide a new id).
+- What would change it: the open branches merging; a decision on the harness's future (FF-58, with FF-24).
+- To undo: rename, delete the allow-list entries, run the check.
+
+## D83. On a store failure a record-only namespace answers 404 on the existence checks and 500 on load, left as is in pull request 162 with the comment corrected
+
+- Date: 2026-11-28. The orchestrator's decision about draft pull request 162, which is in flight; revisitable.
+- Decided: in pull request 162, when the record store fails, a namespace that has only a record answers 404 on HEAD, the lists and the rename target, and 500 on load. The behavior is left as is, and the javadoc that said the two rules are one is corrected (the record's commit `7635dd2c`). Aligning the existence checks with load's rule is its own change.
+- Why: aligning the checks with load's rule is a behavior change of its own, wider than the findings C1 and C3 of the re-check of 158 that this pull request closes; the author kept the behavior and corrected the comment.
+- What it rests on: `records/pr-review-162.md` F2; `records/iceberg-rest-handler-minors.md` (F2 javadoc, behavior unchanged).
+- What would change it: a client seen to mislead on a store outage; the owner's answer on what existence is for his routes.
+- To undo: apply load's rule (answer as before records existed when the namespace holds something, otherwise the failure) in `IcebergRestApiHandler.hasRecordOrIsListed`; one test per path.

@@ -1,6 +1,6 @@
 # baseline-of-linkedin-main (FF-20 to FF-24)
 
-Bottom line: in progress. Worktrees created: /home/user/oh-baseline (branch irc/baseline-of-linkedin-main at 0d54d2fd), /home/user/oh-main (detached bb8929e1).
+Bottom line: done. Draft pull request 161, head 210d54f85ee43f17bdd2160bfae525d7c0908b59, all 13 CI jobs green (1 skipped by design). The suites compare with a 6-run recording of LinkedIn main bb8929e1; reference line differs on 9 answers, all namespace stack (Part D); default line on 17, two causes NEW (s26 row-lineage columns, Jackson 500 location text). FF-20, FF-21 done; FF-22 partly (list + check); FF-23, FF-24 left with plans. Worktrees created: /home/user/oh-baseline (branch irc/baseline-of-linkedin-main at 0d54d2fd), /home/user/oh-main (detached bb8929e1).
 
 ## Log
 - 2026-11-28 start: read brief, FF-20..24, RF-060/063, review D2/D5/section 5.
@@ -21,3 +21,16 @@ Bottom line: in progress. Worktrees created: /home/user/oh-baseline (branch irc/
 - Race-thread answers now status only; re-recorded RUNS=6 (raw-final4). Final runs both lines: 183 tests each, all pass. check-test-groups: partition holds.
 - Commit aaa84a6d pushed; draft pull request 161. Main worktree removed (sources and status saved in scratch baseline/main-worktree-final).
 - Waiting on CI.
+- CI on aaa84a6d: spark-3.5 itest red on both lines, only s26 (table Owner = OS user: root vs runner). Fixed by normalizing the OS user (0fe4678a), re-recorded RUNS=6 (raw-final5). Merged irc-integration 4b9d152d (#158; stand-in listing now case-insensitive) as 210d54f8; 183 tests each line green. Pushed 210d54f8. Waiting on CI.
+- CI on 210d54f8: all success (Default build Docker on reference line skipped by design). Main worktree removed.
+
+## Review fixes (review of pull request 161, MERGE AFTER FIXES)
+- 5f4db2e4 M1: test-doubles header + stand-in measurement (FIXTURES_STAND_IN=branch): 0 of 424 Spark keys differ; claim corrected.
+- 1877920a M2: NOT ON MAIN marker removed; old marker refused at parse; tests.
+- d1b4eecf M3: checker finds IcebergV3.supported() and openhouse.iceberg.line, counts per line (92 occurrences, 50 lines).
+- b361eeca S3: merge-on-read DELETE entry refiled as difference from main; write statement not added (shared by 4 platforms).
+- 29bfbe28 S1: recorded tests that are gone or disabled fail unless in absentTests().
+- 090e1d61 S6: record mode refused unless commit bb8929e1 and no branch-only class.
+- 6b3db036: decided wordings (Jackson 2.16 default change; fork SparkTable).
+- bd5459f0: README for record.sh.
+- 73da643b merge of irc-integration a0239ad7 (#163 one stand-in); 6f2fc38d: 16 stand-in differences declared (kind "stand-in difference"), renamed test in absentTests, absent list scoped per class; record.sh updated; re-measured Spark with the new stand-in on main: 0 different. Both lines 195 tests green. Pushed 6f2fc38d. PR body updated.
