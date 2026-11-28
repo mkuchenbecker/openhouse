@@ -36,7 +36,15 @@ public class SparkIrcFormatV3Test {
 
   private static final List<String> TABLES =
       Arrays.asList(
-          "v3_created", "v3_plain", "v3_upgraded", "v3_cow", "v3_mor", "v3_ctas", "v3_types");
+          "v3_created",
+          "v3_plain",
+          "v3_upgraded",
+          "v3_cow",
+          "v3_mor",
+          "v3_ctas",
+          "v3_types",
+          "v3_lineage_cow",
+          "v3_lineage_mor");
 
   @BeforeAll
   static void addTheCatalog() throws Exception {
@@ -229,6 +237,65 @@ public class SparkIrcFormatV3Test {
         Arrays.asList(row(1L, "aa"), row(3L, "cc"), row(4L, "d"), row(5L, "e")),
         rows("SELECT * FROM " + t("v3_mor") + " ORDER BY id"));
     Assertions.assertEquals(3, stored("v3_mor").get("format-version").asInt());
+  }
+
+  /**
+   * Row lineage through UPDATE, MERGE and DELETE in a Spark 4.2 session without Iceberg's SQL
+   * extensions (this JVM's session has none; Spark 4 plans row-level statements itself): the
+   * contract of the fork's TestRowLevelOperationsWithLineage holds in both write modes. An
+   * untouched row keeps its row id and sequence number, an updated row keeps its row id and gets
+   * the statement's sequence number, an inserted row gets a fresh id.
+   * SparkIrcRowLevelStatementsTest (smoke JVM, with the extensions) checks the same after every
+   * statement in more shapes.
+   */
+  @Test
+  void rowLineageWithoutIcebergSqlExtensions() throws Exception {
+    Assertions.assertEquals(
+        "",
+        IrcSpark.session().conf().get("spark.sql.extensions", ""),
+        "the session has no extensions");
+    for (String mode : Arrays.asList("copy-on-write", "merge-on-read")) {
+      String table = "copy-on-write".equals(mode) ? "v3_lineage_cow" : "v3_lineage_mor";
+      String name = t(table);
+      rows(
+          "CREATE TABLE "
+              + name
+              + " (id bigint, data string) USING iceberg TBLPROPERTIES ('format-version'='3',"
+              + " 'write.format.default'='parquet', 'write.delete.mode'='"
+              + mode
+              + "', 'write.update.mode'='"
+              + mode
+              + "', 'write.merge.mode'='"
+              + mode
+              + "')");
+      rows("INSERT INTO " + name + " VALUES (1,'a'),(2,'b'),(3,'c')");
+      Assertions.assertEquals(
+          Arrays.asList(row(1L, 0L, 1L), row(2L, 1L, 1L), row(3L, 2L, 1L)), lineage(name), mode);
+      rows("UPDATE " + name + " SET data = 'bb' WHERE id = 2");
+      Assertions.assertEquals(
+          Arrays.asList(row(1L, 0L, 1L), row(2L, 1L, 2L), row(3L, 2L, 1L)), lineage(name), mode);
+      long nextRowId = stored(table).get("next-row-id").asLong();
+      rows(
+          "MERGE INTO "
+              + name
+              + " t USING (SELECT 3L AS id, 'cc' AS data UNION ALL SELECT 4L, 'd') s"
+              + " ON t.id = s.id WHEN MATCHED THEN UPDATE SET t.data = s.data"
+              + " WHEN NOT MATCHED THEN INSERT *");
+      List<List<Object>> merged = lineage(name);
+      Assertions.assertEquals(
+          Arrays.asList(row(1L, 0L, 1L), row(2L, 1L, 2L), row(3L, 2L, 3L)),
+          merged.subList(0, 3),
+          mode);
+      Assertions.assertEquals(4L, merged.get(3).get(0), mode);
+      Assertions.assertTrue((Long) merged.get(3).get(1) >= nextRowId, mode + ": " + merged);
+      Assertions.assertEquals(3L, merged.get(3).get(2), mode);
+      rows("DELETE FROM " + name + " WHERE id = 1");
+      Assertions.assertEquals(merged.subList(1, 4), lineage(name), mode);
+    }
+  }
+
+  private static List<List<Object>> lineage(String name) throws Exception {
+    return rows("SELECT id, _row_id, _last_updated_sequence_number FROM " + name + " ORDER BY id");
   }
 
   /** CTAS at v3 (a staged create and its completion), then INSERT OVERWRITE and ADD COLUMN. */

@@ -13,7 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -44,25 +46,44 @@ final class SmokeTestService {
 
   static synchronized SmokeTestService get() throws Exception {
     if (instance == null) {
-      instance = start();
+      instance = start(Collections.emptyList());
       Runtime.getRuntime().addShutdownHook(new Thread(instance::stop, "irc42-smoke-service-stop"));
     }
     return instance;
   }
 
-  private static SmokeTestService start() throws Exception {
+  private static SmokeTestService formatV3;
+
+  /**
+   * A second service, the same but with the cluster switch {@code
+   * cluster.iceberg.format-v3.enabled} on (a cluster has it off by default, and so has {@link
+   * #get()}): for the row-level statements on format v3 tables. Started on first use, stopped when
+   * the test JVM exits.
+   */
+  static synchronized SmokeTestService getWithFormatV3() throws Exception {
+    if (formatV3 == null) {
+      formatV3 = start(Collections.singletonList("--cluster.iceberg.format-v3.enabled=true"));
+      Runtime.getRuntime()
+          .addShutdownHook(new Thread(formatV3::stop, "irc42-smoke-v3-service-stop"));
+    }
+    return formatV3;
+  }
+
+  private static SmokeTestService start(List<String> springArguments) throws Exception {
     Path parent = Paths.get(required("irc42.workdir"));
     Files.createDirectories(parent);
     Path work = Files.createTempDirectory(parent, "smoke-service-");
     List<String> command =
-        Arrays.asList(
-            required("irc42.java"),
-            "-Xmx768m",
-            "--add-opens=java.base/java.net=ALL-UNNAMED",
-            "-cp",
-            required("irc42.service.classpath"),
-            "com.linkedin.openhouse.spark42.irc.IrcSmokeTestService",
-            work.toString());
+        new ArrayList<>(
+            Arrays.asList(
+                required("irc42.java"),
+                "-Xmx768m",
+                "--add-opens=java.base/java.net=ALL-UNNAMED",
+                "-cp",
+                required("irc42.service.classpath"),
+                "com.linkedin.openhouse.spark42.irc.IrcSmokeTestService",
+                work.toString()));
+    command.addAll(springArguments);
     Process process =
         new ProcessBuilder(command)
             .directory(work.toFile())
