@@ -9,11 +9,13 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import java.util.Arrays;
 import java.util.List;
 import javax.servlet.http.HttpServletRequest;
+import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.ReportMetricsRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.annotation.Secured;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,6 +31,9 @@ import org.springframework.web.bind.annotation.RestController;
  * uri=<server>/iceberg}). Bodies are written by {@link IcebergRestJson} and failures by the
  * IRC-scoped exception handler, so the native routes' JSON and error bodies are untouched. Hidden
  * from the service's generated OpenAPI spec, from which the native clients are generated.
+ *
+ * <p>The namespace writes (create, update properties, drop) are mapped here with the namespace
+ * reads; their work is {@link IcebergRestNamespaceHandler}'s.
  *
  * <p>The write routes (create, staged create, commit, register, drop, rename) are {@link
  * IcebergRestWriteController}'s and the view routes {@link IcebergRestViewController}'s. Every
@@ -46,6 +51,8 @@ public class IcebergRestCatalogController {
   private static final String V1 = BASE_PATH + "/v1";
 
   @Autowired private IcebergRestApiHandler handler;
+
+  @Autowired private IcebergRestNamespaceHandler namespaceHandler;
 
   @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC config: OK"))
   @GetMapping(V1 + "/config")
@@ -73,6 +80,44 @@ public class IcebergRestCatalogController {
   @RequestMapping(value = V1 + "/namespaces/{namespace}", method = RequestMethod.HEAD)
   public ResponseEntity<byte[]> namespaceExists(@PathVariable("namespace") String namespace) {
     handler.namespaceExists(namespace);
+    return IcebergRestJson.noContent();
+  }
+
+  /**
+   * Creates a namespace: stores its record through the namespace service. Secured as the namespace
+   * service's own create route is.
+   */
+  @ApiResponses(@ApiResponse(responseCode = "200", description = "IRC create namespace: OK"))
+  @PostMapping(V1 + "/namespaces")
+  @Secured(value = Privileges.Privilege.SYSTEM_ADMIN)
+  public ResponseEntity<byte[]> createNamespace(@RequestBody(required = false) byte[] body) {
+    return IcebergRestJson.ok(
+        namespaceHandler.createNamespace(
+            IcebergRestJson.read(body, CreateNamespaceRequest.class),
+            extractAuthenticatedUserPrincipal()));
+  }
+
+  /** Sets and removes properties of a namespace's record, as the namespace service does. */
+  @ApiResponses(
+      @ApiResponse(responseCode = "200", description = "IRC update namespace properties: OK"))
+  @PostMapping(V1 + "/namespaces/{namespace}/properties")
+  @Secured(value = Privileges.Privilege.SYSTEM_ADMIN)
+  public ResponseEntity<byte[]> updateNamespaceProperties(
+      @PathVariable("namespace") String namespace, @RequestBody(required = false) byte[] body) {
+    return IcebergRestJson.ok(
+        namespaceHandler.updateProperties(
+            IcebergRestApiHandler.databaseId(namespace),
+            body,
+            extractAuthenticatedUserPrincipal()));
+  }
+
+  /** Drops a namespace's record; a namespace that holds a table or a view is not dropped. */
+  @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC drop namespace: NO_CONTENT"))
+  @DeleteMapping(V1 + "/namespaces/{namespace}")
+  @Secured(value = Privileges.Privilege.SYSTEM_ADMIN)
+  public ResponseEntity<byte[]> dropNamespace(@PathVariable("namespace") String namespace) {
+    namespaceHandler.dropNamespace(
+        IcebergRestApiHandler.databaseId(namespace), extractAuthenticatedUserPrincipal());
     return IcebergRestJson.noContent();
   }
 
@@ -140,9 +185,6 @@ public class IcebergRestCatalogController {
   private static final List<String[]> UNSERVED_SPEC_ROUTES =
       Arrays.asList(
           new String[] {"POST", "/v1/oauth/tokens"},
-          new String[] {"POST", "/v1/namespaces"},
-          new String[] {"DELETE", "/v1/namespaces/*"},
-          new String[] {"POST", "/v1/namespaces/*/properties"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
           // View register, scan planning and credentials: served by
           // IcebergRestRegisterViewController and IcebergRestScanController on the Iceberg 1.12

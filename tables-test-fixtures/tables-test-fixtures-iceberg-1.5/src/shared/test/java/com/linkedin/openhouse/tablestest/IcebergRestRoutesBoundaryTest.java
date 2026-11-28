@@ -99,9 +99,9 @@ public class IcebergRestRoutesBoundaryTest {
 
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
-   * registered: the reads, the metrics report, the table writes and the views on every line, scan
-   * planning, credentials and the view register on 1.12. Reporting stays off unless the client's
-   * own configuration turns it on.
+   * registered: the reads, the metrics report, the table and namespace writes and the views on
+   * every line, scan planning, credentials and the view register on 1.12. Reporting stays off
+   * unless the client's own configuration turns it on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -142,8 +142,16 @@ public class IcebergRestRoutesBoundaryTest {
         registerView,
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register-view"),
         endpoints.toString());
+    // The namespace writes, on every line.
+    for (String write :
+        Arrays.asList(
+            "POST /v1/{prefix}/namespaces",
+            "DELETE /v1/{prefix}/namespaces/{namespace}",
+            "POST /v1/{prefix}/namespaces/{namespace}/properties")) {
+      Assertions.assertTrue(endpoints.contains(write), endpoints.toString());
+    }
     Assertions.assertEquals(
-        19 + (planning ? 2 : 0) + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
+        22 + (planning ? 2 : 0) + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 

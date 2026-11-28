@@ -120,7 +120,7 @@ public class NamespaceRoutesBoundaryTest {
   }
 
   @Test
-  public void theIcebergRestNamespaceRoutesAreUnchanged() throws Exception {
+  public void theIcebergRestNamespaceRoutesStayUnderIcebergBehindItsInterceptor() throws Exception {
     String irc = "IcebergRestCatalogController#";
     String ircAuth = " [" + IRC_TOKEN_INTERCEPTOR + "]";
     Assertions.assertEquals(
@@ -129,12 +129,15 @@ public class NamespaceRoutesBoundaryTest {
         irc + "loadNamespace" + ircAuth, handler("GET", "/iceberg/v1/namespaces/db"));
     Assertions.assertEquals(
         irc + "namespaceExists" + ircAuth, handler("HEAD", "/iceberg/v1/namespaces/db"));
-    // Namespace writes under /iceberg stay with the catch-all (406), with or without a prefix.
-    Assertions.assertEquals(irc + "unserved" + ircAuth, handler("POST", "/iceberg/v1/namespaces"));
+    // Namespace writes under /iceberg are the Iceberg REST controller's (over the same namespace
+    // service); a prefix under /iceberg is still no route (the catch-all).
     Assertions.assertEquals(
-        irc + "unserved" + ircAuth, handler("DELETE", "/iceberg/v1/namespaces/db"));
+        irc + "createNamespace" + ircAuth, handler("POST", "/iceberg/v1/namespaces"));
     Assertions.assertEquals(
-        irc + "unserved" + ircAuth, handler("POST", "/iceberg/v1/namespaces/db/properties"));
+        irc + "dropNamespace" + ircAuth, handler("DELETE", "/iceberg/v1/namespaces/db"));
+    Assertions.assertEquals(
+        irc + "updateNamespaceProperties" + ircAuth,
+        handler("POST", "/iceberg/v1/namespaces/db/properties"));
     Assertions.assertEquals(
         irc + "unserved" + ircAuth, handler("POST", "/iceberg/v1/openhouse/namespaces"));
   }
@@ -211,12 +214,12 @@ public class NamespaceRoutesBoundaryTest {
 
   /**
    * Over HTTP: the namespace-record routes store and answer a namespace record through the embedded
-   * stand-in; the Iceberg REST routes still derive existence from tables (a record alone is not a
-   * namespace there) and still refuse namespace writes with 406; the native database list stays
-   * table-derived.
+   * stand-in; the Iceberg REST routes answer from the same record (load, exists, a duplicate
+   * create), each API in its own error shape; the Iceberg REST and native database lists stay
+   * table-derived, so a record alone is not listed (a known gap: House Tables lists no records).
    */
   @Test
-  public void theRoutesAnswerIndependently() throws Exception {
+  public void bothNamespaceApisAnswerFromTheSameRecords() throws Exception {
     String records = "/v1/openhouse/namespaces";
     Assertions.assertEquals(
         401, call("POST", records, "{\"namespace\":[\"nsb_db\"]}", false).status, "no token");
@@ -235,21 +238,24 @@ public class NamespaceRoutesBoundaryTest {
     Assertions.assertEquals(
         "Nsb_Db", new ObjectMapper().readTree(loaded.body).path("namespace").path(0).asText());
 
-    Assertions.assertEquals(404, call("GET", "/iceberg/v1/namespaces/nsb_db", null, true).status);
-    Assertions.assertEquals(404, call("HEAD", "/iceberg/v1/namespaces/nsb_db", null, true).status);
+    Response ircLoaded = call("GET", "/iceberg/v1/namespaces/nsb_db", null, true);
+    Assertions.assertEquals(200, ircLoaded.status, ircLoaded.body);
+    JsonNode ircLoadedBody = new ObjectMapper().readTree(ircLoaded.body);
+    Assertions.assertEquals("Nsb_Db", ircLoadedBody.path("namespace").path(0).asText());
+    Assertions.assertEquals("v", ircLoadedBody.path("properties").path("k").asText());
+    Assertions.assertEquals(204, call("HEAD", "/iceberg/v1/namespaces/nsb_db", null, true).status);
     Response list = call("GET", "/iceberg/v1/namespaces", null, true);
     Assertions.assertEquals(200, list.status, list.body);
     Assertions.assertFalse(list.body.toLowerCase().contains("nsb_db"), list.body);
     Response databases = call("GET", "/v1/databases", null, true);
     Assertions.assertEquals(200, databases.status, databases.body);
     Assertions.assertFalse(databases.body.toLowerCase().contains("nsb_db"), databases.body);
+    Response ircDuplicate =
+        call("POST", "/iceberg/v1/namespaces", "{\"namespace\":[\"NSB_DB\"]}", true);
+    Assertions.assertEquals(409, ircDuplicate.status, ircDuplicate.body);
     Assertions.assertEquals(
-        406, call("POST", "/iceberg/v1/namespaces", "{\"namespace\":[\"x\"]}", true).status);
-    Assertions.assertEquals(
-        406, call("DELETE", "/iceberg/v1/namespaces/nsb_db", null, true).status);
-    Assertions.assertEquals(
-        406,
-        call("POST", "/iceberg/v1/namespaces/nsb_db/properties", "{\"updates\":{}}", true).status);
+        "Namespace already exists: NSB_DB",
+        new ObjectMapper().readTree(ircDuplicate.body).path("error").path("message").asText());
 
     Response updated =
         call(
@@ -263,7 +269,16 @@ public class NamespaceRoutesBoundaryTest {
     Assertions.assertEquals("[\"k\"]", updatedBody.path("removed").toString());
     Assertions.assertEquals("[\"missing\"]", updatedBody.path("missing").toString());
 
+    Assertions.assertEquals(
+        "1",
+        new ObjectMapper()
+            .readTree(call("GET", "/iceberg/v1/namespaces/nsb_db", null, true).body)
+            .path("properties")
+            .path("a")
+            .asText());
+
     Assertions.assertEquals(204, call("DELETE", records + "/nsb_db", null, true).status);
+    Assertions.assertEquals(404, call("GET", "/iceberg/v1/namespaces/nsb_db", null, true).status);
     Response gone = call("GET", records + "/nsb_db", null, true);
     Assertions.assertEquals(404, gone.status, gone.body);
     Assertions.assertEquals(
@@ -274,9 +289,8 @@ public class NamespaceRoutesBoundaryTest {
   /**
    * Every endpoint the config route lists is served under {@code /iceberg}: the request it names,
    * sent under {@code /iceberg}, reaches an Iceberg REST controller and not the catch-all. The
-   * namespace-record routes have the same spec paths; were the config to list them, their create,
-   * properties and drop endpoints would fail this, as {@code /iceberg} answers those with the
-   * catch-all.
+   * namespace writes are among them: {@code /iceberg} serves them over the same namespace service
+   * as the namespace-record routes.
    */
   @Test
   public void theConfigListsOnlyRoutesServedUnderIceberg() throws Exception {
@@ -297,16 +311,12 @@ public class NamespaceRoutesBoundaryTest {
           served.startsWith("IcebergRest") && !served.contains("#unserved"),
           endpoint + " -> " + served);
     }
-    // The namespace-record routes' spec endpoints that /iceberg does not serve are not listed.
-    Assertions.assertEquals(
-        "IcebergRestCatalogController#unserved [" + IRC_TOKEN_INTERCEPTOR + "]",
-        handler("POST", "/iceberg/v1/namespaces"));
     for (String route :
         Arrays.asList(
             "POST /v1/{prefix}/namespaces",
             "DELETE /v1/{prefix}/namespaces/{namespace}",
             "POST /v1/{prefix}/namespaces/{namespace}/properties")) {
-      Assertions.assertFalse(endpoints.contains(route), route + " in " + endpoints);
+      Assertions.assertTrue(endpoints.contains(route), route + " not in " + endpoints);
     }
   }
 
