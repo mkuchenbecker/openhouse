@@ -1,0 +1,13 @@
+// The Spark 3.5 itest of LinkedIn main puts iceberg-data's unshaded ORC reader next to the shaded
+// one of iceberg-spark-runtime on its test classpath, so a merge-on-read read fails with
+// "shaded TypeDescription cannot be cast to org.apache.orc.TypeDescription" in the test JVM only.
+// apps/spark-3.5 on main excludes it the same way. Test classpath only; nothing main ships changes.
+allprojects {
+  afterEvaluate { p ->
+    if (p.path == ':integrations:spark:spark-3.5:openhouse-spark-3.5-itest') {
+      p.configurations.testRuntimeClasspath {
+        exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
+      }
+    }
+  }
+}

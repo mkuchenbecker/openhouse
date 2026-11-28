@@ -12,6 +12,7 @@ import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * catalog: a staged create and a restore. Configured like {@link TableCountLimitTest}, with a limit
  * of two. Each test uses its own database so nothing leaks between tests.
  */
+@ExtendWith(LinkedInMainAnswers.class)
 @SpringBootTest(properties = "cluster.tables.max-tables-per-database=2")
 @AutoConfigureMockMvc
 @ContextConfiguration(

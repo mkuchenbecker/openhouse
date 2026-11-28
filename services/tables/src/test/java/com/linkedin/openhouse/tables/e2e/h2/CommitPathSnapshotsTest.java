@@ -28,6 +28,7 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,6 +42,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * catalog; the retry cache itself is out of scope here. The Iceberg catalog bean is read only to
  * see branch refs, which a GET does not expose.
  */
+@ExtendWith(LinkedInMainAnswers.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ContextConfiguration(

@@ -37,6 +37,7 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -56,6 +57,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * consider retry"), and the store rejects a save whose version is not the stored location. Only a
  * true race gets past the first two.
  */
+@ExtendWith(LinkedInMainAnswers.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ContextConfiguration(

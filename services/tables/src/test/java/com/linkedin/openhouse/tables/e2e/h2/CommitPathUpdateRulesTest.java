@@ -24,6 +24,7 @@ import java.util.Map;
 import org.apache.iceberg.catalog.Catalog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,6 +42,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * the lock API may change. Each case pins the status, the stable part of the message and that a
  * follow-up GET shows nothing changed.
  */
+@ExtendWith(LinkedInMainAnswers.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ContextConfiguration(
@@ -60,7 +62,8 @@ public class CommitPathUpdateRulesTest {
   void cleanUp() throws Exception {
     for (String db : created) {
       unlock(mvc, db, "t");
-      mvc.perform(
+      perform(
+          mvc,
           MockMvcRequestBuilders.delete(tableUrl(db, "t") + "/lock/SYSTEM_ONLY")
               .header(TablesMvcConstants.HTTP_HEADER_ACTION_TYPE, "SYSTEM"));
       delete(mvc, db, "t");
@@ -130,7 +133,8 @@ public class CommitPathUpdateRulesTest {
   }
 
   private ResultActions systemPut(CreateUpdateTableRequestBody body) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.put(tableUrl(body.getDatabaseId(), body.getTableId()))
             .header(TablesMvcConstants.HTTP_HEADER_ACTION_TYPE, "SYSTEM")
             .contentType(MediaType.APPLICATION_JSON)
@@ -140,7 +144,8 @@ public class CommitPathUpdateRulesTest {
 
   private String systemGet(String db) throws Exception {
     return json(
-        mvc.perform(
+        perform(
+            mvc,
             MockMvcRequestBuilders.get(tableUrl(db, "t"))
                 .header(TablesMvcConstants.HTTP_HEADER_ACTION_TYPE, "SYSTEM")
                 .accept(MediaType.APPLICATION_JSON)));
@@ -149,7 +154,8 @@ public class CommitPathUpdateRulesTest {
   @Test
   void putThatChangesASystemOnlyLockIsRejectedAndOmittingItKeepsIt() throws Exception {
     make("ur_sysonly");
-    mvc.perform(
+    perform(
+            mvc,
             MockMvcRequestBuilders.post(tableUrl("ur_sysonly", "t") + "/lock")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"locked\":true,\"reason\":\"SYSTEM_ONLY\"}"))

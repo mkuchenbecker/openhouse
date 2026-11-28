@@ -1,0 +1,119 @@
+package com.linkedin.openhouse.tables.e2e.h2;
+
+import com.linkedin.openhouse.tables.e2e.h2.LinkedInMainComparison.MainDifference;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
+
+/**
+ * The comparison with LinkedIn main's recording cannot be satisfied by anything but main's answer
+ * or a declaration that pins this build's: no marker in the file excuses a statement, a test that
+ * is gone takes no rows out of view unseen, and a build that is not main cannot record.
+ */
+public class LinkedInMainComparisonTest {
+
+  private static LinkedInMainRecording recording(String... rows) {
+    return LinkedInMainRecording.parse(
+        "suite", Arrays.asList(("# commit: bb8929e1\n" + String.join("\n", rows)).split("\n")));
+  }
+
+  private static List<String> compare(
+      LinkedInMainRecording recording, List<MainDifference> declared, String key, String here) {
+    LinkedInMainComparison comparison = new LinkedInMainComparison("suite", recording, declared);
+    comparison.observe(key.split(" ")[0], key, here);
+    return comparison.endTest();
+  }
+
+  @Test
+  void aStatementWithNoRecordedRowFails() {
+    List<String> problems =
+        compare(recording("t1 #1 a\trows []"), Collections.emptyList(), "t1 #1 b", "rows []");
+    Assertions.assertEquals(1, problems.size(), String.valueOf(problems));
+    Assertions.assertTrue(
+        problems.get(0).contains("no outcome of LinkedIn main is recorded"), problems.get(0));
+    Assertions.assertFalse(problems.get(0).contains("NOT ON MAIN"), problems.get(0));
+  }
+
+  @Test
+  void aRecordedRowWithTheOldMarkerIsRefused() {
+    IllegalStateException refused =
+        Assertions.assertThrows(
+            IllegalStateException.class,
+            () -> recording("t1 #1 a\t" + LinkedInMainRecording.OLD_NOT_ON_MAIN_MARKER + "why"));
+    Assertions.assertTrue(refused.getMessage().contains("not a marker"), refused.getMessage());
+  }
+
+  @Test
+  void aStatementMainNeverReachedNeedsADeclarationThatPinsThisBuildsAnswer() {
+    List<MainDifference> declared =
+        Collections.singletonList(
+            MainDifference.on("t1 #1 b")
+                .main(LinkedInMainComparison.NOT_OBSERVED_ON_MAIN)
+                .here("rows [x]")
+                .because("kind", "reason"));
+    LinkedInMainRecording recording = recording("t1 #1 a\trows []");
+    Assertions.assertEquals(
+        Collections.emptyList(), compare(recording, declared, "t1 #1 b", "rows [x]"));
+    List<String> other = compare(recording, declared, "t1 #1 b", "rows [y]");
+    Assertions.assertEquals(1, other.size(), String.valueOf(other));
+    Assertions.assertTrue(other.get(0).contains("declared: rows [x]"), other.get(0));
+  }
+
+  @Test
+  void aRecordedTestThatIsGoneFailsUnlessNamedWithAReason() {
+    LinkedInMainComparison comparison =
+        new LinkedInMainComparison(
+            "suite",
+            recording("t1 #1 a\trows []", "t2 #1 a\trows []"),
+            Collections.<MainDifference>emptyList());
+    Set<String> declaredTests = new HashSet<>(Collections.singletonList("t1"));
+    List<String> wrong =
+        comparison.recordedTestsNotDeclared(declaredTests, "", Collections.emptyMap());
+    Assertions.assertEquals(1, wrong.size(), String.valueOf(wrong));
+    Assertions.assertTrue(wrong.get(0).contains("t2"), wrong.get(0));
+    Assertions.assertEquals(
+        Collections.emptyList(),
+        comparison.recordedTestsNotDeclared(
+            declaredTests, "", Collections.singletonMap("t2", "removed with its feature")));
+    Assertions.assertEquals(
+        1,
+        comparison
+            .recordedTestsNotDeclared(declaredTests, "", Collections.singletonMap("t2", " "))
+            .size());
+  }
+
+  /** A class with one enabled and one disabled test; private, so JUnit does not run it. */
+  private static class TwoTests {
+    @Test
+    void enabled() {}
+
+    @Disabled("for the test of enabledTests")
+    @Test
+    void disabled() {}
+  }
+
+  @Test
+  void aDisabledTestIsNotAnEnabledTest() {
+    Assertions.assertEquals(
+        Collections.singleton("enabled"),
+        LinkedInMainComparison.enabledTests(TwoTests.class, m -> m));
+  }
+
+  @Test
+  void onlyLinkedInMainMayRecord() {
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () -> LinkedInMainRecording.checkRecordable("bb8929e1004afe1a", true));
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () -> LinkedInMainRecording.checkRecordable("0d54d2fd", false));
+    Assertions.assertThrows(
+        IllegalStateException.class, () -> LinkedInMainRecording.checkRecordable(null, false));
+    LinkedInMainRecording.checkRecordable("bb8929e1004afe1a", false);
+  }
+}
