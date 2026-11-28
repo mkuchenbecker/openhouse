@@ -1,7 +1,7 @@
 # Map of the artifacts
 
 Bottom line: yes, the work is reviewable by another agent. Every landed change is a merge commit on `irc-integration`
-(86 pull requests, numbered 80 to 165 (the namespace stack's 153 is among them), as of 2026-11-28) whose message holds the reasons, the evidence and the known gaps; the notes in this
+(89 pull requests, numbered 80 to 168 (the namespace stack's 153 is among them), as of 2026-11-28) whose message holds the reasons, the evidence and the known gaps; the notes in this
 directory hold the decisions and the results; the raw agent records are now in `records/`. Section 6 describes what was paused on 2026-11-25; work resumed on 2026-11-27 and `18-state.md` is the current state. Everything here was checked on 2026-11-25 against the repositories and GitHub,
 except what is marked "[not checked]". Nothing is merged into either fork's main or into LinkedIn's repositories.
 
@@ -14,7 +14,7 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 5. Decisions, in order: `13-decisions.md` (D1 to D12), `16-decisions-continued.md` (D13 to D21),
    `22-decisions-continued-2.md` (D22 to D29), `37-decisions-continued-3.md` (D30 to D36),
    `51-decisions-continued-4.md` (D37 to D42), `56-decisions-continued-5.md` (D43 to D47),
-   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D86).
+   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D90).
 6. Work tables: `04-work.md`, `30-work-defaults.md`, `41-work-platforms-v3.md`, and `74-work-table-audit.md`.
 7. `45-merged-pull-requests.md`, then result files (`NN-...-result.md`) and `records/` as needed.
 8. The retroactive review of 2026-11-27: `88-review-summary.md` first, then `85-behavior-change-ledger.md` (the
@@ -41,14 +41,20 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
     rewritten ledger section on what the recording of LinkedIn main measured; findings RF-069 rewritten, RF-070 pinned, RF-012 closed,
     RF-072, RF-073 and FF-59 new, FF-20, FF-21 and FF-54 done, FF-22 and FF-53 partly done; decisions D84 to D86 (D62 extended a second
     time, D79 corrected, D83 marked merged); the reviewers' reports `records/pr-review-162.md`, `-162-recheck.md`, `-165.md`,
-    `-165-recheck.md`, `-161.md` and `-161-recheck.md`. In flight: pull request 166 (`records/pr-review-166.md`, `-166-recheck.md`,
-    `records/ci-check-name-and-build-hygiene.md`). The next free file number is 96.
+    `-165-recheck.md`, `-161.md` and `-161-recheck.md`. The notes of the next three are file 96.
+15. The last three (166, 167 and 168, merged 2026-11-28; `irc-integration` at `66a3c75a`, 89 merged):
+    `96-reviewed-merges-166-167-168-result.md`; ledger parts C (BC-103 to BC-108) and G (BC-109 to BC-112, new), BC-004 and BC-036
+    RESTORED, BC-027, BC-035 and BC-039 updated, and two corrected claims (the kit's default is 52 passed, 92 failed, 16 skipped, and main
+    answers an unmapped `/iceberg` path with 400, not 404); FF-11, FF-25, FF-27, FF-29, FF-30 done, FF-53 extended, FF-60 and FF-61 new;
+    decisions D87 to D90; the reviewers' reports `records/pr-review-166.md`, `-166-recheck.md`, `-167.md`, `-168.md` and `-168-recheck.md`.
+    Post-merge CI of 166 failed before any test ran (a rate limit, FF-61); 168 not read. In flight: pull request 169
+    (`records/kit-failures-in-the-rest-layer.md`). The next free file number is 97.
 
 ## 2. Where everything lives
 
 | Repository | Branch | What it is | Head (2026-11-25; irc-integration 2026-11-28) | Part of this effort |
 | --- | --- | --- | --- | --- |
-| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `81cb4b74` (2026-11-28; `81b4cd4d` on 2026-11-25) | yes |
+| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `66a3c75a` (2026-11-28; `81b4cd4d` on 2026-11-25) | yes |
 | openhouse | `claude/openhouse-rest-v3-planning-g42c0h` | these notes; draft pull request 79, open, never merged | this commit | yes |
 | openhouse | 72 `irc/...` branches | one per pull request, base `irc-integration` | various | yes |
 | openhouse | `irc/x2-x3-v3-row-level` | X2 and X3 tests, no pull request yet | `1892643c` | yes, paused |
@@ -75,19 +81,19 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 `README.md` is the index with one row per file; do not read every file in order.
 - Stated by the owner: `01-stated.md`. Requirements and inferences: `02-facts.md`, `03-inferred.md`.
 - Designs: `07`, `14`, `28`, `29`, `05` (patch ledger), `06` (smoke suite proposal), `24` (commit rule inventory).
-- Decisions: D1 to D86 in the eight files listed in section 1. Waiting on the owner: `58`.
+- Decisions: D1 to D90 in the eight files listed in section 1. Waiting on the owner: `58`.
 - Work tables: `04`, `30`, `41`; their audit: `74`. Merged list: `45`. State: `18`. Delegation rules: `17`.
 - Findings: `08`, `20`, `21` and the first-round results `09` to `12`.
 - Result files, one per merged group of work: `15`, `19`, `23`, `25`, `26`, `27`, `31` to `36`, `38` to `40`,
   `42` to `44`, `46` to `50`, `52` to `55`, `57`, `59` to `66`, `68` to `73`, `75` to `82`. File 60 and 70 are scouts.
 - The raw records: `records/` with its own `README.md`: record, work item, pull request, result file. It now also holds the
-  pull request review reports (`pr-review-151.md` to `pr-review-165.md`, with the `-recheck` reports of 158, 161, 162, 164 and 165) and the common briefs. The authors' records of the last three merges are `baseline-of-linkedin-main.md` (161), `iceberg-rest-handler-minors.md` (162) and `stand-in-follow-up.md` (165); the records of 163 and 164 are `house-tables-stand-in-fidelity.md` and `private-ids-out-of-code.md`. In flight, not results: `ci-check-name-and-build-hygiene.md` with `pr-review-166.md` and `pr-review-166-recheck.md` (pull request 166). 127 files in `records/` on 2026-11-28 counting its README.
+  pull request review reports (`pr-review-151.md` to `pr-review-168.md`, with the `-recheck` reports of 158, 161, 162, 164, 165, 166 and 168; the review of 167 has its re-check appended) and the common briefs. The authors' records of the last three merges are `baseline-of-linkedin-main.md` (161), `iceberg-rest-handler-minors.md` (162) and `stand-in-follow-up.md` (165); the records of 163 and 164 are `house-tables-stand-in-fidelity.md` and `private-ids-out-of-code.md`. The authors' records of 166, 167 and 168 are `ci-check-name-and-build-hygiene.md`, `compat-kit-list-checks-causes.md` and `one-switch-for-the-iceberg-rest-base.md`. In flight, not results: `kit-failures-in-the-rest-layer.md` (pull request 169). 133 files in `records/` on 2026-11-28 counting its README.
 - The retroactive review of 2026-11-27: the ledger `85`, the findings and fix-forward list `86`, the re-implementation
   guide `87` and the summary `88`; its records are `records/review-brief-common.md` and the nine `records/review-*.md`
   (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
   jobs, build-deployables, ci-fixtures-tests).
 - The scout of the owner's namespace line: `89-scout-namespace-and-prior-work-result.md`, its record
-  `records/scout-namespace-and-prior-work.md`; decisions D53 to D83 in `90-decisions-continued-7.md`; the reviewed merges: `91-first-reviewed-merges-result.md` (154, 151, 153) `92-reviewed-merges-152-to-159-result.md` (152, 155, 156, 157, 159) `93-reviewed-merges-158-and-160-result.md` (160, 158), `94-reviewed-merges-163-and-164-result.md` (163, 164) and `95-reviewed-merges-162-165-161-result.md` (162, 165, 161).
+  `records/scout-namespace-and-prior-work.md`; decisions D53 to D83 in `90-decisions-continued-7.md`; the reviewed merges: `91-first-reviewed-merges-result.md` (154, 151, 153) `92-reviewed-merges-152-to-159-result.md` (152, 155, 156, 157, 159) `93-reviewed-merges-158-and-160-result.md` (160, 158), `94-reviewed-merges-163-and-164-result.md` (163, 164) and `95-reviewed-merges-162-165-161-result.md` (162, 165, 161) and `96-reviewed-merges-166-167-168-result.md` (166, 167, 168).
 
 ## 4. The code on `irc-integration`, by area
 
@@ -106,7 +112,7 @@ Paths verified with `git ls-tree` on `origin/irc-integration` at `81b4cd4d`.
 - Spark 4.2: `integrations/spark/spark-4.2/` (itest `Spark42IrcSparkSqlSmokeTest`) and `apps/spark-4.2/` (jobs, `Spark42TypeRestCatalogTest`).
 - Maintenance jobs: `apps/spark-3.5/src/shared`; evidence `FormatV3MaintenanceTest` and the other `FormatV3*JobsTest` in `apps/spark-3.5/src/test/`.
 - REST compatibility kit: `integrations/java/openhouse-rest-compat-kit/`, reviewed list `expected-outcomes.txt`
-  (54 passed, 90 failed, 16 skipped, unchanged through pull requests 157, 160, 158 and 163; not re-read for 162, 165 and 161, whose merge messages do not mention it).
+  (since pull request 167 it runs twice: default 160 tests, 52 passed, 92 failed, 16 skipped, and with format v3 on 54, 90, 16; the older text follows: 54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped), unchanged through pull requests 157, 160, 158 and 163; not re-read for 162, 165 and 161, whose merge messages do not mention it; the older text is kept as the record of what was believed).
 - Shared Spark SQL smoke scenarios and write checks: `integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/smoke/`
   (`SparkSqlSmokeScenarios.java`, `SparkSqlWriteStatements.java`), run by `LegacyPath`, `RestShimPath`, `RestHttpPath` tests and `SparkIrcWriteStatementsTest` on 4.2.
 - Delta-harness: `integrations/spark/delta-harness/` (`BASELINE-2026-11-22.md`, `HARNESS-GUIDE.md`).

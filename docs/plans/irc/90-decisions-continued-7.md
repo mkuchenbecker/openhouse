@@ -1,8 +1,8 @@
 # Decision log, continued a seventh time
 
-Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D86 follow (D65 to D68, D69 to D76, D77 to D78, D79 to D83 and D84 to D86 added 2026-11-28).
+Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D90 follow (D65 to D68, D69 to D76, D77 to D78, D79 to D83, D84 to D86 and D87 to D90 added 2026-11-28).
 
-Bottom line: thirty-four decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68, D69 to D76, D77 to D78, D79 to D83 and D84 to D86 on 2026-11-28; D62 was extended twice, not duplicated, for the defects the faithful House Tables stand-in exposed and for what pull request 165 fixed and left; D69, D74 and D75 are now implemented by merged pull requests 158 and 160, and D69 and D75 were extended, not duplicated, for the two decisions the merge of 158 asked for; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
+Bottom line: thirty-eight decisions (D87 to D90, added after the merges of 166, 167 and 168, are at the end), all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68, D69 to D76, D77 to D78, D79 to D83 and D84 to D86 on 2026-11-28; D62 was extended twice, not duplicated, for the defects the faithful House Tables stand-in exposed and for what pull request 165 fixed and left; D69, D74 and D75 are now implemented by merged pull requests 158 and 160, and D69 and D75 were extended, not duplicated, for the two decisions the merge of 158 asked for; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
 (`88-review-summary.md`, `85-behavior-change-ledger.md`, `86-review-findings-and-fix-forward.md`) and the scout's report
 on the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`), under the owner's statements S57 to S61
 (`01-stated.md`). Most of them restore LinkedIn main's behavior (D53 closes an unchecked read, D56 to D61 restore or gate
@@ -361,3 +361,39 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - What it rests on: the merge message of `67989d16` (Leaves true, Behavior changes 1); `records/pr-review-162.md` (finding F1 and the behavior table), `records/pr-review-162-recheck.md` sections 1 and 2; D74 (one existence rule) and D83 (the store failure is a different case).
 - What would change it: a client that treats 503 on an existence probe as fatal where 404 was recoverable.
 - To undo: treat the authorization failure as "no record" again (swallow it in `IcebergRestApiHandler.hasRecordOrIsListed`, as `storedNamespace` did before 162); the tests that pin 503 move to 404.
+
+## D87. The Iceberg REST surface is off by default
+
+- Date: 2026-11-28. The orchestrator's decision, implemented by pull request 168 (merge `66a3c75a`; ledger BC-004 RESTORED, BC-109 to BC-112; FF-11); revisitable.
+- Decided: the whole Iceberg REST base (the routes under `/iceberg/**`) is served only when `cluster.tables.irc.enabled` is true; unset or any other value, it is off and `/iceberg` answers exactly as LinkedIn main (400 from main's no-handler path, with or without a token). Scan planning keeps its own switch under it and needs both.
+- Why: this branch mapped a new HTTP surface in every deployment that takes the build, with nothing to turn it off; on LinkedIn main nothing is mapped there. The owner's rule (S60) is that existing deployments see no change unless they ask for it, so the new surface appears only when asked for.
+- What it rests on: the merge message of `66a3c75a` (Why, Leaves true); `records/pr-review-168.md` and `records/pr-review-168-recheck.md` (the off test passes 7 of 7 on main's own code and on both lines here, and failed 4 of 7 on the base; the shipped Docker recipe printed main's 400 and body, with and without a token); `records/one-switch-for-the-iceberg-rest-base.md`.
+- What would change it: the owner wanting the surface on in his deployments by default.
+- To undo: change the property's default to on [the exact code change was not read]; the off test and the Docker step then fail by design and move to the new default.
+
+## D88. The published test fixtures keep the Iceberg REST routes on, with a README note for consumers
+
+- Date: 2026-11-28. The orchestrator's decision, implemented by pull request 168 (commit `deef5265`); revisitable.
+- Decided: the published test fixtures' embedded service serves `/iceberg` as it did before 168 (the switch is on in test and CI configurations only: the shared test context initializer, the fixtures' embedded service and both runs of the compatibility kit); their README says how a consumer turns it off. No Docker recipe, compose file or main resource turns the switch on.
+- Why: the fixtures are what downstream tests of the Iceberg REST routes use, and turning the routes off there would break them silently; the difference from main is declared, not hidden (ledger BC-039 update). The reviewer raised it as F2 of `records/pr-review-168.md` and asked for the note.
+- What it rests on: merge message of `66a3c75a` ("Unchanged against the base but different from main, by decision"); `records/pr-review-168.md` F2.
+- What would change it: a consumer that needs the fixtures to behave as main.
+- To undo: set the property off in the fixtures' embedded service and move their tests that call `/iceberg` to turn it on.
+
+## D89. The kit's list refiles the 24 view tests from "model difference" to "server breaks the spec on a route it serves"
+
+- Date: 2026-11-28. The orchestrator's decision, implemented by pull request 167 (merge `0b3cafb6`, commit `e1a04fef`); revisitable.
+- Decided: the category VIEWDB (24 tests) changes from class b (a model difference of OpenHouse) to class d (a defect: the server breaks the specification on a route it serves), and LISTNS (2) and KITNS (1) are named as flag artifacts of the same rule: 27 tests share one root cause. The 14 dialect tests (DIALECT 12, DIALECTRES 2) are documented as behind it.
+- Why: on `/iceberg`, HEAD says a namespace that has only a record exists, while creating a view in it answers 404 "Database not found", because the native view create checks only for tables and views. A client following the specification creates a namespace, sees it exist, and cannot create a view in it. That is a contradiction of the server with itself, not a model difference. The fix is a native change on views, which is the owner's (FF-51, FF-60, D67).
+- What it rests on: the merge message of `0b3cafb6` ("A contradiction found on the way"); `records/pr-review-167.md` F1, F2 and its re-check.
+- What would change it: the owner's native change, after which the 27 move to passed or to their next failing step.
+- To undo: refile the category as b in `expected-outcomes.txt` with the old reason.
+
+## D90. Merge order of 166, 167 and 168
+
+- Date: 2026-11-28. The orchestrator's decision; no reversal needed.
+- Decided: 166, then 167, then 168. 168 conflicts with 167 in the kit's service (`RestCompatKitService`: 168 adds the switch to the argument list both runs share), so one had to merge first, and 167 needed 166's workflow structure (its kit step sits in the `rest` matrix group 166 restructured). Each of 167 and 168 merged the base once more before its merge.
+- Why: the re-check of 168 verified the merge kept 167's structure (one argument list, the second run adding its property) and lost nothing of 166 or 167 (33 files, every one the pull request's own); the re-check of 167 verified it kept 166's workflow layout.
+- What it rests on: the merge messages of `0b3cafb6` and `66a3c75a`; `records/pr-review-167.md` (re-check), `records/pr-review-168-recheck.md` section 4.
+- What would change it: nothing; merged.
+- To undo: nothing to undo.

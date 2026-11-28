@@ -1,18 +1,33 @@
 # Current state
 
-Bottom line (2026-11-28, fifth update): 86 pull requests are merged into `irc-integration` and its head is `81cb4b74` (pull
-request 161). Fifteen of them merged under the owner's standing order of an independent review (S58), which is every number from
-151 to 165: 154, 151, 153 (`91-first-reviewed-merges-result.md`), 152, 155, 156, 157, 159
+Bottom line (2026-11-28, sixth update): 89 pull requests are merged into `irc-integration` and its head is `66a3c75a` (pull
+request 168). Eighteen of them merged under the owner's standing order of an independent review (S58), which is every number from
+151 to 168: 154, 151, 153 (`91-first-reviewed-merges-result.md`), 152, 155, 156, 157, 159
 (`92-reviewed-merges-152-to-159-result.md`), 160 and 158 (`93-reviewed-merges-158-and-160-result.md`), 163 and 164
-(`94-reviewed-merges-163-and-164-result.md`) and, since, 162, 165 and 161 (`95-reviewed-merges-162-165-161-result.md`). The
-compatibility kit: the merge messages of 162, 165 and 161 do not mention it, so its state is "not re-read" since the last reading
-(160 tests: 54 passed, 90 failed, 16 skipped, unchanged through pull requests 157, 160, 158 and 163 [ran, by their authors]); the review
-of 161 saw 90 failed kit test lines in the default `rest` job log at head `210d54f8`, as expected. What each merge left true,
-changed and left open is in those five files; the behavior changes are in `85-behavior-change-ledger.md` (BC-095 to BC-102 came
-from the last three merges). The decisions of the day are D69 to D86 (`90-decisions-continued-7.md`). Nothing is merged into either
-fork's main or into LinkedIn's or Apache's repositories.
+(`94-reviewed-merges-163-and-164-result.md`), 162, 165 and 161 (`95-reviewed-merges-162-165-161-result.md`) and, since, 166, 167 and
+168 (`96-reviewed-merges-166-167-168-result.md`). What each merge left true, changed and left open is in those files; the behavior
+changes are in `85-behavior-change-ledger.md` (BC-103 to BC-112 came from the last three merges, and BC-004 and BC-036 are
+RESTORED). The decisions of the day are D69 to D90 (`90-decisions-continued-7.md`). Nothing is merged into either fork's main or
+into LinkedIn's or Apache's repositories.
 
-What the last three merges changed: the evidence suites now compare with a stored recording of LinkedIn main (161: 734 statements
+The compatibility kit, corrected: until pull request 167 the kit ran with format v3 hard-coded on, so the number these notes gave as
+its default, 54 passed, 90 failed, 16 skipped, was the format v3 run. Now (167; read by its reviewer in the CI log, and again in
+168's) it runs twice: at the default configuration 160 tests, 52 passed, 92 failed, 16 skipped; with format v3 on 54, 90, 16. The 92
+default failures by what fixes them: 27 are views in a namespace that holds no table (a native change, the owner's: FF-60, FF-51) and 14 more sit behind
+those (view dialect rules); 32 are the owner's table policies (replace 16, partition spec evolution 9, schema changes 4, format
+version 2, drop with purge 1); 4 need native House Tables APIs that do not exist (list of namespace records 2, view rename 2); 13
+are in the Iceberg REST layer alone (message text 8, identifiers 3, missing metadata file 1, view error type 1), now in flight as pull
+request 169; 2 are the format v3 switch. Every earlier place that states 54 / 90 / 16 as the default carries a dated correction.
+Also corrected: LinkedIn main answers an unmapped `/iceberg` path with 400 from its no-handler path, not "404 through the token
+interceptor" (measured in 168; ledger last section).
+
+What the last three merges (166, 167, 168) changed: LinkedIn's required check `build-run-tests / Build and Run Tests` reports again
+(BC-036 restored) and the fork build verifies its wrapper and JDK (166); the kit's list checks each failing test's cause on both
+configurations (167); the whole Iceberg REST surface is off unless `cluster.tables.irc.enabled` is true, and off it answers exactly as
+LinkedIn main (168; BC-004 restored; the published test fixtures keep it on, D88). So a deployment that takes this build and
+changes no configuration sees no `/iceberg` surface. Earlier in the day:
+
+What the three merges before them (162, 165, 161) changed: the evidence suites now compare with a stored recording of LinkedIn main (161: 734 statements
 recorded with main's own build, compared on both Iceberg lines in CI; 9 declared product differences on the reference line, 17 on
 the default line, 16 test-double differences on each; none on write statements; what a green run proves and does not prove is
 in the ledger and in `95-...`), so "existing behavior did not change" is now measured on the one path it covers and not asserted;
@@ -22,7 +37,7 @@ the three native decisions that pass no UUID are LinkedIn main's and are pinned,
 authorization outage with 503 on namespace existence checks, never guess a view-commit answer and turn two 500s into 409 and 400
 (162).
 
-What the Iceberg REST routes (`/iceberg`) serve now: every route except scan planning and credentials (off by default behind
+What the Iceberg REST routes (`/iceberg`) serve now, when `cluster.tables.irc.enabled` is true (off by default since 168; D87): every route except scan planning and credentials (off by default behind
 `cluster.tables.irc.scan-planning.enabled`, since 158; D75), the stored-plan routes, credential signing and view rename; and
 the namespace writes since 157. A namespace exists if it has a record or holds a table or a view, under any spelling of its
 name, and every namespace route uses that one rule (160). Authorization is decided before anything stored is used or answered
@@ -31,27 +46,38 @@ authorization outage answers 503 and a denial 403, a rename onto a view writes n
 Native answers are LinkedIn main's again by default (156). Nothing native changes with every new property unset (158's merge
 message; the re-check read the classes).
 
-Post-merge CI, as read by the orchestrator on 2026-11-28 UTC: green for the merges of 157 (`518a2134`), 159 (`8a5a9980`), 160
-(`96acfca3`), 158 (`4b9d152d`), 163 (`a0239ad7`) and 164 (`35bd941c`); for 162 (`67989d16`), 165 (`35cc7b1e`) and 161 (`81cb4b74`)
-not read. Earlier merges (151 to 156) passed on both lines, as recorded in `92-reviewed-merges-152-to-159-result.md`. The
-orchestrator's error after 155 (a cache warm-up reported clean from truncated output) stays recorded there.
+Post-merge CI, as read by the orchestrator on 2026-11-28 UTC (the last reading at about 14:50 UTC): green for the merges of 157
+(`518a2134`), 159 (`8a5a9980`), 160 (`96acfca3`), 158 (`4b9d152d`), 163 (`a0239ad7`), 164 (`35bd941c`), 162 (`67989d16`), 165
+(`35cc7b1e`), 161 (`81cb4b74`) and 167 (`0b3cafb6`); NOT read for 168 (`66a3c75a`). FAILED for 166 (`315a6e92`): `Default build,
+rest`, and therefore `Build and Run Tests`, failed and no test ran. Pull request 166 changed `publish-local.sh`, which changed the
+Iceberg fork's cache key, so that post-merge run had to publish the fork from scratch; the fork's own Gradle build then got HTTP 429
+Too Many Requests from Maven Central while resolving its build classpath (`log4j-core`, `commons-io`, `jdom2` and 38 more with the
+same cause) and failed at configuration (job `build-run-tests / Default build, rest`, id 140988141284). Not re-run (the rule); the next
+post-merge run (167) was green. The cause is FF-61 (not started): the fork publish on a cache miss resolves Iceberg's build
+dependencies with none of the retry and cache settings OpenHouse's own build gets, so a cache-key change exposes every job that
+publishes the fork to the rate limit at once. Earlier merges (151 to 156) passed on both lines, as recorded in
+`92-reviewed-merges-152-to-159-result.md`. The orchestrator's error after 155 (a cache warm-up reported clean from truncated output)
+stays recorded there.
 
 In flight now (no results to record as merged):
-- Pull request 166 (`irc/ci-check-name-and-build-hygiene`; FF-27, FF-29, FF-30 and three follow-ups to the private-id guard).
-  First review: everything except its Jackson commit MERGE AS IS; the Jackson commit DO NOT MERGE. The orchestrator withdrew the
-  Jackson alignment (D84); the author removed it, kept exact pins of each line's Jackson list, and merged the base. A re-check
-  record exists (`records/pr-review-166-recheck.md`, written at head `e5da0456` on base `35cc7b1e`, before 161 merged): MERGE.
-  Not merged when these notes were written. Merge order: after 161 (D85), so the comparison with main runs with 166's build changes.
+- Pull request 169 (draft, `irc/kit-failures-in-the-rest-layer`): the 13 compatibility-kit failures that sit in the Iceberg REST
+  layer alone (message text 8, identifiers 3, missing metadata file 1, view error type 1), each changed only if right by the Iceberg
+  REST specification, no native change. The author's record (`records/kit-failures-in-the-rest-layer.md`, in progress, not a result)
+  plans to change 11 of them (message text 8 to the reference implementation's wording; the 3 identifiers to answer "does not exist"
+  on read routes) and to leave the missing metadata file (the specification allows 5XX) and the view error type with their reasons;
+  at its head `49d9a8a5` the author reports the kit at default 63 passed, 81 failed, 16 skipped and with format v3 65, 79, 16,
+  waiting for CI [author's report, not reviewed, not merged].
 
-Queued next: the compatibility kit's list checking causes (FF-25); documentation and false comments (FF-31); one switch for the
-whole Iceberg REST base (FF-11); the namespace stack's follow-up in this repository (FF-50); the full re-record of the LinkedIn main
-recording (FF-55; the stand-in is ported into main's test sources first for the commit path); the table-row repository's contract
-against MySQL (FF-56); renames of identifiers and test data that encode private ids (FF-57); the delta harness decision (FF-58, needs
-a decision); the store-failure asymmetry on namespace existence (FF-59, needs a decision). Also not started: FF-23 and FF-24 (plans
-in the pull request body of 161) and the rest of FF-53 and FF-36. Held and not started: W14 and N9. Ten ledger rows and the scout's
+Queued next: documentation and false comments (FF-31); the namespace stack's follow-up in this repository (FF-50); the full re-record
+of the LinkedIn main recording (FF-55; the stand-in is ported into main's test sources first for the commit path, which `/iceberg`
+rows also need); the table-row repository's contract against MySQL (FF-56); renames of identifiers and test data that encode private
+ids (FF-57); the delta harness decision (FF-58, needs a decision); the store-failure asymmetry on namespace existence (FF-59, needs a
+decision). New and not started: FF-60 (the 27 kit tests behind the namespace contradiction; the owner's native change) and FF-61 (the
+fork publish and the rate limit). Also not started: FF-23 and FF-24 (plans in the pull request body of 161) and the rest of FF-53
+(now with the can-follow findings of 166, 167 and 168) and FF-36. Held and not started: W14 and N9. Ten ledger rows and the scout's
 questions wait on the owner, with the items of 2026-11-28 (`58-waiting-on-mike.md`: now including the verified null-UUID decisions,
-the half-fixed Iceberg REST view commit and drop, and grants that a drop does not revoke); the scan planning question (FF-05) no
-longer exposes anything while open. None blocks work.
+the half-fixed Iceberg REST view commit and drop, grants that a drop does not revoke, and the measured weight of the view-in-a-
+namespace question); the scan planning question (FF-05) no longer exposes anything while open. None blocks work.
 
 Every sub-agent runs on the larger fallback model or the small one, none on the orchestrator's model (the owner's statement of
 2026-11-28, S62).
@@ -71,8 +97,8 @@ partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-1
 place for current state.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, and view
-  rename. Namespace create, update properties and drop are served since pull request 157. The compatibility kit passes 54 of
-  160 (90 failed, 16 skipped); 76 of the failures are OpenHouse model differences, 10 are kit assumptions, 2 are view rename and
+  rename. Namespace create, update properties and drop are served since pull request 157. The compatibility kit passes 52 of
+  160 at the default configuration (92 failed, 16 skipped; 54 and 90 with format v3 on; corrected 2026-11-28, see the top) and its failures by cause are at the top of this file; the older grouping that follows is of 2026-11-28 morning, with the old number: 76 of the failures are OpenHouse model differences, 10 are kit assumptions, 2 are view rename and
   2 are the unlisted records (`58-waiting-on-mike.md`, D32; `39-v13-compat-kit-result.md`,
   `42-v13b-spec-deviations-result.md`). What "conforming" should mean is still put to Mike (D32).
 - Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 199 of 210 smoke statements behave as on the
@@ -130,7 +156,7 @@ place for current state.
 
 ## Merged pull requests
 
-86 pull requests are merged into `irc-integration` (the last is 161, merge commit 81cb4b74; older text below stops at 149) and 10 into the Iceberg
+89 pull requests are merged into `irc-integration` (the last is 168, merge commit 66a3c75a; older text below stops at 149) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
 The latest: 150 and 149 in `82-v10-x18-result.md`; 147 and 148 in `81-v17-x16-result.md`; 146 in `80-c3-c4-result.md`; 145 and 144 in `79-c20-x11-x12-x13-result.md`.
 

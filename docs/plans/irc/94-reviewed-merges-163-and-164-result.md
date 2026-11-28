@@ -20,7 +20,7 @@ Not true yet, and not claimed: the recording of LinkedIn main (draft pull reques
 (draft pull request 162) and the follow-up to 163 are in flight with no merge; the real-store contract runs on H2, not MySQL
 with the production DDL; the release note for the fixtures module's changed surface is still owed; whether the deployed policy
 reads the table UUID that authorization receives as null (RF-069) is not verified by anyone. The compatibility kit is unchanged
-at 160 tests: 54 passed, 90 failed, 16 skipped [ran, by the author of 163 and by its reviewer from the CI logs]. Nothing is
+at 160 tests: 54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped) [ran, by the author of 163 and by its reviewer from the CI logs]. Nothing is
 merged into either fork's main or into LinkedIn's or Apache's repositories.
 
 Sources: the two merge commit messages (`a0239ad7`, `35bd941c`), the authors' records (`records/house-tables-stand-in-fidelity.md`,

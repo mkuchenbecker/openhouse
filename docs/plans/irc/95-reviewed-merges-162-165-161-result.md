@@ -24,7 +24,7 @@ recorded 83 merged through 164 and listed 161, 162 and the follow-up to 163 as i
 Not true yet, and not claimed: pull request 166 (FF-27, FF-29, FF-30) is not merged; the comparison with main covers one path (a
 full re-record is FF-55); the deployed authorization policy is unknown (RF-069); the store-failure asymmetry on namespace existence
 is left (FF-59); the real-store contract still runs on H2, not MySQL with the production DDL (FF-56). The compatibility kit: no merge
-message of these three mentions it, so it is "not re-read" (the last reading, 160 tests: 54 passed, 90 failed, 16 skipped, was by the
+message of these three mentions it, so it is "not re-read" (the last reading, 160 tests: 54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped), was by the
 authors of 157, 160, 158 and 163; the review of 161 saw 90 failed kit test lines in the default `rest` log at `210d54f8`, as
 expected). Nothing is merged into either fork's main or into LinkedIn's or Apache's repositories.
 

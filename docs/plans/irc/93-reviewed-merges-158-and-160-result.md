@@ -15,7 +15,7 @@ review under the owner's standing order S58: 160 (merge `96acfca3`, about 05:48 
    decides which privilege the plan route requires (FF-05). When on they are audited and bounded.
 4. Nothing native changes with every new property unset, on either Iceberg line (158; the re-check read every main class that
    differs and found only new fields, extractions with the same order and messages, and calls that only the Iceberg REST code
-   makes). The compatibility kit is unchanged at 160 tests: 54 passed, 90 failed, 16 skipped.
+   makes). The compatibility kit is unchanged at 160 tests: 54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped).
 
 Not true yet, and not claimed: the plan route's privilege is the owner's (FF-05); the post-merge CI of 158 has not been read;
 three minors found by the re-check of 158 are open (C1 to C3, FF-53); the baseline of LinkedIn main (draft pull request 161)

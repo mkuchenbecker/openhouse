@@ -49,3 +49,4 @@ Worktree /home/user/oh-ci-hygiene, branch irc/ci-check-name-and-build-hygiene, b
 - a8fd7676 minors F10 F11 F8 F7 F9. e5da0456 merge of base 35cc7b1e. Pushed e5da0456cdbe039ee57cd0db34069c09b09796fe.
 - Title/body updated. CI pending on e5da0456.
 - CI e5da0456 all green: aggregates 140970034115, 140967730984 (partition: success listed); plan 8 s / 4 s; partition 63 s / 51 s; Jackson pins passed in both rest jobs; wrapper verified (cache miss) in rest job.
+- 55c53abe (merge of 81cb4b74, base 161): all CI green; plan 7 s/7 s; line-branch check 98 listed.

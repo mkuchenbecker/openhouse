@@ -10,7 +10,7 @@ the standing review order (151 to 157 and 159). What is true now that was not at
 2. Native answers are LinkedIn main's again by default (156): no row-length check unless a width is configured, and with
    the format v3 switch off the native answers are main's, with the stated differences below.
 3. The Iceberg REST namespace writes (create, update properties, drop) are served under `/iceberg` over the owner's
-   namespace service (157). The compatibility kit went from 42 to 54 passed of 160 (54 passed, 90 failed, 16 skipped)
+   namespace service (157). The compatibility kit went from 42 to 54 passed of 160 (54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped))
    [ran, by the author].
 4. Build jobs no longer die on refused downloads (155, 159): read-only jobs take dynamic versions from the restored cache,
    every job retries a refused request for about two minutes, and the cache writer fetches every configuration's files and
@@ -241,7 +241,7 @@ the same validation in the same order, so no code changed for it.
 
 Bottom line: `/iceberg` was answering 406 for namespace create, update properties and drop and counted only tables and views
 as existence; that was the largest block of kit failures (33 of 95). It is now a thin second front for the owner's
-namespace service (decisions D54, D64, D67). Compatibility kit: 160 tests, 42 passed, 95 failed, 23 skipped before; 54
+namespace service (decisions D54, D64, D67). Compatibility kit (every number here, before and after, is of the run with format v3 hard-coded on, as pull request 167 showed 2026-11-28): 160 tests, 42 passed, 95 failed, 23 skipped before; 54
 passed, 90 failed, 16 skipped after (five failures and seven skipped namespace-properties tests now pass; four reason texts
 corrected) [ran, author]. Spark SQL smoke 34 of 34 on every path that goes through `/iceberg` [ran, author]. Two review
 rounds.
