@@ -682,15 +682,14 @@ public class IcebergRestWriteHandler {
       TableIdentifier identifier, UpdateTableRequest request, String actingPrincipal) {
     String databaseId = identifier.namespace().toString();
     String tableId = identifier.name();
-    Optional<TableMetadata> existing =
-        tablesService.tableExists(databaseId, tableId)
-            ? Optional.of(tableCommitService.loadBase(identifier).getMetadata())
-            : Optional.empty();
     // On a table that exists the completion's own assertion fails, and is answered first: it says
     // only that the table exists, as the native create's refusal does to anyone. Another
-    // requirement, checked against the stored table, would answer its stored values.
-    existing.ifPresent(stored -> IcebergRestRequirements.validateCreate(request, stored));
-    IcebergRestRequirements.validate(request, existing.orElse(null));
+    // requirement, checked against the stored table, would answer its stored values. The assertion
+    // needs only that the table exists, so nothing of the table is read for it.
+    if (tablesService.tableExists(databaseId, tableId)) {
+      IcebergRestRequirements.refuseCreateOfExisting(request);
+    }
+    IcebergRestRequirements.validate(request, null);
     TableMetadata.Builder builder = TableMetadata.buildFromEmpty();
     for (MetadataUpdate update : request.updates()) {
       applyTo(builder, update);

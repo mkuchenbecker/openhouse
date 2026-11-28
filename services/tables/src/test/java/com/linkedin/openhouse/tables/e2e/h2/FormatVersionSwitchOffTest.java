@@ -76,6 +76,11 @@ public class FormatVersionSwitchOffTest {
   @Autowired HouseTableRepository houseTableRepository;
   @Autowired MeterRegistry meterRegistry;
 
+  @Autowired
+  com.linkedin.openhouse.common.audit.AuditHandler<
+          com.linkedin.openhouse.tables.audit.model.TableAuditEvent>
+      tableAuditHandler;
+
   private final List<String> created = new ArrayList<>();
 
   @AfterEach
@@ -291,6 +296,88 @@ public class FormatVersionSwitchOffTest {
       assertTrue(refusal.startsWith("FORMAT_VERSION_REFUSED: "), refusal);
       assertTrue(refusal.contains("asks for format version 3"), refusal);
     }
+    assertEquals(2, version(db));
+  }
+
+  /**
+   * The same for a {@code format-version} property below the table's: a table's format version is
+   * never lowered, and the refusal is a 400 before anything is written, not the server failure
+   * (read by a client as "commit state unknown") of Iceberg's own downgrade refusal.
+   */
+  @Test
+  void anIcebergRestCommitLoweringTheFormatVersionPropertyIsRefusedWith400() throws Exception {
+    String db = "fvoff_irc_lower";
+    make(plain(db));
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    UpdateTableRequest commit =
+        IrcWrite.simple(
+            base,
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "1"))));
+    org.mockito.Mockito.clearInvocations(tableAuditHandler);
+    for (org.springframework.test.web.servlet.MvcResult answer :
+        Arrays.asList(
+            IrcWrite.commit(mvc, db, "t", commit),
+            IrcWrite.transaction(mvc, IrcWrite.change(db, "t", commit)))) {
+      String refusal = assertIrcError(answer, 400, "BadRequestException").message();
+      assertTrue(refusal.startsWith("FORMAT_VERSION_REFUSED: "), refusal);
+      assertTrue(refusal.contains("asks for format version 1"), refusal);
+      assertTrue(refusal.contains("never lowered"), refusal);
+    }
+    // Each refusal is audited as the commit's refusal is: one FAILED UPDATE per request.
+    assertEquals(
+        Arrays.asList("UPDATE FAILED", "UPDATE FAILED"),
+        org.mockito.Mockito.mockingDetails(tableAuditHandler).getInvocations().stream()
+            .map(
+                invocation ->
+                    (com.linkedin.openhouse.tables.audit.model.TableAuditEvent)
+                        invocation.getArgument(0))
+            .filter(event -> db.equals(event.getDatabaseName()))
+            .filter(
+                event ->
+                    event.getOperationType()
+                        != com.linkedin.openhouse.tables.audit.model.OperationType.READ)
+            .map(event -> event.getOperationType() + " " + event.getOperationStatus())
+            .collect(java.util.stream.Collectors.toList()));
+    assertEquals(2, version(db));
+    assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, db, "t").metadataFileLocation());
+  }
+
+  /**
+   * A replace whose changes set the {@code format-version} property below the table's (raw REST;
+   * Iceberg's own client refuses to build such a replacement) is not refused: a replace keeps the
+   * table's format version, so it is made and the table stays at its version. Not a server failure.
+   */
+  @Test
+  void anIcebergRestReplaceLoweringTheFormatVersionPropertyKeepsTheTablesVersion()
+      throws Exception {
+    String db = "fvoff_irc_replace_lower";
+    make(plain(db));
+    // A replace is allowed only on a table that enables it.
+    TableMetadata before = IrcWrite.load(mvc, db, "t");
+    assertEquals(
+        200,
+        IrcWrite.commit(
+                mvc,
+                db,
+                "t",
+                IrcWrite.simple(
+                    before,
+                    Collections.singletonList(
+                        new MetadataUpdate.SetProperties(
+                            Collections.singletonMap("replace.enabled", "true")))))
+            .getResponse()
+            .getStatus());
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    UpdateTableRequest replace =
+        IrcWrite.replace(
+            base,
+            IrcWrite.replacement(base, base.schema(), base.spec(), Collections.emptyMap()),
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "1"))));
+    org.springframework.test.web.servlet.MvcResult answer = IrcWrite.commit(mvc, db, "t", replace);
+    assertEquals(200, answer.getResponse().getStatus(), IrcHttp.body(answer));
+    assertEquals(2, IrcWrite.parsed(answer).formatVersion());
     assertEquals(2, version(db));
   }
 
