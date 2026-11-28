@@ -12,6 +12,7 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -33,6 +34,8 @@ import org.springframework.test.context.ContextConfiguration;
 @SpringBootTest(classes = SpringH2Application.class)
 @ContextConfiguration(initializers = PropertyOverrideContextInitializer.class)
 public class HouseTablesH2RepositoryTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   private static final String DB = "cc_store";
 
   @Autowired private HouseTableRepository store;
@@ -42,10 +45,16 @@ public class HouseTablesH2RepositoryTest {
   @AfterEach
   void cleanUp() {
     for (HouseTablePrimaryKey key : keys) {
-      store.deleteById(key, true);
+      // A missing row is a 404 on delete, as in the store; most tests leave none behind.
+      if (store
+          .findEntityById(key)
+          .filter(row -> "TABLE".equals(row.getEntityType()))
+          .isPresent()) {
+        store.deleteById(key, true);
+      }
     }
     keys.clear();
-    HouseTablesH2Repository.softDeletedTables.keySet().removeIf(k -> k.getDatabaseId().equals(DB));
+    houseTablesH2Store.softDeletedTables().keySet().removeIf(k -> k.getDatabaseId().equals(DB));
   }
 
   private HouseTablePrimaryKey key(String table) {
@@ -185,22 +194,22 @@ public class HouseTablesH2RepositoryTest {
     key("soft");
 
     store.deleteById(key("hard"), true);
-    assertFalse(store.findById(key("hard")).isPresent());
+    assertFalse(store.findEntityById(key("hard")).isPresent());
     assertTrue(
-        HouseTablesH2Repository.softDeletedTables.keySet().stream()
+        houseTablesH2Store.softDeletedTables().keySet().stream()
             .noneMatch(k -> k.getTableId().equals("hard")));
 
     long from = System.currentTimeMillis();
     store.deleteById(key("soft"), false);
     long to = System.currentTimeMillis();
-    assertFalse(store.findById(key("soft")).isPresent());
+    assertFalse(store.findEntityById(key("soft")).isPresent());
     SoftDeletedTablePrimaryKey softKey =
-        HouseTablesH2Repository.softDeletedTables.keySet().stream()
+        houseTablesH2Store.softDeletedTables().keySet().stream()
             .filter(k -> k.getTableId().equals("soft"))
             .findFirst()
             .get();
     assertTrue(softKey.getDeletedAtMs() >= from && softKey.getDeletedAtMs() <= to);
-    HouseTable archived = HouseTablesH2Repository.softDeletedTables.get(softKey);
+    HouseTable archived = houseTablesH2Store.softDeletedTables().get(softKey);
     assertEquals(softKey.getDeletedAtMs(), archived.getDeletedAtMs());
     assertEquals(softKey.getDeletedAtMs() + 7L * 24 * 60 * 60 * 1000, archived.getPurgeAfterMs());
 

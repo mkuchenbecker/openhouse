@@ -8,6 +8,7 @@ import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitial
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,8 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 public class CommitPathTableCountLimitTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   private static final String LIMIT_MESSAGE_TAIL =
       "has 2 live tables, reaching the configured limit of 2.";
 
@@ -42,7 +45,8 @@ public class CommitPathTableCountLimitTest {
 
   @AfterEach
   void cleanUp() {
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(k -> k.getDatabaseId().startsWith("cl_"));
   }

@@ -29,6 +29,7 @@ import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
 import com.linkedin.openhouse.tables.model.TableDto;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -64,6 +65,8 @@ import org.springframework.test.web.servlet.MvcResult;
     })
 public class CommitPathAuthorizationTest {
 
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
+
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
   @Autowired HouseTableRepository houseTables;
@@ -84,7 +87,8 @@ public class CommitPathAuthorizationTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(k -> k.getDatabaseId().startsWith("auth_"));
   }

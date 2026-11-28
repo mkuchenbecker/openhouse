@@ -14,6 +14,7 @@ import com.linkedin.openhouse.tables.exception.ViewExceptionHandler;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import java.util.UUID;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -27,6 +28,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -53,6 +55,7 @@ public class ViewsCorruptPointerH2Test {
 
   @Autowired private MockMvc mvc;
   @Autowired private HouseTableRepository houseTableRepository;
+  @Autowired private DataSource dataSource;
   @MockBean private ViewsFeatureGate viewsFeatureGate;
 
   private String jwtAccessToken;
@@ -79,13 +82,21 @@ public class ViewsCorruptPointerH2Test {
             .databaseId(DATABASE_ID)
             .tableId(VIEW_ID)
             .tableUUID(UUID.randomUUID().toString())
-            .tableLocation(blankLocation ? "" : STORED_LOCATION)
+            .tableLocation(STORED_LOCATION)
             .storageType(blankLocation ? "local" : "")
             .tableVersion(INITIAL_TABLE_VERSION)
             .tableCreator("DUMMY_ANONYMOUS_USER")
             .creationTime(1L)
             .lastModifiedTime(1L)
             .build());
+    if (blankLocation) {
+      // House Tables refuses an empty location, so such a row is only ever written directly.
+      new JdbcTemplate(dataSource)
+          .update(
+              "UPDATE house_table SET table_location = '' WHERE database_id = ? AND table_id = ?",
+              DATABASE_ID,
+              VIEW_ID);
+    }
 
     MvcResult result =
         mvc.perform(

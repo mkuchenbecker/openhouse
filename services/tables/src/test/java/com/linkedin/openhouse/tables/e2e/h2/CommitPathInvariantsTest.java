@@ -22,6 +22,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.components.Retention;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.TimePartitionSpec;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -59,6 +60,8 @@ import org.springframework.test.web.servlet.MvcResult;
       AuthorizationPropertiesInitializer.class
     })
 public class CommitPathInvariantsTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   private static final String EVOLUTION_REJECTED =
       "Evolution of table partitioning and clustering columns are not supported";
 
@@ -73,7 +76,8 @@ public class CommitPathInvariantsTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(k -> k.getDatabaseId().startsWith("inv_"));
   }

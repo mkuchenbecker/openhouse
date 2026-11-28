@@ -13,6 +13,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.LockState;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,6 +43,8 @@ import org.springframework.test.web.servlet.MockMvc;
       AuthorizationPropertiesInitializer.class
     })
 public class CommitPathStateRulesTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   @Autowired MockMvc mvc;
 
   private final List<String[]> created = new ArrayList<>();
@@ -53,7 +56,8 @@ public class CommitPathStateRulesTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(k -> k.getDatabaseId().startsWith("st_"));
   }
@@ -94,24 +98,25 @@ public class CommitPathStateRulesTest {
         "Cannot rename a table to the same current db name and table name");
 
     expectUnchanged(mvc, before, "st_ren_case", "t");
-    get(mvc, "st_ren_case", "T").andExpect(status().isNotFound());
+    // House Tables keys ignore letter case, so the other spelling names the same table.
+    expectUnchanged(mvc, before, "st_ren_case", "T");
   }
 
   /**
-   * Table ids are case sensitive in the catalog: renaming onto a name that differs from an existing
-   * table only in case is accepted and leaves both tables in place.
+   * House Tables keys ignore letter case (the production tables' collation), so a name that differs
+   * from an existing table's only in case is that table's key: the store refuses the rename with a
+   * conflict and both tables stay as they were.
    */
   @Test
-  void renameOntoANameDifferingOnlyInCaseFromAnExistingTableSucceeds() throws Exception {
+  void renameOntoANameDifferingOnlyInCaseFromAnExistingTableIsAConflict() throws Exception {
     String other = make(newTable("st_ren_exist_case", "other"));
-    make(newTable("st_ren_exist_case", "u"));
-    created.add(new String[] {"st_ren_exist_case", "OTHER"});
+    String u = make(newTable("st_ren_exist_case", "u"));
 
-    rename(mvc, "st_ren_exist_case", "u", "st_ren_exist_case", "OTHER")
-        .andExpect(status().isNoContent());
+    assertEquals(
+        409,
+        CommitPathHttp.status(rename(mvc, "st_ren_exist_case", "u", "st_ren_exist_case", "OTHER")));
 
-    get(mvc, "st_ren_exist_case", "u").andExpect(status().isNotFound());
-    get(mvc, "st_ren_exist_case", "OTHER").andExpect(status().isOk());
+    expectUnchanged(mvc, u, "st_ren_exist_case", "u");
     expectUnchanged(mvc, other, "st_ren_exist_case", "other");
   }
 

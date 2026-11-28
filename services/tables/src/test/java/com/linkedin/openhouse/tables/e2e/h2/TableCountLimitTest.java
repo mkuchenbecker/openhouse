@@ -27,6 +27,7 @@ import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.ArrayList;
@@ -60,6 +61,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
     })
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 public class TableCountLimitTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   private static final String FEATURE_ID = "bypass_table_count_limit";
   private static final int LIMIT = 2;
 
@@ -87,7 +90,8 @@ public class TableCountLimitTest {
     for (TableToggleStatus toggle : togglesToClean) {
       toggleStatusesRepository.delete(toggle);
     }
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(key -> databasesToClean.contains(key.getDatabaseId()));
     tablesToClean.clear();
@@ -128,7 +132,7 @@ public class TableCountLimitTest {
     houseTableRepository.deleteById(
         HouseTablePrimaryKey.builder().databaseId(db).tableId(restored).build(), false);
     SoftDeletedTablePrimaryKey softKey =
-        HouseTablesH2Repository.softDeletedTables.keySet().stream()
+        houseTablesH2Store.softDeletedTables().keySet().stream()
             .filter(k -> k.getDatabaseId().equals(db) && k.getTableId().equals(restored))
             .findFirst()
             .get();
@@ -139,7 +143,7 @@ public class TableCountLimitTest {
         TableCountLimitExceededException.class,
         () -> openHouseInternalRepository.restoreTable(softKey));
     assertFalse(openHouseInternalRepository.existsById(key(db, restored)));
-    assertTrue(HouseTablesH2Repository.softDeletedTables.containsKey(softKey));
+    assertTrue(houseTablesH2Store.softDeletedTables().containsKey(softKey));
 
     openHouseInternalRepository.deleteById(key(db, "t_replacement"));
     openHouseInternalRepository.restoreTable(softKey);
