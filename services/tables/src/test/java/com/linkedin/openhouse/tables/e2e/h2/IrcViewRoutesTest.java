@@ -93,6 +93,9 @@ public class IrcViewRoutesTest {
   @Autowired ToggleStatusesRepository toggles;
   @Autowired AuditHandler<ViewAuditEvent> viewAuditHandler;
 
+  @Autowired
+  AuditHandler<com.linkedin.openhouse.tables.audit.model.TableAuditEvent> tableAuditHandler;
+
   private final List<String[]> views = new ArrayList<>();
   private final List<String> tables = new ArrayList<>();
 
@@ -979,8 +982,9 @@ public class IrcViewRoutesTest {
    * looks up only tables, has written the renamed metadata. The internal catalog turns the refusal
    * into Iceberg's CommitFailedException, which the commit retries and the native API does not map:
    * the native route answers 500, pinned here as it is. The IRC route answers the spec's 409 {@code
-   * AlreadyExistsException}, worded as Iceberg's catalogs word it. Neither the view nor the table
-   * changes.
+   * AlreadyExistsException}, worded as Iceberg's catalogs word it, from a lookup of the target's
+   * key before the native rename is called, so it writes no metadata file. Neither the view nor the
+   * table changes.
    */
   @Test
   void renameOfATableOntoAViewsNameIsRefused() throws Exception {
@@ -991,14 +995,22 @@ public class IrcViewRoutesTest {
         CommitPathHttp.str(
             CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID");
 
+    clearInvocations(tableAuditHandler);
     org.springframework.test.web.servlet.ResultActions nativeRename =
         CommitPathHttp.rename(mvc, "irc_v_rent", "t", "irc_v_rent", "v");
+    List<String> nativeEvents = renameEvents();
     assertEquals(500, CommitPathHttp.status(nativeRename), CommitPathHttp.json(nativeRename));
     assertTrue(
         CommitPathHttp.message(nativeRename)
             .startsWith("org.apache.iceberg.exceptions.CommitFailedException"),
         CommitPathHttp.message(nativeRename));
 
+    java.nio.file.Path metadataDirectory =
+        java.nio.file.Paths.get(
+            java.net.URI.create(IrcWrite.load(mvc, "irc_v_rent", "t").location()).getPath());
+    java.util.List<String> filesBefore = files(metadataDirectory);
+    assertTrue(!filesBefore.isEmpty(), metadataDirectory.toString());
+    clearInvocations(tableAuditHandler);
     assertEquals(
         "Cannot rename irc_v_rent.t to irc_v_rent.v. View already exists",
         assertIrcError(
@@ -1009,11 +1021,46 @@ public class IrcViewRoutesTest {
                 409,
                 "AlreadyExistsException")
             .message());
+    assertEquals(filesBefore, files(metadataDirectory));
+    // Audited as the native rename's refusal: one FAILED RENAME_FROM of the source.
+    assertEquals(1, nativeEvents.size(), String.valueOf(nativeEvents));
+    assertEquals(nativeEvents, renameEvents());
     assertEquals(view, stored("irc_v_rent", "v"));
     assertEquals(
         tableUuid,
         CommitPathHttp.str(
             CommitPathHttp.json(CommitPathHttp.get(mvc, "irc_v_rent", "t")), "$.tableUUID"));
+  }
+
+  /** The table audit events of irc_v_rent sent since the last clear, without timestamps. */
+  private List<String> renameEvents() {
+    org.mockito.ArgumentCaptor<com.linkedin.openhouse.tables.audit.model.TableAuditEvent> events =
+        org.mockito.ArgumentCaptor.forClass(
+            com.linkedin.openhouse.tables.audit.model.TableAuditEvent.class);
+    verify(tableAuditHandler, Mockito.atLeast(0)).audit(events.capture());
+    List<String> json = new ArrayList<>();
+    for (com.linkedin.openhouse.tables.audit.model.TableAuditEvent event : events.getAllValues()) {
+      if ("irc_v_rent".equals(event.getDatabaseName())) {
+        json.add(event.toBuilder().eventTimestamp(null).build().toJson());
+      }
+    }
+    return json;
+  }
+
+  /** The table metadata files in {@code directory}, sorted. */
+  private static java.util.List<String> files(java.nio.file.Path directory) throws Exception {
+    java.util.List<String> names = new java.util.ArrayList<>();
+    if (java.nio.file.Files.isDirectory(directory)) {
+      try (java.util.stream.Stream<java.nio.file.Path> listed =
+          java.nio.file.Files.list(directory)) {
+        listed
+            .map(file -> file.getFileName().toString())
+            .filter(name -> name.endsWith(".metadata.json"))
+            .forEach(names::add);
+      }
+    }
+    java.util.Collections.sort(names);
+    return names;
   }
 
   @Test

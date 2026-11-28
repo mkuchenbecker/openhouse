@@ -108,9 +108,9 @@ import org.springframework.stereotype.Component;
  *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
  *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
  *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
- *       supported) with the native message. A rename House Tables refuses because the target's key
- *       is taken (a view of that name), which the native route answers 500, is 409 {@code
- *       AlreadyExistsException}.
+ *       supported) with the native message. A rename onto a view's name, which the native route
+ *       answers 500 after it has written the renamed metadata, is 409 {@code
+ *       AlreadyExistsException} before anything is written.
  *   <li>A policy patch ({@value PolicyPatch#KEY} in the properties of a create, a staged create's
  *       completion or a commit, as OpenHouse's policy statements write it) is what the OpenHouse
  *       Java client makes of it before it sends the native request: the key is taken out of the
@@ -1122,6 +1122,15 @@ public class IcebergRestWriteHandler {
    * when the target namespace does not exist, and otherwise 406, the spec's "the server does not
    * support this operation", with the native refusal's message. The ids are checked first, as
    * natively.
+   *
+   * <p>Tables and views share House Tables' key, and the native rename looks only for a table of
+   * the target's name, so onto a view's name it writes the renamed metadata, retries, and fails on
+   * the House Tables write (answered 500). Here the target's key is looked up first, where the
+   * native rename looks for a table there (after the request's validation and the source's
+   * existence), and a view there is the spec's 409 {@code AlreadyExistsException}, with nothing
+   * written. A House Tables refusal during the rename itself is 409 too: "already exists" when the
+   * target's key is now taken, otherwise {@code CommitFailedException}, a conflict a client may
+   * retry.
    */
   public void renameTable(RenameTableRequest request, String actingPrincipal) {
     request.validate();
@@ -1141,6 +1150,26 @@ public class IcebergRestWriteHandler {
         throw new IcebergRestRouteException(e.getMessage(), true);
       }
     }
+    HouseTablePrimaryKey target =
+        HouseTablePrimaryKey.builder()
+            .databaseId(toDatabaseId)
+            .tableId(request.destination().name())
+            .build();
+    // Audited as the native rename audits its refusal (a FAILED RENAME_FROM of the source).
+    tableAudit.auditRefusal(
+        fromDatabaseId,
+        request.source().name(),
+        OperationType.RENAME_FROM,
+        () -> {
+          tablesApiValidator.validateRenameTable(
+              fromDatabaseId, request.source().name(), toDatabaseId, request.destination().name());
+          if (houseTableRepository.findViewById(target).isPresent()
+              && tablesService.tableExists(fromDatabaseId, request.source().name())) {
+            throw new AlreadyExistsException(
+                "Cannot rename %s to %s. View already exists",
+                request.source(), request.destination());
+          }
+        });
     try {
       tablesApiHandler.renameTable(
           fromDatabaseId,
@@ -1152,24 +1181,23 @@ public class IcebergRestWriteHandler {
       if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
         throw e;
       }
-      // House Tables refused the rename: tables and views share its key, and the target's is
-      // taken. The native rename checks only for a table there, so this is a view (or a table
-      // created meanwhile). The native API answers the unmapped commit failure 500; the spec's
-      // answer is 409 AlreadyExists.
-      boolean view =
-          houseTableRepository
-              .findViewById(
-                  HouseTablePrimaryKey.builder()
-                      .databaseId(toDatabaseId)
-                      .tableId(request.destination().name())
-                      .build())
-              .isPresent();
-      throw new AlreadyExistsException(
+      // House Tables refused the rename's write. The native API answers the unmapped commit
+      // failure 500; the spec's answer is a 409: the target's key taken meanwhile (a view, or a
+      // table created since the native rename looked), or a concurrent change of the table.
+      boolean view = houseTableRepository.findViewById(target).isPresent();
+      if (view || tablesService.tableExists(toDatabaseId, request.destination().name())) {
+        throw new AlreadyExistsException(
+            e,
+            "Cannot rename %s to %s. %s already exists",
+            request.source(),
+            request.destination(),
+            view ? "View" : "Table");
+      }
+      throw new CommitFailedException(
           e,
-          "Cannot rename %s to %s. %s already exists",
+          "Cannot rename %s to %s: the table was changed concurrently",
           request.source(),
-          request.destination(),
-          view ? "View" : "Table");
+          request.destination());
     }
   }
 
