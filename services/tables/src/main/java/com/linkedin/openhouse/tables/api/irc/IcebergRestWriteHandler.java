@@ -46,6 +46,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -515,6 +516,14 @@ public class IcebergRestWriteHandler {
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
       return Optional.empty();
     }
+    if (!replace) {
+      // Audited as the commit's refusal, as the refusals of the early decision are.
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          auditedKind(request),
+          () -> refuseALowerFormatVersion(identifier, baseMetadata, candidate));
+    }
     // The policies the OpenHouse client would send: the stored ones, or a patch merged onto them.
     Policies patched =
         patch
@@ -726,6 +735,25 @@ public class IcebergRestWriteHandler {
         () ->
             create(
                 identifier, candidate, candidate.location(), tableUUID, policies, actingPrincipal));
+  }
+
+  /**
+   * Refuses a commit whose {@code format-version} property asks for a version below the table's,
+   * with the 400 these routes give a version they cannot store ({@value
+   * FormatVersionRule#REFUSED}): a table's format version is never lowered. Iceberg refuses such a
+   * commit itself, but only when the repository applies the property, as a server failure, which an
+   * Iceberg client reads as "the commit's state is unknown" although nothing was written.
+   */
+  private static void refuseALowerFormatVersion(
+      TableIdentifier identifier, TableMetadata base, TableMetadata candidate) {
+    OptionalInt asked = FormatVersionRule.requested(candidate.properties());
+    if (asked.isPresent() && asked.getAsInt() < base.formatVersion()) {
+      throw new RequestValidationFailureException(
+          String.format(
+              "%s: Update of table %s asks for format version %d: the table is format version %d,"
+                  + " and a table's format version is never lowered",
+              FormatVersionRule.REFUSED, identifier, asked.getAsInt(), base.formatVersion()));
+    }
   }
 
   private void requireTheClustersFormatVersion(
