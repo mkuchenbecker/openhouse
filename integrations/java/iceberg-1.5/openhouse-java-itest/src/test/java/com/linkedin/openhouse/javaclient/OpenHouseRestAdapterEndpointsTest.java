@@ -19,7 +19,7 @@ import org.apache.iceberg.rest.responses.ConfigResponse;
 import org.junit.jupiter.api.Test;
 
 /**
- * The endpoints the adapter advertises in its config response (work item C5).
+ * The endpoints the adapter advertises in its config response.
  *
  * <p>Iceberg 1.12's {@code RESTSessionCatalog} calls only the endpoints a server advertises, and
  * assumes a default set without views when it advertises none. So on the v3 line ({@link

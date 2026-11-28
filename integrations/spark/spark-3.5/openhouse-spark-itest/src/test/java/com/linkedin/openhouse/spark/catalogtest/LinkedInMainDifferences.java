@@ -36,7 +36,7 @@ final class LinkedInMainDifferences {
 
   private static final String NAMESPACE_EXISTS_WHY =
       "Iceberg 1.12's SparkCatalog checks a namespace's existence with catalog.namespaceExists"
-          + " (Apache Iceberg pull request 14507), which the OpenHouse catalog refuses with its own"
+          + " (the upstream change that made SparkCatalog ask namespaceExists), which the OpenHouse catalog refuses with its own"
           + " wording; Iceberg 1.5.2 left Spark's default, which describes the namespace. Still"
           + " refused, same class.";
 

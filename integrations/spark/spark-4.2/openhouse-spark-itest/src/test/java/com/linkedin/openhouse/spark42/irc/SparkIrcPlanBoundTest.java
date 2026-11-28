@@ -12,11 +12,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Spark 4.2 over IRC against a service whose plans are bounded to four file scan tasks (the cluster
- * property {@value #BOUND}, work item V11c), on a table of five data files: with server planning,
- * every statement whose scan plans more than four tasks fails visibly with the service's message (a
- * SELECT, a LIMIT, an UPDATE, a MERGE), and a write that fails leaves the table as it was; a scan
- * that a filter prunes to four or fewer reads the rows client planning reads; with client planning
- * nothing is bounded. Never fewer rows.
+ * property {@value #BOUND}), on a table of five data files: with server planning, every statement
+ * whose scan plans more than four tasks fails visibly with the service's message (a SELECT, a
+ * LIMIT, an UPDATE, a MERGE), and a write that fails leaves the table as it was; a scan that a
+ * filter prunes to four or fewer reads the rows client planning reads; with client planning nothing
+ * is bounded. Never fewer rows.
  *
  * <p>The service is this class's own (started and stopped here), so no other test meets the bound.
  */

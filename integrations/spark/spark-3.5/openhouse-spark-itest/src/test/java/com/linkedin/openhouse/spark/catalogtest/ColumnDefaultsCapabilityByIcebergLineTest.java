@@ -27,7 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The {@code column-defaults} capability by Iceberg line (decisions D5 and D11a, work item W3).
+ * The {@code column-defaults} capability by Iceberg line.
  *
  * <p>On the legacy line the Spark catalogs declare {@code column-defaults}, so a table that
  * requires it ({@code required-capability.column-defaults=true}) is read, written and evolved

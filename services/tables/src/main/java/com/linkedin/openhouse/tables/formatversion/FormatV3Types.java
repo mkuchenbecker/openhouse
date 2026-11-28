@@ -31,8 +31,8 @@ import org.apache.iceberg.types.TypeUtil;
 import org.apache.iceberg.types.Types;
 
 /**
- * What OpenHouse does with each column type that exists only from Iceberg format version 3 on (work
- * item X5), decided type by type.
+ * What OpenHouse does with each column type that exists only from Iceberg format version 3 on,
+ * decided type by type.
  *
  * <ul>
  *   <li>{@code unknown}: supported. Spark 3.5 and Spark 4 spell it {@code void} (a CTAS of {@code
@@ -117,7 +117,7 @@ public final class FormatV3Types {
       throw new CommitRejectedException(
           String.format(
               "%s: column %s (%s) of table %s: OpenHouse does not take the type %s on format v3"
-                  + " tables (work item X5): %s.",
+                  + " tables: %s.",
               REFUSED,
               schema.findColumnName(field.fieldId()),
               field.type(),

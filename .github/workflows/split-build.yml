@@ -75,6 +75,14 @@ jobs:
       - name: Check the Iceberg-line branches in tests are listed
         run: python3 scripts/ci/check-iceberg-line-branches.py
 
+      # Messages, test names and comments say what they mean in words, not by the id of a private
+      # planning list (scripts/ci/check-private-ids.py). The tree is the same on both lines.
+      - name: Check for private planning ids
+        if: inputs.line == 'default'
+        run: |
+          python3 scripts/ci/check-private-ids.py --self-test
+          python3 scripts/ci/check-private-ids.py
+
   tests:
     name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, ${{ matrix.group }}
     needs: plan

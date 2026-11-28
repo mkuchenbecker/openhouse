@@ -89,8 +89,8 @@ final class TableCommitCore {
         databaseId, tableId, Optional.of(base), candidate.getTableProperties());
     candidate = LockPolicyValidator.prepare(base, candidate);
     try {
-      // On a format v3 table column defaults are Iceberg's own and are stored as committed (work
-      // item W6); below v3 every initial-default is a read-bridge overlay and is dropped.
+      // On a format v3 table column defaults are Iceberg's own and are stored as committed; below
+      // v3 every initial-default is a read-bridge overlay and is dropped.
       if (!FormatVersionRule.writesFormatV3(clusterProperties, base, candidate)) {
         candidate = readBridgeStripProtection.prepare(candidate);
       }

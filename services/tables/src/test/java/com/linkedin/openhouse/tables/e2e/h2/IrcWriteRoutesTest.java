@@ -296,9 +296,9 @@ public class IrcWriteRoutesTest {
   }
 
   /**
-   * The server owns table locations (D30): a create that names a location is created where the
-   * server puts the table, exactly as the same create without one, and the response says where.
-   * Nothing is written at the requested location. Before, such a create was refused with 400.
+   * The server owns table locations: a create that names a location is created where the server
+   * puts the table, exactly as the same create without one, and the response says where. Nothing is
+   * written at the requested location. Before, such a create was refused with 400.
    */
   @Test
   void createThatNamesALocationIsCreatedAtTheServersLocation() throws Exception {
@@ -356,12 +356,12 @@ public class IrcWriteRoutesTest {
   }
 
   /**
-   * The server owns the format version (D19, D20): a create or a staged create whose {@code
-   * format-version} property asks for another version than the cluster's is refused with 400 naming
-   * the property and the version the server uses, as the commit that completes a staged create
-   * already refuses a mismatch. Before, the staged create silently answered metadata of the
-   * cluster's version, which its completion then stored. The cluster's own version is accepted.
-   * (The native create overwrites the property with the cluster's version; that is unchanged.)
+   * The server owns the format version: a create or a staged create whose {@code format-version}
+   * property asks for another version than the cluster's is refused with 400 naming the property
+   * and the version the server uses, as the commit that completes a staged create already refuses a
+   * mismatch. Before, the staged create silently answered metadata of the cluster's version, which
+   * its completion then stored. The cluster's own version is accepted. (The native create
+   * overwrites the property with the cluster's version; that is unchanged.)
    */
   @Test
   void createOrStagedCreateAskingForAnotherFormatVersionIsRefusedAndNamesIt() throws Exception {
@@ -464,9 +464,9 @@ public class IrcWriteRoutesTest {
   }
 
   /**
-   * A staged create that names a location (D30) is staged at the server's location, which its
-   * completion then sets, as {@code RESTCatalog} sends the staged location back: the table is what
-   * the native create stores, and nothing is written at the requested location.
+   * A staged create that names a location is staged at the server's location, which its completion
+   * then sets, as {@code RESTCatalog} sends the staged location back: the table is what the native
+   * create stores, and nothing is written at the requested location.
    */
   @Test
   void stagedCreateThatNamesALocationIsStagedAndCreatedAtTheServersLocation() throws Exception {
@@ -1035,10 +1035,10 @@ public class IrcWriteRoutesTest {
   }
 
   /**
-   * A replace that names a location (D30; {@code RESTSessionCatalog.replaceTransaction} then sends
-   * a set-location among the replace's changes) keeps the table where it is: it stores what the
-   * same replace without a location stores. An ordinary commit that sets the location is still
-   * refused ({@link #locationUuidAndFormatVersionChangesAreRefusedAndNamed}).
+   * A replace that names a location ({@code RESTSessionCatalog.replaceTransaction} then sends a
+   * set-location among the replace's changes) keeps the table where it is: it stores what the same
+   * replace without a location stores. An ordinary commit that sets the location is still refused
+   * ({@link #locationUuidAndFormatVersionChangesAreRefusedAndNamed}).
    */
   @Test
   void replaceThatNamesALocationKeepsTheTablesLocation() throws Exception {

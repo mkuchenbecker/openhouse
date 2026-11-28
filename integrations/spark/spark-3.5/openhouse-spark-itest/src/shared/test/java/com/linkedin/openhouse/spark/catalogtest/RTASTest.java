@@ -127,9 +127,9 @@ public class RTASTest extends OpenHouseSparkITest {
 
   /**
    * With the OpenHouse gate open, an RTAS that drops the former partition source column reaches
-   * Iceberg's own validation. The result depends on the Iceberg line (decision D14a): LinkedIn's
-   * 1.5.2 cannot bind the old spec {@code identity(id)} to the new schema and fails; Iceberg 1.12
-   * keeps specs whose source column is gone unbound (apache/iceberg#11868) and the RTAS succeeds.
+   * Iceberg's own validation. The result depends on the Iceberg line: LinkedIn's 1.5.2 cannot bind
+   * the old spec {@code identity(id)} to the new schema and fails; Iceberg 1.12 keeps specs whose
+   * source column is gone unbound (apache/iceberg#11868) and the RTAS succeeds.
    */
   @Test
   public void testRTASPartitionColumnDropEnabledReachesIcebergValidation() throws Exception {

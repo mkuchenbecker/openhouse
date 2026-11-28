@@ -9,9 +9,9 @@ import java.util.Collections;
 import org.junit.jupiter.api.Test;
 
 /**
- * No read-bridge config is resolved for a format v3 table (work item W6): its column defaults are
- * Iceberg's native ones, stored in its metadata. A v3 table cannot carry the opt-in at all (the
- * commit path refuses it), so this pins the resolver for a table that somehow does.
+ * No read-bridge config is resolved for a format v3 table: its column defaults are Iceberg's native
+ * ones, stored in its metadata. A v3 table cannot carry the opt-in at all (the commit path refuses
+ * it), so this pins the resolver for a table that somehow does.
  */
 class ReadBridgeFormatV3Test {
 

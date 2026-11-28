@@ -39,7 +39,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
- * The order of a column's policy tags (work item N8), at the HTTP boundary of both APIs.
+ * The order of a column's policy tags, at the HTTP boundary of both APIs.
  *
  * <p>The tags are a set ({@link PolicyTag}). The service writes them in the declaration order of
  * {@link PolicyTag.Tag}, {@code PII} then {@code HC}, whatever order a request lists them in: in

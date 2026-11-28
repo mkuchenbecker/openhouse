@@ -22,12 +22,11 @@ import org.junit.jupiter.api.TestInstance;
  *
  * <p>Two catalogs point at the same server: {@code irc}, configured as a user would, and {@code
  * irc_adv}, which also sets {@code openhouse.capabilities=policies,grants,unlock} on the client
- * side. The server's own config override ({@code policies,grants,unlock} since V5-3) wins over that
- * client value, so the two behave the same. Grants and unlock reach the server through the REST
- * capability client (C2-3); this fixture's authorization handler stores no grants, so SHOW GRANTS
- * is empty here as on the OpenHouse catalog (smoke test s17). {@code
- * IcebergRestGrantsUnlockSqlTest} compares every outcome and the stored grants and locks with the
- * OpenHouse catalog's.
+ * side. The server's own config override ({@code policies,grants,unlock}) wins over that client
+ * value, so the two behave the same. Grants and unlock reach the server through the REST capability
+ * client; this fixture's authorization handler stores no grants, so SHOW GRANTS is empty here as on
+ * the OpenHouse catalog (smoke test s17). {@code IcebergRestGrantsUnlockSqlTest} compares every
+ * outcome and the stored grants and locks with the OpenHouse catalog's.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class IcebergRestOpenHouseStatementsTest extends OpenHouseSparkITest {

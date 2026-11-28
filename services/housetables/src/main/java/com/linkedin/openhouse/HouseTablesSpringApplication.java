@@ -30,8 +30,8 @@ public class HouseTablesSpringApplication {
   /**
    * Writes the properties of the schemas springdoc makes from Spring Data's {@code Page} (named
    * {@code Page<content type>}) in alphabetical order, so that two builds of the same sources write
-   * the same spec (work item C15). springdoc lists a schema's properties in the order Jackson finds
-   * them, which for {@code Page}, an interface with getters and no fields, is the order of {@code
+   * the same spec. springdoc lists a schema's properties in the order Jackson finds them, which for
+   * {@code Page}, an interface with getters and no fields, is the order of {@code
    * Class.getDeclaredMethods()} on {@code Page} and {@code Slice}: the JVM does not fix that order,
    * and it changed from one spec generation to the next. The schemas of the service's own classes
    * keep their field order, which is fixed. Only the order changes; the generated clients' models

@@ -100,7 +100,7 @@ final class IcebergRestViewSpelling {
    * not a view's, an update that is not a view's, or one that would set what the server owns, is a
    * 400 naming it. A replace (a commit that sets a new current version, as {@code
    * RESTViewBuilder.replace} sends) ignores a set-location, which is how a replace that names a
-   * location arrives: the server owns the location (D30).
+   * location arrives: the server owns the location.
    */
   static ViewMetadata apply(
       String databaseId, String viewId, ViewMetadata base, UpdateTableRequest request) {

@@ -13,11 +13,11 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The smoke suite has the two targets its baseline has (s13b: the catalog's own name; s29:
  * another catalog's). These are the rest of what {@code OpenHouseCatalog.renameTable} did with a
- * target on Spark 3.5, each run there with the OpenHouse catalog for comparison (N6 record): a
- * catalog that is not named {@code openhouse}, a database that is named like the catalog, more than
- * two namespace levels, and the targets that name no catalog. The SQL extensions read the target
- * ({@code ResolveRenameTableTarget}); the unit tests of the rule are {@code RenameTableTargetTest}
- * in the runtime module.
+ * target on Spark 3.5, each run there with the OpenHouse catalog for comparison: a catalog that is
+ * not named {@code openhouse}, a database that is named like the catalog, more than two namespace
+ * levels, and the targets that name no catalog. The SQL extensions read the target ({@code
+ * ResolveRenameTableTarget}); the unit tests of the rule are {@code RenameTableTargetTest} in the
+ * runtime module.
  */
 public class SparkIrcRenameTargetTest {
 

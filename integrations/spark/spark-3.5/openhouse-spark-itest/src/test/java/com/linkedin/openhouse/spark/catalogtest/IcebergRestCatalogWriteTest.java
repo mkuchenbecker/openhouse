@@ -432,7 +432,7 @@ public class IcebergRestCatalogWriteTest extends OpenHouseSparkITest {
 
   @Test
   void refusedWrites() {
-    // The server owns the location (D30): a location the create names is ignored, and the table
+    // The server owns the location: a location the create names is ignored, and the table
     // is created where the server puts it.
     Table table = rest.buildTable(id("refused"), SCHEMA).withLocation("/tmp/elsewhere").create();
     Assertions.assertTrue(openhouse.tableExists(id("refused")));

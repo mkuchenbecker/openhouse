@@ -15,7 +15,7 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.util.JsonUtil;
 
 /**
- * The schema, partition spec and sort order history a create keeps (work item V14).
+ * The schema, partition spec and sort order history a create keeps.
  *
  * <p>A create builds a table's first metadata from one schema, one spec and one sort order, which
  * {@code TableMetadata.newTableMetadata} numbers afresh: schema 0, spec 0, sort order 1 (0 when

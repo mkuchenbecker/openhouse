@@ -33,10 +33,11 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The first three races of work item X10 through the Iceberg REST routes, from Spark 4.2 with
- * Iceberg's own catalog and client and no OpenHouse class in the engine, on a format v3 table and
- * on a v2 merge-on-read table for comparison. The Spark 3.5 suite ({@code FormatV3ConcurrencyTest}
- * in the apps project) runs them, and the others, through the native OpenHouse catalog.
+ * The first three races of the jobs' concurrency tests through the Iceberg REST routes, from Spark
+ * 4.2 with Iceberg's own catalog and client and no OpenHouse class in the engine, on a format v3
+ * table and on a v2 merge-on-read table for comparison. The Spark 3.5 suite ({@code
+ * FormatV3ConcurrencyTest} in the apps project) runs them, and the others, through the native
+ * OpenHouse catalog.
  *
  * <p>Interleaved by construction: the writer that is to lose runs on a catalog whose REST client is
  * {@link HookedRestCatalog}; when it sends its commit (built and validated against base N), the
@@ -299,7 +300,7 @@ public class SparkIrcConcurrencyTest {
     String raced = HookedRestCatalog.racedAttempt(key);
     Outcome actual = loserFailure == null ? Outcome.SERIAL : Outcome.CONFLICT;
     System.out.println(
-        "X10-RACE rest v"
+        "RACE rest v"
             + formatVersion
             + " "
             + name

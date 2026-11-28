@@ -21,10 +21,10 @@ import org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import org.apache.iceberg.types.Types;
 
 /**
- * Plans a scan for the IRC scan planning route, synchronously and without state (decision D44): the
- * scan the request describes is built on the loaded Iceberg {@link Table} and planned at once, and
- * every file scan task is returned in the one {@code completed} response, with the delete files the
- * tasks reference. Nothing is kept: no plan, no task, no page.
+ * Plans a scan for the IRC scan planning route, synchronously and without state: the scan the
+ * request describes is built on the loaded Iceberg {@link Table} and planned at once, and every
+ * file scan task is returned in the one {@code completed} response, with the delete files the tasks
+ * reference. Nothing is kept: no plan, no task, no page.
  *
  * <p>What the request sets, and what is done with it:
  *
@@ -85,9 +85,9 @@ final class IcebergRestScanPlanner {
   /**
    * Plans the scan {@code request} describes on {@code table}. At most {@code maxTasks} file scan
    * tasks are held: when the scan plans one more, planning stops, what was planned is dropped, and
-   * the answer is {@code failed} with no task and no plan id (decision of V11c: Iceberg 1.12's
-   * client then fails the scan with an {@code IllegalStateException} that carries the message, and
-   * does not retry or fall back, so a client never reads part of a table as if it were all).
+   * the answer is {@code failed} with no task and no plan id (Iceberg 1.12's client then fails the
+   * scan with an {@code IllegalStateException} that carries the message, and does not retry or fall
+   * back, so a client never reads part of a table as if it were all).
    */
   static PlanTableScanResponse plan(Table table, PlanTableScanRequest request, int maxTasks) {
     if (TableUtil.formatVersion(table) >= 3) {
@@ -117,12 +117,12 @@ final class IcebergRestScanPlanner {
   }
 
   /**
-   * A format v3 table is not planned (work item V11e): the specification's scan task carries no
-   * data or file sequence number, and Iceberg 1.12's client reads none, so a server-planned read
-   * would return a null inherited {@code _last_updated_sequence_number} and a copy-on-write rewrite
-   * planned here would store the rewrite's sequence number for every row it keeps. The answer is
-   * {@code failed}, as for a plan above the bound: the client fails the scan, and a write fails
-   * before it writes anything.
+   * A format v3 table is not planned: the specification's scan task carries no data or file
+   * sequence number, and Iceberg 1.12's client reads none, so a server-planned read would return a
+   * null inherited {@code _last_updated_sequence_number} and a copy-on-write rewrite planned here
+   * would store the rewrite's sequence number for every row it keeps. The answer is {@code failed},
+   * as for a plan above the bound: the client fails the scan, and a write fails before it writes
+   * anything.
    */
   private static PlanTableScanResponse formatV3(Table table) {
     return PlanTableScanResponse.builder(table.specs())
@@ -205,8 +205,8 @@ final class IcebergRestScanPlanner {
 
   /**
    * The projection a client that asks for the snapshot's schema meant when it names a column the
-   * snapshot's schema lacks (work item V11e). Spark 4.2 pins a read of main to the current snapshot
-   * and projects the table's current schema, so Iceberg 1.12's {@code RESTTableScan} sends {@code
+   * snapshot's schema lacks. Spark 4.2 pins a read of main to the current snapshot and projects the
+   * table's current schema, so Iceberg 1.12's {@code RESTTableScan} sends {@code
    * use-snapshot-schema=true} with names of the current schema. Planning on the client, that scan's
    * schema is its projection, and the filter binds to the table's specs when the snapshot is the
    * current one; here, selecting those names from the snapshot's schema would drop the new column

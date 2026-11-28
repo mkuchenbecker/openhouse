@@ -310,9 +310,9 @@ public class CommitPathAuthorizationTest {
   }
 
   /**
-   * PINNED DEFECT of the native API (work item N5; see {@link
-   * NativeCreateDirectoryReusePinnedDefectTest}, which shows what the drop of the second table then
-   * destroys). This asserts what the native API does today, which is wrong.
+   * PINNED DEFECT of the native API (see {@link NativeCreateDirectoryReusePinnedDefectTest}, which
+   * shows what the drop of the second table then destroys). This asserts what the native API does
+   * today, which is wrong.
    *
    * <p>Who can put a second table in a live table's directory: anyone who may create tables in the
    * database. The create that names the renamed table's UUID is asked for {@code CREATE_TABLE} on

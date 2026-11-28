@@ -326,8 +326,8 @@ public class SparkIrcFormatV3Test {
    * What format v3 adds to Spark SQL that this service does not take: a VARIANT column is refused
    * by the service, on create (whatever the file format) and on ADD COLUMN, naming the property
    * that keeps variant columns off by default, and leaves nothing behind (SparkIrcFormatV3TypesTest
-   * has the tables that take one, work item X5); a column DEFAULT is refused by Iceberg's own Spark
-   * integration before any request (defaults are set through the Iceberg API until work item W9).
+   * has the tables that take one); a column DEFAULT is refused by Iceberg's own Spark integration
+   * before any request (defaults are set through the Iceberg API).
    */
   @Test
   void variantColumnsAndSqlDefaultsAreRefused() throws Exception {

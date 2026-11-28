@@ -14,12 +14,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Interleaves two clients of one table by construction, for the stale-handle scenario of the smoke
- * suite (work item C4): a catalog of the suite's second catalog ({@code openhouse_second}) calls
- * {@link #beforeCommit} when a commit on a table is about to reach the tables service, after
- * Iceberg built and validated that commit against its base. If a step is armed for the table, it
- * runs to completion first, so what it commits lands between the commit's base and the commit,
- * every time, with no sleep and no thread timing. The step fires once; the outcome of every commit
- * attempt is recorded, by simple class name ({@code committed} for success).
+ * suite: a catalog of the suite's second catalog ({@code openhouse_second}) calls {@link
+ * #beforeCommit} when a commit on a table is about to reach the tables service, after Iceberg built
+ * and validated that commit against its base. If a step is armed for the table, it runs to
+ * completion first, so what it commits lands between the commit's base and the commit, every time,
+ * with no sleep and no thread timing. The step fires once; the outcome of every commit attempt is
+ * recorded, by simple class name ({@code committed} for success).
  *
  * <p>The step runs on its own thread, started when it is armed, outside any Spark SQL execution: a
  * statement run from inside another statement's execution on the same thread is refused by Spark,
@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
  * <p>Which point is "about to reach the service" is the catalog's: the OpenHouse table operations'
  * {@code doCommit} on the legacy and rest-shim paths, the HTTP client's table commit on the Iceberg
  * REST paths ({@link CommitRaceRestCatalog}). Same pattern as {@code CommitHook} of the jobs'
- * concurrency tests (work item X10).
+ * concurrency tests.
  */
 public final class CommitRace {
   private static final Map<String, Armed> ARMED = new ConcurrentHashMap<>();

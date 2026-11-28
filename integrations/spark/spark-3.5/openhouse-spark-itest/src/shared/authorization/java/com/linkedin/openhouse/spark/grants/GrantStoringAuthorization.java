@@ -20,11 +20,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
 /**
- * The test services' authorization backend that stores grants (work item T6). The embedded
- * service's own handler ({@code OpaAuthorizationHandler} with no OPA base URI) allows everything,
- * drops every grant and lists none, so SHOW GRANTS was always empty and a grant had no effect. This
- * one, registered in its place through Spring ({@link Config}: a {@code @Primary} bean, the
- * existing way a test replaces a bean of the service; no production code or wiring changes):
+ * The test services' authorization backend that stores grants. The embedded service's own handler
+ * ({@code OpaAuthorizationHandler} with no OPA base URI) allows everything, drops every grant and
+ * lists none, so SHOW GRANTS was always empty and a grant had no effect. This one, registered in
+ * its place through Spring ({@link Config}: a {@code @Primary} bean, the existing way a test
+ * replaces a bean of the service; no production code or wiring changes):
  *
  * <ul>
  *   <li>keeps, per resource ({@code db} or {@code db.table}), the roles the service hands it on

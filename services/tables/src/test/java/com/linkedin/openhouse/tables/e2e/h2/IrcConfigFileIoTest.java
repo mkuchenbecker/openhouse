@@ -28,12 +28,12 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * The FileIO the Iceberg REST Catalog (IRC) config route advertises as the client's default ({@code
- * io-impl}) follows the cluster's storage (work item V3b): on a cluster of each storage type the
- * service supports ({@code cluster.storages.default-type}: hdfs, local, s3, adls) it is the class
- * the service itself reads and writes that storage's tables with, each of them Iceberg's own. One
- * Spring context per storage type; the object stores are configured but never contacted. (A cluster
- * with no storages configured is a local one; that is the other IRC tests' context, and
- * IrcReadRoutesTest asserts its config.)
+ * io-impl}) follows the cluster's storage: on a cluster of each storage type the service supports
+ * ({@code cluster.storages.default-type}: hdfs, local, s3, adls) it is the class the service itself
+ * reads and writes that storage's tables with, each of them Iceberg's own. One Spring context per
+ * storage type; the object stores are configured but never contacted. (A cluster with no storages
+ * configured is a local one; that is the other IRC tests' context, and IrcReadRoutesTest asserts
+ * its config.)
  *
  * <p>Only the class is advertised: no endpoint, bucket, account or credential from the cluster's
  * storage parameters reaches the response. A storage type the route has no client class for gets no

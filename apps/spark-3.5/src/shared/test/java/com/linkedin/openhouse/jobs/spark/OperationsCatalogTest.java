@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * The catalog {@link Operations} loads tables through (work item N16).
+ * The catalog {@link Operations} loads tables through.
  *
  * <p>Each catalog holds a client: on Spark 3.5 the OpenHouse catalog, whose client keeps a
  * connection pool that evicts in the background and is never disposed, so it stays reachable for
@@ -45,7 +45,7 @@ public class OperationsCatalogTest extends OpenHouseSparkITest {
         Assertions.assertNotNull(ops.getTable(fqtn).currentSnapshot());
       }
       ops.expireSnapshots(fqtn, 3, "DAYS", 1, false);
-      // One catalog for the whole run (before N16: 301, one per load, each with its own client).
+      // One catalog for the whole run (not one per load, 301 here, each with its own client).
       Assertions.assertEquals(1, ops.catalogsBuilt());
     }
   }

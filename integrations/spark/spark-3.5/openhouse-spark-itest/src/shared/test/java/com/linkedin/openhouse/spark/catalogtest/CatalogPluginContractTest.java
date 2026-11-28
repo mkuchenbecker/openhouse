@@ -602,7 +602,7 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     String db = SparkItestColumnDefaults.DATABASE;
     TableIdentifier tid = id(db, "cpc_capability");
     TableIdentifier plain = id(db, "cpc_capability_plain");
-    // The engine catalog declares column-defaults on the legacy Iceberg line only (decision D11a).
+    // The engine catalog declares column-defaults on the legacy Iceberg line only.
     // On the v3 line a catalog that declares it explicitly stands in for a legacy client.
     Catalog declaring;
     if (IcebergLine.current() == IcebergLine.LEGACY) {

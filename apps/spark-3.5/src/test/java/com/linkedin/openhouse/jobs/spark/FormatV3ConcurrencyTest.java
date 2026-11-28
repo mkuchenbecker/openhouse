@@ -55,8 +55,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Row-level writes (DELETE, UPDATE, MERGE) racing the maintenance jobs on Iceberg format v3 tables,
- * through OpenHouse's own commit path (work item X10), each case run the same way on a v2
- * merge-on-read table for comparison.
+ * through OpenHouse's own commit path, each case run the same way on a v2 merge-on-read table for
+ * comparison.
  *
  * <p>Every case is interleaved by construction, with no sleeps and no reliance on thread timing.
  * The writer that is to lose the race runs on a session whose OpenHouse catalog is {@link
@@ -415,7 +415,7 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       Raced raced) {
     Outcome actual = race.loserFailure == null ? Outcome.SERIAL : Outcome.CONFLICT;
     System.out.println(
-        "X10-RACE native v"
+        "RACE native v"
             + formatVersion
             + " "
             + name
@@ -566,10 +566,10 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
   // ----------------------------------------------------------------------------- the steps
 
   /**
-   * Compaction as X6 runs it (every data file that carries deletes is rewritten), with partial
-   * progress off so that it commits once: with partial progress on, its file groups commit from
-   * more than one thread, so the race would not be one by construction (each group's commit is a
-   * rewrite with the same conflict checks).
+   * Compaction as the maintenance job runs it on v3 (every data file that carries deletes is
+   * rewritten), with partial progress off so that it commits once: with partial progress on, its
+   * file groups commit from more than one thread, so the race would not be one by construction
+   * (each group's commit is a rewrite with the same conflict checks).
    */
   private void compaction(Operations ops, String fqtn) {
     DataCompactionSparkApp app =
@@ -928,14 +928,14 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
   }
 
   /**
-   * Work item X13: what happens after the race above leaves a dangling deletion vector (v3), as the
-   * jobs that own the table run next. Compaction (every data file with deletes rewritten) and
-   * snapshot expiry keep it: no rewrite group holds a data file that is gone, and the vector is
-   * live in the current snapshot. Nothing misbehaves meanwhile: rows read the same, every file a
-   * snapshot references exists (the Puffin file is live), and table stats collect. The next
-   * retention run drops it: retention's DELETE removes every delete file whose partition the row
-   * filter covers (Iceberg's MergingSnapshotProducer.deleteByRowFilter), and the vector's partition
-   * is the one retention dropped. Rows stay as they were. The same steps on v2.
+   * What happens after the race above leaves a dangling deletion vector (v3), as the jobs that own
+   * the table run next. Compaction (every data file with deletes rewritten) and snapshot expiry
+   * keep it: no rewrite group holds a data file that is gone, and the vector is live in the current
+   * snapshot. Nothing misbehaves meanwhile: rows read the same, every file a snapshot references
+   * exists (the Puffin file is live), and table stats collect. The next retention run drops it:
+   * retention's DELETE removes every delete file whose partition the row filter covers (Iceberg's
+   * MergingSnapshotProducer.deleteByRowFilter), and the vector's partition is the one retention
+   * dropped. Rows stay as they were. The same steps on v2.
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
@@ -960,7 +960,10 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     compaction(ops, fqtn);
     Table table = ops.getTable(fqtn);
     System.out.println(
-        "X13 v" + formatVersion + " after compaction: " + table.currentSnapshot().operation());
+        "AFTER-RACE v"
+            + formatVersion
+            + " after compaction: "
+            + table.currentSnapshot().operation());
     assertSameRows(afterRace, state(formatVersion, fqtn), "compaction");
     assertEveryReferencedFileExists(table);
     if (formatVersion == 3) {
@@ -983,7 +986,7 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
     retention(ops, fqtn);
     table = ops.getTable(fqtn);
     System.out.println(
-        "X13 v"
+        "AFTER-RACE v"
             + formatVersion
             + " second retention: "
             + (table.currentSnapshot().snapshotId() == beforeRetention
@@ -1131,7 +1134,7 @@ public class FormatV3ConcurrencyTest extends OpenHouseSparkITest {
       }
     }
     System.out.println(
-        "X10-RACE native v"
+        "RACE native v"
             + formatVersion
             + " update-then-orphans-ttl-0-constructor removed="
             + removed.size()

@@ -5,11 +5,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Runs the Spark SQL smoke suite on the plain Iceberg REST path (work item N1-c): Spark 3.5 with
- * Iceberg's own {@code SparkCatalog}, {@code type=rest}, over HTTP to the tables service's Iceberg
- * REST routes, with the OpenHouse SQL extensions in the session and no OpenHouse catalog class on
- * the catalog. {@link #restHttpDifferences()} is the complete list of statements whose outcome is
- * not the baseline's.
+ * Runs the Spark SQL smoke suite on the plain Iceberg REST path: Spark 3.5 with Iceberg's own
+ * {@code SparkCatalog}, {@code type=rest}, over HTTP to the tables service's Iceberg REST routes,
+ * with the OpenHouse SQL extensions in the session and no OpenHouse catalog class on the catalog.
+ * {@link #restHttpDifferences()} is the complete list of statements whose outcome is not the
+ * baseline's.
  *
  * <p>On both Iceberg lines. The lines' clients differ on one statement, the exception class a
  * refused namespace drop is raised as ({@link #restHttpDifferences()}). {@code
@@ -44,9 +44,9 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
 
   /**
    * The statements on which the rest-http path differs from the baseline: the nine statements on
-   * which Spark 4.2 over IRC differs for a reason other than Spark 4 (decision D37), each with the
-   * same outcome there. Apart from CREATE NAMESPACE, which stores a namespace record, no statement
-   * differs in the rows it reads or in what a write stores.
+   * which Spark 4.2 over IRC differs for a reason other than Spark 4 and which are accepted there,
+   * each with the same outcome there. Apart from CREATE NAMESPACE, which stores a namespace record,
+   * no statement differs in the rows it reads or in what a write stores.
    */
   static List<Difference> restHttpDifferences() {
     List<Difference> differences = new ArrayList<>();
@@ -90,7 +90,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .here(rows("Catalog Name,openhouse", "Namespace Name," + DB))
             .because(
                 NAMESPACE_OR_SHOW,
-                "Accepted in D37 for Spark 4.2: the IRC namespace route answers for a database"
+                "Accepted, as for Spark 4.2: the IRC namespace route answers for a database"
                     + " that has tables, so RESTCatalog loads it; OpenHouseCatalog refused in the"
                     + " engine."));
     differences.add(
@@ -99,7 +99,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .here(rows())
             .because(
                 NAMESPACE_OR_SHOW,
-                "Accepted in D37 for Spark 4.2: the IRC namespace list answers an empty list under"
+                "Accepted, as for Spark 4.2: the IRC namespace list answers an empty list under"
                     + " an existing database; OpenHouseCatalog refused in the engine."));
     // ---- s19, s24: USE, whose existence check the IRC routes answer from tables.
     differences.add(
@@ -123,7 +123,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
     String noDatabase =
         "DatabaseId was not provided, for SQL please run \"SHOW TABLES IN <databaseId>\" instead";
     String emptyNamespace =
-        "Accepted in D37 for Spark 4.2: still refused, with another class and message; Iceberg's"
+        "Accepted, as for Spark 4.2: still refused, with another class and message; Iceberg's"
             + " RESTCatalog refuses an empty namespace in the engine, where"
             + " OpenHouseCatalog.listTables did.";
     for (String statement : new String[] {"SHOW TABLES IN openhouse", "SHOW TABLES"}) {
@@ -147,7 +147,7 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
                     "User table " + DB + ".s27_missing cannot be found"))
             .because(
                 TYPE_OR_WORDING,
-                "No OpenHouse Java client on this catalog: the capability client (D23) raises"
+                "No OpenHouse Java client on this catalog: the capability client raises"
                     + " Iceberg's type for a 404, with the same native message."));
     differences.add(
         Difference.on(
@@ -164,19 +164,19 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
             .because(
                 TYPE_OR_WORDING,
                 "No OpenHouse Java client on this catalog: the IRC routes answer a native 400 as"
-                    + " Iceberg's BadRequestException, prefixed \"Malformed request: \" (D16)."));
+                    + " Iceberg's BadRequestException, prefixed \"Malformed request: \"."));
     // ---- s32, s33: what a refused replace leaves, and how a stale commit is applied.
     differences.addAll(
         refusedReplaceLeavesItsDataFile(
             REFUSED_AT_COMMIT,
-            "Work item C3: Iceberg's RESTCatalog stages a replace on the client: it loads the"
+            "Iceberg's RESTCatalog stages a replace on the client: it loads the"
                 + " table (GET), and the first request that says \"replace\" is the commit, after"
                 + " Spark wrote the data. The service can refuse no earlier; the GET carries no"
                 + " intent. Same on Spark 4.2. The file is left for the orphan files job."));
     differences.addAll(
         staleCommitMeetsNoConflict(
             NO_CONFLICT,
-            "Work item C4: the Iceberg REST client sends the changed keys with only an"
+            "The Iceberg REST client sends the changed keys with only an"
                 + " assert-table-uuid requirement, and the service applies them onto the stored"
                 + " table, merging a policy patch onto the stored policies (PolicyPatch). Nothing"
                 + " to refuse; the table ends with both changes, as on the baseline. Same on"
