@@ -16,9 +16,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.validation.ConstraintViolation;
-import javax.validation.Validation;
 import javax.validation.Validator;
-import javax.validation.ValidatorFactory;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.BadRequestException;
@@ -63,12 +61,11 @@ public class IcebergRestNamespaceHandler {
 
   @Autowired private IcebergRestApiHandler readHandler;
 
-  private static final Validator VALIDATOR = newValidator();
-
-  private static Validator newValidator() {
-    ValidatorFactory factory = Validation.buildDefaultValidatorFactory();
-    return factory.getValidator();
-  }
+  /**
+   * The application's bean validator, the one Spring MVC validates the namespace service's request
+   * bodies with on its own routes.
+   */
+  @Autowired private Validator validator;
 
   public CreateNamespaceResponse createNamespace(
       CreateNamespaceRequest request, String actingPrincipal) {
@@ -173,8 +170,8 @@ public class IcebergRestNamespaceHandler {
   }
 
   /** The namespace service's request validation, on its own request class. */
-  private static void validate(Object serviceRequest, String databaseId) {
-    Set<ConstraintViolation<Object>> violations = VALIDATOR.validate(serviceRequest);
+  private void validate(Object serviceRequest, String databaseId) {
+    Set<ConstraintViolation<Object>> violations = validator.validate(serviceRequest);
     if (violations.isEmpty()) {
       return;
     }
