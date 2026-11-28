@@ -72,6 +72,42 @@ public class LinkedInMainRecordingFilesTest {
             + " in different runs");
   }
 
+  /**
+   * The recordings whose keys start with a test class's simple name, with the package of those
+   * classes. The comparison of a class runs only when the class does, so a recorded class that is
+   * gone or disabled as a whole would leave its rows unseen: it must resolve and be enabled.
+   */
+  private static final java.util.Map<String, String> CLASS_KEYED =
+      java.util.Collections.singletonMap(
+          LinkedInMainAnswers.SUITE, "com.linkedin.openhouse.tables.e2e.h2.");
+
+  @ParameterizedTest
+  @ValueSource(strings = {LinkedInMainAnswers.SUITE})
+  void everyRecordedTestClassExistsAndIsEnabled(String suite) throws Exception {
+    LinkedInMainRecording recording = LinkedInMainRecording.parse(suite, lines(suite));
+    String pkg = CLASS_KEYED.get(suite);
+    java.util.Set<String> classes = new java.util.TreeSet<>();
+    for (String key : recording.keys()) {
+      classes.add(key.substring(0, key.indexOf('.')));
+    }
+    Assertions.assertFalse(classes.isEmpty(), "no recorded class");
+    for (String simpleName : classes) {
+      Class<?> testClass;
+      try {
+        testClass = Class.forName(pkg + simpleName);
+      } catch (ClassNotFoundException e) {
+        throw new AssertionError(
+            "recorded on LinkedIn main, but the test class is gone: "
+                + pkg
+                + simpleName
+                + " (re-record without it)");
+      }
+      Assertions.assertFalse(
+          testClass.isAnnotationPresent(org.junit.jupiter.api.Disabled.class),
+          "recorded on LinkedIn main, but the test class is disabled: " + testClass.getName());
+    }
+  }
+
   private static List<String> lines(String suite) throws Exception {
     InputStream in =
         LinkedInMainRecordingFilesTest.class.getResourceAsStream(
