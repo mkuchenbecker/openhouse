@@ -346,6 +346,12 @@ for every version list again, and a refused request (a 429) killed the job befor
 The writer keeps the 24 hours, so a merge refreshes a lookup older than a day; a dynamic version the
 cache has never seen is looked up as before. The local build is unchanged. Each job ends by listing
 the dependency files it downloaded beyond the restored cache (`scripts/ci/list-downloaded-dependencies.sh`).
+So that the list stays empty, the writer, after its build, fetches the files of every resolvable
+configuration of every project (`ciResolveDependencies` from
+`scripts/ci/resolve-all-dependencies.gradle`): what only another job uses (the Spark 4.2 apps'
+Jackson JAX-RS jars, the Spark 3.5 itest's JUnit Platform suite, the Docker job's OpenTelemetry
+agent) is then in the cache the next jobs restore. A dependency a pull request adds or changes is
+downloaded by that pull request's jobs and is in the cache after its merge.
 
 ## Spark 4.2 over the IRC read routes
 

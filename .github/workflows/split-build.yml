@@ -12,7 +12,8 @@ name: Split Build and Run Tests
 # Docker steps are a job of their own. It publishes nothing outside the runner. It writes the
 # Gradle cache only when the caller asks (after a merge), and then from one job of the line, `rest`;
 # every other job takes the build's dynamic versions from the cache it restores
-# (scripts/ci/dependency-cache.gradle) and lists the dependency files it still downloaded.
+# (scripts/ci/dependency-cache.gradle), the writer first fetches every configuration's files into the
+# cache it saves, and every job lists the dependency files it still downloaded.
 #
 # The single job took 52 minutes on a pull request and up to 67 after a merge on 2026-11-24, most
 # of it the apps' tests and the Spark itests sharing one runner; each group here has a runner to
@@ -142,6 +143,17 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+
+      # The writer also fetches the files that only the other jobs use (the Spark 4.2 apps' and the
+      # itests' test dependencies, the Docker job's agent), so that the cache it saves serves them
+      # without downloads (scripts/ci/resolve-all-dependencies.gradle). It builds and tests nothing
+      # and is not part of the job's verdict.
+      - name: Fetch every configuration's files into the Gradle cache
+        if: ${{ !cancelled() && inputs.gradle-cache-write && matrix.group == 'rest' }}
+        continue-on-error: true
+        env:
+          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
+        run: ./gradlew $LINE_FLAG -I scripts/ci/resolve-all-dependencies.gradle ciResolveDependencies
 
       # What the job fetched beyond the restored cache, each a request Maven Central can refuse: a
       # downloaded file lands in files-2.1 with the time of download, a restored one keeps the time

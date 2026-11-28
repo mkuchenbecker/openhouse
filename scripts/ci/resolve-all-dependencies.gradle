@@ -1,0 +1,23 @@
+// Gradle init script of the split build's cache writer (.github/workflows/split-build.yml): the
+// line's `rest` job after a merge runs `ciResolveDependencies` with it after its build, so that the
+// Gradle cache it saves holds the files of every configuration of every project, not only those
+// `rest`'s own tasks used. Without it the other jobs, which restore that cache, downloaded what only
+// their group needs (the Spark 4.2 apps' Jackson JAX-RS jars, the Spark 3.5 itest's JUnit Platform
+// suite, the Docker job's OpenTelemetry agent) on every run, each a request Maven Central can
+// refuse.
+//
+// It resolves each resolvable configuration's files leniently: a configuration that does not
+// resolve is skipped (it fails where a task uses it, as before), and nothing is built. What a
+// configuration resolves to is Gradle's as always; this only fetches the files into the cache.
+allprojects {
+  tasks.register('ciResolveDependencies') {
+    description = 'Downloads the files of every resolvable configuration into the Gradle cache (CI).'
+    doLast {
+      def count = 0
+      project.configurations.findAll { it.canBeResolved }.each { configuration ->
+        count += configuration.incoming.artifactView { lenient = true }.files.files.size()
+      }
+      logger.lifecycle("${project.path}: ${count} files")
+    }
+  }
+}
