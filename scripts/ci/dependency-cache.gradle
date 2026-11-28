@@ -1,0 +1,65 @@
+// Gradle init script of the CI jobs that only read the Gradle cache: in the split build
+// (.github/workflows/split-build.yml) every job of a pull request and every job but the line's
+// `rest` after a merge, and the Dataloader integration job off the default branch
+// (dataloader-tests.yml). scripts/ci/prepare-gradle-home.sh copies it into the runner's Gradle user
+// home (init.d), so it applies to every Gradle command of the job and to nothing outside CI.
+//
+// Such a job restores the cache that `rest` saved after the last merge to irc-integration, often
+// more than a day before. Gradle goes back to the repository for two kinds of cached answers once
+// they are older than 24 hours, and Maven Central answers some of those requests with a 429. Gradle
+// retries a 429 (prepare-gradle-home.sh gives it more tries) and then disables the repository for
+// the rest of that Gradle command: the plugin requests, the dependencies and the files all come
+// from that one Central repository, so everything else the command still needs from it fails too,
+// and the job dies before its tests run. This script keeps both answers from the cache, so that a
+// reader whose restored cache holds what it needs makes no request to Central at all. A reader that
+// must still download something (a dependency a pull request adds, or a file the writer did not
+// fetch) still makes those requests, and a refusal of one still fails that command.
+//
+// 1. Dynamic versions. Some dependencies are declared with a range or a `+`, in POMs and Gradle
+//    module metadata the build pulls in (json-smart [1.3.1,2.3] by nimbus-jose-jwt, log4j-core and
+//    logback-core ranges by spotbugs-annotations) and in build files (mysql-connector-java 8.+).
+//    Gradle resolves one by listing the repository's versions. Here the restored lists are kept for
+//    20 days instead of 24 hours. The writer keeps the 24 hours, so a merge's `rest` refreshes a
+//    list older than a day and the next restores carry it. A dynamic version the restored cache has
+//    never seen (a pull request that adds one) is looked up as before.
+//    The trade: these jobs resolve a range from the list as the writer last saw it, not from Central
+//    at that moment, so where the list decides, a release made since reaches them only after the
+//    next merge's `rest` refreshes the list, while a developer, the writer and a release build get
+//    it at once; until then CI tests the previous one. Today no selection can move that way: the
+//    lists decide only for json-smart (closed at 2.3, long published) and mysql-connector-java 8.+
+//    (relocated to com.mysql:mysql-connector-j after 8.0.33), and the open ranges are settled by
+//    a fixed version in the same graph (log4j-core 2.25.3, 2.25.4 in the Spark 4.2 apps, by the
+//    build's own requests; logback-core 1.2.11 by Spring Boot's logback-classic), although alone
+//    they resolve to newer releases (2.26.1 and 1.6.8 on 2026-11-28). A configuration where such a
+//    range stands alone would lag.
+//    After 20 days without a merge the lists count as stale again and these jobs ask Central, as
+//    before this script; the download list at the end of each job warns when the restored cache is
+//    that old. Not more than 24 days: Gradle (8.14) counts the duration in an int of milliseconds,
+//    and 25 days or more wraps around to a duration every lookup is older than. 20 leaves room for
+//    the writer's own lists, which can be up to a day old when it saves them.
+//
+// 2. The Spring Boot plugin's marker. `id 'org.springframework.boot' version '2.7.8'` is looked up
+//    as the marker module org.springframework.boot:org.springframework.boot.gradle.plugin, whose POM
+//    is on Central but whose jar is not; Gradle caches that missing jar for 24 hours (a fixed
+//    setting) and then asks Central again with a HEAD, in every job. Here the request resolves to
+//    the module the marker points to, spring-boot-gradle-plugin of the same version, which is what
+//    the marker's POM declares as its one dependency: the same plugin classpath, no marker lookup.
+//
+// What a build resolves stays Gradle's: which versions a range admits, how conflicts are settled,
+// which plugin implementation is used.
+def keepDynamicVersionsForDays = 20
+allprojects {
+  buildscript.configurations.configureEach {
+    resolutionStrategy.cacheDynamicVersionsFor(keepDynamicVersionsForDays, 'days')
+  }
+  configurations.configureEach {
+    resolutionStrategy.cacheDynamicVersionsFor(keepDynamicVersionsForDays, 'days')
+  }
+}
+beforeSettings { settings ->
+  settings.pluginManagement.resolutionStrategy.eachPlugin {
+    if (requested.id.id == 'org.springframework.boot' && requested.version != null) {
+      useModule("org.springframework.boot:spring-boot-gradle-plugin:${requested.version}")
+    }
+  }
+}
