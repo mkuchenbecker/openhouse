@@ -19,6 +19,9 @@ ARG BUILD_DIR="build/$APP_NAME/libs"
 ARG JAR_FILES=$BUILD_DIR/*-uber.jar
 
 COPY $JAR_FILES ./
+# The scheduler's logging configuration. It is not in the apps uber jar, which the Spark
+# maintenance jobs load as well and whose logging it must not change.
+COPY apps/spark-3.5/jobs-scheduler/log4j2.properties ./log4j2.properties
 
 # Rename the JAR file.
 RUN ls ./
@@ -34,4 +37,4 @@ RUN mkdir -p /usr/java && ln -sfn /export/apps/jdk/JDK-1_8_0_172 /usr/java/defau
 
 USER $USER
 
-ENTRYPOINT ["sh", "-c", "java -Xmx256M -Xms64M -XX:NativeMemoryTracking=summary -cp $APP_NAME.jar com.linkedin.openhouse.jobs.scheduler.JobsScheduler --tokenFile /var/config/openhouse.token $@"]
+ENTRYPOINT ["sh", "-c", "java -Xmx256M -Xms64M -XX:NativeMemoryTracking=summary -Dlog4j2.configurationFile=$USER_HOME/log4j2.properties -cp $APP_NAME.jar com.linkedin.openhouse.jobs.scheduler.JobsScheduler --tokenFile /var/config/openhouse.token $@"]

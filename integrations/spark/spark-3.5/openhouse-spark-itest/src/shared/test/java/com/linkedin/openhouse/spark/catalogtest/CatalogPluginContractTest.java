@@ -38,6 +38,8 @@ import org.apache.iceberg.catalog.Catalog;
 import org.apache.iceberg.catalog.Namespace;
 import org.apache.iceberg.catalog.SupportsNamespaces;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.exceptions.AlreadyExistsException;
+import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.hadoop.HadoopFileIO;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.types.Types;
@@ -266,44 +268,102 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     Assertions.assertTrue(namespaces.contains(Namespace.of("cpc_ns_b")), namespaces.toString());
   }
 
-  // ---------------------------------------------------- 2. unsupported namespace ops
+  // ------------------------------------------------------- 2. stored namespace records
 
+  /**
+   * The catalog reads and writes the namespace record the tables service stores apart from tables
+   * ({@code /v1/{prefix}/namespaces}). namespaceExists and listNamespaces(namespace) stay refused.
+   * Two answers are known defects, pinned so that a fix shows: listNamespaces() does not list a
+   * created namespace, and removeProperties answers false on the rest-shim path. A name per path,
+   * as the paths share one service.
+   */
   @Test
-  void namespaceOperationsAreUnsupported() {
+  void namespaceOperationsUseTheNamespaceRecord() {
     SupportsNamespaces ns = (SupportsNamespaces) catalog;
-    Namespace n = Namespace.of("cpc_unsupported_ns");
+    Namespace n = Namespace.of("cpc_ns_record_" + catalogPath().replace('-', '_'));
     assertThrowsExactly(
         UnsupportedOperationException.class,
         "Checking if database exists is not supported",
         () -> ns.namespaceExists(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Create Database is not supported",
-        () -> ns.createNamespace(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Create Database is not supported",
+    Assertions.assertThrows(NoSuchNamespaceException.class, () -> ns.loadNamespaceMetadata(n));
+    ns.createNamespace(n);
+    Assertions.assertThrows(
+        AlreadyExistsException.class,
         () -> ns.createNamespace(n, Collections.singletonMap("k", "v")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Drop database is not supported",
-        () -> ns.dropNamespace(n));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Set properties on a database is not supported",
-        () -> ns.setProperties(n, Collections.singletonMap("k", "v")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Remove properties of a database is not supported",
-        () -> ns.removeProperties(n, Collections.singleton("k")));
-    assertThrowsExactly(
-        UnsupportedOperationException.class,
-        "Describing database is not supported",
-        () -> ns.loadNamespaceMetadata(n));
+    // KNOWN DEFECT: listNamespaces() lists the databases that hold tables (the native database
+    // list) and never reads namespace records, so a namespace createNamespace stored is missing.
+    Assertions.assertFalse(
+        ns.listNamespaces().contains(n),
+        "KNOWN DEFECT pinned: a created namespace is not listed; if it is now, update this pin: "
+            + ns.listNamespaces());
+    Assertions.assertTrue(ns.setProperties(n, Collections.singletonMap("k", "v")));
+    Assertions.assertEquals(Collections.singletonMap("k", "v"), ns.loadNamespaceMetadata(n));
+    // KNOWN DEFECT on the rest-shim path: Iceberg's RESTSessionCatalog.updateNamespaceMetadata
+    // returns whether the response's "updated" list is non-empty, and a removal updates nothing, so
+    // removeProperties answers false although the key is removed (checked by the load below).
+    Assertions.assertEquals(
+        !REST_SHIM.equals(catalogPath()),
+        ns.removeProperties(n, Collections.singleton("k")),
+        REST_SHIM.equals(catalogPath())
+            ? "KNOWN DEFECT pinned: rest-shim removeProperties answers false for a removed key"
+            : "removeProperties answers whether a key was removed");
+    Assertions.assertEquals(Collections.emptyMap(), ns.loadNamespaceMetadata(n));
+    Assertions.assertTrue(ns.dropNamespace(n));
+    Assertions.assertFalse(ns.dropNamespace(n));
     assertThrowsExactly(
         UnsupportedOperationException.class,
         "Openhouse supports 2-lvl namespace <schema>.<table>",
         () -> ns.listNamespaces(n));
+  }
+
+  /**
+   * CREATE NAMESPACE and DROP NAMESPACE in Spark SQL. On the Iceberg 1.5.2 line Spark checks
+   * existence by loading the namespace, so CREATE stores a record, with the properties Spark adds
+   * itself (owner, and comment and location from the clauses), and DROP of a namespace that has a
+   * record succeeds. KNOWN DEFECT: that DROP deletes only the record: the tables service's drop
+   * never looks at tables, and Spark raises "not empty" only when the catalog refuses, so a
+   * database that still holds tables is "dropped" while its tables stay. On the Iceberg 1.12 line
+   * Spark first calls namespaceExists, which the catalog refuses, so both statements are refused.
+   */
+  @Test
+  void sqlCreateAndDropNamespace() throws Exception {
+    SupportsNamespaces ns = (SupportsNamespaces) catalog;
+    String name = "cpc_ns_sql_" + catalogPath().replace('-', '_');
+    Namespace n = Namespace.of(name);
+    TableIdentifier table = id(name, "t1");
+    catalog.dropTable(table);
+    ns.dropNamespace(n);
+    String create =
+        "CREATE NAMESPACE openhouse." + name + " COMMENT 'c' LOCATION '/tmp/" + name + "'";
+    String drop = "DROP NAMESPACE openhouse." + name;
+    if (IcebergLine.current() == IcebergLine.V3) {
+      assertThrowsExactly(
+          UnsupportedOperationException.class,
+          "Checking if database exists is not supported",
+          () -> spark.sql(create));
+      ns.createNamespace(n);
+      catalog.createTable(table, SCHEMA);
+      assertThrowsExactly(
+          UnsupportedOperationException.class,
+          "Checking if database exists is not supported",
+          () -> spark.sql(drop));
+    } else {
+      spark.sql(create);
+      Map<String, String> properties = ns.loadNamespaceMetadata(n);
+      Assertions.assertEquals(
+          new HashSet<>(Arrays.asList("comment", "location", "owner")),
+          properties.keySet(),
+          String.valueOf(properties));
+      Assertions.assertEquals("c", properties.get("comment"));
+      catalog.createTable(table, SCHEMA);
+      spark.sql(drop);
+      Assertions.assertThrows(NoSuchNamespaceException.class, () -> ns.loadNamespaceMetadata(n));
+      Assertions.assertTrue(
+          catalog.tableExists(table),
+          "KNOWN DEFECT pinned: DROP NAMESPACE of a database that holds tables leaves the tables");
+    }
+    catalog.dropTable(table);
+    ns.dropNamespace(n);
   }
 
   // ------------------------------------------------------------- 3. load missing

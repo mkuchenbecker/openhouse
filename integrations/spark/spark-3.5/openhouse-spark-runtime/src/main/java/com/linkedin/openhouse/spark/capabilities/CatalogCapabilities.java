@@ -17,7 +17,10 @@ public final class CatalogCapabilities {
 
   /** How the capabilities were found. */
   public enum Path {
-    /** Not an Iceberg catalog: no OpenHouse statement applies. */
+    /**
+     * Not Iceberg's {@code SparkCatalog} or {@code SparkSessionCatalog}: no grants or unlock, and
+     * policies are not refused here. The statements are not planned for such a catalog at all.
+     */
     NOT_ICEBERG,
     /**
      * An OpenHouse catalog class (the legacy {@code OpenHouseCatalog}, the in-process {@code

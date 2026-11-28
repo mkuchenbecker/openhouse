@@ -121,8 +121,10 @@ The images are built from the default build only. Under `-PicebergLinkedIn`, `do
   their base images (`openjdk:23-ea-11-slim`, `eclipse-temurin:17-jre-jammy`) run the jars' Java 17
   class files. They are the base images these Dockerfiles had before the build moved to Java 17.
 - `jobs-scheduler.Dockerfile` runs the scheduler from the Spark 3.5 apps uber jar
-  (`openhouse-spark-apps-1.5_2.12`), which carries `log4j2.properties`: without it the scheduler
-  logs errors only.
+  (`openhouse-spark-apps-1.5_2.12`) with `-Dlog4j2.configurationFile` pointing at
+  `apps/spark-3.5/jobs-scheduler/log4j2.properties`, copied into the image: without it the
+  scheduler logs errors only. The file is not in the jar, which the Spark maintenance jobs load as
+  well.
 - The Spark services of every recipe (`common/spark-services.yml`) are built from
   `spark-3.5-base-hadoop3.2.dockerfile`: Spark 3.5.2, a Java 17 runtime for every JVM in the image
   (the jars are Java 17 class files), the fork's Iceberg runtime in `/opt/spark/jars`, and the
@@ -269,7 +271,8 @@ the default build's single job (`build-run-tests.yml`) runs only before a releas
   ("Docker images" above, the composite action `.github/actions/default-build-deployables`):
   `./gradlew shadowJar dockerPrereqs`; the jobs-scheduler image, built through docker compose, in
   which the scheduler is started without arguments and must log its first line at INFO (which
-  needs the image's Java to run the jar and the jar to carry its `log4j2.properties`); the
+  needs the image's Java to run the jar and the image to give it its `log4j2.properties`; the
+  apps uber jar itself must carry none); the
   `oh-only` recipe, then `scripts/python/integration_test.py` against it. The tables container's
   jar must hold the fork's `iceberg-core` and no other. The containers are stopped in every case,
   and their logs are printed when one of these steps failed.

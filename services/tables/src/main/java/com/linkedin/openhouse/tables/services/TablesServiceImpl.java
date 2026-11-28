@@ -8,8 +8,13 @@ import com.linkedin.openhouse.common.exception.AlreadyExistsException;
 import com.linkedin.openhouse.common.exception.LockConflictException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
+import com.linkedin.openhouse.common.exception.checked.DuplicateCreationException;
+import com.linkedin.openhouse.common.exception.checked.NotFoundException;
+import com.linkedin.openhouse.internal.catalog.model.NamespaceMetadata;
+import com.linkedin.openhouse.internal.catalog.model.NamespacePropertyUpdate;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTableDto;
 import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
@@ -24,6 +29,7 @@ import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.dto.mapper.TablesMapper;
+import com.linkedin.openhouse.tables.exception.InvalidPropertyUpdateException;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoPrimaryKey;
@@ -35,11 +41,16 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import com.linkedin.openhouse.tables.utils.TableUUIDGenerator;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,11 +59,13 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.util.Pair;
 import org.springframework.stereotype.Component;
 
-/** Default Table Service Implementation for /tables REST endpoint. */
+/** Shared implementation for table and namespace operations. */
 @Component
-public class TablesServiceImpl implements TablesService {
+public class TablesServiceImpl implements TablesService, NamespacesService {
 
   @Autowired OpenHouseInternalRepository openHouseInternalRepository;
+
+  @Autowired HouseNamespaceRepository namespaceRepository;
 
   @Autowired TablesMapper tablesMapper;
 
@@ -69,13 +82,72 @@ public class TablesServiceImpl implements TablesService {
   @Autowired(required = false)
   ClusterProperties clusterProperties;
 
+  @Override
+  public NamespaceMetadata createNamespace(
+      String namespace, Map<String, String> properties, String principal)
+      throws DuplicateCreationException {
+    authorizeNamespace(namespace, principal, Privileges.SYSTEM_ADMIN);
+    return namespaceRepository.create(namespace, properties);
+  }
+
+  @Override
+  public NamespaceMetadata loadNamespaceMetadata(String namespace, String principal)
+      throws NotFoundException {
+    authorizeNamespace(namespace, principal, Privileges.GET_TABLE_METADATA);
+    return namespaceRepository.getByName(namespace);
+  }
+
+  @Override
+  public NamespacePropertyUpdate updateNamespaceProperties(
+      String namespace, Map<String, String> updates, Set<String> removals, String principal)
+      throws NotFoundException, InvalidPropertyUpdateException {
+    authorizeNamespace(namespace, principal, Privileges.SYSTEM_ADMIN);
+    if (!Collections.disjoint(updates.keySet(), removals)) {
+      throw new InvalidPropertyUpdateException("Updates and removals must use disjoint keys");
+    }
+    NamespaceMetadata current = namespaceRepository.getByName(namespace);
+    List<String> removed =
+        removals.stream()
+            .filter(current.getProperties()::containsKey)
+            .sorted()
+            .collect(Collectors.toList());
+    List<String> missing =
+        removals.stream()
+            .filter(key -> !current.getProperties().containsKey(key))
+            .sorted()
+            .collect(Collectors.toList());
+    Map<String, String> properties = new HashMap<>(current.getProperties());
+    properties.keySet().removeAll(removals);
+    properties.putAll(updates);
+    namespaceRepository.update(
+        namespace,
+        new NamespaceMetadata(
+            current.getNamespaceUuid(),
+            current.getNamespaceName(),
+            properties,
+            current.getRevision()));
+    return new NamespacePropertyUpdate(
+        updates.keySet().stream().sorted().collect(Collectors.toList()), removed, missing);
+  }
+
+  @Override
+  public void dropNamespace(String namespace, String principal) throws NotFoundException {
+    authorizeNamespace(namespace, principal, Privileges.SYSTEM_ADMIN);
+    namespaceRepository.delete(namespace);
+  }
+
+  private void authorizeNamespace(String namespace, String principal, Privileges privilege) {
+    authorizationUtils.checkDatabasePrivilege(
+        namespace.toLowerCase(Locale.ROOT), principal, privilege);
+  }
+
   /**
    * Lookup a table by databaseId and tableId in OpenHouse's Internal Catalog.
    *
    * @param databaseId
    * @param tableId
    * @return Table DTO object.
-   * @throws com.linkedin.openhouse.common.exception.NoSuchUserTableException if table is not found.
+   * @throws NoSuchUserTableException if table is not found.
    */
   @Override
   public TableDto getTable(String databaseId, String tableId, String actingPrincipal) {
