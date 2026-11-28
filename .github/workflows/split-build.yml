@@ -70,6 +70,11 @@ jobs:
       - name: Self-test the failed-tests printer
         run: python3 scripts/ci/test-print-failed-tests.py
 
+      # Every test that expects one thing on one Iceberg line and another on the other is listed,
+      # with its reason, in scripts/ci/iceberg-line-branches.tsv.
+      - name: Check the Iceberg-line branches in tests are listed
+        run: python3 scripts/ci/check-iceberg-line-branches.py
+
   tests:
     name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, ${{ matrix.group }}
     needs: plan
