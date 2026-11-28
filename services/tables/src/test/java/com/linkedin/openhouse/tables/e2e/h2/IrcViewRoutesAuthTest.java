@@ -64,7 +64,6 @@ public class IrcViewRoutesAuthTest {
   @Autowired ToggleStatusesRepository toggles;
   @MockBean AuthorizationHandler authorizationHandler;
   @Autowired AuditHandler<ViewAuditEvent> viewAuditHandler;
-  @Autowired javax.persistence.EntityManager entityManager;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -468,9 +467,6 @@ public class IrcViewRoutesAuthTest {
                 if (failed.get() != null) {
                   throw failed.get();
                 }
-                // The House Tables stand-in serves this request's reads from the request's own
-                // persistence context; the real House Tables service is read afresh each time.
-                entityManager.clear();
               }
               return null;
             })

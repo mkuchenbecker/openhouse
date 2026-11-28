@@ -66,7 +66,6 @@ public class IrcWriteRoutesAuthTest {
   @Autowired AuditHandler<TableAuditEvent> tableAuditHandler;
   @Autowired com.linkedin.openhouse.tables.services.TableCommitService tableCommitService;
   @Autowired com.linkedin.openhouse.tables.api.irc.IcebergRestTableFileIo tableFileIo;
-  @Autowired javax.persistence.EntityManager entityManager;
 
   private final List<String> created = new ArrayList<>();
 
@@ -1104,9 +1103,6 @@ public class IrcWriteRoutesAuthTest {
                 if (failed.get() != null) {
                   throw failed.get();
                 }
-                // The House Tables stand-in serves this request's reads from the request's own
-                // persistence context; the real House Tables service is read afresh each time.
-                entityManager.clear();
               }
               return null;
             })
