@@ -406,6 +406,106 @@ public class IrcWriteRoutesAuthTest {
     assertTrue(CommitPathHttp.status(get(mvc, DB, "t3")) == 200);
   }
 
+  // ------------------------------------------------- a rename that House Tables refuses
+
+  /**
+   * Makes the native rename's last decision before its write (CREATE_TABLE on the database) run
+   * {@code meanwhile} once and then fail as the rename's House Tables write fails when House Tables
+   * refuses it: the commit failure the table operations throw, caused by the repository's
+   * concurrent-update refusal. Every other decision is allowed.
+   */
+  private void houseTablesRefusesTheRename(Runnable meanwhile) {
+    java.util.concurrent.atomic.AtomicBoolean refused =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(DatabaseDto.class), any(Privileges.class)))
+        .thenAnswer(
+            call -> {
+              if (call.getArgument(2) == Privileges.CREATE_TABLE
+                  && refused.compareAndSet(false, true)) {
+                meanwhile.run();
+                throw new org.apache.iceberg.exceptions.CommitFailedException(
+                    new com.linkedin.openhouse.internal.catalog.repository.exception
+                        .HouseTableConcurrentUpdateException("injected conflict", null));
+              }
+              return true;
+            });
+  }
+
+  /**
+   * House Tables refuses the rename's write while the target's key is free: the table was changed
+   * concurrently, a conflict the client may retry, answered 409 {@code CommitFailedException} (the
+   * native route answers the unmapped commit failure 500). Nothing is renamed. Both Iceberg client
+   * lines read any 409 on the rename route as {@code AlreadyExistsException}.
+   */
+  @Test
+  void aRenameHouseTablesRefusesIs409ChangedConcurrently() throws Exception {
+    create("rn1");
+    houseTablesRefusesTheRename(() -> {});
+    org.apache.iceberg.rest.responses.ErrorResponse error =
+        assertIrcError(
+            IrcWrite.rename(mvc, TableIdentifier.of(DB, "rn1"), TableIdentifier.of(DB, "rn2")),
+            409,
+            "CommitFailedException");
+    assertTrue(error.message().contains("the table was changed concurrently"), error.message());
+    stubDecision(true);
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn1")));
+    assertEquals(404, CommitPathHttp.status(get(mvc, DB, "rn2")));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.apache.iceberg.exceptions.AlreadyExistsException.class,
+        () -> org.apache.iceberg.rest.ErrorHandlers.tableErrorHandler().accept(error));
+  }
+
+  /**
+   * House Tables refuses the rename's write because a table of the target's name was created after
+   * the native rename looked for one: answered 409 {@code AlreadyExistsException} naming a table.
+   * The source is not renamed and the target is the table created meanwhile.
+   */
+  @Test
+  void aRenameHouseTablesRefusesOntoATableCreatedMeanwhileIs409AlreadyExists() throws Exception {
+    create("rn3");
+    created.add("rn4");
+    houseTablesRefusesTheRename(
+        () -> {
+          java.util.concurrent.atomic.AtomicReference<Exception> failed =
+              new java.util.concurrent.atomic.AtomicReference<>();
+          // Another client's create, on a thread of its own as another request would be.
+          Thread creator =
+              new Thread(
+                  () -> {
+                    try {
+                      post(mvc, newTable(DB, "rn4").toBuilder().policies(null).build())
+                          .andExpect(status().isCreated());
+                    } catch (Exception e) {
+                      failed.set(e);
+                    }
+                  });
+          creator.start();
+          try {
+            creator.join();
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+          }
+          if (failed.get() != null) {
+            throw new IllegalStateException(failed.get());
+          }
+          // The House Tables stand-in serves this request's reads from the request's own
+          // persistence context; the real House Tables service is read afresh each time.
+          entityManager.clear();
+        });
+    String message =
+        assertIrcError(
+                IrcWrite.rename(mvc, TableIdentifier.of(DB, "rn3"), TableIdentifier.of(DB, "rn4")),
+                409,
+                "AlreadyExistsException")
+            .message();
+    assertTrue(message.contains("Table already exists"), message);
+    stubDecision(true);
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn3")));
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn4")));
+  }
+
   // ------------------------------------------------- authorization before the stored table is used
 
   /**
