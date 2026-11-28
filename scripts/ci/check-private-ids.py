@@ -14,7 +14,9 @@ builds, whose scenario and finding labels are partly local to each file and part
 documents that are not in this repository; it is left as it is until its future is decided. And
 docs/plans/, the planning notes themselves: they live on a branch of their own that is never
 merged, are private planning by definition and are where these ids are defined, so a draft pull
-request that only makes them linkable would otherwise fail this check on its merge ref. A
+request that only makes them linkable would otherwise fail this check on its merge ref. That the
+notes are never merged is a decision, not something this check enforces: a pull request that did
+merge them would pass it. A
 comment wrapped over two lines is matched joined, so "work" at the end of one line and "item V1"
 at the start of the next is found. A match that is not such an id (a constant named F1, test data,
 a linter code) is listed in scripts/ci/private-ids-allowed.txt, one per line, as
@@ -43,13 +45,14 @@ SKIPPED_DIRS = ("integrations/spark/delta-harness/", "docs/plans/")
 # An id is a capital letter of the planning list's series followed by a number, optionally a
 # lower-case suffix and a hyphenated part (X5, V11e, D14b, C2-3, N3-x1, N1-c), standing alone: not
 # inside a word (FormatV3Types), a path or a version (v1, 1.5.2); a stated requirement is S and
-# two or more digits (S47; S3 alone is Amazon's), and H any number but 2 (H2 is the database the
-# tests run on). V0 to V3 alone are also names of Iceberg format and API versions and of constants
+# two or more digits (S47; S3 alone is Amazon's). Some letter-and-number tokens are ordinary
+# technical words and do not count: H2 alone (the database the tests run on; H2a or H2-x still
+# counts), O365, H264 and H265, and G1 before "GC", "garbage" or "collector" (the JVM's collector).
+# V0 to V3 alone are also names of Iceberg format and API versions and of constants
 # here; they count only alone in parentheses, "(V2)", at the start of a parenthesis that goes on,
 # "(V2; ...", or after words that cite an item ("work item V1", "since V2").
 ID = (
-    r"(?:[BCDEFGIJNOPRTUVWX]\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?|H(?!2(?!\d))\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?"
-    r"|S\d{2,3}|(?:RF|FF|BC)-\d{1,3})"
+    r"(?:[BCDEFGHIJNOPRTUVWX]\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?|S\d{2,3}|(?:RF|FF|BC)-\d{1,3})"
 )
 PATTERNS = [
     re.compile(r"(?<![\w$.\-/#])" + ID + r"(?![\w])"),
@@ -66,6 +69,8 @@ PATTERNS = [
     re.compile(r"(?<![\w$.\-/#\\])(?:x\d{1,2}|n\d{2})(?=[a-z_.\-])"),
 ]
 FORMAT_VERSION = re.compile(r"V[0-3]")
+TECHNICAL = re.compile(r"H2|O365|H26[45]")
+G1_COLLECTOR = re.compile(r" ?(?:GC|garbage|collector)\b", re.I)
 CITING = re.compile(r"(?:\bwork items?|\bitems?|\bsince|\buntil|\bbefore|\bafter|\bof) $", re.I)
 COMMENT = re.compile(r"^\s*(?:\*|//|#|--)\s?")
 
@@ -75,6 +80,10 @@ def matches(line):
     for pattern in PATTERNS:
         for m in pattern.finditer(line):
             token = m.group(0)
+            if TECHNICAL.fullmatch(token):
+                continue
+            if token == "G1" and G1_COLLECTOR.match(line[m.end():]):
+                continue
             if FORMAT_VERSION.fullmatch(token):
                 before, after = line[: m.start()], line[m.end():]
                 if not (before.endswith("(") and after.startswith((")", ";"))) and not CITING.search(
@@ -116,6 +125,9 @@ def self_test():
         ("the H7 harness", None),
         ("(O2)", None),
         ("R12 says", None),
+        ("as H2a said", None),
+        ("see H2-x", None),
+        ("G1 decided it", None),
     ]
     not_found = [
         "FormatV3Types.checkOnV3",
@@ -128,6 +140,10 @@ def self_test():
         "pull request 12 of the Iceberg fork",
         "color: #fff",
         "an H2 database",
+        "the G1 collector",
+        "-XX:+UseG1GC and G1 GC pauses",
+        "an O365 mailbox",
+        "H264 video",
     ]
     failed = 0
     for line, following in found:

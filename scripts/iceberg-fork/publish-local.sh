@@ -46,10 +46,8 @@ fi
 # does not say why.
 java_cmd="${JAVA_HOME:+$JAVA_HOME/bin/}java"
 java_version="$("$java_cmd" -version 2>&1 | sed -n 's/.* version "\([^"]*\)".*/\1/p' | head -n 1)" || true
-java_major="${java_version%%.*}"
-if [[ "$java_major" == 1 ]]; then
-  java_major="$(echo "$java_version" | cut -d. -f2)"
-fi
+# "17.0.13", "21", "17-ea", "21-ea" and the old "1.8.0_392" form: the major version.
+java_major="$(echo "$java_version" | sed -E 's/^1\.([0-9]+).*/\1/; s/^([0-9]+).*/\1/')"
 if ! [[ "$java_major" =~ ^[0-9]+$ ]] || (( java_major < 17 )); then
   echo "publish-local.sh: Iceberg 1.12 needs Java 17 or later; $java_cmd is '${java_version:-not a JDK}'." >&2
   echo "Set JAVA_HOME to a JDK 17 or 21." >&2

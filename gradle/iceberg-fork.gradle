@@ -19,10 +19,16 @@ def forkHomeEnv = providers.environmentVariable('ICEBERG_FORK_HOME').orNull
 def forkHome = forkHomeEnv ? file(forkHomeEnv) : new File(gradle.gradleUserHomeDir, 'iceberg-fork')
 def forkRepo = new File(forkHome, forkVersion)
 
-// What publish-local.sh publishes, each set with its marker: the modules of the Iceberg 1.5 variant,
-// the Spark 4.2 runtime, and the REST compatibility kit.
-def forkMarkers = ['', '-spark-4.2_2.13', '-open-api'].collect { new File(forkRepo, ".published-${forkVersion}${it}") }
-def forkMissing = forkMarkers.findAll { !it.exists() }
+// What publish-local.sh publishes, each set with the marker it writes after the set's build: the
+// modules of the Iceberg 1.5 variant, the Spark 4.2 runtime, and the REST compatibility kit. A set
+// whose marker is missing is not published, or only partly: a publish that stopped half way (the
+// script removes a set's marker before it republishes it) can leave a module's POM without its jar.
+def forkSets = [
+    '': { String module -> module != 'iceberg-spark-runtime-4.2_2.13' && !module.startsWith('iceberg-open-api') },
+    '-spark-4.2_2.13': { String module -> module == 'iceberg-spark-runtime-4.2_2.13' },
+    '-open-api': { String module -> module.startsWith('iceberg-open-api') },
+]
+def forkMissing = forkSets.findAll { suffix, inSet -> !new File(forkRepo, ".published-${forkVersion}${suffix}").exists() }
 def forkMissingMessage = "The build uses Iceberg ${forkGroup}:${forkVersion}, built from the pinned fork commit, and it " +
     "is not (fully) published in ${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first (once " +
     "per pinned commit per machine; docs/development/iceberg-fork.md). -PicebergLinkedIn " +
@@ -30,21 +36,29 @@ def forkMissingMessage = "The build uses Iceberg ${forkGroup}:${forkVersion}, bu
 if (forkMissing.isEmpty()) {
   logger.lifecycle("Iceberg 1.12 line: ${forkGroup}:${forkVersion} from ${forkRepo}")
 } else {
-  // The build still configures, so that help, projects, the IDE import, spotless and the other tasks
-  // that do not need Iceberg work on a fresh clone. A task that does need it fails where it resolves
-  // the fork's artifacts, with this message ahead of Gradle's own "Could not find".
+  // The build still configures, so that help, projects, spotless and the other tasks that resolve
+  // no Iceberg work on a fresh clone. A resolution that takes a fork module of a set whose marker is
+  // missing fails with this message, whether the module is absent (not found) or present (a partial
+  // publish, whose jar may be missing), ahead of Gradle's own "Could not find".
   logger.warn("WARNING: ${forkMissingMessage} Tasks that need Iceberg will fail; missing: "
-      + forkMissing.collect { it.name }.join(', ') + '.')
+      + forkMissing.keySet().collect { ".published-${forkVersion}${it}" }.join(', ') + '.')
+  def unpublished = { String group, String module, String version ->
+    group == forkGroup && version == forkVersion && forkMissing.values().any { it(module) }
+  }
   allprojects {
     configurations.configureEach {
       incoming.afterResolve { ResolvableDependencies resolved ->
-        def missing = resolved.resolutionResult.allDependencies.findAll {
+        def result = resolved.resolutionResult
+        def needed = result.allDependencies.findAll {
           it instanceof UnresolvedDependencyResult && it.requested instanceof ModuleComponentSelector &&
-              it.requested.group == forkGroup && it.requested.version == forkVersion
-        }
-        if (!missing.isEmpty()) {
+              unpublished(it.requested.group, it.requested.module, it.requested.version)
+        }.collect { it.requested.displayName }
+        needed += result.allComponents.collect { it.moduleVersion }.findAll {
+          it != null && unpublished(it.group, it.name, it.version)
+        }.collect { "${it.group}:${it.name}:${it.version}".toString() }
+        if (!needed.isEmpty()) {
           throw new GradleException("${forkMissingMessage} ${resolved.path} needs "
-              + missing.collect { it.requested.displayName }.unique().join(', ') + '.')
+              + needed.unique().join(', ') + '.')
         }
       }
     }

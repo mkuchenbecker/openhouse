@@ -35,9 +35,11 @@ scripts/iceberg-fork/publish-local.sh  # once per pinned commit per machine; FOR
 ./gradlew -PicebergLinkedIn build      # the reference line; needs no publish-local.sh
 ```
 
-Until the fork is published, the default build still configures, so `help`, `projects`, the IDE
-import and the git hooks' `spotlessCheck` work, with a warning that names the script; a task that
-needs Iceberg (a compile, a test) fails where it resolves the fork's jars, with the same message.
+Until the fork is published, the default build still configures, so `help`, `projects` and the
+git hooks' `spotlessCheck` work, with a warning that names the script; a task that needs Iceberg (a
+compile, a test) fails where it resolves the fork's jars, with the same message. So does a set that
+is only partly published (its marker file is missing, say after an interrupted run). An IDE import
+resolves the modules' classpaths, so expect it to fail the same way until the script has run.
 `-PicebergLinkedIn` (or `-PicebergLinkedIn=true`) selects the reference line;
 `-PicebergLinkedIn=false` is the default build, and another value is refused.
 
