@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 1.12 and LinkedIn's 1.5.2).
  */
 @Hidden
+@ConditionalOnIcebergRest
 @RestController
 public class IcebergRestWriteController {
 

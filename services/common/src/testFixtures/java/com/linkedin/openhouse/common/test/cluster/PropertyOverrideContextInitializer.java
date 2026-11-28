@@ -29,5 +29,10 @@ public class PropertyOverrideContextInitializer
         applicationContext,
         "cluster.tables.allowed-client-name-values="
             + String.join(",", testAllowedClientNameValues));
+
+    // The tables service's Iceberg REST Catalog routes, off by default, are on in the tests that
+    // share this set-up; a test of the service with them off uses a set-up without it.
+    TestPropertySourceUtils.addInlinedPropertiesToEnvironment(
+        applicationContext, "cluster.tables.irc.enabled=true");
   }
 }

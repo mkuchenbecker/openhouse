@@ -156,6 +156,24 @@ public class ClusterProperties {
   @Value("${cluster.tables.max-tables-per-database:0}")
   private long maxTablesPerDatabase;
 
+  /** The property that turns on the tables service's Iceberg REST Catalog routes. */
+  public static final String IRC_ENABLED = "cluster.tables.irc.enabled";
+
+  /**
+   * Whether the tables service serves the Iceberg REST Catalog protocol under {@code /iceberg}: the
+   * config, namespace, table, view, commit, transaction, register and metrics routes, and the error
+   * mapping and authentication those routes answer with. Off by default: nothing is then mapped
+   * under {@code /iceberg}, none of these routes' beans is created, and a request there is answered
+   * as any path the service does not map (a 400 "cannot be resolved by server").
+   *
+   * <p>Every other {@code cluster.tables.irc.*} setting applies only with this one on: scan
+   * planning ({@link #IRC_SCAN_PLANNING_ENABLED}) needs both, and with this one off it is ignored,
+   * with a warning at start-up. The register-view route needs this one and an Iceberg line that has
+   * the route's request class.
+   */
+  @Value("${" + IRC_ENABLED + ":false}")
+  private boolean clusterTablesIrcEnabled;
+
   /** The property that turns on the tables service's Iceberg REST scan planning routes. */
   public static final String IRC_SCAN_PLANNING_ENABLED = "cluster.tables.irc.scan-planning.enabled";
 
@@ -164,7 +182,9 @@ public class ClusterProperties {
    * /iceberg/v1/namespaces/{namespace}/tables/{table}/plan}) and the credentials route that goes
    * with it ({@code GET .../tables/{table}/credentials}, an empty list). Off by default: the two
    * routes then answer the 406 of every route the service does not serve, and the config answer
-   * does not list them, so a client plans its scans itself, as on the native API.
+   * does not list them, so a client plans its scans itself, as on the native API. It takes effect
+   * only with the Iceberg REST routes on ({@link #IRC_ENABLED}); with those off, nothing is served
+   * under {@code /iceberg} whatever this says.
    *
    * <p>Turn it on only where every principal that may load a table may also read its data. A plan
    * answers each planned data file's path, partition values and per-column lower and upper bounds

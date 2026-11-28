@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
 @ComponentScan(
@@ -54,6 +55,8 @@ import org.springframework.context.annotation.Primary;
   HouseNamespacesInMemoryRepository.class,
   NamespaceExceptionHandler.class
 })
+// The fixtures' own settings: the Iceberg REST Catalog routes on (see the file).
+@PropertySource("classpath:openhouse-tables-test-fixtures.properties")
 public class SpringH2TestApplication {
 
   public static void main(String[] args) {

@@ -237,10 +237,33 @@ cluster:
 Never set it above the column's real width. A value that is not positive means no check. Changing it
 requires restarting or redeploying the tables service.
 
+#### Iceberg REST Catalog routes
+
+The tables service can serve the Iceberg REST Catalog protocol under `/iceberg`: the config,
+namespace, table, view, commit, transaction, register and metrics routes, with that protocol's
+error shape and the same token interceptor as the native API. This is off by default: nothing is
+mapped under `/iceberg`, none of those routes' beans is created, and a request there is answered as
+any path the service does not map (HTTP 400, "The combination of the method [...] and Path [...]
+cannot be resolved by server"). Turn it on in the tables-service `cluster.yaml`:
+
+```yaml
+cluster:
+  tables:
+    irc:
+      enabled: true
+```
+
+The other `cluster.tables.irc.*` settings take effect only with this one on. Scan planning (below)
+needs both; with the routes off and scan planning set on, the service starts, serves nothing under
+`/iceberg` and logs a warning. The view register route (`POST .../namespaces/{namespace}/register-view`)
+needs the routes on and an Iceberg line with its request class (the fork's 1.12). The format v3
+settings (`cluster.iceberg.format-v3.*`) are not Iceberg REST settings: they apply to the native API
+with the routes on or off. Changing it requires restarting or redeploying the tables service.
+
 #### Iceberg REST scan planning
 
-The tables service's Iceberg REST Catalog routes (`/iceberg`) can plan a client's scans on the
-server (`POST .../namespaces/{namespace}/tables/{table}/plan`, with the credentials route `GET
+The tables service's Iceberg REST Catalog routes (`/iceberg`, above, which must be on) can plan a
+client's scans on the server (`POST .../namespaces/{namespace}/tables/{table}/plan`, with the credentials route `GET
 .../tables/{table}/credentials`, which answers an empty list). This is off by default: the two
 routes then answer 406, as every route the service does not serve, the config answer does not list
 them, and an Iceberg client plans its scans itself.

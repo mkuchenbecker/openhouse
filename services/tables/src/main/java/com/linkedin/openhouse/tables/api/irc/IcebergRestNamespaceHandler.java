@@ -57,6 +57,7 @@ import org.springframework.stereotype.Component;
  * as on the namespace service's own routes, where it decides before it reads the record. The
  * service makes the same decision again when it is called.
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestNamespaceHandler {
 

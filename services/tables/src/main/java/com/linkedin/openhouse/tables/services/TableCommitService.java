@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.services;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.tables.api.irc.ConditionalOnIcebergRest;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
 import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Component;
  * candidate as Iceberg {@link TableMetadata}, for callers that build one by applying changes to the
  * stored metadata (the planned Iceberg REST Catalog commit route).
  */
+@ConditionalOnIcebergRest
 @Component
 public class TableCommitService {
   @Autowired OpenHouseInternalRepository openHouseInternalRepository;

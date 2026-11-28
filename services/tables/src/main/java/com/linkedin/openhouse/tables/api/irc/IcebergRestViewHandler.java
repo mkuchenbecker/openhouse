@@ -67,6 +67,7 @@ import org.springframework.stereotype.Component;
  * that is {@code NoSuchViewException} on a view's own routes and {@code NoSuchNamespaceException}
  * on the namespace's routes (list, create), which is what a catalog without views answers.
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestViewHandler {
 

@@ -27,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  * class exists, so the config lists the route exactly where it is served.
  */
 @Hidden
+@ConditionalOnIcebergRest
 @RestController
 @ConditionalOnClass(name = IcebergRestRegisterViewController.REGISTER_VIEW_CLASS)
 public class IcebergRestRegisterViewController {

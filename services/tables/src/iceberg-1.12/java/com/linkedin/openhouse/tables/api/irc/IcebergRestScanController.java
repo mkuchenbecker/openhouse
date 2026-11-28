@@ -71,6 +71,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Hidden
 @Slf4j
+@ConditionalOnIcebergRest
 @RestController
 @ConditionalOnClass(name = IcebergRestScanController.SCAN_API_CLASS)
 @ConditionalOnProperty(name = ClusterProperties.IRC_SCAN_PLANNING_ENABLED, havingValue = "true")

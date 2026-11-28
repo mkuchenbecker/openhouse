@@ -29,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
  * IcebergRestViewHandler}'s. Hidden from the generated OpenAPI spec, like the other IRC routes.
  */
 @Hidden
+@ConditionalOnIcebergRest
 @RestController
 public class IcebergRestViewController {
 

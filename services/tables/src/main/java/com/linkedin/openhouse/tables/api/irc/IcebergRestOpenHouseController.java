@@ -43,6 +43,7 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Registered on every Iceberg line: nothing here uses an Iceberg API.
  */
 @Hidden
+@ConditionalOnIcebergRest
 @RestController
 public class IcebergRestOpenHouseController {
 

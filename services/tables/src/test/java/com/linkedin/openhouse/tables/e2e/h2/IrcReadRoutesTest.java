@@ -667,4 +667,33 @@ public class IrcReadRoutesTest {
   private static List<Long> snapshotIds(TableMetadata metadata) {
     return metadata.snapshots().stream().map(Snapshot::snapshotId).collect(Collectors.toList());
   }
+
+  /**
+   * With the Iceberg REST routes on, their error advice answers their own routes only: a native
+   * route's error and a native path nothing maps are answered by the native advice, in its error
+   * shape, as with the routes off.
+   */
+  @Test
+  public void nativeErrorsAreAnsweredByTheNativeAdviceWithTheRoutesOn() throws Exception {
+    MvcResult unreadable =
+        mvc.perform(
+                MockMvcRequestBuilders.post("/v1/databases/irc_native/tables/")
+                    .contentType("application/json")
+                    .content("{"))
+            .andReturn();
+    assertEquals(400, unreadable.getResponse().getStatus());
+    assertTrue(
+        unreadable.getResolvedException()
+            instanceof org.springframework.http.converter.HttpMessageNotReadableException);
+    assertEquals("BAD_REQUEST", JsonPath.read(body(unreadable), "$.status"));
+    assertTrue(
+        JsonPath.<String>read(body(unreadable), "$.message").startsWith("Unacceptable JSON"),
+        body(unreadable));
+    MvcResult unmapped = mvc.perform(MockMvcRequestBuilders.get("/v1/nothing")).andReturn();
+    assertEquals(400, unmapped.getResponse().getStatus());
+    assertEquals(
+        "The combination of the method [GET] and Path [uri=/v1/nothing] cannot be resolved by"
+            + " server. Please check and making sure you are using the right version of API.",
+        JsonPath.read(body(unmapped), "$.message"));
+  }
 }
