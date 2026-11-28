@@ -10,7 +10,9 @@ name: Split Build and Run Tests
 # the cutting inside Gradle. So the jobs together run all of `build`, and a project or test task
 # added later runs in its project's job or in `rest` without a change here. The default line's
 # Docker steps are a job of their own. It publishes nothing outside the runner. It writes the
-# Gradle cache only when the caller asks (after a merge), and then from one job of the line, `rest`.
+# Gradle cache only when the caller asks (after a merge), and then from one job of the line, `rest`;
+# every other job takes the build's dynamic versions from the cache it restores
+# (scripts/ci/dependency-cache.gradle) and lists the dependency files it still downloaded.
 #
 # The single job took 52 minutes on a pull request and up to 67 after a merge on 2026-11-24, most
 # of it the apps' tests and the Spark itests sharing one runner; each group here has a runner to
@@ -105,6 +107,23 @@ jobs:
         with:
           cache-read-only: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
 
+      # A job that only reads the cache (the condition of cache-read-only above) resolves the build's
+      # dynamic versions (ranges, `8.+`) as the cache's writer last did, instead of asking Maven
+      # Central for their version lists again: the restored lookups are often older than Gradle's
+      # 24 hours, and a refused request kills the job before any test runs
+      # (scripts/ci/dependency-cache.gradle). From the Gradle user home's init.d it applies to every
+      # Gradle command of the job. The writer keeps Gradle's default, so each merge refreshes them.
+      # The marker dates the restore, for the count of downloads after the build.
+      - name: Prepare the restored Gradle cache
+        env:
+          CACHE_READ_ONLY: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
+        run: |
+          touch "$RUNNER_TEMP/gradle-cache-restored"
+          if [ "$CACHE_READ_ONLY" = true ]; then
+            mkdir -p "$GRADLE_USER_HOME/init.d"
+            cp scripts/ci/dependency-cache.gradle "$GRADLE_USER_HOME/init.d/"
+          fi
+
       # Every Gradle command of the default build needs it; the reference build needs none.
       - name: Restore or publish the Iceberg fork
         if: inputs.line == 'default'
@@ -123,6 +142,13 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew $LINE_FLAG -I scripts/ci/test-groups.gradle clean build --continue 2>&1 | tee "$RUNNER_TEMP/gradle-build.log"
+
+      # What the job fetched beyond the restored cache, each a request Maven Central can refuse: a
+      # downloaded file lands in files-2.1 with the time of download, a restored one keeps the time
+      # it was saved with.
+      - name: List the dependency files the job downloaded
+        if: ${{ !cancelled() }}
+        run: scripts/ci/list-downloaded-dependencies.sh "$RUNNER_TEMP/gradle-cache-restored"
 
       # When a suite above failed. Its failed tests' names and errors are thousands of lines up the
       # log, in what several test tasks wrote at once, and Gradle's closing summary names only the
@@ -182,6 +208,13 @@ jobs:
         with:
           cache-read-only: true
 
+      # As in the test jobs: a reader takes the dynamic versions from the restored cache.
+      - name: Prepare the restored Gradle cache
+        run: |
+          touch "$RUNNER_TEMP/gradle-cache-restored"
+          mkdir -p "$GRADLE_USER_HOME/init.d"
+          cp scripts/ci/dependency-cache.gradle "$GRADLE_USER_HOME/init.d/"
+
       - name: Restore or publish the Iceberg fork
         uses: ./.github/actions/iceberg-fork
 
@@ -193,3 +226,7 @@ jobs:
       - name: Build the deployables and run the integration tests
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         uses: ./.github/actions/default-build-deployables
+
+      - name: List the dependency files the job downloaded
+        if: ${{ !cancelled() }}
+        run: scripts/ci/list-downloaded-dependencies.sh "$RUNNER_TEMP/gradle-cache-restored"

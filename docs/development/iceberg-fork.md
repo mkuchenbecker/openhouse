@@ -335,6 +335,17 @@ script, so the fork is built (about 6 minutes on a runner) only when either chan
 The Gradle cache is written only by the `rest` jobs of a post-merge run: on `irc-integration`, or
 in a branch's own scope when the workflow is run there by hand. A pull request reads it.
 
+Every split-build job that only reads that cache resolves the build's dynamic versions (the
+`json-smart` range in `nimbus-jose-jwt`'s POM, `mysql-connector-java:8.+`, the `log4j-core` and
+`logback-core` ranges of `spotbugs-annotations`) as the writer last did: the job copies
+`scripts/ci/dependency-cache.gradle` into the Gradle user home's `init.d`, which keeps Gradle's
+dynamic-version lookups for 20 days instead of 24 hours. Without it a job whose restored entry was
+saved more than a day before (any pull request when nothing merged for a day) asked Maven Central
+for every version list again, and a refused request (a 429) killed the job before any test ran.
+The writer keeps the 24 hours, so a merge refreshes a lookup older than a day; a dynamic version the
+cache has never seen is looked up as before. The local build is unchanged. Each job ends by listing
+the dependency files it downloaded beyond the restored cache (`scripts/ci/list-downloaded-dependencies.sh`).
+
 ## Spark 4.2 over the IRC read routes
 
 `:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` is not in the reference build

@@ -1,0 +1,30 @@
+// Gradle init script of the split build's jobs that only read the Gradle cache
+// (.github/workflows/split-build.yml): every job of a pull request, and every job but the line's
+// `rest` after a merge. The workflow copies it into the runner's Gradle user home (init.d), so it
+// applies to every Gradle command of the job and to nothing outside CI.
+//
+// Some dependencies are declared with a dynamic version, a range or a `+`, in POMs and Gradle
+// module metadata the build pulls in (json-smart [1.3.1,2.3] by nimbus-jose-jwt, log4j-core and
+// logback-core ranges by spotbugs-annotations) and in build files (mysql-connector-java 8.+).
+// Gradle resolves one by listing the repository's versions, and keeps that list for 24 hours. The
+// cache these jobs restore was written by `rest` after the last merge to irc-integration, often
+// more than a day before, so each job would ask Maven Central for every list again, and a job dies
+// before any test runs when Central refuses one request.
+//
+// Here the restored lists are kept for 20 days: a job resolves each dynamic version as the cache's
+// writer last did, without the network. The writer keeps Gradle's 24 hours, so a merge's `rest`
+// refreshes a list older than a day and the next restores carry it. A dynamic version the restored
+// cache has never seen (a pull request that adds one) is still looked up. Nothing else about
+// resolution changes: which versions a range admits and how conflicts are settled stay Gradle's.
+//
+// Not more than 24 days: Gradle (8.14) counts the duration in an int of milliseconds, and 25 days
+// or more wraps around to a duration every lookup is older than, so each one goes to the network.
+def keepDynamicVersionsForDays = 20
+allprojects {
+  buildscript.configurations.configureEach {
+    resolutionStrategy.cacheDynamicVersionsFor(keepDynamicVersionsForDays, 'days')
+  }
+  configurations.configureEach {
+    resolutionStrategy.cacheDynamicVersionsFor(keepDynamicVersionsForDays, 'days')
+  }
+}
