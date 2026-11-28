@@ -406,6 +406,114 @@ public class IrcWriteRoutesAuthTest {
     assertTrue(CommitPathHttp.status(get(mvc, DB, "t3")) == 200);
   }
 
+  // ------------------------------------------------- the answer to a rename's commit conflict
+
+  /**
+   * Makes the native rename fail, once, with the failure its House Tables write fails with when
+   * House Tables refuses it: the commit failure the table operations throw, caused by the
+   * repository's concurrent-update refusal. The failure is thrown from the first of the native
+   * rename's three decisions (CREATE_TABLE on the database), after it has looked for the source and
+   * the target and before its write, after running {@code meanwhile}; nothing of the rename's own
+   * write path runs. So these tests pin how the Iceberg REST rename answers that failure and what
+   * it looks up to choose the answer, not that a real House Tables conflict reaches the route as
+   * this failure (by reading, the table operations rethrow it as this failure after Iceberg's
+   * commit retries). Every other decision is allowed.
+   */
+  private void theNativeRenameFailsWithACommitConflict(Runnable meanwhile) {
+    java.util.concurrent.atomic.AtomicBoolean refused =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(DatabaseDto.class), any(Privileges.class)))
+        .thenAnswer(
+            call -> {
+              if (call.getArgument(2) == Privileges.CREATE_TABLE
+                  && refused.compareAndSet(false, true)) {
+                meanwhile.run();
+                throw new org.apache.iceberg.exceptions.CommitFailedException(
+                    new com.linkedin.openhouse.internal.catalog.repository.exception
+                        .HouseTableConcurrentUpdateException("injected conflict", null));
+              }
+              return true;
+            });
+  }
+
+  /**
+   * A rename whose commit conflicts while the target's key is free: the table was changed
+   * concurrently, a conflict the client may retry, answered 409 {@code CommitFailedException} (the
+   * native route answers the unmapped commit failure 500). Nothing is renamed. Both Iceberg client
+   * lines read any 409 on the rename route as {@code AlreadyExistsException}.
+   */
+  @Test
+  void aRenameCommitConflictOnAFreeTargetIs409ChangedConcurrently() throws Exception {
+    create("rn1");
+    theNativeRenameFailsWithACommitConflict(() -> {});
+    org.apache.iceberg.rest.responses.ErrorResponse error =
+        assertIrcError(
+            IrcWrite.rename(mvc, TableIdentifier.of(DB, "rn1"), TableIdentifier.of(DB, "rn2")),
+            409,
+            "CommitFailedException");
+    assertTrue(error.message().contains("the table was changed concurrently"), error.message());
+    stubDecision(true);
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn1")));
+    assertEquals(404, CommitPathHttp.status(get(mvc, DB, "rn2")));
+    org.junit.jupiter.api.Assertions.assertThrows(
+        org.apache.iceberg.exceptions.AlreadyExistsException.class,
+        () -> org.apache.iceberg.rest.ErrorHandlers.tableErrorHandler().accept(error));
+  }
+
+  /**
+   * A rename whose commit conflicts after a table of the target's name was created since the native
+   * rename looked for one: answered 409 {@code AlreadyExistsException} naming a table. The source
+   * is not renamed and the target is the table created meanwhile.
+   */
+  @Test
+  void aRenameCommitConflictOnATargetCreatedMeanwhileIs409AlreadyExists() throws Exception {
+    create("rn3");
+    created.add("rn4");
+    theNativeRenameFailsWithACommitConflict(
+        () -> {
+          java.util.concurrent.atomic.AtomicReference<Exception> failed =
+              new java.util.concurrent.atomic.AtomicReference<>();
+          // Another client's create, on a thread of its own as another request would be.
+          Thread creator =
+              new Thread(
+                  () -> {
+                    try {
+                      post(mvc, newTable(DB, "rn4").toBuilder().policies(null).build())
+                          .andExpect(status().isCreated());
+                    } catch (Exception e) {
+                      failed.set(e);
+                    }
+                  });
+          creator.start();
+          try {
+            creator.join(30_000);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(e);
+          }
+          if (creator.isAlive()) {
+            throw new IllegalStateException("the create of the target did not finish in 30 s");
+          }
+          if (failed.get() != null) {
+            throw new IllegalStateException(failed.get());
+          }
+          // The House Tables stand-in serves this request's reads from the request's own
+          // persistence context; the real House Tables service is read afresh each time.
+          entityManager.clear();
+        });
+    String message =
+        assertIrcError(
+                IrcWrite.rename(mvc, TableIdentifier.of(DB, "rn3"), TableIdentifier.of(DB, "rn4")),
+                409,
+                "AlreadyExistsException")
+            .message();
+    assertTrue(message.contains("Table already exists"), message);
+    stubDecision(true);
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn3")));
+    assertEquals(200, CommitPathHttp.status(get(mvc, DB, "rn4")));
+  }
+
   // ------------------------------------------------- authorization before the stored table is used
 
   /**
@@ -649,6 +757,31 @@ public class IrcWriteRoutesAuthTest {
           IrcWrite.commit(mvc, DB, "c1", completion);
       assertIrcError(result, 409, "CommitFailedException");
       assertNoStoredIdIn(IrcHttp.body(result), stored);
+    }
+  }
+
+  /**
+   * That answer needs only that the table exists: the table's metadata file is not read for it. So
+   * the answer is the same when the file cannot be read (here it is moved away).
+   */
+  @Test
+  void aCompletionOnAnExistingTableReadsNoMetadataFile() throws Exception {
+    create("c2");
+    TableMetadata stored = IrcWrite.load(mvc, DB, "c2");
+    java.nio.file.Path current = file(stored.metadataFileLocation());
+    java.nio.file.Path aside = current.resolveSibling(current.getFileName() + ".aside");
+    UpdateTableRequest completion =
+        request(
+            Collections.singletonList(new UpdateRequirement.AssertTableDoesNotExist()),
+            setUserProperty());
+    java.nio.file.Files.move(current, aside);
+    try {
+      org.springframework.test.web.servlet.MvcResult result =
+          IrcWrite.commit(mvc, DB, "c2", completion);
+      String message = assertIrcError(result, 409, "CommitFailedException").message();
+      assertTrue(message.contains("table already exists"), message);
+    } finally {
+      java.nio.file.Files.move(aside, current);
     }
   }
 
@@ -982,9 +1115,12 @@ public class IrcWriteRoutesAuthTest {
       TableAuditEvent event = onlyAuditEvent("rw1");
       assertEquals(OperationType.UPDATE, event.getOperationType());
       assertEquals(OperationStatus.FAILED, event.getOperationStatus());
+      Mockito.clearInvocations(tableAuditHandler);
       result = IrcWrite.transaction(mvc, IrcWrite.change(DB, "rw1", commit));
       assertEquals(nativeMessage, assertIrcError(result, 403, "ForbiddenException").message());
       assertNoStoredIdIn(IrcHttp.body(result), stored);
+      // The one-table transaction's refusal is audited exactly as the commit's: one FAILED UPDATE.
+      assertEquals(event.toJson(), onlyAuditEvent("rw1").toJson());
     }
     stubDecision(true);
     TableMetadata after = IrcWrite.load(mvc, DB, "rw1");
