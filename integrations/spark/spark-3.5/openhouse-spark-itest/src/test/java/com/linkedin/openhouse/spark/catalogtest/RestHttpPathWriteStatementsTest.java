@@ -61,7 +61,7 @@ public class RestHttpPathWriteStatementsTest extends SparkSqlWriteStatements {
     SparkSession base = FIXTURE.session();
     if (spark == null || spark.sparkContext() != base.sparkContext()) {
       SparkSession session = base.newSession();
-      SparkSqlSmokeTest.restCatalog(session, CATALOG, FIXTURE.uri(), base);
+      configurePath(session, base);
       String check = "spark.sql.catalog." + CHECK;
       session.conf().set(check, "org.apache.iceberg.spark.SparkCatalog");
       session.conf().set(check + ".catalog-impl", "com.linkedin.openhouse.spark.OpenHouseCatalog");
@@ -82,6 +82,11 @@ public class RestHttpPathWriteStatementsTest extends SparkSqlWriteStatements {
       spark = session;
     }
     return spark;
+  }
+
+  /** Makes {@value #CATALOG} of {@code session} the catalog path under test. */
+  protected void configurePath(SparkSession session, SparkSession base) {
+    SparkSqlSmokeTest.restCatalog(session, CATALOG, FIXTURE.uri(), base);
   }
 
   private static String token(SparkSession base) {

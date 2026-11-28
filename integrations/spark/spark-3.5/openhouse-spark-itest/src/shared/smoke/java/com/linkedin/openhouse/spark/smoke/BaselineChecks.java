@@ -155,11 +155,19 @@ public abstract class BaselineChecks {
   }
 
   /**
+   * Called with the value of every check as it is made: {@code key} names the check in its test
+   * ({@code <test> / <check>}). Nothing by default; a platform that also compares the values with a
+   * recording overrides it.
+   */
+  protected void value(String test, String key, String actual) {}
+
+  /**
    * One check: {@code actual} must be {@code baseline}, or what this platform declares for the
    * check instead.
    */
   protected final void check(String check, Object baseline, Object actual) {
     String key = test + " / " + check;
+    value(test, key, String.valueOf(actual));
     Difference difference = declared.get(key);
     String expected = String.valueOf(baseline);
     String value = String.valueOf(actual);
