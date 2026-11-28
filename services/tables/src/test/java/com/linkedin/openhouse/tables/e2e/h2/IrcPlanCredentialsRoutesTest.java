@@ -52,6 +52,10 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * on the load and create routes, which vends nothing.
  */
 @SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
+// A context of its own (scan planning on), closed after the class rather than kept in the cache
+// with the shared ones, as the other planning tests' contexts are.
+@org.springframework.test.annotation.DirtiesContext(
+    classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
