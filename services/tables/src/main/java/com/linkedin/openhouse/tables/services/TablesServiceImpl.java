@@ -290,6 +290,13 @@ public class TablesServiceImpl implements TablesService, NamespacesService {
       authorizationUtils.checkDatabasePrivilege(
           databaseId, tableCreatorUpdater, Privileges.CREATE_TABLE);
     }
+    // After the privilege check, for a staged replace and for a create by PUT, which the request
+    // validation cannot tell from an update without reading the table.
+    FormatVersionRule.refuseFormatV3TypesBelowV3(
+        clusterProperties,
+        tableDto.orElse(null),
+        createUpdateTableRequestBody.getSchema(),
+        createUpdateTableRequestBody.getSortOrder());
     clientCapabilityGate.checkWrite(
         databaseId, tableId, tableDto, createUpdateTableRequestBody.getTableProperties());
 

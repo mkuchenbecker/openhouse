@@ -360,13 +360,6 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     return new FormatVersionRule(clusterProperties);
   }
 
-  /**
-   * The format version a replace leaves the table at, from the version its own base has: the one
-   * {@link FormatVersionRule#versionOfReplace} gives where Iceberg builds format v3 and the switch
-   * is on (the table's own, or 3 when the replace asks for it); the cluster's elsewhere, as a
-   * replace was always computed like a create, except that a table at v3 or above, which only a
-   * cluster that had the switch on can hold, is never lowered.
-   */
   /** Whether {@code requested} asks for format version 3 where the cluster allows it. */
   private boolean asksForAllowedV3(Map<String, String> requested) {
     OptionalInt asked = FormatVersionRule.requested(requested);
@@ -375,6 +368,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
         && formatVersionRule().v3Enabled();
   }
 
+  /**
+   * The format version a replace leaves the table at, from the version its own base has: the one
+   * {@link FormatVersionRule#versionOfReplace} gives where Iceberg builds format v3 and the switch
+   * is on (the table's own, or 3 when the replace asks for it); the cluster's elsewhere, as a
+   * replace was always computed like a create, except that a table at v3 or above, which only a
+   * cluster that had the switch on can hold, is never lowered.
+   */
   private int formatVersionOfReplace(
       TableIdentifier tableIdentifier, int stored, Map<String, String> requested) {
     FormatVersionRule rule = formatVersionRule();

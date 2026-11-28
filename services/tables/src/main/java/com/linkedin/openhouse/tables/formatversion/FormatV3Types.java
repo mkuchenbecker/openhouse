@@ -328,6 +328,22 @@ public final class FormatV3Types {
   }
 
   /**
+   * The request validation's failure for a v3-only type below format v3: what it answered where the
+   * schema parser did not know the type.
+   */
+  public static String belowV3SchemaFailure(Type type) {
+    return "schema : Cannot parse type string to primitive: " + spelled(type);
+  }
+
+  /**
+   * The request validation's failure for a sort order whose schema holds a v3-only type below
+   * format v3: where the schema parser did not know the type, the sort order could not be read.
+   */
+  public static String belowV3SortOrderFailure(String sortOrder) {
+    return String.format("sortOrder : provided %s is not a valid sort order", sortOrder);
+  }
+
+  /**
    * {@code type} as a schema's JSON spells it, the short name for a geometry or geography of the
    * default reference system and algorithm, as a request most often spells it.
    */

@@ -4,9 +4,14 @@ import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.CommitRejectedException;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.tables.model.TableDto;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
+import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.types.Type;
 
 /**
  * The one rule for a table's Iceberg format version.
@@ -170,6 +175,40 @@ public class FormatVersionRule {
     }
     requireV3(operation, table, asked.getAsInt());
     return IcebergV3.VERSION;
+  }
+
+  /**
+   * Refuses a write that puts a v3-only column type on a table below format v3, or on a table a PUT
+   * creates, where the cluster cannot have v3 tables, with the request validation's answer from
+   * before this service knew format v3: 400 {@code schema : Cannot parse type string to primitive:
+   * <type>}, and, for a request with a sort order, that the sort order is not valid. Called after
+   * the write's privilege check, where the stored table is known, so that the request validation
+   * reads nothing and an answer cannot tell a caller without access what the table is. A table
+   * already at v3 keeps the rules of a v3 table.
+   *
+   * @param clusterProperties the cluster's configuration; {@code null} reads as v3 switched off
+   * @param stored the stored table; {@code null} for a create
+   * @param schema the schema the write leaves, as JSON
+   * @param sortOrder the sort order the request carries, as JSON; {@code null} for none
+   * @throws RequestValidationFailureException the old answer
+   */
+  public static void refuseFormatV3TypesBelowV3(
+      ClusterProperties clusterProperties, TableDto stored, String schema, String sortOrder) {
+    if (schema == null
+        || (clusterProperties != null && new FormatVersionRule(clusterProperties).v3Enabled())
+        || (stored != null && stored.getFormatVersion() >= IcebergV3.VERSION)) {
+      return;
+    }
+    Optional<Type> type = FormatV3Types.firstFormatV3Type(SchemaParser.fromJson(schema));
+    if (!type.isPresent()) {
+      return;
+    }
+    List<String> failures = new ArrayList<>();
+    failures.add(FormatV3Types.belowV3SchemaFailure(type.get()));
+    if (sortOrder != null) {
+      failures.add(FormatV3Types.belowV3SortOrderFailure(sortOrder));
+    }
+    throw new RequestValidationFailureException(failures);
   }
 
   /**

@@ -92,6 +92,10 @@ final class TableCommitCore {
       return Pair.of(base, /*creation didn't occur*/ false);
     }
     TableDto candidate = commit.candidate();
+    // After the privilege check: whether the request validation's old answer applies depends on
+    // the stored table's format version.
+    FormatVersionRule.refuseFormatV3TypesBelowV3(
+        clusterProperties, base, candidate.getSchema(), candidate.getSortOrder());
     clientCapabilityGate.checkWrite(
         databaseId, tableId, Optional.of(base), candidate.getTableProperties());
     candidate = LockPolicyValidator.prepare(base, candidate);
