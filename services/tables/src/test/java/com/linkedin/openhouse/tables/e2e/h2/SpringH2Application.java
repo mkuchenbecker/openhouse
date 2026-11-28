@@ -52,7 +52,11 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 // table-row repository with its database, the toggle repository, and the namespace-record store
 // the IRC namespace routes read and write records through.
 @EnableJpaRepositories(basePackageClasses = HouseTablesH2Repository.class)
-@Import({HouseTablesH2Configuration.class, HouseNamespacesInMemoryRepository.class})
+@Import({
+  HouseTablesH2Configuration.class,
+  HouseNamespacesInMemoryRepository.class,
+  com.linkedin.openhouse.tables.ReleaseMeterRegistriesOnClose.class
+})
 public class SpringH2Application {
 
   public static void main(String[] args) {

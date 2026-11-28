@@ -59,6 +59,10 @@ import org.springframework.context.annotation.Bean;
  */
 final class ScanPlanning {
 
+  /** The cluster property that serves the scan planning routes, which are off by default. */
+  static final String ENABLED =
+      com.linkedin.openhouse.cluster.configs.ClusterProperties.IRC_SCAN_PLANNING_ENABLED + "=true";
+
   private ScanPlanning() {}
 
   /** The catalog property that makes a 1.12 client plan on the server. */

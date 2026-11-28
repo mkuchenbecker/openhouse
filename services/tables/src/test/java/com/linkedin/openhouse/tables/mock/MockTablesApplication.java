@@ -52,6 +52,8 @@ import org.springframework.context.annotation.FilterType;
     })
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
+@org.springframework.context.annotation.Import(
+    com.linkedin.openhouse.tables.ReleaseMeterRegistriesOnClose.class)
 public class MockTablesApplication {
   public static void main(String[] args) {
     SpringApplication.run(MockTablesApplication.class, args);

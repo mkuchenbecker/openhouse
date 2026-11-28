@@ -51,6 +51,13 @@ public class ServiceAuditAspect {
    */
   private static final String ICEBERG_REST_BASE_PATH = "/iceberg";
 
+  /**
+   * The request attribute a route sets, to a {@link JsonElement}, to be audited as its request
+   * payload in place of the body: for a route whose body is not to be copied into the audit (its
+   * size and content are the client's). A request without it is audited with its body, as always.
+   */
+  public static final String AUDITED_REQUEST_PAYLOAD = "openhouse.audit.requestPayload";
+
   private static final String SESSION_ID = "session-id";
   private static final String ACTION_TYPE = "X-OpenHouse-Action-Type";
 
@@ -212,10 +219,13 @@ public class ServiceAuditAspect {
 
     // Get request payload
     JsonElement requestPayload = null;
+    Object audited = request.getAttribute(AUDITED_REQUEST_PAYLOAD);
     try {
       ContentCachingRequestWrapper wrapper =
           WebUtils.getNativeRequest(request, ContentCachingRequestWrapper.class);
-      if (wrapper != null) {
+      if (audited instanceof JsonElement) {
+        requestPayload = (JsonElement) audited;
+      } else if (wrapper != null) {
         String requestPayloadStr =
             new String(wrapper.getContentAsByteArray(), StandardCharsets.UTF_8);
         requestPayload = JsonParser.parseString(requestPayloadStr);

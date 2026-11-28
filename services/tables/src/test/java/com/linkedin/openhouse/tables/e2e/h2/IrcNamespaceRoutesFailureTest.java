@@ -192,9 +192,10 @@ public class IrcNamespaceRoutesFailureTest {
 
   /**
    * The authorization service's failure ({@link AuthorizationServiceException}) on a name that
-   * holds nothing is the answer of load and of the writes. The IRC error mapping answers it 403
-   * {@code ForbiddenException}, as on every IRC route that asks the authorization service (the
-   * failure type is a subtype of the denial, which the mapping tests first); pinned as it is.
+   * holds nothing is the answer of load and of the writes. The IRC error mapping answers it 503
+   * {@code ServiceUnavailableException} with the service's message, as the native routes answer it
+   * and as on every IRC route that asks the authorization service (the mapping tests for this
+   * subtype of the denial before the denial).
    */
   @Test
   void whenTheAuthorizationServiceFailsANamespaceThatHoldsATableReadsAsBefore() throws Exception {
@@ -211,7 +212,7 @@ public class IrcNamespaceRoutesFailureTest {
         }) {
       assertEquals(
           "authorization service unavailable",
-          assertIrcError(result, 403, "ForbiddenException").message());
+          assertIrcError(result, 503, "ServiceUnavailableException").message());
     }
   }
 

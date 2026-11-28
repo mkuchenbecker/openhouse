@@ -18,6 +18,7 @@ import com.linkedin.openhouse.tables.api.handler.TablesApiHandler;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
+import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.audit.TableAuditAspect;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
@@ -52,12 +53,14 @@ import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.exceptions.AlreadyExistsException;
 import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
+import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.NotFoundException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.rest.requests.CommitTransactionRequest;
@@ -107,9 +110,9 @@ import org.springframework.stereotype.Component;
  *   <li>Drop and rename are the native drop and rename. A rename across databases, which the native
  *       rename refuses (400), answers what the spec lists for it instead: 404 {@code
  *       NoSuchNamespaceException} when the target namespace does not exist, otherwise 406 (not
- *       supported) with the native message. A rename House Tables refuses because the target's key
- *       is taken (a view of that name), which the native route answers 500, is 409 {@code
- *       AlreadyExistsException}.
+ *       supported) with the native message. A rename onto a view's name, which the native route
+ *       answers 500 after it has written the renamed metadata, is 409 {@code
+ *       AlreadyExistsException} before anything is written.
  *   <li>A policy patch ({@value PolicyPatch#KEY} in the properties of a create, a staged create's
  *       completion or a commit, as OpenHouse's policy statements write it) is what the OpenHouse
  *       Java client makes of it before it sends the native request: the key is taken out of the
@@ -190,9 +193,11 @@ public class IcebergRestWriteHandler {
       String databaseId, CreateTableRequest request, String actingPrincipal) {
     TableIdentifier identifier = TableIdentifier.of(databaseId, request.name());
     CreateUpdateTableRequestBody body = createBody(identifier, request);
-    tablesApiHandler.createTable(
-        databaseId, withPatchApplied(identifier, body, null), actingPrincipal);
-    return loaded(identifier);
+    GetTableResponseBody created =
+        tablesApiHandler
+            .createTable(databaseId, withPatchApplied(identifier, body, null), actingPrincipal)
+            .getResponseBody();
+    return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
   }
 
   /**
@@ -270,8 +275,13 @@ public class IcebergRestWriteHandler {
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, request, actingPrincipal);
-    if (commitOn(identifier, base, request, actingPrincipal)) {
-      return loaded(identifier);
+    Optional<TableDto> committed = commitOn(identifier, base, request, actingPrincipal);
+    if (committed.isPresent()) {
+      return answered(
+          identifier,
+          committed.get().getTableLocation(),
+          committed.get().getTableUUID(),
+          base.getTable());
     }
     answerAsALoad(identifier, base, request, actingPrincipal);
     return new IcebergRestLoadedTable(
@@ -320,7 +330,7 @@ public class IcebergRestWriteHandler {
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, change, actingPrincipal);
-    if (!commitOn(identifier, base, change, actingPrincipal)) {
+    if (!commitOn(identifier, base, change, actingPrincipal).isPresent()) {
       answerAsALoad(identifier, base, change, actingPrincipal);
     }
   }
@@ -362,11 +372,20 @@ public class IcebergRestWriteHandler {
    * <ul>
    *   <li>A request with no updates writes nothing and answers the stored table: it is a load, and
    *       passes the table load's checks ({@link TablesService#checkLoad}).
-   *   <li>Any other request is decided as the commit core decides the write ({@link
-   *       TableCommitService#authorizeWrite}). The core decides it again, after its lock checks, so
-   *       an allowed caller is answered exactly as before. If its updates turn out to change
+   *   <li>Any other request passes the checks the commit core runs on the stored table before it
+   *       uses the request, by the core's own method and in the core's order ({@link
+   *       TableCommitService#authorizeWrite}): a table with a legacy lock is refused for every
+   *       caller, as the native update refuses it before anything else; then the write privilege;
+   *       then the SYSTEM_ONLY access decision. The core runs them again, so an allowed caller on
+   *       an unlocked table is answered exactly as before. If its updates turn out to change
    *       nothing, it is a load after all, and passes the load's checks before it is answered
    *       ({@link #answerAsALoad}).
+   *   <li>Such a request also needs the read privilege the load needs, decided with the others: the
+   *       commit answers the table's whole Iceberg metadata (every snapshot with its manifest list,
+   *       the logs, the refs, every schema), where the native update answers a summary of the
+   *       table; and an Iceberg client loads a table before it commits to it, so a caller that may
+   *       not read the table could not commit through one either. The one-table transaction, which
+   *       answers nothing, is decided as the commit it is.
    * </ul>
    *
    * A refusal is audited as the refusal of the operation the request would be: a READ for a load,
@@ -391,8 +410,24 @@ public class IcebergRestWriteHandler {
           databaseId,
           tableId,
           auditedKind(request),
-          () -> tableCommitService.authorizeWrite(stored, principal));
+          () -> {
+            tableCommitService.authorizeWrite(identifier, stored, principal, kind(request));
+            authorizationUtils.checkTablePrivilege(
+                stored, principal, Privileges.GET_TABLE_METADATA);
+          });
     }
+  }
+
+  /**
+   * The kind of the commit {@code request} would be, read from the request, since its updates are
+   * not applied before it is authorized: the snapshots route's for a replace or a commit that adds,
+   * removes or moves a snapshot, the table PUT's otherwise ({@link #auditedKind}). It picks the
+   * wording of a legacy-locked table's refusal.
+   */
+  private static CommitKind kind(UpdateTableRequest request) {
+    return auditedKind(request) == OperationType.UPDATE
+        ? CommitKind.TABLE_UPDATE
+        : CommitKind.SNAPSHOTS_UPDATE;
   }
 
   /**
@@ -436,10 +471,10 @@ public class IcebergRestWriteHandler {
    * to the commit core with {@code base}'s version, so a commit that landed since {@code base} was
    * loaded is refused by the core's guards.
    *
-   * @return whether anything was committed: {@code false} for a request that changes nothing, which
+   * @return the table as the commit stored it; empty for a request that changes nothing, which
    *     writes nothing
    */
-  private boolean commitOn(
+  private Optional<TableDto> commitOn(
       TableIdentifier identifier,
       TableDtoWithMetadata base,
       UpdateTableRequest request,
@@ -449,7 +484,7 @@ public class IcebergRestWriteHandler {
     TableMetadata baseMetadata = base.getMetadata();
     IcebergRestRequirements.validate(request, baseMetadata);
     if (request.updates().isEmpty()) {
-      return false;
+      return Optional.empty();
     }
     boolean replace = IcebergRestRequirements.isReplace(request);
     // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
@@ -462,13 +497,26 @@ public class IcebergRestWriteHandler {
                 .collect(Collectors.toList())
             : request.updates();
     TableMetadata.Builder builder = TableMetadata.buildFrom(baseMetadata);
-    Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
+    Optional<String> patch;
+    try {
+      patch = applyTakingOutThePatch(builder, baseMetadata, updates);
+    } catch (NotATableUpdate refused) {
+      // Audited as the commit's refusal, as the refusals of the early decision are.
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          auditedKind(request),
+          () -> {
+            throw refused;
+          });
+      throw refused;
+    }
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
-      return false;
+      return Optional.empty();
     }
     // The policies the OpenHouse client would send: the stored ones, or a patch merged onto them.
-    Policies requestedPolicies =
+    Policies patched =
         patch
             .map(p -> PolicyPatch.apply(base.getTableDto().getPolicies(), p, identifier.toString()))
             .orElse(null);
@@ -476,39 +524,79 @@ public class IcebergRestWriteHandler {
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
             : CommitKind.TABLE_UPDATE;
-    tableCommitService.commit(
-        identifier,
-        base.getTableDto().getTableLocation(),
-        base,
-        candidate,
-        CommitContext.builder()
-            .kind(kind)
-            .principal(actingPrincipal)
-            .clusterId(clusterProperties.getClusterName())
-            .replace(replace)
-            .requestedPolicies(requestedPolicies)
-            // The native update validation, which the native table PUT and snapshots PUT (replace
-            // included) run before the service layer, on the request the OpenHouse client would
-            // send for this commit.
-            .validation(
-                () ->
-                    tablesApiValidator.validateUpdateTable(
-                        clusterProperties.getClusterName(),
-                        databaseId,
-                        tableId,
-                        IcebergUpdates.toUpdateBody(
-                            identifier,
-                            clusterProperties.getClusterName(),
-                            base.getTableDto(),
-                            base.getTableDto().getTableLocation(),
-                            candidate,
-                            replace,
-                            requestedPolicies != null
-                                ? requestedPolicies
-                                : base.getTableDto().getPolicies(),
-                            partitionSpecMapper)))
-            .build());
-    return true;
+    Policies[] judged = {patched};
+    if (kind == CommitKind.TABLE_UPDATE) {
+      // The lock rule's refusal is audited as the native PUT's refusal of it is (a FAILED UPDATE).
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          OperationType.UPDATE,
+          () -> judged[0] = withTheLockRule(identifier, base.getTableDto(), patched));
+    }
+    Policies requestedPolicies = judged[0];
+    TableDto committed =
+        tableCommitService
+            .commit(
+                identifier,
+                base.getTableDto().getTableLocation(),
+                base,
+                candidate,
+                CommitContext.builder()
+                    .kind(kind)
+                    .principal(actingPrincipal)
+                    .clusterId(clusterProperties.getClusterName())
+                    .replace(replace)
+                    .requestedPolicies(requestedPolicies)
+                    // The native update validation, which the native table PUT and snapshots PUT
+                    // (replace
+                    // included) run before the service layer, on the request the OpenHouse client
+                    // would
+                    // send for this commit.
+                    .validation(
+                        () ->
+                            tablesApiValidator.validateUpdateTable(
+                                clusterProperties.getClusterName(),
+                                databaseId,
+                                tableId,
+                                IcebergUpdates.toUpdateBody(
+                                    identifier,
+                                    clusterProperties.getClusterName(),
+                                    base.getTableDto(),
+                                    base.getTableDto().getTableLocation(),
+                                    candidate,
+                                    replace,
+                                    requestedPolicies != null
+                                        ? requestedPolicies
+                                        : base.getTableDto().getPolicies(),
+                                    partitionSpecMapper)))
+                    .build())
+            .getFirst();
+    return Optional.of(committed);
+  }
+
+  /**
+   * {@code requested}, the policies of a commit of the table PUT's kind, as the table PUT's lock
+   * rule (a request may not change the stored lock) judges them on {@code stored}, a table whose
+   * stored policies have no lock state: that rule fails on such a table with a NullPointerException
+   * (the native PUT's 500, which stays its answer), so here the absent lock state is read as what
+   * it means, unlocked. A lock state that locks the table is the rule's refusal; one that leaves it
+   * unlocked changes nothing and is dropped, as the rule then has nothing to judge. Anything else
+   * is returned as it is, for the rule to judge in the commit core.
+   */
+  private static Policies withTheLockRule(
+      TableIdentifier identifier, TableDto stored, Policies requested) {
+    boolean storedHasNoLockState =
+        stored.getPolicies() == null || stored.getPolicies().getLockState() == null;
+    if (requested == null || requested.getLockState() == null || !storedHasNoLockState) {
+      return requested;
+    }
+    if (requested.getLockState().isLocked()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Lock state cannot be updated for Table %s.%s",
+              identifier.namespace(), identifier.name()));
+    }
+    return requested.toBuilder().lockState(null).build();
   }
 
   /**
@@ -538,13 +626,34 @@ public class IcebergRestWriteHandler {
           builder.removeProperties(removed);
         }
       } else {
-        update.applyTo(builder);
+        applyTo(builder, update);
       }
     }
     if (base.properties().containsKey(PolicyPatch.KEY)) {
       builder.removeProperties(Collections.singleton(PolicyPatch.KEY));
     }
     return Optional.ofNullable(patch);
+  }
+
+  /**
+   * Applies {@code update} to table metadata. An update only a view takes (a view version, the
+   * current view version) has no meaning for a table, and Iceberg refuses it with {@code
+   * UnsupportedOperationException}: that is the request's fault, answered 400 with Iceberg's
+   * message, not a server failure.
+   */
+  private static void applyTo(TableMetadata.Builder builder, MetadataUpdate update) {
+    try {
+      update.applyTo(builder);
+    } catch (UnsupportedOperationException e) {
+      throw new NotATableUpdate(e);
+    }
+  }
+
+  /** An update only a view takes, sent to a table: the request's fault (400). */
+  private static final class NotATableUpdate extends BadRequestException {
+    NotATableUpdate(UnsupportedOperationException cause) {
+      super(cause, "%s", cause.getMessage());
+    }
   }
 
   /**
@@ -584,7 +693,7 @@ public class IcebergRestWriteHandler {
     IcebergRestRequirements.validate(request, existing.orElse(null));
     TableMetadata.Builder builder = TableMetadata.buildFromEmpty();
     for (MetadataUpdate update : request.updates()) {
-      update.applyTo(builder);
+      applyTo(builder, update);
     }
     TableMetadata candidate = builder.build();
     Optional<String> patch = Optional.ofNullable(candidate.properties().get(PolicyPatch.KEY));
@@ -690,8 +799,8 @@ public class IcebergRestWriteHandler {
     }
     if (candidate.snapshots().isEmpty()) {
       tablesApiValidator.validateCreateTable(clusterProperties.getClusterName(), databaseId, body);
-      tablesService.createTable(body, actingPrincipal, tableUUID);
-      return loaded(identifier);
+      TableDto created = tablesService.createTable(body, actingPrincipal, tableUUID).getFirst();
+      return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
     }
     // A create with data: what the OpenHouse Java client sends for a CTAS. The table's UUID comes
     // from where the snapshot's files are, as natively; the three properties below are the ones
@@ -700,24 +809,28 @@ public class IcebergRestWriteHandler {
     withIds.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, databaseId);
     withIds.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, tableId);
     withIds.put(TABLE_LOCATION_KEY, location);
-    icebergSnapshotsApiHandler.putIcebergSnapshots(
-        databaseId,
-        tableId,
-        IcebergSnapshotsRequestBody.builder()
-            .baseTableVersion(INITIAL_TABLE_VERSION)
-            .jsonSnapshots(
-                candidate.snapshots().stream()
-                    .map(SnapshotParser::toJson)
-                    .collect(Collectors.toList()))
-            .snapshotRefs(
-                candidate.refs().entrySet().stream()
-                    .collect(
-                        Collectors.toMap(
-                            Map.Entry::getKey, e -> SnapshotRefParser.toJson(e.getValue()))))
-            .createUpdateTableRequestBody(body.toBuilder().tableProperties(withIds).build())
-            .build(),
-        actingPrincipal);
-    return loaded(identifier);
+    GetTableResponseBody created =
+        icebergSnapshotsApiHandler
+            .putIcebergSnapshots(
+                databaseId,
+                tableId,
+                IcebergSnapshotsRequestBody.builder()
+                    .baseTableVersion(INITIAL_TABLE_VERSION)
+                    .jsonSnapshots(
+                        candidate.snapshots().stream()
+                            .map(SnapshotParser::toJson)
+                            .collect(Collectors.toList()))
+                    .snapshotRefs(
+                        candidate.refs().entrySet().stream()
+                            .collect(
+                                Collectors.toMap(
+                                    Map.Entry::getKey,
+                                    e -> SnapshotRefParser.toJson(e.getValue()))))
+                    .createUpdateTableRequestBody(body.toBuilder().tableProperties(withIds).build())
+                    .build(),
+                actingPrincipal)
+            .getResponseBody();
+    return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
   }
 
   /**
@@ -1080,6 +1193,15 @@ public class IcebergRestWriteHandler {
    * when the target namespace does not exist, and otherwise 406, the spec's "the server does not
    * support this operation", with the native refusal's message. The ids are checked first, as
    * natively.
+   *
+   * <p>Tables and views share House Tables' key, and the native rename looks only for a table of
+   * the target's name, so onto a view's name it writes the renamed metadata, retries, and fails on
+   * the House Tables write (answered 500). Here the target's key is looked up first, where the
+   * native rename looks for a table there (after the request's validation and the source's
+   * existence), and a view there is the spec's 409 {@code AlreadyExistsException}, with nothing
+   * written. A House Tables refusal during the rename itself is 409 too: "already exists" when the
+   * target's key is now taken, otherwise {@code CommitFailedException}, a conflict a client may
+   * retry.
    */
   public void renameTable(RenameTableRequest request, String actingPrincipal) {
     request.validate();
@@ -1099,6 +1221,26 @@ public class IcebergRestWriteHandler {
         throw new IcebergRestRouteException(e.getMessage(), true);
       }
     }
+    HouseTablePrimaryKey target =
+        HouseTablePrimaryKey.builder()
+            .databaseId(toDatabaseId)
+            .tableId(request.destination().name())
+            .build();
+    // Audited as the native rename audits its refusal (a FAILED RENAME_FROM of the source).
+    tableAudit.auditRefusal(
+        fromDatabaseId,
+        request.source().name(),
+        OperationType.RENAME_FROM,
+        () -> {
+          tablesApiValidator.validateRenameTable(
+              fromDatabaseId, request.source().name(), toDatabaseId, request.destination().name());
+          if (houseTableRepository.findViewById(target).isPresent()
+              && tablesService.tableExists(fromDatabaseId, request.source().name())) {
+            throw new AlreadyExistsException(
+                "Cannot rename %s to %s. View already exists",
+                request.source(), request.destination());
+          }
+        });
     try {
       tablesApiHandler.renameTable(
           fromDatabaseId,
@@ -1110,24 +1252,23 @@ public class IcebergRestWriteHandler {
       if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
         throw e;
       }
-      // House Tables refused the rename: tables and views share its key, and the target's is
-      // taken. The native rename checks only for a table there, so this is a view (or a table
-      // created meanwhile). The native API answers the unmapped commit failure 500; the spec's
-      // answer is 409 AlreadyExists.
-      boolean view =
-          houseTableRepository
-              .findViewById(
-                  HouseTablePrimaryKey.builder()
-                      .databaseId(toDatabaseId)
-                      .tableId(request.destination().name())
-                      .build())
-              .isPresent();
-      throw new AlreadyExistsException(
+      // House Tables refused the rename's write. The native API answers the unmapped commit
+      // failure 500; the spec's answer is a 409: the target's key taken meanwhile (a view, or a
+      // table created since the native rename looked), or a concurrent change of the table.
+      boolean view = houseTableRepository.findViewById(target).isPresent();
+      if (view || tablesService.tableExists(toDatabaseId, request.destination().name())) {
+        throw new AlreadyExistsException(
+            e,
+            "Cannot rename %s to %s. %s already exists",
+            request.source(),
+            request.destination(),
+            view ? "View" : "Table");
+      }
+      throw new CommitFailedException(
           e,
-          "Cannot rename %s to %s. %s already exists",
+          "Cannot rename %s to %s: the table was changed concurrently",
           request.source(),
-          request.destination(),
-          view ? "View" : "Table");
+          request.destination());
     }
   }
 
@@ -1191,14 +1332,52 @@ public class IcebergRestWriteHandler {
     }
   }
 
-  /** The table as stored now, at the location the native API reports. */
-  private IcebergRestLoadedTable loaded(TableIdentifier identifier) {
+  /**
+   * The answer to a write that stored the table at {@code committed} (its metadata file, as the
+   * native API reports it): that version of the table, and never a later one, or another table of
+   * the same name, that the write's decisions were not made on. The table is read back as stored
+   * now, which is that version unless another write landed after this one; then the version this
+   * write stored is read from its own metadata file.
+   *
+   * <p>That file can be gone: a later commit's metadata cleanup deletes old files, and a drop
+   * deletes the table's directory. The write landed all the same, so it is not answered as a
+   * failure. When the table stored now is the same table (the same UUID), it is answered: the later
+   * version, which already holds this write. When it is another table of the name, nothing that
+   * this write's decisions were made on can be answered, and the answer is the commit's state
+   * unknown ({@link CommitStateUnknownException}, the spec's 500 for an unknown commit state),
+   * which a client reads as "the commit may have landed" and does not clean up after.
+   *
+   * @param committedUuid the OpenHouse UUID of the table the write stored
+   * @param written the table the write was made on, whose FileIO reads that file; {@code null} for
+   *     a create, which reads it with the table's own
+   */
+  private IcebergRestLoadedTable answered(
+      TableIdentifier identifier, String committed, String committedUuid, Table written) {
     TableDtoWithMetadata stored = tableCommitService.loadBase(identifier);
-    return new IcebergRestLoadedTable(
-        stored.getTableDto().getTableLocation(),
-        stored.getMetadata(),
-        tableFileIo.config(stored.getTable()),
-        false);
+    if (stored.getTableDto().getTableLocation().equals(committed)) {
+      return new IcebergRestLoadedTable(
+          committed, stored.getMetadata(), tableFileIo.config(stored.getTable()), false);
+    }
+    Table table = written != null ? written : stored.getTable();
+    TableMetadata metadata;
+    try {
+      metadata = TableMetadataParser.read(table.io(), committed);
+    } catch (RuntimeException unreadable) {
+      if (committedUuid != null && committedUuid.equals(stored.getTableDto().getTableUUID())) {
+        return new IcebergRestLoadedTable(
+            stored.getTableDto().getTableLocation(),
+            stored.getMetadata(),
+            tableFileIo.config(stored.getTable()),
+            false);
+      }
+      throw new CommitStateUnknownException(
+          String.format(
+              "The write to %s landed, but the version it stored (%s) can no longer be read, and"
+                  + " the table of that name is now another table",
+              identifier, committed),
+          unreadable);
+    }
+    return new IcebergRestLoadedTable(committed, metadata, tableFileIo.config(table), false);
   }
 
   /**

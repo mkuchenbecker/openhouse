@@ -32,7 +32,9 @@ public class SparkIrcPlanBoundTest {
 
   @BeforeAll
   static void startTheService() throws Exception {
-    service = IrcReadTestServiceProcess.startOwn(Arrays.asList("-D" + BOUND + "=4"));
+    service =
+        IrcReadTestServiceProcess.startOwn(
+            Arrays.asList("-D" + ServerPlanning.SERVICE_PROPERTY + "=true", "-D" + BOUND + "=4"));
     SparkSession spark = IrcSpark.session();
     SparkIrcServerPlanningWritesTest.catalog(spark, CLIENT, service, "client");
     SparkIrcServerPlanningWritesTest.catalog(spark, SERVER, service, "server");
