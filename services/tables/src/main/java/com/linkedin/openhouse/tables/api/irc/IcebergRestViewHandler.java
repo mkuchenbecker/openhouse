@@ -30,6 +30,7 @@ import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.ImmutableLoadViewResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.apache.iceberg.rest.responses.LoadViewResponse;
+import org.apache.iceberg.view.ViewMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.stereotype.Component;
@@ -158,12 +159,26 @@ public class IcebergRestViewHandler {
     String databaseId = viewDatabaseId(namespace, viewId);
     authorizeCommit(databaseId, viewId, request, actingPrincipal);
     ViewsServiceImpl.LoadedView base = onView(() -> load(databaseId, viewId, actingPrincipal));
+    ViewMetadata candidate =
+        IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request);
+    if (!request.updates().isEmpty() && candidate.changes().isEmpty()) {
+      // Updates that change nothing: the commit answers the definition and changes nothing, so it
+      // needs the read privilege, as one with no updates does (authorizeCommit).
+      onView(
+          () -> {
+            viewAudit.auditRefusal(
+                databaseId,
+                viewId,
+                ViewOperationType.REPLACE,
+                () ->
+                    viewsService.authorizeRead(
+                        viewsService.viewReference(databaseId, viewId), actingPrincipal));
+            return null;
+          });
+    }
     CreateUpdateViewRequestBody body =
         IcebergRestViewSpelling.replaceBody(
-            databaseId,
-            viewId,
-            base.getView().getMetadataLocation(),
-            IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request));
+            databaseId, viewId, base.getView().getMetadataLocation(), candidate);
     onView(() -> viewsApiHandler.updateView(body, actingPrincipal));
     return onView(() -> response(load(databaseId, viewId, actingPrincipal)));
   }

@@ -106,19 +106,6 @@ public class TableCommitService {
   }
 
   /**
-   * The privilege decisions of a table load ({@link TablesService#loadTable}), in its order: the
-   * lock administrator privilege on a table with a legacy lock, then the read privilege. For a
-   * request that answers the stored table and changes nothing, decided before anything about the
-   * table is checked or answered.
-   */
-  public void authorizeRead(TableDto base, String principal) {
-    if (LockPolicyValidator.isLegacyLocked(base)) {
-      authorizationUtils.checkLockTablePrivilege(base, principal, Privileges.LOCK_ADMIN);
-    }
-    authorizationUtils.checkTablePrivilege(base, principal, Privileges.GET_TABLE_METADATA);
-  }
-
-  /**
    * The privilege decision the commit core makes for a write to {@code base} (the write privilege,
    * or the system administrator privilege on a replica table), for a caller that decides it before
    * it checks a request against the stored table. The core still makes it, in its own order.

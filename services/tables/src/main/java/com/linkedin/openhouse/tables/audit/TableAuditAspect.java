@@ -248,6 +248,22 @@ public class TableAuditAspect {
     }
   }
 
+  /**
+   * Audits a read a route answers outside the audited load, as the IRC load's success is audited: a
+   * READ SUCCESS event with {@code currentTableRoot}, the metadata location it answers.
+   */
+  public void auditRead(String databaseId, String tableId, String currentTableRoot) {
+    buildAndSendEvent(
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(OperationType.READ)
+            .build(),
+        OperationStatus.SUCCESS,
+        currentTableRoot);
+  }
+
   @SuppressWarnings("unchecked")
   private Pair<TableDto, Boolean> auditTableWrite(
       ProceedingJoinPoint point, String databaseId, String tableId, OperationType operationType)

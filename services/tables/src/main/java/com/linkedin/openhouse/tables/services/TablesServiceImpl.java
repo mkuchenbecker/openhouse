@@ -95,7 +95,8 @@ public class TablesServiceImpl implements TablesService {
   }
 
   /** The checks every table load passes, in order: lock, privilege, lock access, capability. */
-  private void checkLoad(TableDto tableDto, String actingPrincipal) {
+  @Override
+  public void checkLoad(TableDto tableDto, String actingPrincipal) {
     // Restricts reading table to users with lock admin Privileges
     if (LockPolicyValidator.isLegacyLocked(tableDto)) {
       authorizationUtils.checkLockTablePrivilege(tableDto, actingPrincipal, Privileges.LOCK_ADMIN);

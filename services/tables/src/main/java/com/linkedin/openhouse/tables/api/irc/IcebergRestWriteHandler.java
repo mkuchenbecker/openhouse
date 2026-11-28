@@ -270,13 +270,15 @@ public class IcebergRestWriteHandler {
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, request, actingPrincipal);
-    return commitOn(identifier, base, request, actingPrincipal)
-        ? loaded(identifier)
-        : new IcebergRestLoadedTable(
-            base.getTableDto().getTableLocation(),
-            base.getMetadata(),
-            tableFileIo.config(base.getTable()),
-            false);
+    if (commitOn(identifier, base, request, actingPrincipal)) {
+      return loaded(identifier);
+    }
+    answerAsALoad(identifier, base, request, actingPrincipal);
+    return new IcebergRestLoadedTable(
+        base.getTableDto().getTableLocation(),
+        base.getMetadata(),
+        tableFileIo.config(base.getTable()),
+        false);
   }
 
   /**
@@ -318,7 +320,35 @@ public class IcebergRestWriteHandler {
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, change, actingPrincipal);
-    commitOn(identifier, base, change, actingPrincipal);
+    if (!commitOn(identifier, base, change, actingPrincipal)) {
+      answerAsALoad(identifier, base, change, actingPrincipal);
+    }
+  }
+
+  /**
+   * A commit that changed nothing (no updates, or updates Iceberg's metadata builder records as no
+   * change, and no policy patch) wrote nothing and answers the stored table: it is a load, whatever
+   * its updates list held. So it passes every check the table load makes, in the load's order
+   * ({@link TablesService#checkLoad}: LOCK_ADMIN on a legacy-locked table, the read privilege, the
+   * SYSTEM_ONLY access decision, the client-capability gate), and is audited as the load is: a
+   * refusal as a FAILED READ, an answer as a READ. A request with no updates passed those checks
+   * already, before its requirements were checked ({@link #authorize}).
+   */
+  private void answerAsALoad(
+      TableIdentifier identifier,
+      TableDtoWithMetadata base,
+      UpdateTableRequest request,
+      String principal) {
+    String databaseId = identifier.namespace().toString();
+    String tableId = identifier.name();
+    if (!request.updates().isEmpty()) {
+      tableAudit.auditRefusal(
+          databaseId,
+          tableId,
+          OperationType.READ,
+          () -> tablesService.checkLoad(base.getTableDto(), principal));
+    }
+    tableAudit.auditRead(databaseId, tableId, base.getTableDto().getTableLocation());
   }
 
   /**
@@ -331,10 +361,12 @@ public class IcebergRestWriteHandler {
    *
    * <ul>
    *   <li>A request with no updates writes nothing and answers the stored table: it is a load, and
-   *       is decided as the table load is ({@link TableCommitService#authorizeRead}).
+   *       passes the table load's checks ({@link TablesService#checkLoad}).
    *   <li>Any other request is decided as the commit core decides the write ({@link
    *       TableCommitService#authorizeWrite}). The core decides it again, after its lock checks, so
-   *       an allowed caller is answered exactly as before.
+   *       an allowed caller is answered exactly as before. If its updates turn out to change
+   *       nothing, it is a load after all, and passes the load's checks before it is answered
+   *       ({@link #answerAsALoad}).
    * </ul>
    *
    * A refusal is audited as the refusal of the operation the request would be: a READ for a load,
@@ -353,7 +385,7 @@ public class IcebergRestWriteHandler {
           databaseId,
           tableId,
           OperationType.READ,
-          () -> tableCommitService.authorizeRead(stored, principal));
+          () -> tablesService.checkLoad(stored, principal));
     } else {
       tableAudit.auditRefusal(
           databaseId,

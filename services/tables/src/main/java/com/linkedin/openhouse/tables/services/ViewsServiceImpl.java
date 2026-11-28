@@ -145,11 +145,7 @@ public class ViewsServiceImpl implements ViewsService {
    */
   public LoadedView loadReadableView(String databaseId, String viewId, String actingPrincipal) {
     return load(
-        databaseId,
-        viewId,
-        row ->
-            authorizationUtils.checkTablePrivilege(
-                authorizationReference(row), actingPrincipal, Privileges.GET_TABLE_METADATA));
+        databaseId, viewId, row -> authorizeRead(authorizationReference(row), actingPrincipal));
   }
 
   /**
@@ -184,14 +180,13 @@ public class ViewsServiceImpl implements ViewsService {
     }
   }
 
-  /** The read decision of {@link #loadReadableView}, on a view's reference. */
+  /**
+   * The read decision of {@link #loadReadableView}: the read privilege a table load asks for
+   * ({@code GET_TABLE_METADATA}), on a view's reference ({@link #viewReference}).
+   */
   public void authorizeRead(TableDto reference, String actingPrincipal) {
-    try {
-      authorizationUtils.checkTablePrivilege(
-          reference, actingPrincipal, Privileges.GET_TABLE_METADATA);
-    } catch (RuntimeException e) {
-      throw ViewFailureTranslator.translateWriteFailureTo(e);
-    }
+    authorizationUtils.checkTablePrivilege(
+        reference, actingPrincipal, Privileges.GET_TABLE_METADATA);
   }
 
   /**
