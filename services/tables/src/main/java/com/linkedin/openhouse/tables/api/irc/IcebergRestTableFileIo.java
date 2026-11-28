@@ -27,6 +27,7 @@ import org.springframework.stereotype.Component;
  * were. A storage type with no known client class ({@link IcebergRestApiHandler#clientFileIo}) gets
  * no entry either, rather than a class that cannot read it.
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestTableFileIo {
 

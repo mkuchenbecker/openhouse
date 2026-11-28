@@ -26,7 +26,8 @@ import org.springframework.context.ConfigurableApplicationContext;
  * (the fork's 1.12 or LinkedIn's 1.5.2): the reads, writes and views are served on both, the view
  * register only where Iceberg has its class (1.12). The scan planning and credentials routes are
  * not served on either: the embedded server has the default cluster configuration, which leaves
- * scan planning off. The expectation is chosen at runtime from the classpath.
+ * scan planning off, and the fixtures' own settings, which turn the Iceberg REST routes on (they
+ * are off by default). The expectation is chosen at runtime from the classpath.
  */
 public class IcebergRestRoutesBoundaryTest {
 

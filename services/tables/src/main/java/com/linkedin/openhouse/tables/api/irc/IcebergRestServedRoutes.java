@@ -36,6 +36,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * Read once, on first use, when every controller is registered. Spring types only: this bean is
  * created on every Iceberg line, including LinkedIn's 1.5.2, which lacks {@code Endpoint}.
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestServedRoutes {
 

@@ -26,6 +26,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.util.ContentCachingRequestWrapper;
 import org.springframework.web.util.WebUtils;
 
@@ -246,7 +247,7 @@ public class ServiceAuditAspect {
         .endTimestamp(endTime)
         .sessionId(request.getHeader(SESSION_ID))
         .clusterName(clusterProperties.getClusterName())
-        .serviceName(getServiceNameFromRequestURI(request.getRequestURI()))
+        .serviceName(getServiceName(request))
         .user(extractAuthenticatedUserPrincipal())
         .actionType(request.getHeader(ACTION_TYPE))
         .method(HttpMethod.valueOf(request.getMethod()))
@@ -259,14 +260,28 @@ public class ServiceAuditAspect {
         .build();
   }
 
+  /**
+   * The service a request is for, by its path. A path under {@code /iceberg} is the tables
+   * service's only where a handler is mapped for it: the tables service maps that path only with
+   * its Iceberg REST routes on, and with them off such a request is audited as any other path
+   * nothing maps.
+   */
+  private ServiceName getServiceName(HttpServletRequest request) {
+    String uri = request.getRequestURI();
+    if (uri.startsWith(ICEBERG_REST_BASE_PATH + "/")) {
+      return request.getAttribute(HandlerMapping.BEST_MATCHING_HANDLER_ATTRIBUTE) != null
+          ? ServiceName.TABLES_SERVICE
+          : ServiceName.UNRECOGNIZED;
+    }
+    return getServiceNameFromRequestURI(uri);
+  }
+
   private ServiceName getServiceNameFromRequestURI(String uri) {
     if (uri.startsWith("/jobs")) {
       return ServiceName.JOBS_SERVICE;
     } else if (uri.startsWith("/hts")) {
       return ServiceName.HOUSETABLES_SERVICE;
-    } else if (uri.startsWith("/databases")
-        || uri.matches("/v[0-9]+/databases.*")
-        || uri.startsWith(ICEBERG_REST_BASE_PATH + "/")) {
+    } else if (uri.startsWith("/databases") || uri.matches("/v[0-9]+/databases.*")) {
       return ServiceName.TABLES_SERVICE;
     }
     return ServiceName.UNRECOGNIZED;

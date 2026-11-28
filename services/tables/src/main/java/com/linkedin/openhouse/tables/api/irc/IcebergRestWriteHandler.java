@@ -126,6 +126,7 @@ import org.springframework.stereotype.Component;
  *       drop, is refused (400).
  * </ul>
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestWriteHandler {
 

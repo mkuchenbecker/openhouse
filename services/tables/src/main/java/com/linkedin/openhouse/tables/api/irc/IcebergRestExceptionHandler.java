@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * request gets ({@code ServiceAuditAspect}).
  */
 @Slf4j
+@ConditionalOnIcebergRest
 @RestControllerAdvice(basePackageClasses = IcebergRestCatalogController.class)
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class IcebergRestExceptionHandler {

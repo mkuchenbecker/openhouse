@@ -88,6 +88,7 @@ import org.springframework.stereotype.Component;
  * <p>Compiled on the Iceberg 1.12 line only, with its route ({@link
  * IcebergRestRegisterViewController}).
  */
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestViewRegistration {
 
