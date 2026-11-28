@@ -116,6 +116,11 @@ public final class IcebergRestErrors {
         || failure instanceof IllegalArgumentException) {
       return error(HttpStatus.BAD_REQUEST, BadRequestException.class, message);
     }
+    // Before the access-denied test: the authorization backend's own failure is a subclass of the
+    // access-denied exception, and is the native 503, not a refusal.
+    if (failure instanceof AuthorizationServiceException) {
+      return error(HttpStatus.SERVICE_UNAVAILABLE, ServiceUnavailableException.class, message);
+    }
     if (failure instanceof AccessDeniedException || failure instanceof ForbiddenException) {
       return error(HttpStatus.FORBIDDEN, ForbiddenException.class, message);
     }
@@ -125,8 +130,7 @@ public final class IcebergRestErrors {
     if (failure instanceof ServiceUnavailableException) {
       return error(HttpStatus.SERVICE_UNAVAILABLE, ServiceUnavailableException.class, message);
     }
-    if (failure instanceof AuthorizationServiceException
-        || failure instanceof StorageDependencyUnavailableException
+    if (failure instanceof StorageDependencyUnavailableException
         || failure instanceof DependencyUnavailableException) {
       return error(HttpStatus.SERVICE_UNAVAILABLE, ServiceUnavailableException.class, message);
     }

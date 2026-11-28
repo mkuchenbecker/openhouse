@@ -918,13 +918,13 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * KNOWN DEFECT, pinned so that its fix shows as a flipped assertion: when the authorization
-   * backend fails, the IRC table routes answer 403 ForbiddenException, where the native route
-   * answers 503 (the IRC error mapping tests for the access-denied type before its subclass that
-   * means the backend failed). It fails closed: nothing is answered.
+   * When the authorization backend itself fails, the IRC table routes answer what the native route
+   * answers, 503 with the backend's message (a client may retry it), not the 403 of a refusal, on
+   * the load, the empty commit, a commit with updates and the one-table transaction. It fails
+   * closed: nothing is answered and nothing is written.
    */
   @Test
-  void knownDefectAnAuthorizationBackendFailureIs403OnTheIrcTableRoutes() throws Exception {
+  void anAuthorizationBackendFailureIs503OnTheIrcTableRoutesAsNatively() throws Exception {
     create("f1");
     TableMetadata stored = IrcWrite.load(mvc, DB, "f1");
     when(authorizationHandler.checkAccessDecision(
@@ -932,16 +932,26 @@ public class IrcWriteRoutesAuthTest {
         .thenThrow(
             new org.springframework.security.access.AuthorizationServiceException(
                 "Cannot perform Opa access check"));
-    assertEquals(503, CommitPathHttp.status(get(mvc, DB, "f1")));
-    assertIrcError(IrcHttp.get(mvc, IrcWrite.table(DB, "f1")), 403, "ForbiddenException");
-    org.springframework.test.web.servlet.MvcResult result = IrcWrite.commit(mvc, DB, "f1", EMPTY);
-    assertIrcError(result, 403, "ForbiddenException");
-    assertNoStoredIdIn(IrcHttp.body(result), stored);
-    assertIrcError(
-        IrcWrite.commit(mvc, DB, "f1", request(Collections.emptyList(), setUserProperty())),
-        403,
-        "ForbiddenException");
+    String nativeMessage = message(get(mvc, DB, "f1").andExpect(status().isServiceUnavailable()));
+    assertEquals("Cannot perform Opa access check", nativeMessage);
+    List<org.springframework.test.web.servlet.MvcResult> results = new ArrayList<>();
+    results.add(IrcHttp.get(mvc, IrcWrite.table(DB, "f1")));
+    results.add(IrcWrite.commit(mvc, DB, "f1", EMPTY));
+    results.add(
+        IrcWrite.commit(mvc, DB, "f1", request(Collections.emptyList(), setUserProperty())));
+    results.add(
+        IrcWrite.transaction(
+            mvc, IrcWrite.change(DB, "f1", request(Collections.emptyList(), setUserProperty()))));
+    for (org.springframework.test.web.servlet.MvcResult result : results) {
+      assertEquals(
+          nativeMessage,
+          assertIrcError(result, 503, "ServiceUnavailableException").message(),
+          result.getRequest().getRequestURI());
+      assertNoStoredIdIn(IrcHttp.body(result), stored);
+    }
     reset(authorizationHandler);
     stubDecision(true);
+    assertEquals(
+        stored.metadataFileLocation(), IrcWrite.load(mvc, DB, "f1").metadataFileLocation());
   }
 }
