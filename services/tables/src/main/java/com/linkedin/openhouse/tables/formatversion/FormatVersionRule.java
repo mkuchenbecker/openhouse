@@ -212,6 +212,18 @@ public class FormatVersionRule {
     checkUpdate("Update", table, stored, properties);
   }
 
+  /**
+   * Refuses, whatever the switch, an update that asks for a version above the table's that it
+   * cannot have, or below a v3 table's, with this rule's own 400 ({@value #REFUSED}). For the
+   * Iceberg REST commit routes, which have no answer of LinkedIn main to keep and on which a server
+   * failure would tell the client that the commit's state is unknown.
+   *
+   * @throws RequestValidationFailureException as {@link #checkUpdate} does with the switch on
+   */
+  public void refuseUpdate(String table, int stored, Map<String, String> properties) {
+    checkUpdate("Update", table, stored, properties);
+  }
+
   private void checkUpdate(
       String operation, String table, int stored, Map<String, String> properties) {
     OptionalInt asked = requested(properties);

@@ -267,6 +267,33 @@ public class FormatVersionSwitchOffTest {
         .sum();
   }
 
+  /**
+   * An Iceberg REST commit, or a transaction, whose changes set the {@code format-version} property
+   * above the table's is refused with 400 {@code FORMAT_VERSION_REFUSED}, as on the branch before:
+   * these routes have no answer of LinkedIn main to keep, and a server failure would tell an
+   * Iceberg client that the commit's state is unknown. The native PUT keeps main's answer.
+   */
+  @Test
+  void anIcebergRestCommitSettingTheFormatVersionPropertyIsRefusedWith400() throws Exception {
+    String db = "fvoff_irc_property";
+    make(plain(db));
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    UpdateTableRequest commit =
+        IrcWrite.simple(
+            base,
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "3"))));
+    for (org.springframework.test.web.servlet.MvcResult answer :
+        Arrays.asList(
+            IrcWrite.commit(mvc, db, "t", commit),
+            IrcWrite.transaction(mvc, IrcWrite.change(db, "t", commit)))) {
+      String refusal = assertIrcError(answer, 400, "BadRequestException").message();
+      assertTrue(refusal.startsWith("FORMAT_VERSION_REFUSED: "), refusal);
+      assertTrue(refusal.contains("asks for format version 3"), refusal);
+    }
+    assertEquals(2, version(db));
+  }
+
   // ---------------------------------------------------------------- unchanged answers
 
   /** A create that asks for the cluster's version, a lower one or no number: as before. */
