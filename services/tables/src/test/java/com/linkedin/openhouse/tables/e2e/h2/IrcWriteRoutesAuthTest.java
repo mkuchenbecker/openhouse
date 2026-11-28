@@ -768,10 +768,11 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * On a table with a legacy lock, a commit that changes nothing needs what the load needs there,
+   * On a table with a legacy lock, a commit with no updates needs what the load needs there,
    * LOCK_ADMIN: denied that one privilege, the caller gets the native load's refusal and no
-   * metadata. A commit that changes the table is refused as the native PUT refuses a locked table,
-   * for an allowed caller, and is the write refusal for one who may not write.
+   * metadata. A commit with updates, whether they change the table or not, is refused as the native
+   * PUT refuses a locked table, before anything else and for every caller, also one who may not
+   * write.
    */
   @Test
   void onALegacyLockedTableACommitThatChangesNothingNeedsLockAdmin() throws Exception {
@@ -785,10 +786,15 @@ public class IrcWriteRoutesAuthTest {
           noChangeCommits(stored).entrySet()) {
         org.springframework.test.web.servlet.MvcResult result =
             IrcWrite.commit(mvc, DB, "l1", commit.getValue());
-        assertEquals(
-            nativeMessage,
-            assertIrcError(result, 403, "ForbiddenException").message(),
-            commit.getKey());
+        if (commit.getValue().updates().isEmpty()) {
+          assertEquals(
+              nativeMessage,
+              assertIrcError(result, 403, "ForbiddenException").message(),
+              commit.getKey());
+        } else {
+          String locked = assertIrcError(result, 400, "BadRequestException").message();
+          assertTrue(locked.contains("locked state"), commit.getKey() + ": " + locked);
+        }
         assertNoStoredIdIn(IrcHttp.body(result), stored);
       }
       UpdateTableRequest change = request(Collections.emptyList(), setUserProperty());
@@ -797,7 +803,10 @@ public class IrcWriteRoutesAuthTest {
               .message();
       assertTrue(locked.contains("locked state"), locked);
       denyOnly(Privileges.UPDATE_TABLE_METADATA);
-      assertIrcError(IrcWrite.commit(mvc, DB, "l1", change), 403, "ForbiddenException");
+      assertEquals(
+          locked,
+          assertIrcError(IrcWrite.commit(mvc, DB, "l1", change), 400, "BadRequestException")
+              .message());
     } finally {
       unlockTable("l1");
     }
@@ -869,6 +878,70 @@ public class IrcWriteRoutesAuthTest {
       }
     } finally {
       unlockTable("w1");
+    }
+  }
+
+  /**
+   * On a locked table, a commit with updates is refused as the native PUT refuses it before any of
+   * its requirements is checked against the stored table, whether its updates change the table or
+   * not: a legacy lock is refused for every caller (here one denied only LOCK_ADMIN, and one denied
+   * only the write privilege), a SYSTEM_ONLY lock for a caller the system-only decision denies. The
+   * answer is the native refusal, with none of the stored ids a failing requirement would name.
+   */
+  @Test
+  void onALockedTableAFailingRequirementIsTheNativeRefusalAndTellsNothingStored() throws Exception {
+    java.util.Map<String, UpdateTableRequest> commits = new java.util.LinkedHashMap<>();
+    commits.put("a change", request(Collections.singletonList(wrongUuid()), setUserProperty()));
+    commits.put(
+        "no change",
+        request(
+            Collections.singletonList(wrongUuid()),
+            Collections.singletonList(new MetadataUpdate.SetProperties(Collections.emptyMap()))));
+
+    create("lk1");
+    TableMetadata legacy = IrcWrite.load(mvc, DB, "lk1");
+    lockTable("lk1", null);
+    try {
+      String getJson = json(get(mvc, DB, "lk1"));
+      for (Privileges denied :
+          new Privileges[] {Privileges.LOCK_ADMIN, Privileges.UPDATE_TABLE_METADATA}) {
+        denyOnly(denied);
+        String nativeMessage =
+            message(put(mvc, bodyFromGet(getJson)).andExpect(status().isBadRequest()));
+        assertTrue(nativeMessage.contains("locked state and cannot be updated"), nativeMessage);
+        for (java.util.Map.Entry<String, UpdateTableRequest> commit : commits.entrySet()) {
+          org.springframework.test.web.servlet.MvcResult result =
+              IrcWrite.commit(mvc, DB, "lk1", commit.getValue());
+          assertEquals(
+              nativeMessage,
+              assertIrcError(result, 400, "BadRequestException").message(),
+              denied + ", " + commit.getKey());
+          assertNoStoredIdIn(IrcHttp.body(result), legacy);
+        }
+      }
+    } finally {
+      unlockTable("lk1");
+    }
+
+    create("lk2");
+    TableMetadata systemOnly = IrcWrite.load(mvc, DB, "lk2");
+    String getJson = json(get(mvc, DB, "lk2"));
+    lockTable("lk2", "SYSTEM_ONLY");
+    try {
+      // Every privilege allowed; the system-only decision is the default handler's, which denies a
+      // request that does not declare itself a system one.
+      String nativeMessage = message(put(mvc, bodyFromGet(getJson)).andExpect(status().isLocked()));
+      for (java.util.Map.Entry<String, UpdateTableRequest> commit : commits.entrySet()) {
+        org.springframework.test.web.servlet.MvcResult result =
+            IrcWrite.commit(mvc, DB, "lk2", commit.getValue());
+        assertEquals(
+            nativeMessage,
+            assertIrcError(result, 423, "SystemOnlyLockAccessDeniedException").message(),
+            commit.getKey());
+        assertNoStoredIdIn(IrcHttp.body(result), systemOnly);
+      }
+    } finally {
+      unlockTable("lk2");
     }
   }
 

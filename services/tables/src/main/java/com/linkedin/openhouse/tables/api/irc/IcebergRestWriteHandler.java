@@ -362,9 +362,12 @@ public class IcebergRestWriteHandler {
    * <ul>
    *   <li>A request with no updates writes nothing and answers the stored table: it is a load, and
    *       passes the table load's checks ({@link TablesService#checkLoad}).
-   *   <li>Any other request is decided as the commit core decides the write ({@link
-   *       TableCommitService#authorizeWrite}). The core decides it again, after its lock checks, so
-   *       an allowed caller is answered exactly as before. If its updates turn out to change
+   *   <li>Any other request passes the checks the commit core runs on the stored table before it
+   *       uses the request, by the core's own method and in the core's order ({@link
+   *       TableCommitService#authorizeWrite}): a table with a legacy lock is refused for every
+   *       caller, as the native update refuses it before anything else; then the write privilege;
+   *       then the SYSTEM_ONLY access decision. The core runs them again, so an allowed caller on
+   *       an unlocked table is answered exactly as before. If its updates turn out to change
    *       nothing, it is a load after all, and passes the load's checks before it is answered
    *       ({@link #answerAsALoad}).
    * </ul>
@@ -391,8 +394,20 @@ public class IcebergRestWriteHandler {
           databaseId,
           tableId,
           auditedKind(request),
-          () -> tableCommitService.authorizeWrite(stored, principal));
+          () -> tableCommitService.authorizeWrite(identifier, stored, principal, kind(request)));
     }
+  }
+
+  /**
+   * The kind of the commit {@code request} would be, read from the request, since its updates are
+   * not applied before it is authorized: the snapshots route's for a replace or a commit that adds,
+   * removes or moves a snapshot, the table PUT's otherwise ({@link #auditedKind}). It picks the
+   * wording of a legacy-locked table's refusal.
+   */
+  private static CommitKind kind(UpdateTableRequest request) {
+    return auditedKind(request) == OperationType.UPDATE
+        ? CommitKind.TABLE_UPDATE
+        : CommitKind.SNAPSHOTS_UPDATE;
   }
 
   /**

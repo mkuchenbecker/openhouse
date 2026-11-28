@@ -67,18 +67,7 @@ final class TableCommitCore {
     if (kind == CommitKind.TABLE_UPDATE) {
       checkIfLockPoliciesUpdated(base, context);
     }
-    if (LockPolicyValidator.isLegacyLocked(base)) {
-      throw new UnsupportedClientOperationException(
-          UnsupportedClientOperationException.Operation.LOCKED_TABLE_OPERATION,
-          kind == CommitKind.TABLE_UPDATE
-              ? String.format(
-                  "Table %s.%s is in locked state and cannot be updated.", databaseId, tableId)
-              : String.format(
-                  "Table %s.%s is in locked state and cannot be written to", databaseId, tableId));
-    }
-    authorizationUtils.checkTableWritePathPrivileges(
-        base, principal, Privileges.UPDATE_TABLE_METADATA);
-    authorizationUtils.checkSystemOnlyLockAccess(base, principal);
+    checkWriteAccess(base, principal, kind, databaseId, tableId);
 
     // An optimization to avoid persisting an unchanged table (native table PUT only).
     if (kind == CommitKind.TABLE_UPDATE
@@ -103,6 +92,28 @@ final class TableCommitCore {
     return kind == CommitKind.TABLE_UPDATE
         ? Pair.of(saveTableUpdate(repository, candidate), false)
         : Pair.of(saveSnapshotsUpdate(commit, candidate), false);
+  }
+
+  /**
+   * The checks of a write to the stored table {@code base} that depend on nothing in the request
+   * but its kind, in the order {@link #commit} runs them: the refusal of a table with a legacy lock
+   * (for every caller), the write privilege (the system administrator privilege on a replica
+   * table), and the SYSTEM_ONLY access decision.
+   */
+  void checkWriteAccess(
+      TableDto base, String principal, CommitKind kind, String databaseId, String tableId) {
+    if (LockPolicyValidator.isLegacyLocked(base)) {
+      throw new UnsupportedClientOperationException(
+          UnsupportedClientOperationException.Operation.LOCKED_TABLE_OPERATION,
+          kind == CommitKind.TABLE_UPDATE
+              ? String.format(
+                  "Table %s.%s is in locked state and cannot be updated.", databaseId, tableId)
+              : String.format(
+                  "Table %s.%s is in locked state and cannot be written to", databaseId, tableId));
+    }
+    authorizationUtils.checkTableWritePathPrivileges(
+        base, principal, Privileges.UPDATE_TABLE_METADATA);
+    authorizationUtils.checkSystemOnlyLockAccess(base, principal);
   }
 
   /**

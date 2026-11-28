@@ -3,8 +3,8 @@ package com.linkedin.openhouse.tables.services;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
-import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.commit.CommitContext;
+import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.commit.TableCommit;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PartitionSpecMapper;
 import com.linkedin.openhouse.tables.dto.mapper.iceberg.PoliciesSpecMapper;
@@ -106,13 +106,17 @@ public class TableCommitService {
   }
 
   /**
-   * The privilege decision the commit core makes for a write to {@code base} (the write privilege,
-   * or the system administrator privilege on a replica table), for a caller that decides it before
-   * it checks a request against the stored table. The core still makes it, in its own order.
+   * The checks the commit core runs on a write of {@code kind} to the stored table {@code base}
+   * before it uses anything of the request but its kind, by the core's own method and in its order
+   * (the legacy-lock refusal, the write privilege or, on a replica table, the system administrator
+   * privilege, the SYSTEM_ONLY access decision), for a caller that runs them before it checks a
+   * request against the stored table. The core still runs them, in its own order.
    */
-  public void authorizeWrite(TableDto base, String principal) {
-    authorizationUtils.checkTableWritePathPrivileges(
-        base, principal, Privileges.UPDATE_TABLE_METADATA);
+  public void authorizeWrite(
+      TableIdentifier identifier, TableDto base, String principal, CommitKind kind) {
+    core()
+        .checkWriteAccess(
+            base, principal, kind, identifier.namespace().toString(), identifier.name());
   }
 
   /**
@@ -126,11 +130,14 @@ public class TableCommitService {
 
   /** Commits an already decoded {@link TableCommit}. */
   public Pair<TableDto, Boolean> commit(TableCommit commit) {
+    return core().commit(commit);
+  }
+
+  private TableCommitCore core() {
     return new TableCommitCore(
-            openHouseInternalRepository,
-            authorizationUtils,
-            clientCapabilityGate,
-            readBridgeStripProtection)
-        .commit(commit);
+        openHouseInternalRepository,
+        authorizationUtils,
+        clientCapabilityGate,
+        readBridgeStripProtection);
   }
 }
