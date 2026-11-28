@@ -17,7 +17,8 @@ classpath), and on the 1.5.2 line v2 position delete files accumulate.
   (17: 7 run, 10 skipped, 0 failed) + RestHttpPathWriteStatementsTest 19/0; 1.12 RowLevel x3 17/0,
   RestHttpPathWriteStatementsTest 19/0, FormatV3SparkTest 7/0; 4.2 SparkIrcRowLevelStatementsTest 17/0,
   SparkIrcWriteStatementsTest 19/0, SparkIrcFormatV3Test 8/0. check-test-groups: partition holds.
-- Draft pull request 151 opened; waiting for CI on 47d20539.
+- Draft pull request 151 opened. CI on 47d20539: 13 jobs success, 1 skipped by the workflow (reference build's
+  Docker job). Done; the next step is the independent review, then the orchestrator's merge.
 - Behavior changes against the base: none, test sources only (spark-3.5 itest src/shared/smoke, src/test;
   spark-4.2 itest src/service, src/smoke, src/test).
 
@@ -75,3 +76,22 @@ On 1.5.2 [ran]: per path 17 tests, 7 run (v2), 10 skipped by assumption (v3), 0 
 - Avro in the 3.5 itest JVM: ClassCastException, thin iceberg-core next to the shaded runtime (declared).
 - Upgrade: the first DELETE on v3 folds the position delete into one vector and the position delete file stops
   being live; old rows get row ids from that commit.
+
+## Review round (pull request 151 review, 2026-11-27)
+
+- F1-F7 edited in the worktree, not yet compiled/committed (waiting for 6 GB free memory). Next: compile,
+  spotless, mutation check (v3MergeOnReadParquet created copy-on-write, legacy path, must go red), revert,
+  run 3.5 RowLevel x3 on 1.12 and 1.5.2 and 4.2 RowLevel + SparkIrcFormatV3Test, commit, push, CI.
+- 8f096093 committed and pushed (F1, F2, F3 first form, F4-F7). Mutation check [ran]: v3MergeOnReadParquet
+  created copy-on-write, legacy path: 11 unexpected values (write modes; rows removed through delete files 1/1/2/1/1
+  vs 0; "a deletion vector is live" false), reverted, not committed.
+- Full run at 8f096093 [ran]: F3's first form (added-rows == rows of new data files) failed on
+  v3CopyOnWriteParquetPartitioned on all four paths (DELETE 2 vs 5, MERGE update 3 vs 5). Not a defect: the
+  spec makes added-rows the upper bound, the added + existing row counts of manifests given a first-row-id
+  (a rewritten manifest carries the other partition's file). Check corrected to the spec plus a lower bound
+  (uncommitted, rerunning everything).
+- b27e5133 committed and pushed (added-rows per the spec). Full rerun at b27e5133 [ran]: 1.12 RowLevel x3 17/0,
+  RestHttpPathWriteStatementsTest 19/0; 4.2 SparkIrcRowLevelStatementsTest 17/0, SparkIrcWriteStatementsTest 19/0,
+  SparkIrcFormatV3Test 8/0; 1.5.2 RowLevel x3 17 (10 skipped)/0, RestHttpPathWriteStatementsTest 19/0.
+  check-test-groups holds. Pull request body updated. Waiting for CI on b27e5133.
+- CI on b27e5133: 13 jobs success; skipped by the workflow: reference Docker job and two summary entries. Done.

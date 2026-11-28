@@ -1,8 +1,8 @@
 # Records: the agents' raw working records
 
-Bottom line: these 92 files (91 markdown records and one build log) are the raw, unedited records written by the
+Bottom line: these 101 files (100 markdown records and one build log) are the raw, unedited records written by the
 agents that did each piece of work, plus the ten files of the retroactive review of 2026-11-27 (the common brief and
-the nine reviewers' reports, `review-*.md`), and the scout's report and the fix-forward work's brief and records of the same day. They were copied byte for byte from the orchestrator's session directory
+the nine reviewers' reports, `review-*.md`), and the scout's report and the fix-forward work's brief and records of the same day. Added 2026-11-28: the records of the first pull requests that were reviewed by an independent sub-agent before merge (`pr-review-*.md`, one report per pull request, with the common brief `pr-review-brief-common.md` every such reviewer works under), and the authors' records of those pull requests. They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
 container. The line limit and wording rules of the notes do not apply to them, so they use abbreviations and other
 shorthand. Where they and a note disagree, the record and the merge commit message are closer to the source.
@@ -16,7 +16,7 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 - "Pull request" numbers are on `mkuchenbecker/openhouse` unless marked iceberg. They come from
   `../45-merged-pull-requests.md` by work item id, or from the record itself. "not stated" means neither says.
 - "(by title)" in the last column means the note's title matches the record's subject; it does not cite it by name.
-- The two unmerged pieces of work are `x2-x3-v3-row-level.md` and `small-batch-w13-w14-n9.md`; start there to resume.
+- The unmerged piece of work whose record is kept here is `small-batch-w13-w14-n9.md` (W13 is done by pull request 154; W14 and N9 are not started); start there to resume. `x2-x3-v3-row-level.md` is merged (pull request 151).
 - `full-rest-stub.log` is a raw build log (4071 lines) kept with the records; it is not cited by a note.
 
 | Record | Work item ids | Pull request | Result file or note that summarizes it |
@@ -95,7 +95,7 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `x1-format-v3.md` | X1, W6 | pull request 124 | `57-x1-format-v3-result.md` |
 | `x10-v3-maintenance-concurrency.md` | X10 (concurrency) | pull request 130 | `65-x10-concurrency-result.md` |
 | `x10b-v3-maintenance-branches-evolution.md` | X10 (rest), X15 | pull request 137 | `76-x10-shapes-result.md` |
-| `x2-x3-v3-row-level.md` | X2, X3 | not stated | none (unmerged; cited in `18-state.md`) |
+| `x2-x3-v3-row-level.md` | X2, X3 | pull request 151 (merge `afe8d3c8`) | `../45-merged-pull-requests.md`, `../91-first-reviewed-merges-result.md` |
 | `x5-v3-types.md` | X5 | pull request 129 | `68-x5-v3-types-result.md` |
 | `x6-maintenance-v3.md` | X6 | pull request 125 | `63-x6-maintenance-v3-result.md` |
 | `full-rest-stub.log` | not stated | not stated | not stated |
@@ -111,5 +111,13 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `review-ci-fixtures-tests.md` | retroactive review | pull requests 80, 81, 82, 83, 85, 90, 93, 104, 108, 111, 115, 133, 138, 140, 144, 146, 148, 150 | retroactive review, 2026-11-27 |
 | `fix-brief-common.md` | fix-forward work | the fix-forward pull requests of 2026-11-27 | the common brief every fix-forward agent works under (see `../86-review-findings-and-fix-forward.md`) |
 | `scout-namespace-and-prior-work.md` | scout of the owner's namespace line | upstream pull requests 869 to 871 and the earlier drafts on the fork | `../89-scout-namespace-and-prior-work-result.md` |
-| `authorize-first-on-rest-commits.md` | FF-01, FF-02, FF-03 | in flight (branch `irc/authorize-first-on-rest-commits`) | `../18-state.md` (in flight) |
-| `build-on-owner-namespace-stack.md` | merge of the owner's namespace stack | in flight (branch `irc/build-on-owner-namespace-stack`) | `../18-state.md` (in flight) |
+| `authorize-first-on-rest-commits.md` | FF-01, FF-02, FF-03 | pull request 152, in review, not merged (branch `irc/authorize-first-on-rest-commits`) | `../18-state.md` (in flight) |
+| `build-on-owner-namespace-stack.md` | merge of the owner's namespace stack, D54 | pull request 153 (merge `bc0ff1e8`) | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` part D |
+| `restore-jobs-and-client-behavior.md` | FF-10, FF-14, FF-15, FF-16, W13 | pull request 154 (merge `7cf347d7`) | `../91-first-reviewed-merges-result.md` |
+| `restore-native-service-behavior.md` | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40 | pull request 156, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `ci-dynamic-version-resolution.md` | FF-41 (CI dependency resolution) | pull request 155, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `pr-review-brief-common.md` | independent review of one pull request before merge | the pull requests merged under the owner's standing order S58 | the common brief every pull request reviewer works under |
+| `pr-review-151.md` | review of pull request 151 (X2, X3) | pull request 151 | `../91-first-reviewed-merges-result.md` |
+| `pr-review-152.md` | review of pull request 152 (FF-01, FF-02, FF-03) | pull request 152, not merged | `../91-first-reviewed-merges-result.md` (What the reviews are finding) |
+| `pr-review-153.md` | review of pull request 153 (owner's namespace stack) | pull request 153 | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` part D |
+| `pr-review-154.md` | review of pull request 154 (restore jobs and client) | pull request 154 | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` |
