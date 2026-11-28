@@ -5,6 +5,7 @@ import com.linkedin.openhouse.common.audit.DummyServiceAuditHandler;
 import com.linkedin.openhouse.common.audit.model.ServiceAuditEvent;
 import com.linkedin.openhouse.tables.audit.DummyTableAuditHandler;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
+import com.linkedin.openhouse.tablestest.HouseNamespacesInMemoryRepository;
 import org.mockito.Mockito;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
@@ -14,6 +15,7 @@ import org.springframework.boot.autoconfigure.domain.EntityScan;
 import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
@@ -45,6 +47,9 @@ import org.springframework.context.annotation.PropertySource;
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
 @PropertySource("classpath:tables-service-test-h2.properties")
+// The namespace-record store of the embedded service, which runs without a House Tables service:
+// the IRC namespace routes read and write records through it.
+@Import(HouseNamespacesInMemoryRepository.class)
 public class SpringH2Application {
 
   public static void main(String[] args) {

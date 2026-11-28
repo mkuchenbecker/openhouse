@@ -4,8 +4,10 @@ import static com.linkedin.openhouse.tables.e2e.h2.CommitPathHttp.newTable;
 import static com.linkedin.openhouse.tables.e2e.h2.CommitPathHttp.post;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.linkedin.openhouse.common.exception.checked.NotFoundException;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.model.TableModelConstants;
 import java.lang.reflect.InvocationTargetException;
@@ -51,6 +53,10 @@ import org.springframework.util.ClassUtils;
  * default method calling another) is not seen, only what the service asks of the repository, which
  * is what a House Tables request is in production.
  *
+ * <p>The namespace-record store ({@link HouseNamespaceRepository}, a keyed store in House Tables)
+ * is recorded the same way: {@code getByName[key]=1} for a record read, {@code =0} for a miss, and
+ * its writes as {@code create[write]}, {@code update[write]}, {@code delete[write]}.
+ *
  * <p>Each record is {@code method[kind]=rows}: {@code list} for the unpaged listing of a database,
  * {@code page<n>x<size>} for a paged one, {@code key} for a keyed read; a listing of every database
  * ({@code findAll}) is recorded without its row count, which depends on what other tests left in
@@ -70,6 +76,9 @@ public class IrcHouseTableReadsTest {
   /** A database that holds nothing. */
   private static final String NONE = "v17_none";
 
+  /** A namespace that has a record and holds nothing. */
+  private static final String REC = "v17_record";
+
   private static final String[] TABLES = {"t1", "t2", "t3"};
 
   private static final Schema SCHEMA =
@@ -86,6 +95,9 @@ public class IrcHouseTableReadsTest {
       return new BeanPostProcessor() {
         @Override
         public Object postProcessAfterInitialization(Object bean, String beanName) {
+          if (bean instanceof HouseNamespaceRepository) {
+            return recordingNamespaces((HouseNamespaceRepository) bean);
+          }
           return bean instanceof HouseTableRepository ? recording(bean) : bean;
         }
       };
@@ -115,6 +127,33 @@ public class IrcHouseTableReadsTest {
             }
           }
           return result;
+        });
+  }
+
+  private static Object recordingNamespaces(HouseNamespaceRepository target) {
+    return Proxy.newProxyInstance(
+        IrcHouseTableReadsTest.class.getClassLoader(),
+        ClassUtils.getAllInterfaces(target),
+        (proxy, method, args) -> {
+          String name = method.getName();
+          boolean isRead = name.equals("getByName");
+          boolean isWrite = name.equals("create") || name.equals("update") || name.equals("delete");
+          try {
+            Object result = method.invoke(target, args);
+            if (isRead) {
+              READS.add("getByName[key]=1");
+            } else if (isWrite) {
+              READS.add(name + "[write]");
+            }
+            return result;
+          } catch (InvocationTargetException e) {
+            if (isRead && e.getCause() instanceof NotFoundException) {
+              READS.add("getByName[key]=0");
+            } else if (isWrite) {
+              READS.add(name + "[write]");
+            }
+            throw e.getCause();
+          }
         });
   }
 
@@ -199,21 +238,112 @@ public class IrcHouseTableReadsTest {
         readsOf(IrcHttp.head(mvc, "/v1/namespaces/" + DB), 204));
   }
 
+  /** A miss reads the record (one keyed read) before the database list. */
   @Test
   void namespaceExistsMissing() throws Exception {
     reads();
     assertEquals(
-        list("findAllByDatabaseId[page0x1]=0", "findAll[all databases]"),
+        list("findAllByDatabaseId[page0x1]=0", "getByName[key]=0", "findAll[all databases]"),
         readsOf(IrcHttp.head(mvc, "/v1/namespaces/" + NONE), 404));
   }
 
+  /** A load reads the record first, for its properties; with none, the table probe as before. */
   @Test
   void loadNamespace() throws Exception {
     threeTables();
     reads();
     assertEquals(
-        list("findAllByDatabaseId[page0x1]=1"),
+        list("getByName[key]=0", "findAllByDatabaseId[page0x1]=1"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + DB), 200));
+  }
+
+  /** A namespace with a record: the record alone, for load and exists. */
+  @Test
+  void loadAndExistsOfANamespaceWithARecordOnly() throws Exception {
+    createRecord();
+    assertEquals(list("getByName[key]=1"), readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + REC), 200));
+    assertEquals(
+        list("findAllByDatabaseId[page0x1]=0", "getByName[key]=1"),
+        readsOf(IrcHttp.head(mvc, "/v1/namespaces/" + REC), 204));
+    assertEquals(
+        list("findAllByDatabaseId[list]=0", "getByName[key]=1"),
+        readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + REC + "/tables"), 200));
+  }
+
+  /** A create probes for a table and a view (one row each), then writes the record. */
+  @Test
+  void createNamespace() throws Exception {
+    reads();
+    try {
+      assertEquals(
+          list(
+              "findAllByDatabaseId[page0x1]=0",
+              "findAllViewsByDatabaseId[page0x1]=0",
+              "create[write]"),
+          readsOf(IrcNamespaceRoutesTest.createNamespace(mvc, REC, Collections.emptyMap()), 200));
+    } finally {
+      IrcNamespaceRoutesTest.dropNamespace(mvc, REC);
+      reads();
+    }
+  }
+
+  /** A create of a namespace that holds a table: the table probe, and nothing else. */
+  @Test
+  void createNamespaceThatHoldsATable() throws Exception {
+    threeTables();
+    reads();
+    assertEquals(
+        list("findAllByDatabaseId[page0x1]=1"),
+        readsOf(IrcNamespaceRoutesTest.createNamespace(mvc, DB, Collections.emptyMap()), 409));
+  }
+
+  /** An update is the namespace service's: one keyed read of the record and one replace. */
+  @Test
+  void updateNamespaceProperties() throws Exception {
+    createRecord();
+    try {
+      assertEquals(
+          list("getByName[key]=1", "update[write]"),
+          readsOf(
+              IrcNamespaceRoutesTest.updateProperties(
+                  mvc, REC, Collections.singletonMap("k", "v"), Collections.emptyList()),
+              200));
+    } finally {
+      IrcNamespaceRoutesTest.dropNamespace(mvc, REC);
+      reads();
+    }
+  }
+
+  /** A drop probes for a table and a view, then deletes the record. */
+  @Test
+  void dropNamespace() throws Exception {
+    createRecord();
+    assertEquals(
+        list(
+            "findAllByDatabaseId[page0x1]=0",
+            "findAllViewsByDatabaseId[page0x1]=0",
+            "delete[write]"),
+        readsOf(IrcNamespaceRoutesTest.dropNamespace(mvc, REC), 204));
+  }
+
+  /** A drop of a namespace that holds a table: the table probe, and nothing else. */
+  @Test
+  void dropNamespaceThatHoldsATable() throws Exception {
+    threeTables();
+    reads();
+    assertEquals(
+        list("findAllByDatabaseId[page0x1]=1"),
+        readsOf(IrcNamespaceRoutesTest.dropNamespace(mvc, DB), 409));
+  }
+
+  /** {@link #REC} with a record and no table, and a fresh start of the reads. */
+  private void createRecord() throws Exception {
+    assertEquals(
+        200,
+        IrcNamespaceRoutesTest.createNamespace(mvc, REC, Collections.emptyMap())
+            .getResponse()
+            .getStatus());
+    reads();
   }
 
   @Test
@@ -274,7 +404,7 @@ public class IrcHouseTableReadsTest {
   void listTablesMissing() throws Exception {
     reads();
     assertEquals(
-        list("findAllByDatabaseId[list]=0", "findAll[all databases]"),
+        list("findAllByDatabaseId[list]=0", "getByName[key]=0", "findAll[all databases]"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + NONE + "/tables"), 404));
   }
 
