@@ -83,6 +83,46 @@ jobs:
           python3 scripts/ci/check-private-ids.py --self-test
           python3 scripts/ci/check-private-ids.py
 
+  # The test groups together must run exactly the line's `build`, each test task in one job
+  # (scripts/ci/check-test-groups.py, by Gradle dry runs), so that a project or task the cut would
+  # drop, or run twice, fails the line, not silently. Beside the groups, not before them: only the
+  # line's verdict below waits for it. A dry run configures the build and resolves nothing, so it
+  # needs no published fork (gradle/iceberg-fork.gradle).
+  partition:
+    name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, test-group partition
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # The line's Gradle cache entry, as the test jobs restore it.
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      - name: Self-test the verdict of Build and Run Tests
+        run: python3 scripts/ci/check-needed-jobs.py --self-test
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'microsoft'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      # As in the test jobs; this job only reads the cache.
+      - name: Prepare the restored Gradle cache
+        run: scripts/ci/prepare-gradle-home.sh reader
+
+      - name: Check that the test groups add up to the build
+        env:
+          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
+        run: python3 scripts/ci/check-test-groups.py $LINE_FLAG
+
   tests:
     name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, ${{ matrix.group }}
     needs: plan
@@ -270,3 +310,31 @@ jobs:
       - name: List the dependency files the job downloaded
         if: ${{ !cancelled() }}
         run: scripts/ci/list-downloaded-dependencies.sh "$RUNNER_TEMP/gradle-cache-restored"
+
+  # The line's one check: the pull request check LinkedIn's single job reported, by the same name
+  # ("build-run-tests / Build and Run Tests" for the default line, which branch protection can
+  # require). It needs every job of the line and runs whatever their outcome, so a red, cancelled
+  # or skipped job makes it red (scripts/ci/check-needed-jobs.py); only the Docker job, which the
+  # reference line skips by design, may be skipped there. Not when the whole run was cancelled (a
+  # newer push to the pull request supersedes it): then it does not run, instead of reporting
+  # failure on the superseded commit; a job that is cancelled on its own (a time limit) still
+  # makes it red.
+  build-and-run-tests:
+    name: Build and Run Tests
+    if: ${{ !cancelled() }}
+    needs: [plan, partition, tests, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the verdict script
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/ci/check-needed-jobs.py
+          sparse-checkout-cone-mode: false
+
+      - name: Require every job of the line to have succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          ALLOW_SKIP: ${{ inputs.line == 'reference' && '--allow-skip docker' || '' }}
+        run: python3 scripts/ci/check-needed-jobs.py $ALLOW_SKIP "$NEEDS"

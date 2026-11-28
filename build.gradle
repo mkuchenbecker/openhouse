@@ -39,7 +39,7 @@ ext {
 // scripts/iceberg-fork/publish-local.sh (gradle/iceberg-fork.gradle, docs/development/iceberg-fork.md).
 // -PicebergLinkedIn builds the reference line instead, LinkedIn's Iceberg 1.5.2 releases, as set
 // above; settings.gradle explains both and the deprecated -PicebergFork.
-def icebergFork = !hasProperty('icebergLinkedIn')
+def icebergFork = !gradle.ext.icebergLinkedIn
 if (icebergFork) {
   apply from: 'gradle/iceberg-fork.gradle'
 }

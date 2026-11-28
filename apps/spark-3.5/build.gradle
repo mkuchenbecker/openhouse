@@ -18,7 +18,7 @@ ext {
 
 configurations.all {
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
-    if (!rootProject.hasProperty('icebergLinkedIn')) {
+    if (!gradle.ext.icebergLinkedIn) {
         // The Iceberg 1.12 line adds these thin jars (openhouse.iceberg-conventions-1.5.2); the
         // shaded iceberg-spark-runtime already carries them, as it does iceberg-data.
         exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
@@ -76,7 +76,7 @@ sourceSets {
             srcDirs += 'src/shared/test/java'
             // Test helpers that need one Iceberg line's API (variant data on the 1.12 line), with a
             // same-named copy for the other line, so the tests compile on both.
-            srcDirs += rootProject.hasProperty('icebergLinkedIn')
+            srcDirs += gradle.ext.icebergLinkedIn
                 ? 'src/test-iceberg-1.5/java' : 'src/test-iceberg-1.12/java'
         }
     }
@@ -91,5 +91,5 @@ tasks.withType(Test).configureEach {
     // test JVMs on a 16 GB runner (4 workers, 1.5 GB at most each, the Spark 4.2 jobs project
     // included) stay under 6 GB.
     maxHeapSize = '1g'
-    systemProperty 'openhouse.iceberg.line', rootProject.hasProperty('icebergLinkedIn') ? 'linkedin' : 'default'
+    systemProperty 'openhouse.iceberg.line', gradle.ext.icebergLinkedIn ? 'linkedin' : 'default'
 }
