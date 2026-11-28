@@ -371,6 +371,40 @@ public class IrcFormatV3RoutesTest {
     assertAnsweredIsStored(v2, upgraded);
   }
 
+  /**
+   * An Iceberg REST replace that upgrades a v2 table to v3 takes what only v3 allows in its new
+   * schema: a column of a type v3 takes ({@code unknown}) or a column with an initial-default.
+   */
+  @Test
+  void aReplaceThatUpgradesAV2TableTakesWhatOnlyV3Allows() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String[][] cases = {
+      {"irc_v3_up_unknown", "u", "unknown", null},
+      {"irc_v3_up_default", "country", "string", "\"US\""}
+    };
+    for (String[] c : cases) {
+      String db = c[0];
+      createNative(with(plain(db), CatalogConstants.RTAS_ENABLED_TABLE_PROP, "true"));
+      TableMetadata base = IrcWrite.load(mvc, db, "t");
+      Schema schema =
+          SchemaParser.fromJson(
+              addColumn(SchemaParser.toJson(base.schema()), c[1], c[2], c[3], null));
+      Map<String, String> asked = new HashMap<>(base.properties());
+      asked.put(FORMAT_VERSION, "3");
+      TableMetadata upgrading = IrcWrite.replacement(base, schema, base.spec(), asked);
+      MvcResult answer =
+          IrcWrite.commit(mvc, db, "t", IrcWrite.replace(base, upgrading, Collections.emptyList()));
+      assertEquals(200, answer.getResponse().getStatus(), IrcHttp.body(answer));
+      TableMetadata upgraded = IrcWrite.parsed(answer);
+      assertEquals(3, upgraded.formatVersion());
+      assertEquals(c[2], upgraded.schema().findField(c[1]).type().toString());
+      if (c[3] != null) {
+        assertEquals("US", String.valueOf(upgraded.schema().findField(c[1]).initialDefault()));
+      }
+      assertAnsweredIsStored(db, upgraded);
+    }
+  }
+
   // ---------------------------------------------------------------- refused, not lost
 
   private MvcResult commitRaw(String db, String json) throws Exception {

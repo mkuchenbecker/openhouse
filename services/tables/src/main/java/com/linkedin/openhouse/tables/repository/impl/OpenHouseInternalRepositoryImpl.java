@@ -205,8 +205,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
           writeSchema,
           partitionSpec);
       Map<String, String> tableProps = computePropsForTableCreation(tableDto);
-      // The format version is decided on the replace's own base, in replaceTable.
+      // The format version is decided on the replace's own base, in replaceTable. Only an upgrade
+      // to 3 the cluster allows is named now: Iceberg builds the replacement at the version its
+      // properties name before it checks the new schema, which may hold what only v3 allows.
       tableProps.remove(TableProperties.FORMAT_VERSION);
+      if (asksForAllowedV3(tableDto.getTableProperties())) {
+        tableProps.put(TableProperties.FORMAT_VERSION, Integer.toString(IcebergV3.VERSION));
+      }
       tablePolicyManager.managePoliciesOnCreateIfNeeded(tableDto);
       SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
       String metadataLocation = tableProps.get(getCanonicalFieldName("tableLocation"));
@@ -362,6 +367,14 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
    * replace was always computed like a create, except that a table at v3 or above, which only a
    * cluster that had the switch on can hold, is never lowered.
    */
+  /** Whether {@code requested} asks for format version 3 where the cluster allows it. */
+  private boolean asksForAllowedV3(Map<String, String> requested) {
+    OptionalInt asked = FormatVersionRule.requested(requested);
+    return asked.isPresent()
+        && asked.getAsInt() == IcebergV3.VERSION
+        && formatVersionRule().v3Enabled();
+  }
+
   private int formatVersionOfReplace(
       TableIdentifier tableIdentifier, int stored, Map<String, String> requested) {
     FormatVersionRule rule = formatVersionRule();
@@ -388,9 +401,11 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   }
 
   /**
-   * Replaces the table in one transaction. {@code tableProps} carry no format version: the
-   * replacement keeps the one its base has, and moves to the one {@link #formatVersionOfReplace}
-   * gives for that base, read from the transaction itself, so no other read decides it.
+   * Replaces the table in one transaction. {@code tableProps} carry no format version, except an
+   * upgrade to 3 the cluster allows: the replacement keeps the one its base has (or is built at 3),
+   * and moves to the one {@link #formatVersionOfReplace} gives for that base, read from the
+   * transaction itself, so no other read decides it; that decision also refuses what the rule
+   * refuses.
    *
    * @param requested the table properties the replace was asked for, which may ask for a format
    *     version
@@ -414,7 +429,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                 .replaceTransaction();
     int stored = txn.underlyingOps().current().formatVersion();
     int version = formatVersionOfReplace(tableIdentifier, stored, requested);
-    if (version != stored) {
+    if (version != txn.currentMetadata().formatVersion()) {
       txn.updateProperties()
           .set(TableProperties.FORMAT_VERSION, Integer.toString(version))
           .commit();

@@ -8,6 +8,7 @@ import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.api.validator.ApiValidatorUtil;
 import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.internal.catalog.CatalogConstants;
+import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateLockRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.request.UpdateAclPoliciesRequestBody;
@@ -17,6 +18,7 @@ import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.common.TableType;
 import com.linkedin.openhouse.tables.formatversion.FormatV3Types;
 import com.linkedin.openhouse.tables.formatversion.FormatVersionRule;
+import com.linkedin.openhouse.tables.formatversion.IcebergV3;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -29,16 +31,21 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.validation.Validator;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.iceberg.HasTableOperations;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.SortOrderParser;
+import org.apache.iceberg.Table;
+import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.types.Type;
 import org.apache.iceberg.types.Types;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -65,6 +72,9 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
 
   @Autowired(required = false)
   private ClusterProperties clusterProperties;
+
+  @Autowired(required = false)
+  private ObjectProvider<OpenHouseInternalCatalog> catalog;
 
   @Override
   public void validateGetTable(String databaseId, String tableId) {
@@ -115,6 +125,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       CreateUpdateTableRequestBody createUpdateTableRequestBody) {
     List<String> validationFailures = new ArrayList<>();
     ApiValidatorUtil.collectViolations(validator, createUpdateTableRequestBody, validationFailures);
+    BooleanSupplier belowFormatV3 =
+        belowFormatV3(
+            createUpdateTableRequestBody.getDatabaseId(),
+            createUpdateTableRequestBody.getTableId());
     if (!createUpdateTableRequestBody.getClusterId().equals(clusterId)) {
       validationFailures.add(
           String.format(
@@ -128,7 +142,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
               databaseId, createUpdateTableRequestBody.getDatabaseId()));
     }
     if (createUpdateTableRequestBody.getSchema() != null) {
-      validateNoDuplicateColumns(createUpdateTableRequestBody.getSchema(), validationFailures)
+      validateNoDuplicateColumns(
+              createUpdateTableRequestBody.getSchema(), validationFailures, belowFormatV3)
           .filter(schema -> schema.columns().isEmpty())
           .ifPresent(
               schema ->
@@ -140,7 +155,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateSortOrder(
         createUpdateTableRequestBody.getSortOrder(),
         createUpdateTableRequestBody.getSchema(),
-        validationFailures);
+        validationFailures,
+        belowFormatV3);
     validationFailures.addAll(validateUUIDForReplicaTable(createUpdateTableRequestBody));
     validationFailures.addAll(
         validateUpdateTimestampForReplicatedTable(createUpdateTableRequestBody));
@@ -322,6 +338,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       CreateUpdateTableRequestBody createUpdateTableRequestBody) {
     List<String> validationFailures = new ArrayList<>();
     ApiValidatorUtil.collectViolations(validator, createUpdateTableRequestBody, validationFailures);
+    BooleanSupplier belowFormatV3 =
+        belowFormatV3(
+            createUpdateTableRequestBody.getDatabaseId(),
+            createUpdateTableRequestBody.getTableId());
     if (!createUpdateTableRequestBody.getClusterId().equals(clusterId)) {
       validationFailures.add(
           String.format(
@@ -341,7 +361,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
               tableId, createUpdateTableRequestBody.getTableId()));
     }
     if (createUpdateTableRequestBody.getSchema() != null) {
-      validateNoDuplicateColumns(createUpdateTableRequestBody.getSchema(), validationFailures)
+      validateNoDuplicateColumns(
+              createUpdateTableRequestBody.getSchema(), validationFailures, belowFormatV3)
           .filter(schema -> schema.columns().isEmpty())
           .ifPresent(
               schema ->
@@ -369,7 +390,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateSortOrder(
         createUpdateTableRequestBody.getSortOrder(),
         createUpdateTableRequestBody.getSchema(),
-        validationFailures);
+        validationFailures,
+        belowFormatV3);
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
     }
@@ -484,19 +506,17 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   }
 
   private Optional<Schema> validateNoDuplicateColumns(
-      String schemaJson, List<String> validationFailures) {
+      String schemaJson, List<String> validationFailures, BooleanSupplier belowFormatV3) {
     try {
       Schema schema = SchemaParser.fromJson(schemaJson);
-      if (!formatV3Enabled()) {
-        Optional<Type> formatV3Type = FormatV3Types.firstFormatV3Type(schema);
-        if (formatV3Type.isPresent()) {
-          // Where this cluster cannot have format v3 tables, a type that exists only from format
-          // v3 on gets the answer it had where the schema parser did not know it.
-          validationFailures.add(
-              "schema : Cannot parse type string to primitive: "
-                  + FormatV3Types.spelled(formatV3Type.get()));
-          return Optional.empty();
-        }
+      Optional<Type> formatV3Type = FormatV3Types.firstFormatV3Type(schema);
+      if (formatV3Type.isPresent() && belowFormatV3.getAsBoolean()) {
+        // Below format v3, on a cluster that cannot have v3 tables, a type that exists only from
+        // format v3 on gets the answer it had where the schema parser did not know it.
+        validationFailures.add(
+            "schema : Cannot parse type string to primitive: "
+                + FormatV3Types.spelled(formatV3Type.get()));
+        return Optional.empty();
       }
       checkDuplicates(schema.asStruct(), new ArrayDeque<>(), validationFailures);
       return Optional.of(schema);
@@ -555,6 +575,38 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     }
   }
 
+  /**
+   * Whether a write of {@code databaseId.tableId} is held to the answer the request validation gave
+   * before this service knew format v3, which refused every v3-only type: where this cluster cannot
+   * have format v3 tables, unless the table already is one (made while the cluster could), which
+   * keeps the rules of a v3 table. The table is read only when asked, which is only for a schema
+   * with a v3-only type, and at most once.
+   */
+  private BooleanSupplier belowFormatV3(String databaseId, String tableId) {
+    Boolean[] below = {null};
+    return () -> {
+      if (below[0] == null) {
+        below[0] = !formatV3Enabled() && !storedAtFormatV3(databaseId, tableId);
+      }
+      return below[0];
+    };
+  }
+
+  /** Whether the table exists and is at format version 3 or above. */
+  private boolean storedAtFormatV3(String databaseId, String tableId) {
+    OpenHouseInternalCatalog internalCatalog = catalog == null ? null : catalog.getIfAvailable();
+    if (internalCatalog == null || databaseId == null || tableId == null) {
+      return false;
+    }
+    TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
+    if (!internalCatalog.tableExists(identifier)) {
+      return false;
+    }
+    Table table = internalCatalog.loadTable(identifier);
+    return table instanceof HasTableOperations
+        && ((HasTableOperations) table).operations().current().formatVersion() >= IcebergV3.VERSION;
+  }
+
   /** Whether this cluster can have format v3 tables. */
   private boolean formatV3Enabled() {
     return clusterProperties != null && new FormatVersionRule(clusterProperties).v3Enabled();
@@ -568,11 +620,16 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     ApiValidatorUtil.validateIdentifier("tableId", tableId, validationFailures);
   }
 
-  private void validateSortOrder(String sortOrder, String schema, List<String> validationFailures) {
+  private void validateSortOrder(
+      String sortOrder,
+      String schema,
+      List<String> validationFailures,
+      BooleanSupplier belowFormatV3) {
     if (sortOrder != null) {
       try {
         Schema icebergSchema = getSchemaFromSchemaJson(schema);
-        if (!formatV3Enabled() && FormatV3Types.firstFormatV3Type(icebergSchema).isPresent()) {
+        if (FormatV3Types.firstFormatV3Type(icebergSchema).isPresent()
+            && belowFormatV3.getAsBoolean()) {
           // As where the schema parser did not know the type: the sort order cannot be read.
           throw new IllegalArgumentException("Cannot parse the schema of the sort order");
         }
