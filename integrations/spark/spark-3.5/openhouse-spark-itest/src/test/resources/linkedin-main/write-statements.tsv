@@ -1,0 +1,92 @@
+# LinkedIn main's outcomes of the write-statements statements
+# commit: bb8929e1004afe1a46172799c2b640e92356e9a2
+# recorded: 2026-11-28
+# jdk: Ubuntu 17.0.21.1+2-1-24.04.1-Ubuntu
+# spark: 3.5.2
+# iceberg: core from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar, Spark catalog from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar
+# path: the OpenHouse catalog of Spark 3.5 over the native tables API
+# command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
+# test doubles: House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at bb8929e1), not this branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization
+# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or this branch's copied into main), measured on 2026-11-28 with 1 run(s)
+# runs: 6
+# key<TAB>outcome, sorted by key
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / SHOW TBLPROPERTIES ('owner')	[owner,Table openhouse.smoke_writes.owner does not have property: owner]
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / owner after later writes	true
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / owner after the refused set	true
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / owner is the Spark user	true
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / owner of the CTAS table is the Spark user	true
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / owner rows of SHOW TBLPROPERTIES	[]
+aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / setting owner fails with	org.apache.spark.sql.catalyst.parser.ParseException
+aWriteWithAWapBranchGoesToThatBranch / refs	[main=branch, staging=branch]
+aWriteWithAWapBranchGoesToThatBranch / rows of main	[main.a]
+aWriteWithAWapBranchGoesToThatBranch / rows of staging	[main.a, staging.a]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / operations, published	[append, append]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / operations, staged	[append, append]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / rows of main, published	[main.a, wap1.a]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / rows of main, staged	[main.a]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / rows of snapshot 2	[main.a, wap1.a]
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / snapshot 2 reachable, published	true
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / snapshot 2 reachable, staged	false
+aWriteWithAWapIdIsStagedAndCherryPickingPublishesIt / wap.id of snapshot 2	wap1
+addColumnIsStoredAndOldRowsReadNull / columns	[id long, extra string]
+addColumnIsStoredAndOldRowsReadNull / rows	[1,null, 2,v]
+anInsertIntoABranchLeavesMainAsItWas / refs	[b1=branch, main=branch]
+anInsertIntoABranchLeavesMainAsItWas / rows of b1	[1, 2]
+anInsertIntoABranchLeavesMainAsItWas / rows of main	[1]
+createTableAsSelectIsOneCreateWithItsRows / columns	[id long, name string]
+createTableAsSelectIsOneCreateWithItsRows / openhouse.tableId	ctas
+createTableAsSelectIsOneCreateWithItsRows / openhouse.tableVersion	INITIAL_VERSION
+createTableAsSelectIsOneCreateWithItsRows / operations	[append]
+createTableAsSelectIsOneCreateWithItsRows / rows	[1,a, 2,b]
+deleteRemovesTheMatchingRows / operations	[append, overwrite]
+deleteRemovesTheMatchingRows / rows	[1,a, 3,c]
+dropColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / columns	[id long, name string]
+dropColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / refusal carries "invalid schema evolution"	true
+dropColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / refused with	org.apache.iceberg.exceptions.BadRequestException
+dropColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / rows	[1,a]
+insertIntoAppendsASnapshotPerStatement / added-records of snapshot 1	2
+insertIntoAppendsASnapshotPerStatement / columns	[id long, name string]
+insertIntoAppendsASnapshotPerStatement / operations	[append, append]
+insertIntoAppendsASnapshotPerStatement / rows	[1,a, 2,b, 3,c]
+insertIntoAppendsASnapshotPerStatement / total-records of snapshot 2	3
+insertOverwriteOfAStaticPartitionLeavesTheOtherPartitions / operations	[append, overwrite]
+insertOverwriteOfAStaticPartitionLeavesTheOtherPartitions / partitioning	[1000: p: identity(2)]
+insertOverwriteOfAStaticPartitionLeavesTheOtherPartitions / rows	[10,x, 2,y]
+insertOverwriteWithDynamicPartitionsReplacesOnlyThePartitionsItWrites / operations	[append, overwrite]
+insertOverwriteWithDynamicPartitionsReplacesOnlyThePartitionsItWrites / replace-partitions of snapshot 2	true
+insertOverwriteWithDynamicPartitionsReplacesOnlyThePartitionsItWrites / rows	[10,x, 20,y, 3,z]
+insertOverwriteWithoutAPartitionReplacesEveryRowInStaticMode / operations	[append, overwrite]
+insertOverwriteWithoutAPartitionReplacesEveryRowInStaticMode / rows	[10,x]
+mergeIntoRewritesTheDataFilesByDefault / operations	[append, overwrite]
+mergeIntoRewritesTheDataFilesByDefault / rows	[1,a, 2,B, 3,c]
+mergeIntoRewritesTheDataFilesByDefault / total-delete-files of snapshot 2	0
+mergeIntoWritesAPositionDeleteFileWhenTheTableAsksForMergeOnRead / operations	[append, overwrite]
+mergeIntoWritesAPositionDeleteFileWhenTheTableAsksForMergeOnRead / rows	[1,a, 2,B, 3,c]
+mergeIntoWritesAPositionDeleteFileWhenTheTableAsksForMergeOnRead / total-delete-files of snapshot 2	1
+mergeIntoWritesAPositionDeleteFileWhenTheTableAsksForMergeOnRead / total-position-deletes of snapshot 2	1
+renameColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / columns	[id long, name string]
+renameColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / refusal carries "invalid schema evolution"	true
+renameColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / refused with	org.apache.iceberg.exceptions.BadRequestException
+renameColumnIsRefusedByTheNativeSchemaRuleAndChangesNothing / rows	[1,a]
+replaceTableAsSelectIsRefusedAndChangesNothingWhereReplaceIsNotEnabled / columns	[id long, name string]
+replaceTableAsSelectIsRefusedAndChangesNothingWhereReplaceIsNotEnabled / operations	[append]
+replaceTableAsSelectIsRefusedAndChangesNothingWhereReplaceIsNotEnabled / refusal carries "REPLACE TABLE AS SELECT is not enabled for table"	true
+replaceTableAsSelectIsRefusedAndChangesNothingWhereReplaceIsNotEnabled / refused with	org.apache.iceberg.exceptions.BadRequestException
+replaceTableAsSelectIsRefusedAndChangesNothingWhereReplaceIsNotEnabled / rows	[1,a]
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / columns	[id long, name string, more string]
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / extra	y
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / operations	[append, append]
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / replace.enabled	true
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / rows	[7,z,q]
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / rows of snapshot 1	[1,a]
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / snapshot 1 reachable	false
+replaceTableAsSelectReplacesSchemaAndRowsAndKeepsPropertiesWhereReplaceIsEnabled / team	x
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / openhouse.foo stored	false
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / refusal carries "table properties starting with `openhouse.` and the `policies` key cannot be modified"	true
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / refused with	org.apache.iceberg.exceptions.BadRequestException
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / team after set	x
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / team after unset	false
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / tier after set	gold
+tablePropertiesAreSetAndUnsetAndAReservedKeyIsRefused / tier after unset	gold
+updateChangesTheMatchingRows / operations	[append, overwrite]
+updateChangesTheMatchingRows / rows	[1,a, 2,B]

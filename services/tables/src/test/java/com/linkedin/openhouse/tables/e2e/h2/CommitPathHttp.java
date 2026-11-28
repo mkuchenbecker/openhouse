@@ -5,6 +5,8 @@ import static com.linkedin.openhouse.tables.e2e.h2.ValidationUtilities.CURRENT_M
 import static com.linkedin.openhouse.tables.model.TableModelConstants.buildCreateUpdateTableRequestBody;
 import static com.linkedin.openhouse.tables.model.TableModelConstants.buildGetTableResponseBodyWithDbTbl;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.gson.Gson;
 import com.jayway.jsonpath.JsonPath;
 import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
@@ -12,6 +14,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.types.Type;
@@ -21,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
@@ -31,6 +35,59 @@ final class CommitPathHttp {
   private static final String V1 = CURRENT_MAJOR_VERSION_PREFIX;
 
   private CommitPathHttp() {}
+
+  /**
+   * Performs the request and hands its answer to {@link LinkedInMainAnswers}, which compares it
+   * with LinkedIn main's: the status, and the message of an error or the body of a successful GET.
+   */
+  static ResultActions perform(MockMvc mvc, MockHttpServletRequestBuilder request)
+      throws Exception {
+    ResultActions actions = mvc.perform(request);
+    MvcResult result = actions.andReturn();
+    String method = result.getRequest().getMethod();
+    StringBuilder what =
+        new StringBuilder(method).append(' ').append(result.getRequest().getRequestURI());
+    new TreeMap<>(result.getRequest().getParameterMap())
+        .forEach(
+            (k, v) ->
+                what.append(what.indexOf("?") < 0 ? '?' : '&')
+                    .append(k)
+                    .append('=')
+                    .append(String.join(",", v)));
+    int status = result.getResponse().getStatus();
+    String body = result.getResponse().getContentAsString();
+    String answer = String.valueOf(status);
+    if (status >= 400) {
+      answer += " " + messageOf(body);
+    } else if ("GET".equals(method)) {
+      answer += " " + withSortedKeys(body);
+    }
+    LinkedInMainAnswers.answer(what.toString(), answer);
+    return actions;
+  }
+
+  private static final ObjectMapper SORTED =
+      new ObjectMapper().configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+
+  /**
+   * A JSON body with every object's keys sorted, so that the order a JVM happens to write them in
+   * (a Spring page's properties change order from one JVM to the next) is not compared.
+   */
+  private static String withSortedKeys(String body) {
+    try {
+      return SORTED.writeValueAsString(SORTED.readValue(body, Object.class));
+    } catch (Exception e) {
+      return body;
+    }
+  }
+
+  private static String messageOf(String body) {
+    try {
+      return JsonPath.read(body, "$.message");
+    } catch (Exception e) {
+      return body;
+    }
+  }
 
   static String tableUrl(String db, String table) {
     return String.format("%s/databases/%s/tables/%s", V1, db, table);
@@ -45,7 +102,8 @@ final class CommitPathHttp {
   }
 
   static ResultActions post(MockMvc mvc, CreateUpdateTableRequestBody body) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.post(
                 String.format("%s/databases/%s/tables/", V1, body.getDatabaseId()))
             .contentType(MediaType.APPLICATION_JSON)
@@ -56,7 +114,8 @@ final class CommitPathHttp {
   /** POST with an explicit path database, for path/body mismatch cases. */
   static ResultActions post(MockMvc mvc, String pathDb, CreateUpdateTableRequestBody body)
       throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.post(String.format("%s/databases/%s/tables/", V1, pathDb))
             .contentType(MediaType.APPLICATION_JSON)
             .content(body.toJson())
@@ -64,7 +123,8 @@ final class CommitPathHttp {
   }
 
   static ResultActions put(MockMvc mvc, CreateUpdateTableRequestBody body) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.put(tableUrl(body.getDatabaseId(), body.getTableId()))
             .contentType(MediaType.APPLICATION_JSON)
             .content(body.toJson())
@@ -75,7 +135,8 @@ final class CommitPathHttp {
   static ResultActions put(
       MockMvc mvc, String pathDb, String pathTable, CreateUpdateTableRequestBody body)
       throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.put(tableUrl(pathDb, pathTable))
             .contentType(MediaType.APPLICATION_JSON)
             .content(body.toJson())
@@ -84,7 +145,8 @@ final class CommitPathHttp {
 
   static ResultActions putSnapshots(
       MockMvc mvc, String db, String table, IcebergSnapshotsRequestBody body) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.put(tableUrl(db, table) + "/iceberg/v2/snapshots")
             .contentType(MediaType.APPLICATION_JSON)
             .content(body.toJson())
@@ -92,17 +154,18 @@ final class CommitPathHttp {
   }
 
   static ResultActions get(MockMvc mvc, String db, String table) throws Exception {
-    return mvc.perform(
-        MockMvcRequestBuilders.get(tableUrl(db, table)).accept(MediaType.APPLICATION_JSON));
+    return perform(
+        mvc, MockMvcRequestBuilders.get(tableUrl(db, table)).accept(MediaType.APPLICATION_JSON));
   }
 
   static ResultActions delete(MockMvc mvc, String db, String table) throws Exception {
-    return mvc.perform(MockMvcRequestBuilders.delete(tableUrl(db, table)));
+    return perform(mvc, MockMvcRequestBuilders.delete(tableUrl(db, table)));
   }
 
   static ResultActions rename(
       MockMvc mvc, String fromDb, String fromTable, String toDb, String toTable) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.patch(tableUrl(fromDb, fromTable) + "/rename")
             .param("toDatabaseId", toDb)
             .param("toTableId", toTable));
@@ -110,26 +173,30 @@ final class CommitPathHttp {
 
   static ResultActions restore(MockMvc mvc, String db, String table, long deletedAtMs)
       throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.put(tableUrl(db, table) + "/restore")
             .param("deletedAtMs", Long.toString(deletedAtMs)));
   }
 
   static ResultActions purge(MockMvc mvc, String db, String table, long purgeAfterMs)
       throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.delete(tableUrl(db, table) + "/purge")
             .param("purgeAfterMs", Long.toString(purgeAfterMs)));
   }
 
   static ResultActions softDeleted(MockMvc mvc, String db) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.get(String.format("%s/databases/%s/softDeletedTables", V1, db))
             .accept(MediaType.APPLICATION_JSON));
   }
 
   static ResultActions lock(MockMvc mvc, String db, String table) throws Exception {
-    return mvc.perform(
+    return perform(
+        mvc,
         MockMvcRequestBuilders.post(tableUrl(db, table) + "/lock")
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"locked\":true,\"message\":\"commit path test\"}")
@@ -137,7 +204,7 @@ final class CommitPathHttp {
   }
 
   static ResultActions unlock(MockMvc mvc, String db, String table) throws Exception {
-    return mvc.perform(MockMvcRequestBuilders.delete(tableUrl(db, table) + "/lock"));
+    return perform(mvc, MockMvcRequestBuilders.delete(tableUrl(db, table) + "/lock"));
   }
 
   /** A builder pre-filled from {@code body}; the request class has no toBuilder of its own. */

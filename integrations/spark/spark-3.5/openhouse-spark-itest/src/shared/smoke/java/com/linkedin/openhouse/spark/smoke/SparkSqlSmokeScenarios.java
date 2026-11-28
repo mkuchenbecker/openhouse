@@ -396,6 +396,13 @@ public abstract class SparkSqlSmokeScenarios {
         Collections.emptyList(), unused, "Differences declared for statements that were not run");
   }
 
+  /**
+   * Called with the outcome of every statement as it is checked: {@code key} names the statement in
+   * its scenario ({@code <scenario> #<occurrence> <statement>}). Nothing by default; a platform
+   * that also compares the outcomes with a recording overrides it.
+   */
+  protected void outcome(String scenario, String key, Outcome actual) {}
+
   /** Runs a statement that the baseline expects to succeed. */
   protected final Outcome sql(SparkSession spark, String statement) {
     return sql(spark, statement, succeeds());
@@ -441,6 +448,7 @@ public abstract class SparkSqlSmokeScenarios {
     statementNumber++;
     int occurrence = occurrences.merge(shown, 1, Integer::sum);
     String key = Difference.key(scenario, shown, occurrence);
+    outcome(scenario, key, actual);
     Difference difference = declared.get(key);
     List<Expectation> baselineList = Arrays.asList(baseline);
     boolean baselineHolds = baselineList.stream().allMatch(e -> e.holds(actual));

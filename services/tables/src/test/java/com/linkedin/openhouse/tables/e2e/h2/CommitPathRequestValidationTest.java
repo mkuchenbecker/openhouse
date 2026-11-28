@@ -17,6 +17,7 @@ import java.util.Map;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,6 +28,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * What the create and update endpoints reject before anything is committed, and how: status, the
  * stable leading part of the message, and that nothing was created or changed.
  */
+@ExtendWith(LinkedInMainAnswers.class)
 @SpringBootTest
 @AutoConfigureMockMvc
 @ContextConfiguration(
