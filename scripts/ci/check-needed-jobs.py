@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The verdict of a build line's last job (`Build and Run Tests` in split-build.yml).
 
-The job needs every other job of the line and runs whatever their outcome. It passes only when
+The job needs every other job of the line and runs whatever their outcome, unless the whole run
+was cancelled (the workflow's `if: !cancelled()`). It passes only when
 each of them succeeded. A job that the workflow skips by design on this line (the Docker job on
 the reference line) is named with --allow-skip; any other skipped job fails the verdict, as do a
 failed and a cancelled one, so that a job that did not run cannot pass for one that ran green.
@@ -52,6 +53,8 @@ def self_test():
         ("a skip allowed for one job only", needs(plan="success", tests="skipped", docker="skipped"), ["docker"], False),
         ("an allowed skip that ran red", needs(plan="success", tests="success", docker="failure"), ["docker"], False),
         ("an allowed skip that is not needed", needs(plan="success", tests="success"), ["docker"], False),
+        ("the partition red", needs(plan="success", partition="failure", tests="success", docker="success"), [], False),
+        ("a group cancelled on its own, the run not", needs(plan="success", partition="success", tests="cancelled", docker="success"), [], False),
         ("no result", {"plan": {}}, [], False),
         ("nothing needed", {}, [], False),
     ]

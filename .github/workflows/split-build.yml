@@ -310,10 +310,13 @@ jobs:
   # ("build-run-tests / Build and Run Tests" for the default line, which branch protection can
   # require). It needs every job of the line and runs whatever their outcome, so a red, cancelled
   # or skipped job makes it red (scripts/ci/check-needed-jobs.py); only the Docker job, which the
-  # reference line skips by design, may be skipped there.
+  # reference line skips by design, may be skipped there. Not when the whole run was cancelled (a
+  # newer push to the pull request supersedes it): then it does not run, instead of reporting
+  # failure on the superseded commit; a job that is cancelled on its own (a time limit) still
+  # makes it red.
   build-and-run-tests:
     name: Build and Run Tests
-    if: always()
+    if: ${{ !cancelled() }}
     needs: [plan, partition, tests, docker]
     runs-on: ubuntu-latest
     permissions:
