@@ -218,11 +218,20 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
   upgrade, the service gives that refusal before anything is changed. No `FORMAT_VERSION_REFUSED`
   or `COLUMN_DEFAULT_REQUIRES_V3` answer, and no format-version pre-commit check or metric, for a
   table below v3. The Iceberg REST create still refuses a version it does not create.
-- With the switch off, `cluster.iceberg.format-version` may not be above 2: the tables service
-  refuses to start, naming both properties. On Iceberg 1.5.2 such a cluster could create no table.
+- With the switch off, a cluster whose `cluster.iceberg.format-version` is above 2 makes no table of
+  that version, as on LinkedIn main, where Iceberg 1.5.2 refused such creates and replaces while
+  reads, updates and snapshot commits of existing tables worked: a create answers Iceberg 1.5.2's
+  `Unsupported format version: vN` and a replace its upgrade refusal, each with what to change; no
+  commit may leave a table above 2.
+- With the switch off, a table already at v3 (made while the switch was on) keeps the rules of a v3
+  table: it takes `unknown` columns and column defaults on every write path.
+- The Iceberg REST commit routes answer a `format-version` property they cannot store with 400
+  `FORMAT_VERSION_REFUSED`, whatever the switch: a server failure would tell an Iceberg client
+  that the commit's state is unknown.
 - An upgrade to v3 is logged (a warning naming the table, both versions and the principal) and
   audited as its own table audit event, `UPGRADE_FORMAT_VERSION`, after the event of the write
-  that made it.
+  that made it. A failure to send that event is logged and does not change the write's answer or
+  its own event.
 - One rule decides all of it, `FormatVersionRule`, and `FormatVersionCommitPolicy` checks it on
   every commit path as a catalog pre-commit check, with what a v3 table may carry: column defaults
   are Iceberg's native `initial-default` and `write-default`, stored as committed (an existing

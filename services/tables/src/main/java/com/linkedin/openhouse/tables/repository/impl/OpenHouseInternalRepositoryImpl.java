@@ -381,7 +381,11 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     if (rule.switchOn() && IcebergV3.supported()) {
       return rule.versionOfReplace(tableIdentifier.toString(), stored, requested);
     }
-    return stored >= IcebergV3.VERSION ? stored : rule.clusterVersion();
+    if (stored >= IcebergV3.VERSION) {
+      return stored;
+    }
+    rule.refuseClusterVersionAboveTwo(stored);
+    return rule.clusterVersion();
   }
 
   protected Table createTable(

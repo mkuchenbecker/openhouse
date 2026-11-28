@@ -31,8 +31,10 @@ import org.apache.iceberg.TableProperties;
  *   <li>An update is left to Iceberg, which upgrades a table to v2 and refuses a version it cannot
  *       build. The Iceberg 1.12 line can build v3 and v4, so there an update that asks for a
  *       version above 2 is given the refusal Iceberg 1.5.2 gave it ({@link #checkUpdate}).
- *   <li>{@code cluster.iceberg.format-version} may not be above 2 ({@link #requireClusterVersion}):
- *       on Iceberg 1.5.2 such a cluster could create no table at all.
+ *   <li>A cluster whose {@code cluster.iceberg.format-version} is above 2 makes no table of that
+ *       version: on Iceberg 1.5.2, which builds nothing above v2, its creates and replaces failed
+ *       (its reads, updates and snapshot commits of existing tables worked), and so they fail here
+ *       ({@link #refuseClusterVersionAboveTwo}); the invariant holds such a cluster to 2.
  * </ul>
  *
  * <p>With the switch on:
@@ -84,21 +86,37 @@ public class FormatVersionRule {
   }
 
   /**
-   * Refuses a cluster whose {@code cluster.iceberg.format-version} is above 2 while the switch is
-   * off: it would make every new table v3 with the switch that is meant to allow v3 tables off. On
-   * LinkedIn's Iceberg 1.5.2, which builds nothing above v2, such a cluster could create no table.
-   *
-   * @throws IllegalStateException naming both properties
+   * The refusal LinkedIn's Iceberg 1.5.2 gives an upgrade to a version it cannot build ({@code
+   * TableMetadata.Builder.upgradeFormatVersion}), with the version asked and the one it supports.
+   * Given by this rule where the Iceberg on the classpath could build the version, so that the
+   * answer is the one LinkedIn main gave; never on the 1.5.2 line, whose Iceberg gives it itself.
    */
-  public void requireClusterVersion() {
-    if (!switchOn() && clusterVersion() > HIGHEST_WITHOUT_V3) {
-      throw new IllegalStateException(
-          String.format(
-              "cluster.iceberg.format-version is %d, and %s is false: tables above format version"
-                  + " %d need %s=true. Set cluster.iceberg.format-version to %d or lower, or turn"
-                  + " format version 3 on.",
-              clusterVersion(), SWITCH, HIGHEST_WITHOUT_V3, SWITCH, HIGHEST_WITHOUT_V3));
+  static final String UNSUPPORTED_UPGRADE =
+      "Cannot upgrade table to unsupported format version: v%s (supported: v%s)";
+
+  /**
+   * Refuses, with the switch off and where Iceberg would build it, a create or replace at a cluster
+   * format version above 2. On LinkedIn's Iceberg 1.5.2 such a create failed in Iceberg ({@code
+   * Unsupported format version: vN}) and such a replace with {@link #UNSUPPORTED_UPGRADE}; reads,
+   * updates and snapshot commits of existing tables were not touched, and are not here. On the
+   * 1.5.2 line Iceberg still refuses them itself.
+   *
+   * @param stored the version of the table a replace replaces; {@code null} for a create
+   * @throws IllegalArgumentException with Iceberg 1.5.2's text and what to change
+   */
+  public void refuseClusterVersionAboveTwo(Integer stored) {
+    if (switchOn() || clusterVersion() <= HIGHEST_WITHOUT_V3 || !IcebergV3.supported()) {
+      return;
     }
+    String refusal =
+        stored == null
+            ? String.format("Unsupported format version: v%s", clusterVersion())
+            : String.format(UNSUPPORTED_UPGRADE, clusterVersion(), HIGHEST_WITHOUT_V3);
+    throw new IllegalArgumentException(
+        String.format(
+            "%s: cluster.iceberg.format-version is %d, and %s is false; tables above format"
+                + " version %d need %s=true",
+            refusal, clusterVersion(), SWITCH, HIGHEST_WITHOUT_V3, SWITCH));
   }
 
   /** The cluster property that allows variant columns on v3 tables. */
@@ -135,10 +153,19 @@ public class FormatVersionRule {
    *     replace, whose properties are computed as a create's before {@link #versionOfReplace}
    * @throws RequestValidationFailureException if the switch is on and the create asks for a version
    *     above the cluster's that it cannot have
+   * @throws IllegalArgumentException if the switch is off and the cluster's version is one Iceberg
+   *     1.5.2 cannot build ({@link #refuseClusterVersionAboveTwo})
    */
   public int versionOfCreate(String operation, String table, Map<String, String> properties) {
     OptionalInt asked = requested(properties);
-    if (!switchOn() || !asked.isPresent() || asked.getAsInt() <= clusterVersion()) {
+    if (!switchOn()) {
+      if (!"Replace".equals(operation)) {
+        // A replace is refused on its own base instead (versionOfReplace's callers).
+        refuseClusterVersionAboveTwo(null);
+      }
+      return clusterVersion();
+    }
+    if (!asked.isPresent() || asked.getAsInt() <= clusterVersion()) {
       return clusterVersion();
     }
     requireV3(operation, table, asked.getAsInt());
@@ -188,7 +215,10 @@ public class FormatVersionRule {
    * v3: Iceberg upgrades a table to v2, and refuses a version it cannot build or a downgrade with
    * its own failure. Iceberg 1.5.2 builds nothing above v2; the Iceberg 1.12 line builds v3 and v4,
    * so there an update that asks for a version above 2 is refused here with the failure Iceberg
-   * 1.5.2 throws for it, before anything is changed.
+   * 1.5.2 throws for it, before anything is changed. That is earlier in the update than Iceberg
+   * 1.5.2 threw it (when the update's properties were applied, after its schema, policy and sort
+   * order were), so an update that LinkedIn main refused for one of those first gets this refusal
+   * instead on the 1.12 line.
    *
    * @throws RequestValidationFailureException if the switch is on and it asks for a version above
    *     the table's that it cannot have, or below a v3 table's
@@ -203,9 +233,7 @@ public class FormatVersionRule {
           && asked.getAsInt() > stored
           && asked.getAsInt() > HIGHEST_WITHOUT_V3) {
         throw new IllegalArgumentException(
-            String.format(
-                "Cannot upgrade table to unsupported format version: v%s (supported: v%s)",
-                asked.getAsInt(), HIGHEST_WITHOUT_V3));
+            String.format(UNSUPPORTED_UPGRADE, asked.getAsInt(), HIGHEST_WITHOUT_V3));
       }
       return;
     }
@@ -271,7 +299,9 @@ public class FormatVersionRule {
    * @throws CommitRejectedException if the commit would leave another version
    */
   public void checkCommitted(String table, Integer stored, int committed) {
-    int floor = stored == null ? clusterVersion() : Math.max(stored, clusterVersion());
+    // With the switch off a cluster's own version cannot make a table v3.
+    int cluster = switchOn() ? clusterVersion() : Math.min(clusterVersion(), HIGHEST_WITHOUT_V3);
+    int floor = stored == null ? cluster : Math.max(stored, cluster);
     if (committed <= floor || (committed == IcebergV3.VERSION && v3Enabled())) {
       return;
     }

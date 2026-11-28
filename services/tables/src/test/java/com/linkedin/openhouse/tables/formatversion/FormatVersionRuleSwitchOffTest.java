@@ -32,26 +32,53 @@ class FormatVersionRuleSwitchOffTest {
     return Collections.singletonMap(FormatVersionRule.PROPERTY, version);
   }
 
-  /** A cluster at format version 3 with the switch off does not start. */
+  /**
+   * A cluster at a format version above 2 with the switch off makes no table of that version, as on
+   * LinkedIn main, where Iceberg 1.5.2 refused such a create and replace; everything else works. On
+   * the 1.5.2 line Iceberg refuses them itself.
+   */
   @Test
-  void aClusterVersionAboveTwoNeedsTheSwitch() {
+  void aClusterVersionAboveTwoMakesNoTableOfThatVersionWithTheSwitchOff() {
     for (int version : new int[] {3, 4}) {
-      IllegalStateException refused =
-          assertThrows(
-              IllegalStateException.class,
-              () -> new ApiConfig().formatVersionCommitPolicy(cluster(version, false)));
-      assertEquals(
-          "cluster.iceberg.format-version is "
-              + version
-              + ", and cluster.iceberg.format-v3.enabled is false: tables above format version 2"
-              + " need cluster.iceberg.format-v3.enabled=true. Set cluster.iceberg.format-version"
-              + " to 2 or lower, or turn format version 3 on.",
-          refused.getMessage());
-    }
-    for (int version : new int[] {1, 2}) {
+      FormatVersionRule rule = new FormatVersionRule(cluster(version, false));
       assertDoesNotThrow(() -> new ApiConfig().formatVersionCommitPolicy(cluster(version, false)));
+      String why =
+          ": cluster.iceberg.format-version is "
+              + version
+              + ", and cluster.iceberg.format-v3.enabled is false; tables above format version 2"
+              + " need cluster.iceberg.format-v3.enabled=true";
+      if (IcebergV3.supported()) {
+        IllegalArgumentException create =
+            assertThrows(
+                IllegalArgumentException.class,
+                () -> rule.versionOfCreate("Create", "db.t", Collections.emptyMap()));
+        assertEquals("Unsupported format version: v" + version + why, create.getMessage());
+        IllegalArgumentException replace =
+            assertThrows(
+                IllegalArgumentException.class, () -> rule.refuseClusterVersionAboveTwo(2));
+        assertEquals(
+            "Cannot upgrade table to unsupported format version: v"
+                + version
+                + " (supported: v2)"
+                + why,
+            replace.getMessage());
+      } else {
+        // Iceberg 1.5.2 refuses the version itself, as on main.
+        assertEquals(version, rule.versionOfCreate("Create", "db.t", Collections.emptyMap()));
+      }
+      // The invariant holds the cluster to 2: no commit may leave a table at its version.
+      assertThrows(
+          com.linkedin.openhouse.common.exception.CommitRejectedException.class,
+          () -> rule.checkCommitted("db.t", 2, version));
+      assertThrows(
+          com.linkedin.openhouse.common.exception.CommitRejectedException.class,
+          () -> rule.checkCommitted("db.t", null, version));
     }
-    assertDoesNotThrow(() -> new ApiConfig().formatVersionCommitPolicy(cluster(3, true)));
+    FormatVersionRule on = new FormatVersionRule(cluster(3, true));
+    if (IcebergV3.supported()) {
+      assertEquals(3, on.versionOfCreate("Create", "db.t", Collections.emptyMap()));
+    }
+    assertDoesNotThrow(() -> on.refuseClusterVersionAboveTwo(2));
   }
 
   /** A create is stored at the cluster's version whatever it asks for. */
