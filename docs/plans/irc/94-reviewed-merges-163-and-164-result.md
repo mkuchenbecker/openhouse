@@ -224,3 +224,13 @@ Recorded as in flight, with what is known and no predicted results.
 - Where the brief and the records differ: the merge message of 163 says about a dozen commit-path answers differ in 161; the
   author's record of 161 says 16 stand-in differences are declared. The merge message of 164 says the identifier names are "listed
   with proposed names"; that list is not in the message text or in the author's record (the method names are in the review F5).
+
+## Later the same day (added after pull requests 162, 165 and 161 merged)
+
+Superseded in part: the three pull requests listed above as in flight merged afterwards (162 as `67989d16`, 165 as `35cc7b1e`, 161 as
+`81cb4b74`); see `95-reviewed-merges-162-165-161-result.md`. Correction to this file: the stored recording of 161 was not taken with
+"main's old stand-in" for the commit path; it was taken with this branch's earlier stand-in of `services/tables`' tests copied into
+main (`e2e/h2/HouseTablesH2Repository` at `0fe4678a`), and 161 declares 16 test-double differences on each line, not "about a dozen".
+The question this file leaves open on RF-069, whether anything verified the claim about the policy engine, is answered in `86-...`
+(RF-069): the sample policy and this repository's handler are read and established; only the deployed policy is unknown.
+

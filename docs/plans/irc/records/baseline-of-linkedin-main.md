@@ -34,3 +34,6 @@ Bottom line: done. Draft pull request 161, head 210d54f85ee43f17bdd2160bfae525d7
 - 6b3db036: decided wordings (Jackson 2.16 default change; fork SparkTable).
 - bd5459f0: README for record.sh.
 - 73da643b merge of irc-integration a0239ad7 (#163 one stand-in); 6f2fc38d: 16 stand-in differences declared (kind "stand-in difference"), renamed test in absentTests, absent list scoped per class; record.sh updated; re-measured Spark with the new stand-in on main: 0 different. Both lines 195 tests green. Pushed 6f2fc38d. PR body updated.
+- Merged 162 (0e5472cd, two parents via commit-tree), both lines 195 green, pushed; CI on b03b8757 all green; waiting on 0e5472cd.
+- CI on 0e5472cd: all success (1 skipped by design).
+- 165 round: merge 903b8c84, items 86de82cc 911a726d 7a9a287c 3db9c32b 028f295f; pushed 028f295fe6b3911f418d79c7fa2f9280c86444e4

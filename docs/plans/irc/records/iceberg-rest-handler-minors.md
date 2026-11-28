@@ -48,3 +48,7 @@ Bottom line: in progress. Worktree /home/user/oh-irc-minors, base origin/irc-int
 - Merged base a0239ad7 (#163 stand-in) as e011e171, clean. Re-ran: default 19 classes 295 tests 1 skipped 0 failed;
   reference 15 classes 281 tests 25 skipped 0 failed. No test changed outcome under the faithful stand-in.
 - Pushed e011e1710ab0c7a5ec0875ced92099882fcd9e86; waiting for CI.
+- Merged base 35bd941c (#164) as 448fcd6f (the hook dropped the merge state; finished with write-tree/commit-tree, both
+  parents). check-private-ids.py passes with no rewording needed. Re-ran: default 295/1 skipped, reference 281/25
+  skipped, 0 failed. CI on 448fcd6f5a3cc8844eaab1b1856cab6384ef1e59: 13 success, 1 skipped by design (Default build,
+  Docker images, under iceberg-linkedin-build). Bottom line: done, draft pull request 162.

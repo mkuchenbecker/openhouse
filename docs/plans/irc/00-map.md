@@ -1,7 +1,7 @@
 # Map of the artifacts
 
 Bottom line: yes, the work is reviewable by another agent. Every landed change is a merge commit on `irc-integration`
-(83 pull requests, 80 to 160, 163 and 164 (the namespace stack's 153 is among them), as of 2026-11-28) whose message holds the reasons, the evidence and the known gaps; the notes in this
+(86 pull requests, numbered 80 to 165 (the namespace stack's 153 is among them), as of 2026-11-28) whose message holds the reasons, the evidence and the known gaps; the notes in this
 directory hold the decisions and the results; the raw agent records are now in `records/`. Section 6 describes what was paused on 2026-11-25; work resumed on 2026-11-27 and `18-state.md` is the current state. Everything here was checked on 2026-11-25 against the repositories and GitHub,
 except what is marked "[not checked]". Nothing is merged into either fork's main or into LinkedIn's repositories.
 
@@ -14,7 +14,7 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 5. Decisions, in order: `13-decisions.md` (D1 to D12), `16-decisions-continued.md` (D13 to D21),
    `22-decisions-continued-2.md` (D22 to D29), `37-decisions-continued-3.md` (D30 to D36),
    `51-decisions-continued-4.md` (D37 to D42), `56-decisions-continued-5.md` (D43 to D47),
-   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D83).
+   `67-decisions-continued-6.md` (D48 to D52), `90-decisions-continued-7.md` (D53 to D86).
 6. Work tables: `04-work.md`, `30-work-defaults.md`, `41-work-platforms-v3.md`, and `74-work-table-audit.md`.
 7. `45-merged-pull-requests.md`, then result files (`NN-...-result.md`) and `records/` as needed.
 8. The retroactive review of 2026-11-27: `88-review-summary.md` first, then `85-behavior-change-ledger.md` (the
@@ -36,13 +36,19 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
     ledger parts B (BC-089, BC-092 to BC-094) and C (BC-090, BC-091), BC-039 updated, and the ledger section on what the recording of
     LinkedIn main measured (from the open pull request 161); findings RF-069 to RF-071, RF-012 extended, FF-54 to FF-58 in `86-...`;
     decisions D79 to D83 and D62 extended; the reviewers' reports `records/pr-review-163.md`, `-164.md` and `-164-recheck.md`.
-    The next free file number is 95.
+14. The last three (162, 165 and 161, merged 2026-11-28; `irc-integration` at `81cb4b74`, 86 merged):
+    `95-reviewed-merges-162-165-161-result.md`; ledger parts F (BC-095 to BC-100) and C (BC-101, BC-102), BC-039 updated, and the
+    rewritten ledger section on what the recording of LinkedIn main measured; findings RF-069 rewritten, RF-070 pinned, RF-012 closed,
+    RF-072, RF-073 and FF-59 new, FF-20, FF-21 and FF-54 done, FF-22 and FF-53 partly done; decisions D84 to D86 (D62 extended a second
+    time, D79 corrected, D83 marked merged); the reviewers' reports `records/pr-review-162.md`, `-162-recheck.md`, `-165.md`,
+    `-165-recheck.md`, `-161.md` and `-161-recheck.md`. In flight: pull request 166 (`records/pr-review-166.md`, `-166-recheck.md`,
+    `records/ci-check-name-and-build-hygiene.md`). The next free file number is 96.
 
 ## 2. Where everything lives
 
 | Repository | Branch | What it is | Head (2026-11-25; irc-integration 2026-11-28) | Part of this effort |
 | --- | --- | --- | --- | --- |
-| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `35bd941c` (2026-11-28; `81b4cd4d` on 2026-11-25) | yes |
+| openhouse | `irc-integration` | LinkedIn main (`bb8929e1`) plus every landed change | `81cb4b74` (2026-11-28; `81b4cd4d` on 2026-11-25) | yes |
 | openhouse | `claude/openhouse-rest-v3-planning-g42c0h` | these notes; draft pull request 79, open, never merged | this commit | yes |
 | openhouse | 72 `irc/...` branches | one per pull request, base `irc-integration` | various | yes |
 | openhouse | `irc/x2-x3-v3-row-level` | X2 and X3 tests, no pull request yet | `1892643c` | yes, paused |
@@ -69,19 +75,19 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 `README.md` is the index with one row per file; do not read every file in order.
 - Stated by the owner: `01-stated.md`. Requirements and inferences: `02-facts.md`, `03-inferred.md`.
 - Designs: `07`, `14`, `28`, `29`, `05` (patch ledger), `06` (smoke suite proposal), `24` (commit rule inventory).
-- Decisions: D1 to D83 in the eight files listed in section 1. Waiting on the owner: `58`.
+- Decisions: D1 to D86 in the eight files listed in section 1. Waiting on the owner: `58`.
 - Work tables: `04`, `30`, `41`; their audit: `74`. Merged list: `45`. State: `18`. Delegation rules: `17`.
 - Findings: `08`, `20`, `21` and the first-round results `09` to `12`.
 - Result files, one per merged group of work: `15`, `19`, `23`, `25`, `26`, `27`, `31` to `36`, `38` to `40`,
   `42` to `44`, `46` to `50`, `52` to `55`, `57`, `59` to `66`, `68` to `73`, `75` to `82`. File 60 and 70 are scouts.
 - The raw records: `records/` with its own `README.md`: record, work item, pull request, result file. It now also holds the
-  pull request review reports (`pr-review-151.md` to `pr-review-164.md`, with `pr-review-158-recheck.md` and `pr-review-164-recheck.md`) and the common briefs. In flight, not results: the author's records of the baseline of LinkedIn main (`baseline-of-linkedin-main.md`, with `pr-review-161.md`), of the handler minors (`iceberg-rest-handler-minors.md`, with `pr-review-162.md`) and of the follow-up to 163 (`stand-in-follow-up.md`). The records of the two merged here are `house-tables-stand-in-fidelity.md` (163) and `private-ids-out-of-code.md` (164).
+  pull request review reports (`pr-review-151.md` to `pr-review-165.md`, with the `-recheck` reports of 158, 161, 162, 164 and 165) and the common briefs. The authors' records of the last three merges are `baseline-of-linkedin-main.md` (161), `iceberg-rest-handler-minors.md` (162) and `stand-in-follow-up.md` (165); the records of 163 and 164 are `house-tables-stand-in-fidelity.md` and `private-ids-out-of-code.md`. In flight, not results: `ci-check-name-and-build-hygiene.md` with `pr-review-166.md` and `pr-review-166-recheck.md` (pull request 166). 127 files in `records/` on 2026-11-28 counting its README.
 - The retroactive review of 2026-11-27: the ledger `85`, the findings and fix-forward list `86`, the re-implementation
   guide `87` and the summary `88`; its records are `records/review-brief-common.md` and the nine `records/review-*.md`
   (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
   jobs, build-deployables, ci-fixtures-tests).
 - The scout of the owner's namespace line: `89-scout-namespace-and-prior-work-result.md`, its record
-  `records/scout-namespace-and-prior-work.md`; decisions D53 to D83 in `90-decisions-continued-7.md`; the reviewed merges: `91-first-reviewed-merges-result.md` (154, 151, 153) `92-reviewed-merges-152-to-159-result.md` (152, 155, 156, 157, 159) `93-reviewed-merges-158-and-160-result.md` (160, 158) and `94-reviewed-merges-163-and-164-result.md` (163, 164).
+  `records/scout-namespace-and-prior-work.md`; decisions D53 to D83 in `90-decisions-continued-7.md`; the reviewed merges: `91-first-reviewed-merges-result.md` (154, 151, 153) `92-reviewed-merges-152-to-159-result.md` (152, 155, 156, 157, 159) `93-reviewed-merges-158-and-160-result.md` (160, 158), `94-reviewed-merges-163-and-164-result.md` (163, 164) and `95-reviewed-merges-162-165-161-result.md` (162, 165, 161).
 
 ## 4. The code on `irc-integration`, by area
 
@@ -100,7 +106,7 @@ Paths verified with `git ls-tree` on `origin/irc-integration` at `81b4cd4d`.
 - Spark 4.2: `integrations/spark/spark-4.2/` (itest `Spark42IrcSparkSqlSmokeTest`) and `apps/spark-4.2/` (jobs, `Spark42TypeRestCatalogTest`).
 - Maintenance jobs: `apps/spark-3.5/src/shared`; evidence `FormatV3MaintenanceTest` and the other `FormatV3*JobsTest` in `apps/spark-3.5/src/test/`.
 - REST compatibility kit: `integrations/java/openhouse-rest-compat-kit/`, reviewed list `expected-outcomes.txt`
-  (54 passed, 90 failed, 16 skipped, unchanged through pull requests 157, 160, 158 and 163).
+  (54 passed, 90 failed, 16 skipped, unchanged through pull requests 157, 160, 158 and 163; not re-read for 162, 165 and 161, whose merge messages do not mention it).
 - Shared Spark SQL smoke scenarios and write checks: `integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/smoke/`
   (`SparkSqlSmokeScenarios.java`, `SparkSqlWriteStatements.java`), run by `LegacyPath`, `RestShimPath`, `RestHttpPath` tests and `SparkIrcWriteStatementsTest` on 4.2.
 - Delta-harness: `integrations/spark/delta-harness/` (`BASELINE-2026-11-22.md`, `HARNESS-GUIDE.md`).
@@ -151,3 +157,29 @@ build of 149 was read long ago; see `18-state.md`. What follows is the state of 
   irreversible ones are in `58-waiting-on-mike.md`.
 - Only two changes got an independent review before merge (the v3 maintenance work, pull request 125, and the
   register-view route, pull request 149). The rest did not.
+
+## 9. The instrument for the claim "existing behavior did not change": the recording of LinkedIn main
+
+Bottom line: a new reader who wants to know whether this branch changes what LinkedIn main answers should start from the stored
+recording of main, not from the notes. Pull request 161 (merge `81cb4b74`) recorded main `bb8929e1` with its own build and made four
+suites compare with it in CI on both Iceberg lines. Where it lives in the code repository (on `irc-integration`; paths verified with
+`git ls-tree` at `81cb4b74`):
+- `scripts/linkedin-main-baseline/`: `README.md` (when and how to record again, the test doubles, what waits for a re-record),
+  `record.sh` (the only writer of the recordings; it refuses to run on anything but main's commit), `recorder/` (the main-side sources
+  and the empty difference lists it copies in).
+- The recordings, the `linkedin-main` resource directories: `integrations/spark/spark-3.5/openhouse-spark-itest/src/test/resources/linkedin-main/`
+  (`smoke-scenarios.tsv`, `write-statements.tsv`, `catalog-plugin-contract.tsv`) and
+  `services/tables/src/test/resources/linkedin-main/commit-path.tsv`.
+- The `LinkedInMain*` test classes: `LinkedInMainRecording`, `LinkedInMainComparison`, `LinkedInMainAnswers` (one copy under
+  `.../openhouse-spark-itest/src/shared/smoke/` and one under `services/tables/src/test/.../e2e/h2/`), `LinkedInMainDifferences` (the
+  Spark itest's declared differences) and `CommitPathLinkedInMainDifferences` (`services/tables`), `LinkedInMainComparisonTest`,
+  `LinkedInMainRecordingFilesTest`; the comparing tests are `LegacyPathSparkSqlSmokeTest`, `LegacyPathWriteStatementsTest`,
+  `CatalogPluginContractTest` and the `CommitPath*Test` classes.
+- The list of tests that branch on the Iceberg line: `scripts/ci/iceberg-line-branches.tsv` and `scripts/ci/check-iceberg-line-branches.py`.
+
+Which notes explain it: `95-reviewed-merges-162-165-161-result.md` section 3 (what 161 leaves true, the declared differences by kind,
+line and cause, and what a green run proves and does not prove, in full); `85-behavior-change-ledger.md`, the section "What the
+recording of LinkedIn main measured" (each declared difference with its ledger row); `86-...`, FF-20 to FF-24 and FF-55 (what is done
+and the full re-record that is still needed); `90-...` D79 (the test-double differences) and D80, D81 (the Jackson text and the
+row-lineage columns); `records/pr-review-161.md` and `records/pr-review-161-recheck.md` (the reviewer's check that the stored files
+are main's and that no declaration hides a product change).
