@@ -148,10 +148,11 @@ dependencies {
 tasks.named('test') {
   // Bound retained Spring contexts so the full service suite fits the test worker's heap.
   systemProperty 'spring.test.context.cache.maxSize', '8'
-  // The suite starts over fifty Spring contexts and no longer fits the default 512 MB worker heap
-  // (it ran out loading one of its last contexts); at 768 MB the heap in use in the second half of
-  // the suite stays between about 450 and 660 MB.
-  maxHeapSize = '768m'
+  // Closed contexts are still partly retained (ReleaseMeterRegistriesOnClose takes their meter
+  // registries out of the global one; more than eight contexts stay reachable all the same), and
+  // the heap in use after a full collection reaches about 500 MB late in the suite: above the
+  // default 512 MB worker heap's margin, so a little more.
+  maxHeapSize = '640m'
 }
 
 // Keep the HTS bootstrap resources isolated from existing Tables Service tests.

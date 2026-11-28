@@ -32,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
@@ -45,11 +46,10 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * the same principal for the same table, byte for byte, since both routes run the load's checks.
  */
 @SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
-// A context of its own (scan planning on), closed after the class rather than kept in the cache
-// with the shared ones, as the other planning tests' contexts are.
-@org.springframework.test.annotation.DirtiesContext(
-    classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
+// One context configuration, shared with IrcPlanCredentialsRoutesTest: scan planning on, with
+// authorization and a mocked authorization handler.
 @AutoConfigureMockMvc
+@Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(
     initializers = {
       PropertyOverrideContextInitializer.class,

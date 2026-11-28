@@ -52,13 +52,15 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * on the load and create routes, which vends nothing.
  */
 @SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
-// A context of its own (scan planning on), closed after the class rather than kept in the cache
-// with the shared ones, as the other planning tests' contexts are.
-@org.springframework.test.annotation.DirtiesContext(
-    classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
+// One context configuration, shared with IrcPlanCredentialsAuthTest: scan planning on, with
+// authorization and a mocked authorization handler.
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
-@ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
+@ContextConfiguration(
+    initializers = {
+      PropertyOverrideContextInitializer.class,
+      com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer.class
+    })
 public class IrcPlanCredentialsRoutesTest {
 
   static final String DB = "irc_plan_routes";
@@ -77,6 +79,37 @@ public class IrcPlanCredentialsRoutesTest {
 
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
+
+  /** Allows every decision: this class tests the routes, IrcPlanCredentialsAuthTest the checks. */
+  @org.springframework.boot.test.mock.mockito.MockBean
+  com.linkedin.openhouse.tables.authorization.AuthorizationHandler authorizationHandler;
+
+  @org.junit.jupiter.api.BeforeEach
+  void allowEverything() {
+    org.mockito.Mockito.reset(authorizationHandler);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.model.TableDto.class),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.authorization.Privileges.class)))
+        .thenReturn(true);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.model.DatabaseDto.class),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.authorization.Privileges.class)))
+        .thenReturn(true);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkSystemOnlyLockAccess(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+        .thenCallRealMethod();
+  }
 
   @Autowired
   com.linkedin.openhouse.common.audit.AuditHandler<
