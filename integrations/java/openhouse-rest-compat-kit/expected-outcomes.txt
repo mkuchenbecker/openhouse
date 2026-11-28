@@ -105,12 +105,6 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecServerSideRetry() |
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecThenRevert() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Evolution of table partitioning and clustering columns are not supported
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Commit on table newdb.newtable changes what an OpenHouse table commit does not store: partition spec (not expressible as time partitioning and clustering)
 
-# MSG
-category MSG | e | error type and status are right; the kit asserts the reference implementation's message text
-OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
-OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
-OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "No such view: ns.table" to start with: "View does not exist"
-
 # SCHEMA
 category SCHEMA | b | a column drop is refused 400 (OpenHouse schema evolution rules: every column of the current schema stays)
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSchemas(boolean)[1] | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col_to_delete] not found in newSchema
@@ -265,5 +259,8 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchema() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaAssignmentConflict() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSortOrder() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSortOrderServerSideRetry() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | PASSED
 OpenHouseRestCompatibilityKitViewCatalogTests.renameTableTargetAlreadyExistsAsView() | PASSED
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewThatAlreadyExistsAsTable() | PASSED

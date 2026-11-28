@@ -130,7 +130,7 @@ public class IrcRegisterViewRaceTest {
     String location = droppedView();
     MvcResult result = registerLosingTo(location, row -> houseTables.save(row));
     assertEquals(
-        "Name already exists as a table: " + DB + ".v",
+        "Table with same name already exists: " + DB + ".v",
         assertIrcError(result, 409, "AlreadyExistsException").message());
     assertEquals(
         false,

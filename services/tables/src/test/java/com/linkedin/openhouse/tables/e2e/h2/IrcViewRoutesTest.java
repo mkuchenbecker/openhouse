@@ -231,12 +231,17 @@ public class IrcViewRoutesTest {
         404, IrcHttp.head(mvc, IrcViewWrite.view("irc_v_head", "t")).getResponse().getStatus());
   }
 
+  /**
+   * The native 404, worded as Iceberg's catalogs word a missing view; the native route keeps its
+   * own wording.
+   */
   @Test
   void aMissingViewIs404NoSuchView() throws Exception {
     database("irc_v_missing");
-    String nativeMsg = nativeMessage(get(mvc, "irc_v_missing", "nope"));
     assertEquals(
-        nativeMsg,
+        "No such view: irc_v_missing.nope", nativeMessage(get(mvc, "irc_v_missing", "nope")));
+    assertEquals(
+        "View does not exist: irc_v_missing.nope",
         assertIrcError(
                 IrcHttp.get(mvc, IrcViewWrite.view("irc_v_missing", "nope")),
                 404,
@@ -321,6 +326,10 @@ public class IrcViewRoutesTest {
     expectAudited("irc_v_exists", ViewOperationType.CREATE, OperationStatus.FAILED);
   }
 
+  /**
+   * The native 409, worded as Iceberg's catalogs word a view create onto a table's name; the native
+   * route keeps its own wording.
+   */
   @Test
   void createOverATableIs409AlreadyExists() throws Exception {
     database("irc_v_overt");
@@ -334,8 +343,9 @@ public class IrcViewRoutesTest {
                     SCHEMA_ID_NAME,
                     sql("irc_v_overt"),
                     Collections.emptyMap())));
+    assertEquals("Name already exists as a table: irc_v_overt.t", nativeMsg);
     assertEquals(
-        nativeMsg,
+        "Table with same name already exists: irc_v_overt.t",
         assertIrcError(
                 IrcViewWrite.create(mvc, "irc_v_overt", ircCreate("irc_v_overt", "t")),
                 409,
@@ -844,9 +854,10 @@ public class IrcViewRoutesTest {
     assertEquals(204, IrcViewWrite.drop(mvc, "irc_v_drop", "v").getResponse().getStatus());
     assertEquals(404, code(get(mvc, "irc_v_drop", "v")));
     expectAudited("irc_v_drop", ViewOperationType.DROP, OperationStatus.SUCCESS);
-    String nativeMsg = nativeMessage(NativeViewHttp.delete(mvc, "irc_v_drop", "v"));
     assertEquals(
-        nativeMsg,
+        "No such view: irc_v_drop.v", nativeMessage(NativeViewHttp.delete(mvc, "irc_v_drop", "v")));
+    assertEquals(
+        "View does not exist: irc_v_drop.v",
         assertIrcError(IrcViewWrite.drop(mvc, "irc_v_drop", "v"), 404, "NoSuchViewException")
             .message());
     // A drop addressed to a table name drops nothing.
@@ -950,8 +961,11 @@ public class IrcViewRoutesTest {
   void aTableRouteAskedForAViewAndAViewRouteAskedForATable() throws Exception {
     database("irc_v_kinds");
     createNative("irc_v_kinds", "v");
-    assertIrcError(
-        IrcHttp.get(mvc, IrcViewWrite.view("irc_v_kinds", "t")), 404, "NoSuchViewException");
+    assertEquals(
+        "View does not exist: irc_v_kinds.t",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("irc_v_kinds", "t")), 404, "NoSuchViewException")
+            .message());
     assertIrcError(
         IrcHttp.get(mvc, IrcWrite.table("irc_v_kinds", "v")), 404, "NoSuchTableException");
     assertEquals(

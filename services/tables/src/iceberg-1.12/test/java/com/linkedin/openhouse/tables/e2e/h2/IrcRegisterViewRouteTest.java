@@ -303,8 +303,10 @@ public class IrcRegisterViewRouteTest {
                     SCHEMA_ID_NAME,
                     sql("irc_rv_istable"),
                     Collections.emptyMap())));
+    // The IRC create's answer (IrcViewRoutesTest.createOverATableIs409AlreadyExists): the native
+    // 409, worded as Iceberg's catalogs word it.
     assertEquals(
-        nativeMsg,
+        "Table with same name already exists: irc_rv_istable.t",
         assertIrcError(
                 register("irc_rv_istable", "t", created.metadataFileLocation()),
                 409,

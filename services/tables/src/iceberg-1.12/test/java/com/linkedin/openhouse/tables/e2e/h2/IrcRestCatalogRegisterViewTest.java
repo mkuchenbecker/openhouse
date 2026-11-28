@@ -140,7 +140,7 @@ class IrcRestCatalogRegisterViewTest {
     rest.dropView(VIEW);
     AlreadyExistsException asTable =
         assertThrows(AlreadyExistsException.class, () -> rest.registerView(TABLE, location));
-    assertEquals("Name already exists as a table: " + TABLE, asTable.getMessage());
+    assertEquals("Table with same name already exists: " + TABLE, asTable.getMessage());
     assertThrows(
         BadRequestException.class, () -> rest.registerView(TableIdentifier.of(DB, "w"), location));
     assertThrows(

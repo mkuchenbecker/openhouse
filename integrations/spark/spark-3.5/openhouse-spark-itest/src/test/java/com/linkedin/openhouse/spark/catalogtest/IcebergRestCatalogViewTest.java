@@ -225,7 +225,9 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   @Test
   void aMissingViewIsNoSuchView() {
     assertThrown(
-        NoSuchViewException.class, "No such view", thrown(() -> rest.loadView(id("missing"))));
+        NoSuchViewException.class,
+        "View does not exist: " + id("missing"),
+        thrown(() -> rest.loadView(id("missing"))));
     Assertions.assertFalse(rest.viewExists(id("missing")));
     Assertions.assertFalse(rest.dropView(id("missing")));
     // A table is not a view.
