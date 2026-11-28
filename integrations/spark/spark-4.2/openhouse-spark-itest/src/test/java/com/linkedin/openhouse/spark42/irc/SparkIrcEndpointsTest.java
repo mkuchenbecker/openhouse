@@ -225,6 +225,11 @@ public class SparkIrcEndpointsTest {
     awaitRequest("POST /iceberg/v1/namespaces 200");
     try (RESTCatalog catalog = rest(READER)) {
       Assertions.assertTrue(catalog.namespaceExists(Namespace.of("irc42_new_ns")));
+      // Spark adds its own owner property to the statement, and the record stores it.
+      Assertions.assertEquals(
+          java.util.Collections.singletonMap(
+              "owner", IrcSpark.session().sparkContext().sparkUser()),
+          catalog.loadNamespaceMetadata(Namespace.of("irc42_new_ns")));
     }
     Throwable alter = failure("ALTER NAMESPACE irc." + DB + " SET PROPERTIES ('k'='v')");
     Assertions.assertTrue(

@@ -249,4 +249,65 @@ public class IrcNamespaceRoutesAuthTest {
     assertEquals(
         404, IrcHttp.head(mvc, "/v1/namespaces/irc_ns_auth_only").getResponse().getStatus());
   }
+
+  /**
+   * Denies {@code denied} on the database {@code resource} alone (the name a decision is asked for)
+   * and allows every other decision, so a refusal shows which resource was decided on.
+   */
+  private void denyOn(String resource, Privileges denied) {
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(TableDto.class), any(Privileges.class)))
+        .thenReturn(true);
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(DatabaseDto.class), any(Privileges.class)))
+        .thenAnswer(
+            call ->
+                !(call.getArgument(2) == denied
+                    && resource.equals(((DatabaseDto) call.getArgument(1)).getDatabaseId())));
+  }
+
+  /**
+   * The write decision is on the lower-cased database: denied {@code SYSTEM_ADMIN} on {@code
+   * irc_ns_auth_res} alone, a create spelled {@code Irc_Ns_Auth_Res} is refused while another name
+   * is not; and the decision this layer makes is that one, not the namespace service's alone: a
+   * create or drop of a namespace that holds tables, which the service is never asked about, is
+   * refused (403, not the 409 the layer's own check would answer).
+   */
+  @Test
+  void theWriteDecisionIsOnTheLowerCasedDatabase() throws Exception {
+    table("irc_ns_auth_rtab");
+    denyOn("irc_ns_auth_res", Privileges.SYSTEM_ADMIN);
+    forbidden(
+        IrcNamespaceRoutesTest.createNamespace(mvc, "Irc_Ns_Auth_Res", Collections.emptyMap()));
+    assertFalse(hasRecord("irc_ns_auth_res"));
+    record("Irc_Ns_Auth_Ok");
+
+    denyOn("irc_ns_auth_rtab", Privileges.SYSTEM_ADMIN);
+    forbidden(
+        IrcNamespaceRoutesTest.createNamespace(mvc, "IRC_NS_AUTH_RTAB", Collections.emptyMap()));
+    forbidden(IrcNamespaceRoutesTest.dropNamespace(mvc, "IRC_NS_AUTH_RTAB"));
+    forbidden(
+        IrcNamespaceRoutesTest.updateProperties(
+            mvc, "IRC_NS_AUTH_RTAB", Collections.singletonMap("k", "v"), List.of()));
+  }
+
+  /**
+   * The read decision is on the lower-cased database too: denied {@code GET_TABLE_METADATA} on
+   * {@code irc_ns_auth_rres} alone, that record is not shown (a record-only namespace does not
+   * exist for the caller), while another record is.
+   */
+  @Test
+  void theReadDecisionIsOnTheLowerCasedDatabase() throws Exception {
+    record("Irc_Ns_Auth_Rres");
+    record("Irc_Ns_Auth_Rok");
+    denyOn("irc_ns_auth_rres", Privileges.GET_TABLE_METADATA);
+    assertIrcError(
+        IrcHttp.get(mvc, "/v1/namespaces/IRC_NS_AUTH_RRES"), 404, "NoSuchNamespaceException");
+    assertEquals(
+        Collections.singletonMap("k", "v"),
+        IrcClientParsers.parse(
+                body(IrcHttp.get(mvc, "/v1/namespaces/IRC_NS_AUTH_ROK")),
+                GetNamespaceResponse.class)
+            .properties());
+  }
 }

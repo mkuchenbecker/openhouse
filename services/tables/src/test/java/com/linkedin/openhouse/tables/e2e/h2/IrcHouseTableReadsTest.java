@@ -270,16 +270,16 @@ public class IrcHouseTableReadsTest {
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + REC + "/tables"), 200));
   }
 
-  /** A create probes for a table and a view (one row each), then writes the record. */
+  /**
+   * A create probes for a table (one row), and for a view (one row) only where the database's views
+   * are enabled (not here), then writes the record.
+   */
   @Test
   void createNamespace() throws Exception {
     reads();
     try {
       assertEquals(
-          list(
-              "findAllByDatabaseId[page0x1]=0",
-              "findAllViewsByDatabaseId[page0x1]=0",
-              "create[write]"),
+          list("findAllByDatabaseId[page0x1]=0", "create[write]"),
           readsOf(IrcNamespaceRoutesTest.createNamespace(mvc, REC, Collections.emptyMap()), 200));
     } finally {
       IrcNamespaceRoutesTest.dropNamespace(mvc, REC);
@@ -314,15 +314,12 @@ public class IrcHouseTableReadsTest {
     }
   }
 
-  /** A drop probes for a table and a view, then deletes the record. */
+  /** A drop probes for a table, and for a view only where views are enabled, then deletes. */
   @Test
   void dropNamespace() throws Exception {
     createRecord();
     assertEquals(
-        list(
-            "findAllByDatabaseId[page0x1]=0",
-            "findAllViewsByDatabaseId[page0x1]=0",
-            "delete[write]"),
+        list("findAllByDatabaseId[page0x1]=0", "delete[write]"),
         readsOf(IrcNamespaceRoutesTest.dropNamespace(mvc, REC), 204));
   }
 

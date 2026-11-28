@@ -342,9 +342,12 @@ public class IrcNamespaceRoutesTest {
     assertFalse(hasRecord("irc_ns_drop_both"));
   }
 
-  /** A namespace that holds a view and no table is not empty either. */
+  /**
+   * A namespace that holds a view and no table is not empty either, while its views are enabled:
+   * the drop asks the views gate the view routes ask.
+   */
   @Test
-  void aNamespaceThatHoldsOnlyAViewIsNotDropped() throws Exception {
+  void aNamespaceThatHoldsOnlyAViewIsNotDroppedWhileItsViewsAreEnabled() throws Exception {
     String db = "irc_ns_drop_viewed";
     NativeViewHttp.enableViews(toggles, db);
     table(db, "t");
@@ -363,6 +366,30 @@ public class IrcNamespaceRoutesTest {
     tables.clear();
     assertIrcError(dropNamespace(mvc, db), 409, "NamespaceNotEmptyException");
     assertEquals(200, NativeViewHttp.code(NativeViewHttp.get(mvc, db, "v")));
+
+    // With the database's views disabled it holds no views for these routes (its view list is
+    // empty), so it is empty: a drop meets no record (404), a create stores one, a drop removes it.
+    toggles.delete(viewsToggle(db));
+    try {
+      assertIrcError(dropNamespace(mvc, db), 404, "NoSuchNamespaceException");
+      created(db, Collections.emptyMap());
+      assertEquals(204, dropNamespace(mvc, db).getResponse().getStatus());
+      assertFalse(hasRecord(db));
+    } finally {
+      NativeViewHttp.enableViews(toggles, db);
+    }
+  }
+
+  /** The toggle row {@link NativeViewHttp#enableViews} saves for {@code db}. */
+  private static com.linkedin.openhouse.tables.toggle.model.TableToggleStatus viewsToggle(
+      String db) {
+    return com.linkedin.openhouse.tables.toggle.model.TableToggleStatus.builder()
+        .databaseId(db)
+        .tableId(com.linkedin.openhouse.tables.services.ViewsFeatureGate.GATE_PROBE_TABLE_ID)
+        .featureId("views")
+        .toggleStatusEnum(
+            com.linkedin.openhouse.housetables.client.model.ToggleStatus.StatusEnum.ACTIVE)
+        .build();
   }
 
   /**
