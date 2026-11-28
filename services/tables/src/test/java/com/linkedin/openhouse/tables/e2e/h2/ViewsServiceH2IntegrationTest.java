@@ -204,8 +204,10 @@ public class ViewsServiceH2IntegrationTest {
             create.getResponse().getContentAsString(), "$.metadataLocation");
     HouseTable createdRow = findViewRow();
     org.junit.jupiter.api.Assertions.assertEquals("local", createdRow.getStorageType());
-    org.junit.jupiter.api.Assertions.assertTrue(
-        createdRow.getTableLocation().contains(createdRow.getTableUUID()));
+    // House Tables keeps no UUID; the root the row points into is named for the view's.
+    String createdRoot =
+        createdRow.getTableLocation().substring(0, createdRow.getTableLocation().lastIndexOf('/'));
+    java.util.UUID.fromString(createdRoot.substring(createdRoot.length() - 36));
 
     mvc.perform(
             MockMvcRequestBuilders.get(VIEW_PATH)
@@ -251,11 +253,9 @@ public class ViewsServiceH2IntegrationTest {
         "Changed replacement must publish a new metadata pointer.");
     HouseTable replacedRow = findViewRow();
     org.junit.jupiter.api.Assertions.assertEquals(
-        createdRow.getTableUUID(), replacedRow.getTableUUID());
-    org.junit.jupiter.api.Assertions.assertEquals(
         createdRow.getStorageType(), replacedRow.getStorageType());
     org.junit.jupiter.api.Assertions.assertTrue(
-        replacedRow.getTableLocation().contains(createdRow.getTableUUID()));
+        replacedRow.getTableLocation().startsWith(createdRoot + "/"));
 
     mvc.perform(
             MockMvcRequestBuilders.get(VIEWS_PATH)

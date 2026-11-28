@@ -17,6 +17,7 @@ import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableReques
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
 import com.linkedin.openhouse.tables.api.spec.v0.response.GetTableResponseBody;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -63,6 +64,8 @@ import org.springframework.test.web.servlet.MvcResult;
       AuthorizationPropertiesInitializer.class
     })
 public class CommitPathConcurrencyTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
   private static final String MODIFIED =
       "Entity with key[local-cluster.%s.t] is modified by another process already";
   private static final long SEVEN_DAYS_MS = 7L * 24 * 60 * 60 * 1000;
@@ -79,7 +82,8 @@ public class CommitPathConcurrencyTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables
+    houseTablesH2Store
+        .softDeletedTables()
         .keySet()
         .removeIf(k -> k.getDatabaseId().startsWith("cc_"));
   }
@@ -315,8 +319,9 @@ public class CommitPathConcurrencyTest {
     get(mvc, db, "t").andExpect(status().isNotFound());
     assertEquals(1, softDeletedCount(db, "t"));
     restore(mvc, db, "t", deletedAtMs).andExpect(status().isNoContent());
-    // the row is gone once restored
-    assertEquals(404, CommitPathHttp.status(restore(mvc, db, "t", deletedAtMs)));
+    // once restored the table is live, which a restore refuses before it looks for the row
+    assertEquals(409, CommitPathHttp.status(restore(mvc, db, "t", deletedAtMs)));
+    assertEquals(0, softDeletedCount(db, "t"));
   }
 
   @Test

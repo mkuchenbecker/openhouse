@@ -9,7 +9,9 @@ import com.linkedin.openhouse.common.schema.IcebergSchemaHelper;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
 import com.linkedin.openhouse.internal.catalog.repository.HouseNamespaceRepository;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
 import com.linkedin.openhouse.tables.model.TableModelConstants;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -70,6 +72,8 @@ import org.springframework.util.ClassUtils;
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 public class IrcHouseTableReadsTest {
 
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
+
   /** The database of three tables. */
   private static final String DB = "v17_three";
 
@@ -117,6 +121,11 @@ public class IrcHouseTableReadsTest {
           try {
             result = method.invoke(target, args);
           } catch (InvocationTargetException e) {
+            // A keyed table read of a missing row is a 404 from House Tables: a read of no row.
+            if (e.getCause() instanceof HouseTableNotFoundException
+                && method.getName().startsWith("find")) {
+              READS.add(method.getName() + "[key]=0");
+            }
             throw e.getCause();
           }
           if (HouseTableRepository.class.isAssignableFrom(method.getDeclaringClass())
@@ -208,7 +217,7 @@ public class IrcHouseTableReadsTest {
       CommitPathHttp.delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables.clear();
+    houseTablesH2Store.softDeletedTables().clear();
   }
 
   /** {@link #DB} with its three tables, made through the native create. */
