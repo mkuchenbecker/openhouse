@@ -125,8 +125,10 @@ public class ViewsDualStorageH2IntegrationTest {
     Assertions.assertEquals(expectedStorageType, created.getStorageType());
     Assertions.assertEquals(base, created.getTableLocation());
     String createdRoot = viewRoot(created.getTableLocation());
-    // The root is named for the view's UUID: <view>-<uuid>.
-    UUID.fromString(createdRoot.substring(createdRoot.length() - 36));
+    // The root is named for the view's own UUID, which its metadata records: <view>-<uuid>.
+    String viewUuid = StoredViewMetadata.viewUuid(created.getTableLocation());
+    UUID.fromString(viewUuid);
+    Assertions.assertEquals(viewUuid, createdRoot.substring(createdRoot.length() - 36));
 
     MvcResult replace =
         mvc.perform(
@@ -151,6 +153,7 @@ public class ViewsDualStorageH2IntegrationTest {
     Assertions.assertEquals(replacement, replaced.getTableLocation());
     Assertions.assertEquals(created.getStorageType(), replaced.getStorageType());
     Assertions.assertEquals(createdRoot, viewRoot(replaced.getTableLocation()));
+    Assertions.assertEquals(viewUuid, StoredViewMetadata.viewUuid(replaced.getTableLocation()));
   }
 
   /** View metadata files live directly under the allocated root, with no metadata/ directory. */
