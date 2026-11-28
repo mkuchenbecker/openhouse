@@ -1024,10 +1024,11 @@ public class IcebergRestWriteHandler {
 
   /**
    * Refuses, for a register or the commit that completes a staged create ({@code operation}), a
-   * directory a house-table row, live or soft-deleted, points into or names by UUID. A table's drop
-   * deletes its directory, so a second table there would take the first one's files with it when it
-   * is dropped; and a directory is not free because no table has its name: a table renamed away
-   * keeps the directory of its old name, and a soft-deleted table can be restored into its own.
+   * directory a house-table row, live or soft-deleted, points into, or whose UUID is the one the
+   * directory of a row's location is named for ({@link #namesUuid}). A table's drop deletes its
+   * directory, so a second table there would take the first one's files with it when it is dropped;
+   * and a directory is not free because no table has its name: a table renamed away keeps the
+   * directory of its old name, and a soft-deleted table can be restored into its own.
    */
   private void refuseADirectoryInUse(
       String operation,
@@ -1069,11 +1070,37 @@ public class IcebergRestWriteHandler {
   }
 
   private static boolean uses(HouseTable row, Storage storage, String directory, UUID tableUUID) {
-    if (tableUUID.toString().equals(row.getTableUUID())) {
-      return true;
-    }
     String location = row.getTableLocation();
-    return location != null && withoutEndpoint(storage, location).startsWith(directory + "/");
+    if (location == null) {
+      return false;
+    }
+    String stored = withoutEndpoint(storage, location);
+    return stored.startsWith(directory + "/") || namesUuid(stored, tableUUID);
+  }
+
+  /**
+   * Whether the directory a metadata file lies in is named for {@code uuid}. OpenHouse allocates a
+   * table or view the directory {@code <database>/<name>-<uuid>} and writes its metadata files
+   * directly in it, and a rename keeps the directory, so this is the UUID a house-table row's
+   * entity carries: House Tables keeps the location, not the UUID. It reads nothing but the
+   * location.
+   */
+  static boolean namesUuid(String metadataLocation, UUID uuid) {
+    int fileAt = metadataLocation.lastIndexOf('/');
+    if (fileAt <= 0) {
+      return false;
+    }
+    String directory = metadataLocation.substring(0, fileAt);
+    String name = directory.substring(directory.lastIndexOf('/') + 1);
+    int uuidLength = 36;
+    if (name.length() <= uuidLength || name.charAt(name.length() - uuidLength - 1) != '-') {
+      return false;
+    }
+    try {
+      return uuid.equals(UUID.fromString(name.substring(name.length() - uuidLength)));
+    } catch (IllegalArgumentException e) {
+      return false;
+    }
   }
 
   /** Reads the metadata file; a failure is told without the file's content. */

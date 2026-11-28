@@ -247,11 +247,12 @@ public class IcebergRestViewRegistration {
   }
 
   /**
-   * Refuses a directory a house-table row of the database points into or names by UUID: a table,
-   * live or soft-deleted (as the table register refuses it), or a view. A row's drop does not free
-   * the directory for another view, and two rows sharing a directory would diverge on their next
-   * write. Existing lookups only: the database's table rows, its soft-deleted tables and its views,
-   * page by page.
+   * Refuses a directory a house-table row of the database points into, or whose UUID is the one the
+   * directory of a row's location is named for ({@code IcebergRestWriteHandler.namesUuid}): a
+   * table, live or soft-deleted (as the table register refuses it), or a view. A row's drop does
+   * not free the directory for another view, and two rows sharing a directory would diverge on
+   * their next write. Existing lookups only: the database's table rows, its soft-deleted tables and
+   * its views, page by page.
    */
   private void refuseADirectoryInUse(
       TableIdentifier identifier, Storage storage, String directory, UUID uuid) {
@@ -293,8 +294,10 @@ public class IcebergRestViewRegistration {
       UUID uuid,
       String kind) {
     String location = row.getTableLocation();
-    if (uuid.toString().equals(row.getTableUUID())
-        || (location != null && withoutEndpoint(storage, location).startsWith(directory + "/"))) {
+    String stored = location == null ? null : withoutEndpoint(storage, location);
+    if (stored != null
+        && (stored.startsWith(directory + "/")
+            || IcebergRestWriteHandler.namesUuid(stored, uuid))) {
       throw refused(
           identifier,
           "that directory belongs to %s%s.%s",
