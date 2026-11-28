@@ -966,6 +966,26 @@ public abstract class SparkSqlSmokeScenarios {
         "CREATE NAMESPACE openhouse.smoke_t1_new_ns",
         fails("java.lang.UnsupportedOperationException", "Describing database is not supported"));
     sql(spark, "SHOW DATABASES IN openhouse LIKE 'smoke_t1_new_ns'", rows());
+    // USE checks that the namespace exists, as CREATE NAMESPACE does.
+    use(
+        spark,
+        "USE openhouse.smoke_t1_new_ns",
+        fails("java.lang.UnsupportedOperationException", "Describing database is not supported"));
+  }
+
+  /**
+   * Runs a USE statement and puts the session's current catalog and namespace back afterwards, so
+   * that the scenarios after it see the session as before whatever the statement did.
+   */
+  protected final Outcome use(SparkSession spark, String statement, Expectation... baseline) {
+    String catalog = spark.catalog().currentCatalog();
+    String database = spark.catalog().currentDatabase();
+    try {
+      return sql(spark, statement, baseline);
+    } finally {
+      spark.catalog().setCurrentCatalog(catalog);
+      spark.catalog().setCurrentDatabase(database);
+    }
   }
 
   // ---------- scenarios added with the REST-shaped path (work item C1) ----------
@@ -1118,6 +1138,10 @@ public abstract class SparkSqlSmokeScenarios {
         spark,
         "SHOW TABLES IN " + CAT_DB + " LIKE 's24_namespaces'",
         rows(DB + ",s24_namespaces,false"));
+    use(
+        spark,
+        "USE " + CAT_DB,
+        fails("java.lang.UnsupportedOperationException", "Describing database is not supported"));
   }
 
   @Test
