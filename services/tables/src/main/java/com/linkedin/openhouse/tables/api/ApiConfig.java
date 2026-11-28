@@ -41,11 +41,16 @@ public class ApiConfig {
 
   /**
    * A pre-commit check: the format version a commit may leave, and what a format v3 table may
-   * carry. The internal catalog runs it on every table commit.
+   * carry. The internal catalog runs it on every table commit it applies to.
+   *
+   * @throws IllegalStateException at start-up, if the cluster's format version is above 2 with the
+   *     format v3 switch off ({@link FormatVersionRule#requireClusterVersion})
    */
   @Bean
   public FormatVersionCommitPolicy formatVersionCommitPolicy(ClusterProperties clusterProperties) {
-    return new FormatVersionCommitPolicy(new FormatVersionRule(clusterProperties));
+    FormatVersionRule rule = new FormatVersionRule(clusterProperties);
+    rule.requireClusterVersion();
+    return new FormatVersionCommitPolicy(rule);
   }
 
   /** A pre-commit check: the internal catalog runs it on every table commit. */

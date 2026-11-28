@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
+import com.linkedin.openhouse.tables.api.ApiConfig;
 import com.linkedin.openhouse.tables.model.TableDto;
 import java.util.Collections;
 import java.util.Map;
@@ -29,6 +30,28 @@ class FormatVersionRuleSwitchOffTest {
 
   private static Map<String, String> asking(String version) {
     return Collections.singletonMap(FormatVersionRule.PROPERTY, version);
+  }
+
+  /** A cluster at format version 3 with the switch off does not start. */
+  @Test
+  void aClusterVersionAboveTwoNeedsTheSwitch() {
+    for (int version : new int[] {3, 4}) {
+      IllegalStateException refused =
+          assertThrows(
+              IllegalStateException.class,
+              () -> new ApiConfig().formatVersionCommitPolicy(cluster(version, false)));
+      assertEquals(
+          "cluster.iceberg.format-version is "
+              + version
+              + ", and cluster.iceberg.format-v3.enabled is false: tables above format version 2"
+              + " need cluster.iceberg.format-v3.enabled=true. Set cluster.iceberg.format-version"
+              + " to 2 or lower, or turn format version 3 on.",
+          refused.getMessage());
+    }
+    for (int version : new int[] {1, 2}) {
+      assertDoesNotThrow(() -> new ApiConfig().formatVersionCommitPolicy(cluster(version, false)));
+    }
+    assertDoesNotThrow(() -> new ApiConfig().formatVersionCommitPolicy(cluster(3, true)));
   }
 
   /** A create is stored at the cluster's version whatever it asks for. */

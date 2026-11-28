@@ -31,6 +31,8 @@ import org.apache.iceberg.TableProperties;
  *   <li>An update is left to Iceberg, which upgrades a table to v2 and refuses a version it cannot
  *       build. The Iceberg 1.12 line can build v3 and v4, so there an update that asks for a
  *       version above 2 is given the refusal Iceberg 1.5.2 gave it ({@link #checkUpdate}).
+ *   <li>{@code cluster.iceberg.format-version} may not be above 2 ({@link #requireClusterVersion}):
+ *       on Iceberg 1.5.2 such a cluster could create no table at all.
  * </ul>
  *
  * <p>With the switch on:
@@ -79,6 +81,24 @@ public class FormatVersionRule {
   /** Whether the cluster switch {@value #SWITCH} is on, whatever this Iceberg can build. */
   public boolean switchOn() {
     return clusterProperties.isClusterIcebergFormatV3Enabled();
+  }
+
+  /**
+   * Refuses a cluster whose {@code cluster.iceberg.format-version} is above 2 while the switch is
+   * off: it would make every new table v3 with the switch that is meant to allow v3 tables off. On
+   * LinkedIn's Iceberg 1.5.2, which builds nothing above v2, such a cluster could create no table.
+   *
+   * @throws IllegalStateException naming both properties
+   */
+  public void requireClusterVersion() {
+    if (!switchOn() && clusterVersion() > HIGHEST_WITHOUT_V3) {
+      throw new IllegalStateException(
+          String.format(
+              "cluster.iceberg.format-version is %d, and %s is false: tables above format version"
+                  + " %d need %s=true. Set cluster.iceberg.format-version to %d or lower, or turn"
+                  + " format version 3 on.",
+              clusterVersion(), SWITCH, HIGHEST_WITHOUT_V3, SWITCH, HIGHEST_WITHOUT_V3));
+    }
   }
 
   /** The cluster property that allows variant columns on v3 tables. */

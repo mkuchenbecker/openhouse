@@ -43,6 +43,9 @@ import org.apache.iceberg.types.Types;
  * <p>With the format v3 switch off, the check judges only a commit that finds or leaves a table at
  * format version 3 or above ({@link #appliesTo}): every other commit is judged by what judged it
  * before this service knew format v3, and the check is neither run nor counted for it.
+ *
+ * <p>A commit it lets through that raises a table's format version to 3 or above is recorded for
+ * the table audit ({@link FormatVersionUpgrades}).
  */
 public class FormatVersionCommitPolicy implements PreCommitCheck {
 
@@ -134,6 +137,13 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
       keepInitialDefaults(table, base, added);
     } else {
       refuseNewWriteDefaults(table, base, committed, added);
+    }
+    if (base != null
+        && base.formatVersion() < IcebergV3.VERSION
+        && committed.formatVersion() >= IcebergV3.VERSION
+        && !isTrue(properties.get(CatalogConstants.IS_STAGE_REPLACE_KEY))) {
+      FormatVersionUpgrades.record(
+          table.toString(), base.formatVersion(), committed.formatVersion());
     }
   }
 
