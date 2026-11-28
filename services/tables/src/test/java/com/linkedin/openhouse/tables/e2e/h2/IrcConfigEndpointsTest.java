@@ -82,10 +82,11 @@ public class IrcConfigEndpointsTest {
           "POST /v1/{prefix}/transactions/commit");
 
   /**
-   * What this service serves on the Iceberg 1.12 line (the default build): the routes above, and
-   * the scan planning route (synchronous, D44), the credentials route (an empty list, D45) and the
-   * view register route (in place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2
-   * reference line has no classes for (IrcPlanCredentialsRoutesTest).
+   * What this service serves on the Iceberg 1.12 line (the default build) with scan planning on
+   * ({@code cluster.tables.irc.scan-planning.enabled}): the routes above, and the scan planning
+   * route (synchronous, D44), the credentials route (an empty list, D45) and the view register
+   * route (in place, IrcRegisterViewRouteTest), which LinkedIn's Iceberg 1.5.2 reference line has
+   * no classes for (IrcPlanCredentialsRoutesTest).
    */
   static final List<String> SERVED_ON_ICEBERG_1_12 =
       Arrays.asList(
@@ -113,21 +114,17 @@ public class IrcConfigEndpointsTest {
           "POST /v1/{prefix}/transactions/commit");
 
   /**
-   * The routes this server serves on the Iceberg line of this build: the 1.12 list, less each group
-   * whose Iceberg classes this build lacks, each decided by its own class (the scan planning and
-   * credentials routes by the planning request, the view register by its request), so the
-   * expectation holds if the two ever diverge. Without either it is the 1.5.2 list.
+   * The routes this server serves on the Iceberg line of this build with the default cluster
+   * configuration: the 1.12 list, less the scan planning and credentials routes, which a cluster
+   * serves only when it turns scan planning on (off here), and less the view register route when
+   * this build lacks its Iceberg class. Without it, it is the 1.5.2 list.
    */
   static List<String> served() {
     List<String> served = new ArrayList<>(SERVED_ON_ICEBERG_1_12);
-    if (!IrcPlanCredentialsRoutesTest.served()) {
-      served.remove("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials");
-      served.remove("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan");
-    }
+    served.remove("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials");
+    served.remove("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan");
     if (!registerViewServed()) {
       served.remove("POST /v1/{prefix}/namespaces/{namespace}/register-view");
-    }
-    if (!IrcPlanCredentialsRoutesTest.served() && !registerViewServed()) {
       assertEquals(SERVED_ON_ICEBERG_1_5, served);
     }
     return served;
@@ -295,6 +292,41 @@ public class IrcConfigEndpointsTest {
                 "DELETE /v1/{prefix}/namespaces/{namespace}/tables/{table}/openhouse/lock/{reason}",
                 "POST /v1/{prefix}/views/rename")),
         accounted);
+  }
+
+  /**
+   * Scan planning and the credentials route are off unless the cluster turns them on ({@code
+   * cluster.tables.irc.scan-planning.enabled}, unset here): on either Iceberg line neither is
+   * mapped or listed, and each answers exactly what a spec route this server does not serve
+   * answers, the catch-all's 406. With the property on, IrcPlanCredentialsRoutesTest.
+   */
+  @Test
+  void scanPlanningAndCredentialsAreNotServedUnlessTheClusterTurnsThemOn() throws Exception {
+    List<String> listed = endpoints();
+    for (String route :
+        new String[] {
+          "POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan",
+          "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials"
+        }) {
+      assertFalse(listed.contains(route), route);
+      String path =
+          route.split(" ")[1].replace("/{prefix}", "").replace("{namespace}", "irc_cfg_none");
+      org.apache.iceberg.rest.responses.ErrorResponse error =
+          IrcHttp.assertIrcError(call(route), 406, "UnsupportedOperationException");
+      assertEquals(
+          "This server does not support "
+              + route.split(" ")[0]
+              + " "
+              + path.replace("{table}", "t")
+              + " yet",
+          error.message());
+    }
+    for (Map.Entry<RequestMappingInfo, HandlerMethod> entry :
+        mappings.getHandlerMethods().entrySet()) {
+      for (String pattern : entry.getKey().getPatternValues()) {
+        assertFalse(pattern.endsWith("/plan") || pattern.endsWith("/credentials"), pattern);
+      }
+    }
   }
 
   /**

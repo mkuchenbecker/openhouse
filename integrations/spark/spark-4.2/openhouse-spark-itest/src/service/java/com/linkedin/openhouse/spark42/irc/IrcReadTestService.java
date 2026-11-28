@@ -112,6 +112,9 @@ public final class IrcReadTestService {
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
                 "--cluster.storages.types.local.rootpath=" + warehouse,
+                // Scan planning, off by default: the suites compare server planning with client
+                // planning, in the server-planning runs and in their own tests.
+                "--cluster.tables.irc.scan-planning.enabled=true",
                 // Every request, unbuffered, so a test can see which routes a client called.
                 "--server.tomcat.accesslog.enabled=true",
                 "--server.tomcat.accesslog.directory=" + work.resolve("access"),

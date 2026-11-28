@@ -59,17 +59,18 @@ import org.apache.iceberg.types.Types;
  *
  * <p>One plan is bounded (work item V11c): it holds at most a configured number of file scan tasks,
  * and a scan that plans more is answered {@code failed} ({@link #plan}). The bound is on what one
- * request makes the service hold; it does not bound the time spent reading manifests of a scan
- * whose filter prunes most files.
+ * request makes the service hold; the time one plan may take, and how many run at once, are bounded
+ * where the route runs it ({@link IcebergRestBoundedPlans}): planning stops when its thread is
+ * interrupted.
  */
 final class IcebergRestScanPlanner {
 
   private IcebergRestScanPlanner() {}
 
   /**
-   * The bound on file scan tasks in one plan when the cluster property sets none, or sets one that
-   * is not positive. See the V11c measurement: on the local test fixture, a plan of 10,000 tasks
-   * answered 2.8 MB and the heap's high-water mark while writing it was about 25 MB.
+   * The bound on file scan tasks in one plan when the cluster property sets none (its default in
+   * {@code ClusterProperties}). See the V11c measurement: on the local test fixture, a plan of
+   * 10,000 tasks answered 2.8 MB and the heap's high-water mark while writing it was about 25 MB.
    */
   static final int DEFAULT_MAX_FILE_SCAN_TASKS = 10_000;
 
@@ -79,10 +80,8 @@ final class IcebergRestScanPlanner {
   /** The error type of a plan answered {@code failed} because the table is format version 3. */
   static final String FORMAT_V3 = "ScanPlanFormatVersionException";
 
-  /** {@code configured}, or the default when it is not positive. */
-  static int bound(int configured) {
-    return configured > 0 ? configured : DEFAULT_MAX_FILE_SCAN_TASKS;
-  }
+  /** The error type of a plan answered {@code failed} for taking longer than the time bound. */
+  static final String TIMED_OUT = "ScanPlanTimeoutException";
 
   /**
    * Plans the scan {@code request} describes on {@code table}. At most {@code maxTasks} file scan
@@ -101,6 +100,10 @@ final class IcebergRestScanPlanner {
       for (FileScanTask task : planned) {
         if (tasks.size() >= maxTasks) {
           return tooLarge(table, maxTasks);
+        }
+        if (Thread.currentThread().isInterrupted()) {
+          // The plan took longer than its time bound and is already answered: stop.
+          return timedOut(table, -1);
         }
         tasks.add(task);
       }
@@ -153,6 +156,28 @@ final class IcebergRestScanPlanner {
                             + " (catalog property scan-planning-mode=client), or narrow it with a"
                             + " filter.",
                         maxTasks, IcebergRestScanController.MAX_FILE_SCAN_TASKS))
+                .build())
+        .build();
+  }
+
+  /**
+   * The answer to a plan that took longer than {@code timeoutMs}: {@code failed}, as for a plan
+   * above the task bound, since the same scan would take as long again; the client fails the scan
+   * and does not retry it.
+   */
+  static PlanTableScanResponse timedOut(Table table, long timeoutMs) {
+    return PlanTableScanResponse.builder(table.specs())
+        .withPlanStatus(PlanStatus.FAILED)
+        .withErrorResponse(
+            ErrorResponse.builder()
+                .responseCode(422)
+                .withType(TIMED_OUT)
+                .withMessage(
+                    String.format(
+                        "The scan took longer to plan than the %d ms this service plans one scan"
+                            + " for (cluster property %s). Plan it on the client (catalog"
+                            + " property scan-planning-mode=client), or narrow it with a filter.",
+                        timeoutMs, IcebergRestScanController.TIMEOUT_MS))
                 .build())
         .build();
   }

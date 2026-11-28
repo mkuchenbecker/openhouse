@@ -145,7 +145,8 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
           // View register, scan planning and credentials: served by
           // IcebergRestRegisterViewController and IcebergRestScanController on the Iceberg 1.12
-          // line; on LinkedIn's 1.5.2 reference line, which lacks their classes, answered here.
+          // line (scan planning and credentials only where the cluster turns scan planning on);
+          // otherwise, and on LinkedIn's 1.5.2 reference line, which lacks their classes, here.
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/plan"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/plan/*"},

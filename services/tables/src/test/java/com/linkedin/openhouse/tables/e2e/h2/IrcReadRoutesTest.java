@@ -616,8 +616,8 @@ public class IrcReadRoutesTest {
    * Spec routes this server does not serve yet answer 406 in the spec's error shape. (The metrics
    * report, register and multi-table commit routes were among them until they were served:
    * IrcMetricsRouteTest, IrcRegisterRouteTest, IrcTransactionRouteTest; and, on the Iceberg 1.12
-   * line, the scan planning and credentials routes, IrcPlanCredentialsRoutesTest, and the view
-   * register route, IrcRegisterViewRouteTest.)
+   * line, the view register route, IrcRegisterViewRouteTest, and the scan planning and credentials
+   * routes where the cluster turns scan planning on, IrcPlanCredentialsRoutesTest; it is off here.)
    */
   @Test
   void unservedSpecRoutesAre406UnsupportedOperation() throws Exception {
@@ -631,11 +631,9 @@ public class IrcReadRoutesTest {
                   {HttpMethod.POST, "/v1/oauth/tokens"},
                   {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/plan/p1"},
                   {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/tasks"},
+                  {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"},
+                  {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"},
                 }));
-    if (!IrcPlanCredentialsRoutesTest.served()) {
-      routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/tables/t/plan"});
-      routes.add(new Object[] {HttpMethod.GET, "/v1/namespaces/irc_x/tables/t/credentials"});
-    }
     if (!IrcConfigEndpointsTest.registerViewServed()) {
       routes.add(new Object[] {HttpMethod.POST, "/v1/namespaces/irc_x/register-view"});
     }

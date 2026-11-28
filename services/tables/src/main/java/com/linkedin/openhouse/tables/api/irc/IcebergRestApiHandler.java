@@ -254,14 +254,16 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * The Iceberg table {@code databaseId.tableId} as {@link #loadTable} loads it for {@code
+   * The table {@code databaseId.tableId} as {@link #loadTable} loads it for {@code
    * actingPrincipal}: the same validation and the same {@link TablesService#loadTable} call, so the
-   * same checks in the same order with the same failures (and the same read audit event). For the
-   * routes that act on a table a caller could load, such as scan planning and credentials.
+   * same checks in the same order with the same failures, and the same read audit event ({@code
+   * TableAuditAspect}). For the routes that act on a table a caller could load, such as scan
+   * planning and credentials, which use its Iceberg {@link Table}.
    */
-  public Table loadIcebergTable(String databaseId, String tableId, String actingPrincipal) {
+  public TableDtoWithMetadata loadIcebergTable(
+      String databaseId, String tableId, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
-    return tablesService.loadTable(databaseId, tableId, actingPrincipal).getTable();
+    return tablesService.loadTable(databaseId, tableId, actingPrincipal);
   }
 
   /** The counter of metrics reports received, tagged {@value #REPORT_TYPE_TAG}. */

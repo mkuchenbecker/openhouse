@@ -23,14 +23,12 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 /**
  * The Iceberg REST Catalog (IRC) routes of the embedded server, on the Iceberg line of the build
- * (the fork's 1.12 or LinkedIn's 1.5.2): the reads, writes and views are served on both, the scan
- * planning and credentials routes only where Iceberg has their classes (1.12). The expectation is
- * chosen at runtime from the classpath.
+ * (the fork's 1.12 or LinkedIn's 1.5.2): the reads, writes and views are served on both, the view
+ * register only where Iceberg has its class (1.12). The scan planning and credentials routes are
+ * not served on either: the embedded server has the default cluster configuration, which leaves
+ * scan planning off. The expectation is chosen at runtime from the classpath.
  */
 public class IcebergRestRoutesBoundaryTest {
-
-  private static final String SCAN_API_CLASS =
-      "org.apache.iceberg.rest.requests.PlanTableScanRequest";
 
   private static ConfigurableApplicationContext context;
 
@@ -100,8 +98,9 @@ public class IcebergRestRoutesBoundaryTest {
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
    * registered: the reads, the metrics report, the table writes and the views on every line, scan
-   * planning, credentials and the view register on 1.12. Reporting stays off unless the client's
-   * own configuration turns it on.
+   * the view register on 1.12; never scan planning or credentials, which the default cluster
+   * configuration leaves off. Reporting stays off unless the client's own configuration turns it
+   * on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -125,15 +124,12 @@ public class IcebergRestRoutesBoundaryTest {
         endpoints.toString());
     Assertions.assertTrue(
         endpoints.contains("POST /v1/{prefix}/transactions/commit"), endpoints.toString());
-    // The scan planning and credentials routes are served where Iceberg has their classes (the
-    // 1.12 line), not on LinkedIn's 1.5.2 reference line.
-    boolean planning = classPresent(SCAN_API_CLASS);
-    Assertions.assertEquals(
-        planning,
+    // The scan planning and credentials routes are not served with the default cluster
+    // configuration (cluster.tables.irc.scan-planning.enabled is off), on either line.
+    Assertions.assertFalse(
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan"),
         endpoints.toString());
-    Assertions.assertEquals(
-        planning,
+    Assertions.assertFalse(
         endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials"),
         endpoints.toString());
     // So is the view register route, which reads Iceberg 1.12's RegisterViewRequest.
@@ -142,8 +138,7 @@ public class IcebergRestRoutesBoundaryTest {
         registerView,
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register-view"),
         endpoints.toString());
-    Assertions.assertEquals(
-        19 + (planning ? 2 : 0) + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
+    Assertions.assertEquals(19 + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 

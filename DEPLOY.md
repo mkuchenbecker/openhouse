@@ -231,6 +231,35 @@ cluster:
 Never set it above the column's real width. A value that is not positive means the default.
 Changing it requires restarting or redeploying the tables service.
 
+#### Iceberg REST scan planning
+
+The tables service's Iceberg REST Catalog routes (`/iceberg`) can plan a client's scans on the
+server (`POST .../namespaces/{namespace}/tables/{table}/plan`, with the credentials route `GET
+.../tables/{table}/credentials`, which answers an empty list). This is off by default: the two
+routes then answer 406, as every route the service does not serve, the config answer does not list
+them, and an Iceberg client plans its scans itself.
+
+Turn it on only where every principal that may load a table may also read its data. A plan answers
+each planned data file's path, partition values and per-column lower and upper bounds (values from
+the data), which the service reads from the table's manifests with its own storage access, and the
+route asks only for the privilege a table load asks for (`GET_TABLE_METADATA`). Whether it should
+ask for a data-read privilege instead is an open question.
+
+```yaml
+cluster:
+  tables:
+    irc:
+      scan-planning:
+        enabled: true
+        max-file-scan-tasks: 10000  # a larger plan is answered failed
+        max-concurrent-plans: 4     # a plan beyond that is answered 503 with Retry-After
+        timeout-ms: 60000           # a slower plan is answered failed and interrupted
+```
+
+The three bounds default to the values shown and must be positive: with scan planning on, the
+service does not start otherwise. Each plan call is audited as a table read, as a table load is.
+Changing any of them requires restarting or redeploying the tables service.
+
 #### MySQL for HouseTables Service
 
 To use MySQL, update [cluster.yaml](infra/recipes/k8s/config/housetables/minikube/housetables.yaml). Sample

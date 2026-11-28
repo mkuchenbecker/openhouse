@@ -47,7 +47,7 @@ import org.springframework.test.context.ContextConfiguration;
 @SpringBootTest(
     classes = SpringH2Application.class,
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = IrcScanPlanningBoundTest.BOUND + "=5")
+    properties = {ScanPlanning.ENABLED, IrcScanPlanningBoundTest.BOUND + "=5"})
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 @Import({IrcReadRoutesTest.StubDefaults.class, ScanPlanning.RecordRequests.class})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)

@@ -72,7 +72,10 @@ import org.springframework.test.context.ContextConfiguration;
  */
 @SpringBootTest(
     classes = SpringH2Application.class,
-    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties =
+        com.linkedin.openhouse.cluster.configs.ClusterProperties.IRC_SCAN_PLANNING_ENABLED
+            + "=true")
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 @Import(IrcScanPlanCostTest.MeasureRequests.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -311,7 +314,7 @@ class IrcScanPlanCostTest {
     PlanTableScanRequest request =
         IcebergRestJson.read(body.getBytes(StandardCharsets.UTF_8), PlanTableScanRequest.class);
     long base = usedAfterGc();
-    int bound = IcebergRestScanPlanner.bound(0);
+    int bound = IcebergRestScanPlanner.DEFAULT_MAX_FILE_SCAN_TASKS;
     PlanTableScanResponse planned = IcebergRestScanPlanner.plan(table, request, bound);
     long withTasks = usedAfterGc() - base;
     resetPeaks();
@@ -360,9 +363,6 @@ class IrcScanPlanCostTest {
   @Test
   void theDefaultBoundIsTenThousandFileScanTasks() throws Exception {
     assertEquals(10_000, IcebergRestScanPlanner.DEFAULT_MAX_FILE_SCAN_TASKS);
-    assertEquals(10_000, IcebergRestScanPlanner.bound(0));
-    assertEquals(10_000, IcebergRestScanPlanner.bound(-1));
-    assertEquals(7, IcebergRestScanPlanner.bound(7));
     table("files_10001", 10_001);
     JsonNode answer = new ObjectMapper().readTree(postPlan("files_10001", "{}").body());
     assertEquals("failed", answer.get("status").asText(), answer.toString());

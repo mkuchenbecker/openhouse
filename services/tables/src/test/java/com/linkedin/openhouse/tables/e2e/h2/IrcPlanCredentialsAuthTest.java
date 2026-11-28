@@ -44,7 +44,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * fixture of {@link IrcReadRoutesAuthTest}: each answer is compared with the IRC load's answer to
  * the same principal for the same table, byte for byte, since both routes run the load's checks.
  */
-@SpringBootTest
+@SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
 @AutoConfigureMockMvc
 @ContextConfiguration(
     initializers = {
