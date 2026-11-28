@@ -104,6 +104,16 @@ class IrcRestCatalogNamespaceTest {
         () -> rest.removeProperties(NS, Collections.singleton("k")));
   }
 
+  /** Whether this Iceberg line's client has an error handler of its own for a namespace drop. */
+  private static boolean clientHasDropNamespaceErrors() {
+    try {
+      Class.forName("org.apache.iceberg.rest.ErrorHandlers").getMethod("dropNamespaceErrorHandler");
+      return true;
+    } catch (ReflectiveOperationException e) {
+      return false;
+    }
+  }
+
   @Test
   void aNamespaceThatHoldsATableIsNotDroppedAndCannotBeCreated() {
     Namespace tabled = Namespace.of("irc_rest_ns_tabled");
@@ -114,9 +124,14 @@ class IrcRestCatalogNamespaceTest {
         PartitionSpec.unpartitioned());
     try {
       assertThrows(AlreadyExistsException.class, () -> rest.createNamespace(tabled));
-      NamespaceNotEmptyException notEmpty =
-          assertThrows(NamespaceNotEmptyException.class, () -> rest.dropNamespace(tabled));
-      assertTrue(notEmpty.getMessage().contains("is not empty"), notEmpty.getMessage());
+      // The service answers 409 NamespaceNotEmptyException. Iceberg 1.12's client raises that
+      // type; 1.5.2's maps every 409 of a namespace route to AlreadyExistsException.
+      Class<? extends RuntimeException> expected =
+          clientHasDropNamespaceErrors()
+              ? NamespaceNotEmptyException.class
+              : AlreadyExistsException.class;
+      RuntimeException notEmpty = assertThrows(expected, () -> rest.dropNamespace(tabled));
+      assertEquals("Namespace irc_rest_ns_tabled is not empty", notEmpty.getMessage());
       assertTrue(rest.tableExists(table));
     } finally {
       rest.dropTable(table);

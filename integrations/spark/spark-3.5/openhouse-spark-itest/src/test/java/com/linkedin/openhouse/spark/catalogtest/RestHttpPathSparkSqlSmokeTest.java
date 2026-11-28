@@ -11,10 +11,9 @@ import java.util.List;
  * the catalog. {@link #restHttpDifferences()} is the complete list of statements whose outcome is
  * not the baseline's.
  *
- * <p>On both Iceberg lines (work item N10). The Iceberg 1.5.2 client differs from the 1.12 one on
- * the three namespace statements that stay refused, and nowhere else: it has no endpoint list, so
- * it sends the request, and the service's catch-all refuses it ({@link #restHttpDifferences()}).
- * {@code RestHttpPathLineTest} pins that the line the declarations follow is the build's line.
+ * <p>On both Iceberg lines (work item N10). The lines' clients differ on one statement, the
+ * exception class a refused namespace drop is raised as ({@link #restHttpDifferences()}). {@code
+ * RestHttpPathLineTest} pins that the line the declarations follow is the build's line.
  */
 public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
 
@@ -32,66 +31,58 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
   private static final String UNSUPPORTED = "java.lang.UnsupportedOperationException";
   private static final String JAVA_CLIENT_FAILURE =
       "com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException";
-  private static final String NAMESPACES_STAY_UNSUPPORTED =
-      "Decision D20: namespace create, update and drop stay unsupported over IRC. Still an"
-          + " UnsupportedOperationException; the wording is the Iceberg 1.12 client's, which"
-          + " refuses a route the service's config does not list before sending anything.";
-  private static final String NAMESPACES_STAY_UNSUPPORTED_ON_152 =
-      "Decision D20: namespace create, update and drop stay unsupported over IRC. The Iceberg"
-          + " 1.5.2 client has no endpoint list (it ignores the config's endpoints), so it sends"
-          + " the request and the service's catch-all refuses the route; RESTCatalog raises that"
-          + " as a RESTException. Still refused, and nothing is stored.";
-  private static final String REST_EXCEPTION = "org.apache.iceberg.exceptions.RESTException";
-
-  /** The refusal of a namespace route the service does not serve, on the line of the classpath. */
-  private static Expectation namespaceRouteRefused(String endpoint112, String refused152) {
-    return IcebergLine.current() == IcebergLine.V3
-        ? fails(UNSUPPORTED, "Server does not support endpoint: " + endpoint112)
-        : fails(REST_EXCEPTION, refused152);
-  }
-
-  private static String namespacesStayUnsupported() {
-    return IcebergLine.current() == IcebergLine.V3
-        ? NAMESPACES_STAY_UNSUPPORTED
-        : NAMESPACES_STAY_UNSUPPORTED_ON_152;
-  }
+  /**
+   * Why a property update of {@value #DB}, which holds tables and has no namespace record, is a
+   * missing namespace.
+   */
+  static final String TABLE_ONLY_HAS_NO_RECORD =
+      "KNOWN DEFECT, a consequence of the two existence rules: the namespace exists by holding"
+          + " tables, but its properties are those of a namespace record, and it has none, so the"
+          + " IRC update answers the namespace service's 404 for a missing record. No record is"
+          + " created implicitly; nor can one be created for it, since a create of a namespace"
+          + " that holds tables is a conflict.";
 
   /**
    * The statements on which the rest-http path differs from the baseline: the nine statements on
    * which Spark 4.2 over IRC differs for a reason other than Spark 4 (decision D37), each with the
-   * same outcome there. No statement differs in the rows it reads or in what a write stores.
+   * same outcome there. Apart from CREATE NAMESPACE, which stores a namespace record, no statement
+   * differs in the rows it reads or in what a write stores.
    */
   static List<Difference> restHttpDifferences() {
     List<Difference> differences = new ArrayList<>();
-    // ---- s19, s24: namespace statements that stay refused, with the REST client's wording.
+    // ---- s19, s24: namespace writes, served over stored namespace records.
     differences.add(
         Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-            .here(
-                namespaceRouteRefused(
-                    "POST /v1/{prefix}/namespaces",
-                    "Unable to process: This server does not support POST /v1/namespaces yet"))
-            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
+            .here(succeeds())
+            .because(
+                NAMESPACE_RECORDS,
+                "The IRC create route stores a namespace record for a name that holds nothing."
+                    + " KNOWN DEFECT: the namespace is then not listed (SHOW DATABASES), whose list"
+                    + " comes from tables only: House Tables has no list of records."));
     differences.add(
         Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
             .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
             .here(
-                namespaceRouteRefused(
-                    "POST /v1/{prefix}/namespaces/{namespace}/properties",
-                    "Unable to process: This server does not support POST /v1/namespaces/"
-                        + DB
-                        + "/properties yet"))
-            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
+                fails(
+                    "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+                    "[SCHEMA_NOT_FOUND] The schema `" + DB + "` cannot be found."))
+            .because(NAMESPACE_RECORDS, TABLE_ONLY_HAS_NO_RECORD));
     differences.add(
         Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
             .here(
-                namespaceRouteRefused(
-                    "DELETE /v1/{prefix}/namespaces/{namespace}",
-                    "Unable to process: This server does not support DELETE /v1/namespaces/"
-                        + DB
-                        + " yet"))
-            .because(TYPE_OR_WORDING, namespacesStayUnsupported()));
+                fails(
+                    IcebergLine.current() == IcebergLine.V3
+                        ? "org.apache.iceberg.exceptions.NamespaceNotEmptyException"
+                        : "org.apache.iceberg.exceptions.AlreadyExistsException",
+                    "Namespace " + DB + " is not empty"))
+            .because(
+                NAMESPACE_RECORDS,
+                "Still refused: the IRC drop refuses a namespace that holds a table or a view"
+                    + " with the spec's 409 NamespaceNotEmptyException, and nothing is dropped."
+                    + " Iceberg 1.12's client raises that type; 1.5.2's maps every 409 of a"
+                    + " namespace route to AlreadyExistsException."));
     // ---- s24: namespace statements the OpenHouse catalog refused and the IRC routes answer.
     differences.add(
         Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
@@ -122,14 +113,12 @@ public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
     differences.add(
         Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
             .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-            .here(
-                fails(
-                    "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
-                    "[SCHEMA_NOT_FOUND] The schema `openhouse`.`smoke_t1_new_ns` cannot be found."))
+            .here(succeeds())
             .because(
-                NAMESPACE_OR_SHOW,
-                "Decision D20 refuses CREATE NAMESPACE over IRC, so the namespace does not exist;"
-                    + " OpenHouseCatalog refused the existence check in the engine."));
+                NAMESPACE_RECORDS,
+                "CREATE NAMESPACE stored a record, which the IRC namespace route counts as"
+                    + " existence, so the check passes; OpenHouseCatalog refused it in the"
+                    + " engine."));
     // ---- s25: SHOW TABLES without a database. Still refused, by Iceberg's RESTCatalog.
     String noDatabase =
         "DatabaseId was not provided, for SQL please run \"SHOW TABLES IN <databaseId>\" instead";
