@@ -389,7 +389,7 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
     TableIdentifier id = TableIdentifier.of(DB, "t_written");
     Table viaRest = rest.loadTable(id);
     Table viaOpenHouse = openhouse.loadTable(id);
-    // FileIO: the server advertises the existing client's own (HadoopFileIO) since V3, because
+    // FileIO: the server advertises the existing client's own (HadoopFileIO), because
     // RESTCatalog's default (ResolvingFileIO) cannot write delete files on this Iceberg line
     // (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate).
     Assertions.assertEquals(HadoopFileIO.class, viaRest.io().getClass());

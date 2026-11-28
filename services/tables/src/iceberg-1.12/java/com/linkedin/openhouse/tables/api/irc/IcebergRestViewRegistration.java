@@ -77,8 +77,9 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * The file's content is trusted only as far as these checks go: that nobody but the service writes
- * into a view's directory rests on storage permissions. Older files of a dropped view register too
- * (the view is brought back as that file records it). A refusal of the file is 400 {@code
+ * into a view's directory rests on storage permissions. Older files of a dropped view register too:
+ * their SQL was the view's once, the registrant could create any SQL natively with the same
+ * privilege, and the audit names who registered it. A refusal of the file is 400 {@code
  * BadRequestException} and does not tell what the file holds. The row is written once, as the
  * engine writes a create's: a concurrent create of the name is 409, naming the kind that won. The
  * registration is audited as a CREATE by the caller ({@link ViewAuditAspect#auditCreate}), and the
