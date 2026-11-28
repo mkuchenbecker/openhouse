@@ -18,11 +18,12 @@ final class CommitPathLinkedInMainDifferences {
   static final String ICEBERG_112 = "Iceberg 1.12 line";
 
   private static final String JACKSON_LOCATION_WHY =
-      "The message of a 500 that a request body which is not JSON gets carries Jackson's parse"
-          + " location. The default line's jackson-core (2.22.2, where LinkedIn main and the reference line resolve"
-          + " 2.14.3) no longer quotes the source in it (StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION"
-          + " is off by default: \"Source: REDACTED\") and counts the column differently. Status and"
-          + " the rest of the message are as on main.";
+      "Kept on purpose, a security default. The message of a 500 that a request body which is not"
+          + " JSON gets carries Jackson's parse location. In jackson-core 2.16 the default of"
+          + " INCLUDE_SOURCE_IN_LOCATION changed from true to false, so the location no longer"
+          + " quotes the request body (\"Source: REDACTED\") and its column is counted"
+          + " differently. The default line resolves jackson-core 2.22.2; LinkedIn main and the"
+          + " reference line resolve 2.14.3. Status and the rest of the message are as on main.";
 
   static List<MainDifference> differences() {
     List<MainDifference> differences = new ArrayList<>();

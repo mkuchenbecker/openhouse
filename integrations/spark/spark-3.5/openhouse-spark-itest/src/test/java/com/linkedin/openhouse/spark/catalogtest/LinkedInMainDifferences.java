@@ -48,7 +48,9 @@ final class LinkedInMainDifferences {
   private static final String ROW_LINEAGE_WHY =
       "Iceberg 1.12's SparkTable lists the format v3 row-lineage metadata columns _row_id and"
           + " _last_updated_sequence_number for every table, a format 2 table included; Iceberg 1.5.2"
-          + " has no such columns. The table, its columns and its properties are as on main.";
+          + " has no such columns. The table, its columns and its properties are as on main. The"
+          + " OpenHouse catalog does not build that list: a restore would go in the Iceberg fork's"
+          + " SparkTable (spark/v3.5, its metadata columns), listing them for format 3 and above only.";
 
   private static final String CAPABILITY_WHY =
       "On the Iceberg 1.12 line the Spark 3.5 OpenHouse catalog declares no column-defaults"
