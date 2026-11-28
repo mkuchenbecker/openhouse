@@ -65,7 +65,7 @@ public class SparkIrcFormatV3TypesTest {
   private static void refusedNamingX5(String message, String column) {
     Assertions.assertTrue(
         message.contains("FORMAT_V3_TYPE_NOT_SUPPORTED: column " + column)
-            && message.contains("work item X5"),
+            && message.contains(" on format v3 tables: "),
         message);
   }
 

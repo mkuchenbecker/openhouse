@@ -476,7 +476,9 @@ public class IrcFormatV3RoutesTest {
                 "BadRequestException")
             .message();
     assertTrue(message.startsWith("FORMAT_V3_TYPE_NOT_SUPPORTED: "), message);
-    assertTrue(message.contains("work item X5"), message);
+    assertTrue(
+        message.contains("OpenHouse does not take the type timestamptz_ns on format v3 tables: "),
+        message);
     message =
         assertIrcError(
                 IrcWrite.create(mvc, db, ircCreate("3").withSchema(nanos).stageCreate().build()),

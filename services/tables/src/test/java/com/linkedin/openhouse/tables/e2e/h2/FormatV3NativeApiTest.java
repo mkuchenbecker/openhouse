@@ -548,7 +548,9 @@ public class FormatV3NativeApiTest {
                       .schema(addColumn(body.getSchema(), "v", type, null, null))
                       .build()),
               "FORMAT_V3_TYPE_NOT_SUPPORTED");
-      assertTrue(message.contains("work item X5"), message);
+      assertTrue(
+          message.contains("OpenHouse does not take the type " + type + " on format v3 tables: "),
+          message);
       assertEquals(404, status(get(mvc, db, "t")));
     }
     String v3 = makeV3(db);
@@ -606,7 +608,11 @@ public class FormatV3NativeApiTest {
             .build();
     String message =
         refused(post(mvc, asking(replica, "3")), "FORMAT_V3_REPLICATION_NOT_SUPPORTED");
-    assertTrue(message.contains("work item X7"), message);
+    assertTrue(
+        message.contains(
+            "Replication of format v3 tables is not supported: a replica is rebuilt from the"
+                + " snapshots it is sent"),
+        message);
     assertEquals(404, status(get(mvc, db, "t")));
     // A v2 replica is created as before and cannot be upgraded.
     assertEquals(201, status(post(mvc, replica)));
@@ -807,7 +813,11 @@ public class FormatV3NativeApiTest {
                 .content(with(asking(plain(db), "3"), OPT_IN, "true").toJson())
                 .accept(MediaType.APPLICATION_JSON));
     String message = refused(create, "COLUMN_DEFAULTS_OPT_IN_ON_V3");
-    assertTrue(message.contains("work item W8"), message);
+    assertTrue(
+        message.contains(
+            "A table that uses it stays at format version 2, since OpenHouse does not translate"
+                + " its stored defaults to native ones; a new format v3 table does not set it."),
+        message);
     assertEquals(404, status(get(mvc, db, "t")));
     // On an update of a v3 table.
     String v3 = makeV3(db);
