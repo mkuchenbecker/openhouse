@@ -29,7 +29,23 @@ pluginManagement {
 // -PicebergLinkedIn builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
 // com.linkedin.iceberg 1.5.2 releases, the behavior the 1.12 line is measured against. The modules
 // that need Iceberg 1.12 are not in that build.
-def icebergLinkedIn = providers.gradleProperty('icebergLinkedIn').present
+//
+// The property is read here only, as a boolean: -PicebergLinkedIn and -PicebergLinkedIn=true
+// select the reference line, -PicebergLinkedIn=false or no property the default line, and any
+// other value is refused. Every build file reads the answer as gradle.ext.icebergLinkedIn, so the
+// line has one meaning everywhere.
+def lineValue = providers.gradleProperty('icebergLinkedIn').orNull
+def icebergLinkedIn
+if (lineValue == null || lineValue.trim().equalsIgnoreCase('false')) {
+  icebergLinkedIn = false
+} else if (lineValue.trim().isEmpty() || lineValue.trim().equalsIgnoreCase('true')) {
+  icebergLinkedIn = true
+} else {
+  throw new GradleException(
+      "-PicebergLinkedIn=${lineValue}: the property is true (or empty) for LinkedIn's Iceberg 1.5.2 "
+          + 'reference line, or false for the default build.')
+}
+gradle.ext.icebergLinkedIn = icebergLinkedIn
 // -PicebergFork selected the 1.12 line while it was opt-in. It is accepted for one more cycle so
 // that commands and branches written before the flip do not break, and does nothing.
 if (providers.gradleProperty('icebergFork').present) {

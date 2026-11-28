@@ -105,7 +105,7 @@ tasks.matching { it.name == 'generateOpenApiDocs' }.configureEach {
 // credentials routes). A build uses one Iceberg line for every module (1.12 by
 // default, LinkedIn's 1.5.2 under -PicebergLinkedIn), as openhouse-catalog-capabilities does: the
 // reference line compiles without them, and there those routes answer 406 as before.
-if (!rootProject.hasProperty('icebergLinkedIn')) {
+if (!gradle.ext.icebergLinkedIn) {
   sourceSets {
     main {
       java {

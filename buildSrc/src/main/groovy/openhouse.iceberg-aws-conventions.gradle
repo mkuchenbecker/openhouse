@@ -2,7 +2,7 @@ ext {
   icebergAwsVersion = '1.2.0.6'
 }
 
-if (!rootProject.hasProperty('icebergLinkedIn')) {
+if (!gradle.ext.icebergLinkedIn) {
   // The Iceberg 1.12 line: the fork's own iceberg-aws (gradle/iceberg-fork.gradle), so S3FileIO and
   // AwsClientFactories are of the same Iceberg line as core and no 1.2-era iceberg-build.properties
   // names the Iceberg version. It takes the AWS SDK compileOnly, so the SDK comes from here, at the

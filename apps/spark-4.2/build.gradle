@@ -31,13 +31,6 @@ ext {
   jackson42Version = '2.21.4'
 }
 
-def forkRepo = rootProject.ext.icebergForkRepo
-if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
-  throw new GradleException(
-      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
-          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
-}
-
 def apps35 = project(':apps:openhouse-spark-apps-1.5_2.12').projectDir
 
 sourceSets {
