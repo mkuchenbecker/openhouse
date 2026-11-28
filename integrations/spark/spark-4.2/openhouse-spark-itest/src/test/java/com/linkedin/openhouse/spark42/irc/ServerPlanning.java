@@ -14,9 +14,9 @@ import java.util.function.BiConsumer;
  * default client, and only the catalogs that ask for it plan on the server.
  *
  * <p>Declared exception: the catalogs whose tables are format v3 ({@link #FORMAT_V3}) keep client
- * planning in that run, because the plan route refuses format v3 tables (work item V11e) and every
- * statement of those classes would fail with the refusal. The refusal itself is tested where it is
- * the subject ({@code SparkIrcScanPlanningTest}, {@code SparkIrcServerPlanningWritesTest}).
+ * planning in that run, because the plan route refuses format v3 tables and every statement of
+ * those classes would fail with the refusal. The refusal itself is tested where it is the subject
+ * ({@code SparkIrcScanPlanningTest}, {@code SparkIrcServerPlanningWritesTest}).
  */
 final class ServerPlanning {
 
@@ -35,9 +35,9 @@ final class ServerPlanning {
     return "server".equals(System.getProperty(PROPERTY));
   }
 
-  /** Why a catalog of format v3 tables is not switched to server planning (V11e). */
+  /** Why a catalog of format v3 tables is not switched to server planning. */
   static final String FORMAT_V3 =
-      "its tables are format v3, and the plan route refuses format v3 tables (V11e): a scan task"
+      "its tables are format v3, and the plan route refuses format v3 tables: a scan task"
           + " carries no sequence number, so row lineage would be wrong";
 
   private static final List<String> NOT_APPLIED = Collections.synchronizedList(new ArrayList<>());

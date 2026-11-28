@@ -14,21 +14,19 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Spark 4.2's row-level writes leave the same table whether their scans are planned on the client
- * or on the server (work item V11b). Each scenario is a list of statements run twice, from scratch:
- * once through a catalog that plans on the client, on tables named {@code <scenario>_c}, and once
- * through a catalog of the same service with {@code scan-planning-mode=server}, on tables named
- * {@code <scenario>_s}. Every statement of a run goes through that run's catalog, so each scan of a
- * write (the copy-on-write rewrite, the merge-on-read delete scan, the MERGE join, the SELECT of an
+ * or on the server. Each scenario is a list of statements run twice, from scratch: once through a
+ * catalog that plans on the client, on tables named {@code <scenario>_c}, and once through a
+ * catalog of the same service with {@code scan-planning-mode=server}, on tables named {@code
+ * <scenario>_s}. Every statement of a run goes through that run's catalog, so each scan of a write
+ * (the copy-on-write rewrite, the merge-on-read delete scan, the MERGE join, the SELECT of an
  * INSERT OVERWRITE or a CTAS) is planned the one way or the other. Then the two tables must be the
  * same: their rows, their data and delete files (content, format, record count, partition, and for
  * a deletion vector its size), and the operation and counts of every snapshot. Both tables are read
  * back through the client-planning catalog, so what is compared is what the writes stored.
  *
- * <p>Format v3: the service refuses to plan v3 tables (work item V11e; a scan task carries no
- * sequence number, so row lineage would be wrong). The same scenarios on v3 assert that the
- * statement under test fails visibly with the refusal and leaves the table, its row lineage
- * included, as it was. Until V11e they compared the stored tables, and two tests pinned the wrong
- * lineage; that subject no longer exists.
+ * <p>Format v3: the service refuses to plan v3 tables (a scan task carries no sequence number, so
+ * row lineage would be wrong). The same scenarios on v3 assert that the statement under test fails
+ * visibly with the refusal and leaves the table, its row lineage included, as it was.
  *
  * <p>Every table first gets a merge-on-read DELETE of one row, so the statement under test plans
  * files that already have a position delete or a deletion vector: a copy-on-write rewrite must not
@@ -164,7 +162,7 @@ public class SparkIrcServerPlanningWritesTest {
 
   /**
    * Format v2: runs the scenario both ways and asserts the two tables are the same. Format v3: the
-   * service refuses to plan v3 tables (V11e), so the scenario's last statement, through the
+   * service refuses to plan v3 tables, so the scenario's last statement, through the
    * server-planning catalog, must fail visibly with the refusal and leave the table exactly as the
    * statements before it left it. Returns the rows of the client-planned run, for the scenario's
    * own checks.
@@ -387,12 +385,10 @@ public class SparkIrcServerPlanningWritesTest {
   // ---------------------------------------------------------------- format v3: refused
 
   /**
-   * The three statements of the V11e decision on a format v3 table with deletion vectors, through
+   * The three statements the plan route refuses on a format v3 table with deletion vectors, through
    * the server-planning catalog: a SELECT, a copy-on-write UPDATE and a merge-on-read MERGE. Each
    * fails visibly with the service's refusal, and the table is unchanged (rows, files, snapshots
    * and row lineage). The same statements on a format v2 table plan on the server and succeed.
-   * Until V11e two tests here pinned the wrong row lineage a server-planned v3 read and rewrite
-   * produced; the route no longer plans v3 tables.
    */
   @Test
   void aSelectAnUpdateAndAMergeOnAFormatV3TableAreRefusedAndChangeNothing() throws Exception {

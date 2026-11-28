@@ -146,9 +146,9 @@ public class IrcReadRoutesTest {
    * files with write properties that ResolvingFileIO does not support
    * (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate). The override {@code
    * openhouse.capabilities} names the OpenHouse features these routes serve: {@code policies}, the
-   * policy patch of OpenHouse's policy statements (V5-2), and {@code grants} and {@code unlock},
-   * the OpenHouse routes under the base path (V5-3). It is an override so that the client's merged
-   * catalog properties say what the server serves, whatever the client was configured with.
+   * policy patch of OpenHouse's policy statements, and {@code grants} and {@code unlock}, the
+   * OpenHouse routes under the base path. It is an override so that the client's merged catalog
+   * properties say what the server serves, whatever the client was configured with.
    */
   @Test
   void configDefaultsTurnOffMetricsReportingAndUseHadoopFileIo() throws Exception {

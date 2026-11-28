@@ -57,8 +57,8 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
 
 /**
- * Black-box tests of the maintenance jobs on Iceberg format v3 tables (work item X6), each one run
- * the same way on a v2 table so that a v3 fix cannot change what a job does on v2.
+ * Black-box tests of the maintenance jobs on Iceberg format v3 tables, each one run the same way on
+ * a v2 table so that a v3 fix cannot change what a job does on v2.
  *
  * <p>Every test builds a time-partitioned, merge-on-read table with several data files per
  * partition, deletes from DELETE, UPDATE and MERGE (deletion vectors in Puffin files on v3,
@@ -83,7 +83,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   private final OtelEmitter otelEmitter =
       new AppsOtelEmitter(Collections.singletonList(DefaultOtelConfig.getOpenTelemetry()));
 
-  /** The v2 and v3 sessions, the fixture table and the checks, shared with X10's tests. */
+  /** The v2 and v3 sessions, the fixture table and the checks, shared with the race tests. */
   private FormatV3Tables tables;
 
   /** Midnight today, UTC: rows are written in partitions this many days before it. */
@@ -355,7 +355,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     List<String> rewrittenWithDeletes =
         withDeletes.stream().filter(f -> !liveAfter.contains(f)).collect(Collectors.toList());
     System.out.println(
-        "X6-COMPACTION v"
+        "COMPACTION v"
             + formatVersion
             + " "
             + launch
@@ -638,14 +638,14 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
             .map(Map.Entry::getKey)
             .collect(Collectors.toCollection(TreeSet::new));
     System.out.println(
-        "X6-BACKUP v"
+        "BACKUP v"
             + formatVersion
             + " "
             + remover
             + " delete files by partition: "
             + deletesByPartition);
     System.out.println(
-        "X6-BACKUP v"
+        "BACKUP v"
             + formatVersion
             + " "
             + remover
@@ -653,7 +653,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
             + sharedAcrossKeptAndExpired);
     Reading before = reading(formatVersion, fqtn);
 
-    // Work item X9: retention signals that the expired partitions carry delete files (a WARN log
+    // Retention signals that the expired partitions carry delete files (a WARN log
     // and a metric per kind); nothing else about the run changes.
     OtelEmitter retentionEmitter = Mockito.spy(otelEmitter);
     Operations retentionOps = tables.newOps(spark, retentionEmitter);
@@ -730,7 +730,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
       if (p.getName().startsWith("data_manifest")) {
         try (java.io.InputStream in = fs.open(p)) {
           String json = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-          System.out.println("X6-BACKUP v" + formatVersion + " " + remover + " manifest: " + json);
+          System.out.println("BACKUP v" + formatVersion + " " + remover + " manifest: " + json);
           com.google.gson.JsonObject manifest =
               com.google.gson.JsonParser.parseString(json).getAsJsonObject();
           manifest
@@ -760,7 +760,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
 
     // The backed-up data files still hold the rows that were deleted before retention ran, and
     // nothing the manifest lists records that they were deleted: a restore driven by the
-    // manifests brings them back. Pinned (work item X6, finding 1a), not changed here.
+    // manifests brings them back. Pinned as the backup job's behavior, not changed here.
     Set<Long> idsInBackedUpData = new TreeSet<>();
     // Iceberg's ORC reader: Spark's own cannot parse Iceberg's ORC timestamp type attribute.
     org.apache.iceberg.Schema idOnly = table.schema().select("id");
@@ -814,8 +814,8 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   }
 
   /**
-   * Work item X9, the other side: a backup-enabled retention over expired partitions without delete
-   * files signals nothing.
+   * The other side of the delete-file signal: a backup-enabled retention over expired partitions
+   * without delete files signals nothing.
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
@@ -951,13 +951,13 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
   }
 
   /**
-   * Work item X12: the delete-file numbers of table stats count each delete file once and add its
-   * size once, on v3 as on v2. On v3 one Puffin file holds the deletion vectors of several data
-   * files, and the files metadata tables list one row per deletion vector, each with the Puffin
-   * file's path and whole size; the collectors drop duplicate (content, path, size) rows before
-   * counting, so a Puffin file counts once. Expected values come from the snapshots' delete
-   * manifests and the file system, not from the collectors. The table has position deletes only
-   * (Spark writes no equality deletes).
+   * The delete-file numbers of table stats count each delete file once and add its size once, on v3
+   * as on v2. On v3 one Puffin file holds the deletion vectors of several data files, and the files
+   * metadata tables list one row per deletion vector, each with the Puffin file's path and whole
+   * size; the collectors drop duplicate (content, path, size) rows before counting, so a Puffin
+   * file counts once. Expected values come from the snapshots' delete manifests and the file
+   * system, not from the collectors. The table has position deletes only (Spark writes no equality
+   * deletes).
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})
@@ -1004,7 +1004,7 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
     IcebergTableStats stats = ops.collectTableStats(fqtn);
     Assertions.assertNotNull(stats, "stats collection failed (it returns null on an exception)");
     System.out.println(
-        "X12 v"
+        "TABLE-STATS v"
             + formatVersion
             + " current: entries="
             + current.size()

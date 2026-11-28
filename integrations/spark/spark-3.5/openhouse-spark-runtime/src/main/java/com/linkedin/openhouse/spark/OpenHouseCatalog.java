@@ -27,9 +27,8 @@ public class OpenHouseCatalog extends com.linkedin.openhouse.javaclient.OpenHous
    *
    * <p>On the v3 line ({@link IcebergLine}) it declares nothing. That line applies no read-bridge
    * overlay, so a table that requires the capability is refused by the service (422 {@code
-   * CLIENT_CAPABILITY_MISSING}) instead of being read differently by legacy and new clients
-   * (decisions D5 and D11a). Its column defaults are native format v3 defaults, which need no
-   * capability.
+   * CLIENT_CAPABILITY_MISSING}) instead of being read differently by legacy and new clients. Its
+   * column defaults are native format v3 defaults, which need no capability.
    */
   @Override
   protected Set<String> capabilities() {

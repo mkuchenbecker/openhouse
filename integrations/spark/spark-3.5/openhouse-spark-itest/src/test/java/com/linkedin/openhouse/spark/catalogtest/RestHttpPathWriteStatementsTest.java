@@ -23,9 +23,9 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 
 /**
- * The write statements ({@link SparkSqlWriteStatements}, Spark 4.2's checks, work item N10) on the
- * Spark 3.5 plain REST path: Iceberg's own {@code SparkCatalog} with {@code type=rest} over HTTP to
- * the shared embedded service's Iceberg REST routes, as {@code RestHttpPathSparkSqlSmokeTest}
+ * The write statements ({@link SparkSqlWriteStatements}, Spark 4.2's checks too) on the Spark 3.5
+ * plain REST path: Iceberg's own {@code SparkCatalog} with {@code type=rest} over HTTP to the
+ * shared embedded service's Iceberg REST routes, as {@code RestHttpPathSparkSqlSmokeTest}
  * configures it. {@link #differences()} is the complete list of checks on which it differs from
  * Spark 4.2 over IRC. On both Iceberg lines.
  *

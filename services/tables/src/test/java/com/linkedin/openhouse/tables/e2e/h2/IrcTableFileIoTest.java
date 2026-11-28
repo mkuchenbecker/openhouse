@@ -47,7 +47,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * The FileIO class an Iceberg REST client is given for a table that the storage selector places on
- * another storage type than the cluster's default (work item V20).
+ * another storage type than the cluster's default.
  *
  * <p>The config route advertises the default storage's class as the catalog's {@code io-impl}
  * ({@link IrcConfigFileIoTest}). The table's own responses (load, create, staged create) can carry

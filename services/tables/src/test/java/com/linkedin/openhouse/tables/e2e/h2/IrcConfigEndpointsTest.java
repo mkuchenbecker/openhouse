@@ -251,7 +251,7 @@ public class IrcConfigEndpointsTest {
   /**
    * Read independently of the server's derivation: every route the IRC controllers map is either
    * listed, or the config route, or an OpenHouse route, or the catch-all, or the one spec route
-   * mapped only to refuse it (view rename, D27).
+   * mapped only to refuse it (view rename).
    */
   @Test
   void everyMappedIrcRouteIsListedOrAccountedFor() throws Exception {

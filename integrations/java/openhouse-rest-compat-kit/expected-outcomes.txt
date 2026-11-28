@@ -40,9 +40,9 @@ OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithSlash() | SKIPPED | a
 OpenHouseRestCompatibilityKitCatalogTests.testTableNameWithSlash() | SKIPPED | a | supportsNamesWithSlashes=false (kit's own answer): ids are letters, digits and underscores
 
 # (a) VARIANT: 3 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
-OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
-OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them until work item X5
+OpenHouseRestCompatibilityKitCatalogTests.testAddVariantColumnToExistingTable() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them while cluster.iceberg.format-v3.variant.enabled is off, its default
+OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithVariantColumn() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them while cluster.iceberg.format-v3.variant.enabled is off, its default
+OpenHouseRestCompatibilityKitCatalogTests.testCreateV2TableWithVariantColumnFails() | SKIPPED | a | supportsVariant=false (kit default): the kit's service creates format v3 tables, but a variant column is refused on them while cluster.iceberg.format-v3.variant.enabled is off, its default
 
 # (b) DIALECT: 13 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
@@ -55,7 +55,7 @@ OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionConflict() | FAI
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionErrorCases() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForCaseInsensitive() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForMultipleDialects() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
-OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocation() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400; then a commit that only sets the location is refused 400 (D30)
+OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocation() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400; then a commit that only sets the location is refused 400 (the server owns view locations)
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewLocationConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesConflict() | FAILED | b | views accept the spark dialect only (OpenHouse view policy); refused 400
 

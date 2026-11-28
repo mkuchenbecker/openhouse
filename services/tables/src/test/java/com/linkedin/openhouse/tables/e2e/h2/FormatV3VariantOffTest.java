@@ -33,10 +33,10 @@ import org.springframework.test.web.servlet.ResultActions;
 
 /**
  * Variant columns on a cluster with the format v3 switch on and {@code
- * cluster.iceberg.format-v3.variant.enabled} at its default, off (work item X5): a variant column
- * is refused on a v3 table, by create and by schema evolution, through the native API and the
- * Iceberg REST routes, naming the property, whatever the file format; an unknown column is taken as
- * with the property on.
+ * cluster.iceberg.format-v3.variant.enabled} at its default, off: a variant column is refused on a
+ * v3 table, by create and by schema evolution, through the native API and the Iceberg REST routes,
+ * naming the property, whatever the file format; an unknown column is taken as with the property
+ * on.
  */
 @SpringBootTest(properties = SWITCH_ON)
 @AutoConfigureMockMvc

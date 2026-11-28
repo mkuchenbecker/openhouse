@@ -25,10 +25,10 @@ import org.apache.iceberg.rest.responses.ErrorResponse;
  * Iceberg's own {@link RESTCatalog} with its own HTTP client, wrapped so that a table commit
  * ({@code POST .../namespaces/{ns}/tables/{t}} with an {@link UpdateTableRequest}) first runs the
  * step armed for that table, to completion, and records how each commit attempt ended: test only,
- * for the concurrency tests (work item X10), as {@code catalog-impl} of the writer that is to lose
- * the race. The commit was built and validated against its base before the request is sent, so what
- * the step commits lands between the writer's base and its commit, by construction. Everything else
- * is passed to the client unchanged.
+ * for the concurrency tests, as {@code catalog-impl} of the writer that is to lose the race. The
+ * commit was built and validated against its base before the request is sent, so what the step
+ * commits lands between the writer's base and its commit, by construction. Everything else is
+ * passed to the client unchanged.
  */
 public class HookedRestCatalog extends RESTCatalog {
   private static final Map<String, Runnable> ARMED = new ConcurrentHashMap<>();

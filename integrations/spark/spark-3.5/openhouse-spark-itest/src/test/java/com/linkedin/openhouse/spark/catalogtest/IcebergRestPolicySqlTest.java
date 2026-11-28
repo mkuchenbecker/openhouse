@@ -18,7 +18,7 @@ import org.junit.jupiter.api.TestInstance;
 /**
  * OpenHouse's policy statements through Iceberg's own {@code SparkCatalog} over an unmodified
  * {@code RESTCatalog} ({@code type=rest}), with the OpenHouse SQL extensions in the session and no
- * OpenHouse catalog class on that catalog, against the embedded tables service (V5-1).
+ * OpenHouse catalog class on that catalog, against the embedded tables service.
  *
  * <p>Each statement runs on two tables that start identical: through the OpenHouse catalog (the
  * OpenHouse Java client, which merges the statement's patch client-side) on one, and through the
@@ -178,7 +178,7 @@ public class IcebergRestPolicySqlTest extends OpenHouseSparkITest {
 
   /**
    * The capability a client reads: an unmodified RESTCatalog configured as the Spark catalog is has
-   * {@code openhouse.capabilities=policies,grants,unlock} in its properties (V5-2, V5-3).
+   * {@code openhouse.capabilities=policies,grants,unlock} in its properties.
    */
   @Test
   void aRestCatalogReadsThePolicyCapability() throws Exception {

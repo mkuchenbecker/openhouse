@@ -19,8 +19,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 /**
- * Work item V14 from Spark 4.2: a CTAS and a {@code CREATE OR REPLACE TABLE ... AS SELECT} of a
- * missing table over IRC are create transactions without schema, spec or order history, and the
+ * The create history from Spark 4.2: a CTAS and a {@code CREATE OR REPLACE TABLE ... AS SELECT} of
+ * a missing table over IRC are create transactions without schema, spec or order history, and the
  * table they store has the same schemas, specs, sort orders and ids as the same statement on
  * Iceberg's own Hadoop catalog (the reference) stores.
  */

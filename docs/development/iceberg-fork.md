@@ -6,7 +6,7 @@ of the Iceberg fork. `./gradlew build` with no property is that build, on Java 1
 
 `-PicebergLinkedIn` builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
 `com.linkedin.iceberg` 1.5.2 releases from Maven Central. It exists for one purpose: LinkedIn's
-line is the behavior the 1.12 line is measured against (decision D8), so its suites and the
+line is the behavior the 1.12 line is measured against, so its suites and the
 delta-harness can still be run on it. The modules that need Iceberg 1.12 (Spark 4.2, the
 compatibility kit) are not in that build, and it builds no deployables.
 
@@ -83,8 +83,9 @@ applies and the reference build does not, or guarded by the same property (`iceb
 
 The Iceberg 1.2 / Spark 3.1 projects (`apps/spark`, `integrations/java/iceberg-1.2`,
 `integrations/spark/spark-3.1`, `tables-test-fixtures/tables-test-fixtures-iceberg-1.2`) are
-deleted (decision D3). The sources they shared with the 1.5 projects are those projects'
-`src/shared` directories, ordinary source roots now.
+deleted: the shared server modules need Java 17 and cannot also serve that line. The sources
+they shared with the 1.5 projects are those projects' `src/shared` directories, ordinary source
+roots now.
 
 The delta-harness runs on the default build; `HARNESS_ICEBERG_LINKEDIN=1` runs it on the reference
 line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
@@ -92,12 +93,13 @@ line (`integrations/spark/delta-harness/HARNESS-GUIDE.md`).
 ## Publishing
 
 The default build refuses to publish to a remote Maven repository. Its Iceberg is hosted nowhere
-(decision D7), so the POMs would name `com.linkedin.iceberg:*:<baseVersion>-ohfork.<commit>`, which
-no consumer can resolve. `./gradlew publish`, or any single task that publishes to a repository
+(it is built from a pinned fork commit on the build machine), so the POMs would name
+`com.linkedin.iceberg:*:<baseVersion>-ohfork.<commit>`, which no consumer can resolve.
+`./gradlew publish`, or any single task that publishes to a repository
 that is not a `file:` URL, stops when the task graph is ready, before any task runs, with a message
 that says so (`gradle/iceberg-fork.gradle`). The ways forward are to publish from the reference
 line (`./gradlew -PicebergLinkedIn publish`), or to host the fork's Iceberg artifacts first, which
-is the repository owner's decision (work item I6d). `publishToMavenLocal` is not affected.
+is for the repository owner to decide. `publishToMavenLocal` is not affected.
 `build-tag-publish.yml` runs `./gradlew publish` only on `linkedin/openhouse`'s `main`; there it
 would now stop at this check.
 
@@ -165,28 +167,28 @@ Iceberg on the classpath to build format v3 metadata in memory, which LinkedIn's
 releases refuse and the 1.12 line accepts. Tests that expect different results per line use the
 same class.
 
-- Column defaults (decisions D5, D11a): on the 1.12 line the client applies no
-  `openhouse.read-bridge.column-default.*` overlay and the Spark catalogs do not declare the
+- Column defaults, which on the 1.12 line are native Iceberg default values: there the client
+  applies no `openhouse.read-bridge.column-default.*` overlay and the Spark catalogs do not declare the
   `column-defaults` capability, so a table with `required-capability.column-defaults=true` is
   refused with 422 `CLIENT_CAPABILITY_MISSING`. Iceberg 1.12 itself refuses a non-null
   `initial-default` below format v3; tests that need one build a v3 table on that line.
 - `REPLACE TABLE ... AS SELECT` that drops a former partition source column succeeds on 1.12 and
-  fails Iceberg validation on 1.5.2 (decision D14a, apache/iceberg#11868).
+  fails Iceberg validation on 1.5.2 (apache/iceberg#11868).
 - `CREATE NAMESPACE` and `DROP NAMESPACE` are unsupported on both lines, with the message "Checking
   if database exists is not supported" on 1.12 instead of "Describing database is not supported"
-  (decision D14b, apache/iceberg#14507).
+  (apache/iceberg#14507).
 - After several merge-on-read `DELETE`s on one data file, 1.12 keeps one live position delete file
   for it (Spark's delete granularity defaults to `file` and the earlier file is replaced), where
-  1.5.2 keeps one per `DELETE` (`SparkMoRFunctionalTest`, decision D31).
+  1.5.2 keeps one per `DELETE` (`SparkMoRFunctionalTest`); the rows read are the same.
 - `ALTER TABLE ... ADD COLUMN c int DEFAULT 5` is refused ("setting default values in Spark is
-  currently unsupported") instead of being accepted with the default dropped (decision D31).
+  currently unsupported") instead of being accepted with the default silently dropped.
 
 With `write.wap.enabled=true` and `spark.wap.branch` set, an explicit `TIMESTAMP AS OF` or
 `VERSION AS OF` read reads main's history on both lines (delta-harness
 `interact.branch.ttBeforeBranchPoint`). Apache Iceberg 1.12 refuses it ("Cannot override ref,
-already set snapshot id"); D31 does not accept that, and the fork's Spark 3.5 time-travel reads
-ignore the session WAP branch from the pinned commit a88f556c on (fork pull request 12, item I11;
-its tests pin the same on Spark 4.2).
+already set snapshot id"), which would make a working read fail for a user who stages writes, so
+the fork's Spark 3.5 time-travel reads ignore the session WAP branch from the pinned commit
+a88f556c on (its tests pin the same on Spark 4.2, which needed no change).
 
 On the REST-shaped path (`catalog-impl` `OpenHouseRestCatalog`), Iceberg 1.12's client calls only
 the endpoints a server advertises, and with none advertised assumes a default set without views. So
@@ -238,7 +240,7 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
   column's `initial-default` never changes, and the read-bridge opt-in
   `required-capability.column-defaults` is refused on v3; below v3, with the switch on, a new or
   changed `write-default` is refused with `COLUMN_DEFAULT_REQUIRES_V3`).
-- The v3-only column types (work item X5, `FormatV3Types`): `unknown` (Spark's `void`) is taken;
+- The v3-only column types (`FormatV3Types`): `unknown` (Spark's `void`) is taken;
   `timestamp_ns`, `timestamptz_ns`, `geometry` and `geography` are refused
   (`FORMAT_V3_TYPE_NOT_SUPPORTED`, with the reason); `variant` is off by default, behind its own
   property, below. With the switch off, every one of them is refused by the native request
@@ -253,13 +255,13 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
   variant`; SHOW TABLES still lists it); and it cannot carry a retention policy. With it on, a
   variant column is still refused on a table that writes ORC or still has ORC data files.
   Turning it off again refuses new variant columns only; tables that have one keep it.
-- Refused on v3 until their work items: replica and replicated tables, table encryption, and the
-  register of a v3 metadata file.
+- Refused on v3, because OpenHouse does not handle them there: replica and replicated tables,
+  table encryption, and the register of a v3 metadata file.
 
 ## CI
 
 Two builds, the default and the reference, run beside each other on every pull request
-(`pr-validations.yml`, decision D33) and after each merge to `irc-integration`
+(`pr-validations.yml`) and after each merge to `irc-integration`
 (`post-merge-build.yml`, also by hand with `workflow_dispatch`). Neither blocks nor waits for the
 other. A newer push to a pull request cancels the pull request's older run. A post-merge run is
 never cancelled and waits for no other: each merge commit has its own concurrency group, so the

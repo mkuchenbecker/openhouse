@@ -28,9 +28,9 @@ import org.junit.jupiter.params.provider.ValueSource;
  *
  * <p>Every case has an expectation per Iceberg line ({@link IcebergLine}). The read bridge is the
  * legacy line's mechanism: there each case asserts the overlay and the filled rows. On the v3 line
- * the client neither overlays nor declares {@code column-defaults} (decisions D5 and D11a), so
- * creating a table that requires the capability is refused with the service's 422 {@code
- * CLIENT_CAPABILITY_MISSING}, and that refusal is what each case asserts there.
+ * the client neither overlays nor declares {@code column-defaults}, so creating a table that
+ * requires the capability is refused with the service's 422 {@code CLIENT_CAPABILITY_MISSING}, and
+ * that refusal is what each case asserts there.
  */
 public class ColumnDefaultSparkITest extends OpenHouseSparkITest {
 

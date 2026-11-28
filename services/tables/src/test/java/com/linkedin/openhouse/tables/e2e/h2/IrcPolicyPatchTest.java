@@ -65,7 +65,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
- * Policy changes through the IRC commit and create routes (V5-1), at the HTTP boundary.
+ * Policy changes through the IRC commit and create routes, at the HTTP boundary.
  *
  * <p>OpenHouse's Spark policy statements express a policy change as the table property {@value
  * #KEY} holding a JSON patch ({@code updateProperties().set(KEY, patch)}). The OpenHouse Java

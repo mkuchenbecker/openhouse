@@ -34,7 +34,7 @@ import org.apache.spark.sql.SparkSession;
  *
  * <p>A {@code RENAME TO} target that names the catalog (s13b, and the cross-catalog refusal of s29)
  * is not on the list: the OpenHouse catalog class decided those outcomes in the engine too, and the
- * SQL extensions now read the target as it did ({@code ResolveRenameTableTarget}, decision D37).
+ * SQL extensions read the target as it did ({@code ResolveRenameTableTarget}).
  */
 public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
 
@@ -91,7 +91,7 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                     .here(rows("Catalog Name,openhouse", "Namespace Name," + DB))
                     .because(
                         IRC_UNDECIDED,
-                        "The IRC namespace route answers for a database that has tables (V2), so"
+                        "The IRC namespace route answers for a database that has tables, so"
                             + " RESTCatalog loads the namespace. OpenHouseCatalog refused the call in the"
                             + " engine. Iceberg's Hadoop catalog answers the statement as well."),
                 Difference.on("s24", "ALTER NAMESPACE " + CAT_DB + " SET DBPROPERTIES ('k'='v')")
@@ -126,8 +126,8 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                     .here(rows())
                     .because(
                         IRC_UNDECIDED,
-                        "The IRC namespace list answers an empty list under an existing database (V2;"
-                            + " pinned for Spark 4.2 since N3a). OpenHouseCatalog refused the call in the"
+                        "The IRC namespace list answers an empty list under an existing database."
+                            + " OpenHouseCatalog refused the call in the"
                             + " engine. Iceberg's Hadoop catalog answers an empty list as well."),
                 // Baseline: refused. Here the existence check is answered from tables.
                 Difference.on("s24", "USE " + CAT_DB)
@@ -135,7 +135,7 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                     .here(succeeds())
                     .because(
                         IRC_UNDECIDED,
-                        "The IRC namespace route answers for a database that has tables (V2), so"
+                        "The IRC namespace route answers for a database that has tables, so"
                             + " the existence check passes. OpenHouseCatalog refused it in the"
                             + " engine."),
                 Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
@@ -214,8 +214,8 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                     .because(
                         DECIDED,
                         "The goal excludes the Java client's exception class from the engine. The"
-                            + " capability client (decision D23) raises Iceberg's type for a 404 with the"
-                            + " same native message (difference 1 of the C2-3 result)."),
+                            + " capability client raises Iceberg's type for a 404 with the same native"
+                            + " message."),
                 Difference.on("s29", "ALTER TABLE " + s29 + " RENAME TO " + DB + ".s29_rename")
                     .baseline(
                         fails(
@@ -229,12 +229,12 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                         DECIDED,
                         "The goal excludes the Java client's exception class from the engine. The IRC"
                             + " routes answer a native 400 as Iceberg's BadRequestException with the native"
-                            + " message (decision D16, V3 error mapping).")));
+                            + " message.")));
     // ---- s32, s33: what a refused replace leaves, and how a stale commit is applied.
     differences.addAll(
         refusedReplaceLeavesItsDataFile(
             IRC_UNDECIDED,
-            "Work item C3: Iceberg's RESTCatalog stages a replace on the client: it loads the"
+            "Iceberg's RESTCatalog stages a replace on the client: it loads the"
                 + " table (GET), and the first request that says \"replace\" is the commit, after"
                 + " Spark wrote the data. The service can refuse no earlier; the GET carries no"
                 + " intent. The same on Spark 3.5 over the same routes. The file is left for the"
@@ -242,7 +242,7 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     differences.addAll(
         staleCommitMeetsNoConflict(
             IRC_UNDECIDED,
-            "Work item C4: the Iceberg REST client sends the changed keys with only an"
+            "The Iceberg REST client sends the changed keys with only an"
                 + " assert-table-uuid requirement, and the service applies them onto the stored"
                 + " table, merging a policy patch onto the stored policies (PolicyPatch). Nothing"
                 + " to refuse; the table ends with both changes, as on the baseline. The same on"

@@ -23,11 +23,11 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * The column types format v3 adds (work item X5), through Spark 3.5 SQL with the OpenHouse catalog
- * (the native API), against a tables service with the cluster switch on. Of those types Spark 3.5
- * can spell only one, {@code void}, which Iceberg's Spark integration maps to Iceberg's {@code
- * unknown} and the service takes; it has no type for variant, geometry, geography or nanosecond
- * timestamps, and cannot read a table with a variant column (which the service takes from Spark 4).
+ * The column types format v3 adds, through Spark 3.5 SQL with the OpenHouse catalog (the native
+ * API), against a tables service with the cluster switch on. Of those types Spark 3.5 can spell
+ * only one, {@code void}, which Iceberg's Spark integration maps to Iceberg's {@code unknown} and
+ * the service takes; it has no type for variant, geometry, geography or nanosecond timestamps, and
+ * cannot read a table with a variant column (which the service takes from Spark 4).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FormatV3TypesSparkTest extends OpenHouseSparkITest {

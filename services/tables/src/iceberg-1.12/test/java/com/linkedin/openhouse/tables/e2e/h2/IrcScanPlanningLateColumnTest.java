@@ -30,13 +30,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * A scan that names a column added after the snapshot it reads (work item V11e). Spark 4.2 pins a
- * read of main to the current snapshot: it builds {@code filter(f).project(tableSchema)
- * .useSnapshot(current)}, so Iceberg 1.12's {@code RESTTableScan} sends {@code
- * use-snapshot-schema=true} with the names of the table's current schema. Each case here makes
- * exactly those calls on a client that plans itself and on one that plans on the server, and
- * compares what each gets: the planned tasks (data files, deletes and residuals), or the failure.
- * Client planning is the reference.
+ * A scan that names a column added after the snapshot it reads. Spark 4.2 pins a read of main to
+ * the current snapshot: it builds {@code filter(f).project(tableSchema) .useSnapshot(current)}, so
+ * Iceberg 1.12's {@code RESTTableScan} sends {@code use-snapshot-schema=true} with the names of the
+ * table's current schema. Each case here makes exactly those calls on a client that plans itself
+ * and on one that plans on the server, and compares what each gets: the planned tasks (data files,
+ * deletes and residuals), or the failure. Client planning is the reference.
  *
  * <p>The table: {@code id} with two rows in one file, then the column {@code extra} added, then (in
  * some cases) one more file with {@code extra = 7}.
@@ -132,8 +131,8 @@ class IrcScanPlanningLateColumnTest {
 
   /**
    * With no snapshot since the column was added, a filter that is true for nulls, one that is false
-   * for nulls, and a projection alone plan what client planning plans (until V11e the filters were
-   * a 400: the service selected the names from the snapshot's schema, which lacks the column).
+   * for nulls, and a projection alone plan what client planning plans (the snapshot's schema lacks
+   * the column, so the service resolves the names as the client meant them).
    */
   @Test
   void noSnapshotSinceTheColumnWasAdded() {
