@@ -211,19 +211,39 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
   Spark 4.2. Everything else is created at, and stays at, the version it has. Upgrading a table
   cannot be undone: a lower version is refused, and LinkedIn's Iceberg 1.5.2 clients and services
   cannot load a v3 table.
-- With the switch off, a request for a version above the cluster's is refused with 400
-  (`FORMAT_VERSION_REFUSED` on the native API). On the reference line the same statements fail in
-  the client's own Iceberg.
+- With the switch off, the native API answers as LinkedIn main did on Iceberg 1.5.2: a create (or
+  replace) asking for a version above the cluster's is stored at the cluster's version, and an
+  update asking for a version above 2 gets Iceberg 1.5.2's refusal (`Cannot upgrade table to
+  unsupported format version: vN (supported: v2)`); on the 1.12 line, where Iceberg itself would
+  upgrade, the service gives that refusal before anything is changed. No `FORMAT_VERSION_REFUSED`
+  or `COLUMN_DEFAULT_REQUIRES_V3` answer, and no format-version pre-commit check or metric, for a
+  table below v3. The Iceberg REST create still refuses a version it does not create.
+- With the switch off, a cluster whose `cluster.iceberg.format-version` is above 2 makes no table of
+  that version, as on LinkedIn main, where Iceberg 1.5.2 refused such creates and replaces while
+  reads, updates and snapshot commits of existing tables worked: a create answers Iceberg 1.5.2's
+  `Unsupported format version: vN` and a replace its upgrade refusal, each with what to change; no
+  commit may leave a table above 2.
+- With the switch off, a table already at v3 (made while the switch was on) keeps the rules of a v3
+  table: it takes `unknown` columns and column defaults on every write path.
+- The Iceberg REST commit routes answer a `format-version` property they cannot store with 400
+  `FORMAT_VERSION_REFUSED`, whatever the switch: a server failure would tell an Iceberg client
+  that the commit's state is unknown.
+- An upgrade to v3 is logged (a warning naming the table, both versions and the principal) and
+  audited as its own table audit event, `UPGRADE_FORMAT_VERSION`, after the event of the write
+  that made it. A failure to send that event is logged and does not change the write's answer or
+  its own event.
 - One rule decides all of it, `FormatVersionRule`, and `FormatVersionCommitPolicy` checks it on
   every commit path as a catalog pre-commit check, with what a v3 table may carry: column defaults
   are Iceberg's native `initial-default` and `write-default`, stored as committed (an existing
   column's `initial-default` never changes, and the read-bridge opt-in
-  `required-capability.column-defaults` is refused on v3; below v3 a `write-default` is refused
-  with `COLUMN_DEFAULT_REQUIRES_V3`).
+  `required-capability.column-defaults` is refused on v3; below v3, with the switch on, a new or
+  changed `write-default` is refused with `COLUMN_DEFAULT_REQUIRES_V3`).
 - The v3-only column types (work item X5, `FormatV3Types`): `unknown` (Spark's `void`) is taken;
   `timestamp_ns`, `timestamptz_ns`, `geometry` and `geography` are refused
   (`FORMAT_V3_TYPE_NOT_SUPPORTED`, with the reason); `variant` is off by default, behind its own
-  property, below.
+  property, below. With the switch off, every one of them is refused by the native request
+  validation with LinkedIn main's answer, 400 `schema : Cannot parse type string to primitive:
+  <type>`.
 - `cluster.iceberg.format-v3.variant.enabled` (default `false`; needs the v3 switch) lets a v3
   table take a variant column. Off, a variant column is refused on create and on evolution, on
   both APIs. Turning it on costs this, for every table that takes one: the column can never be

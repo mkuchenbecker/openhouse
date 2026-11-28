@@ -51,7 +51,12 @@ import org.springframework.test.web.servlet.ResultActions;
  *
  * <p>Lengths are of the location as stored.
  */
-@SpringBootTest(properties = SWITCH_ON)
+@SpringBootTest(
+    properties = {
+      SWITCH_ON,
+      "cluster.housetables.metadata-location-max-length=255",
+      "cluster.housetables.table-id-max-length=255"
+    })
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})

@@ -55,8 +55,12 @@ import org.springframework.test.web.servlet.MvcResult;
  * other row may use that directory. So a registration gives back a view that was dropped, exactly
  * as it was (its UUID, location, versions, history and properties); it cannot give a view another
  * view's or table's files. Every refusal stores nothing.
+ *
+ * <p>The cluster states the production store's location width ({@code
+ * cluster.housetables.metadata-location-max-length=255}), so a location the row cannot hold is
+ * refused before anything is written.
  */
-@SpringBootTest
+@SpringBootTest(properties = "cluster.housetables.metadata-location-max-length=255")
 @AutoConfigureMockMvc
 @Import({IrcReadRoutesTest.StubDefaults.class, IrcViewRoutesTest.ViewAudit.class})
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})

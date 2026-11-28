@@ -14,5 +14,10 @@ public enum OperationType {
   STAGED_REPLACE,
   REPLACE_COMMIT,
   RENAME_FROM,
-  RENAME_TO
+  RENAME_TO,
+  /**
+   * A write raised the table's Iceberg format version to 3 or above, which cannot be undone: sent,
+   * after the event of the write that did it, when that write succeeded.
+   */
+  UPGRADE_FORMAT_VERSION
 }

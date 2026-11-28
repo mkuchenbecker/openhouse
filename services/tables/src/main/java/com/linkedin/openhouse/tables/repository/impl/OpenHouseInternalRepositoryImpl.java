@@ -205,14 +205,26 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
           writeSchema,
           partitionSpec);
       Map<String, String> tableProps = computePropsForTableCreation(tableDto);
-      keepFormatVersionOnReplace(tableIdentifier, tableDto, tableProps);
+      // The format version is decided on the replace's own base, in replaceTable. Only an upgrade
+      // to 3 the cluster allows is named now: Iceberg builds the replacement at the version its
+      // properties name before it checks the new schema, which may hold what only v3 allows.
+      tableProps.remove(TableProperties.FORMAT_VERSION);
+      if (asksForAllowedV3(tableDto.getTableProperties())) {
+        tableProps.put(TableProperties.FORMAT_VERSION, Integer.toString(IcebergV3.VERSION));
+      }
       tablePolicyManager.managePoliciesOnCreateIfNeeded(tableDto);
       SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
       String metadataLocation = tableProps.get(getCanonicalFieldName("tableLocation"));
       String tableLocation = metadataLocation.substring(0, metadataLocation.lastIndexOf("/"));
       table =
           replaceTable(
-              tableIdentifier, writeSchema, partitionSpec, tableLocation, tableProps, sortOrder);
+              tableIdentifier,
+              writeSchema,
+              partitionSpec,
+              tableLocation,
+              tableProps,
+              sortOrder,
+              tableDto.getTableProperties());
       log.info(
           "replace for table {} took {} ms",
           tableIdentifier,
@@ -229,7 +241,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
 
       UpdateProperties updateProperties = transaction.updateProperties();
       boolean schemaUpdated =
-          doUpdateSchemaIfNeeded(writeSchema, table.schema(), tableDto, updateProperties);
+          doUpdateSchemaIfNeeded(
+              writeSchema,
+              table.schema(),
+              tableDto,
+              updateProperties,
+              formatVersionRule().switchOn()
+                  || InternalRepositoryUtils.formatVersion(table) >= IcebergV3.VERSION);
       boolean propsUpdated = doUpdateUserPropsIfNeeded(updateProperties, tableDto, table);
       boolean snapshotsUpdated = doUpdateSnapshotsIfNeeded(updateProperties, tableDto);
       boolean policiesUpdated =
@@ -342,28 +360,32 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     return new FormatVersionRule(clusterProperties);
   }
 
+  /** Whether {@code requested} asks for format version 3 where the cluster allows it. */
+  private boolean asksForAllowedV3(Map<String, String> requested) {
+    OptionalInt asked = FormatVersionRule.requested(requested);
+    return asked.isPresent()
+        && asked.getAsInt() == IcebergV3.VERSION
+        && formatVersionRule().v3Enabled();
+  }
+
   /**
-   * A replace keeps the table's format version: {@code tableProps}, computed as for a create, carry
-   * the version a create would get (the cluster's), which on a table of a higher version would be a
-   * downgrade. The version is the one {@link FormatVersionRule#versionOfReplace} gives: the table's
-   * own, or 3 when the replace asks for it and v3 is enabled.
-   *
-   * <p>A table can be above the cluster's version only where Iceberg builds format v3, whether the
-   * cluster's switch is on now or was on when the table was made v3, so only there is the stored
-   * table read for it; elsewhere the properties stay as the create computed them.
+   * The format version a replace leaves the table at, from the version its own base has: the one
+   * {@link FormatVersionRule#versionOfReplace} gives where Iceberg builds format v3 and the switch
+   * is on (the table's own, or 3 when the replace asks for it); the cluster's elsewhere, as a
+   * replace was always computed like a create, except that a table at v3 or above, which only a
+   * cluster that had the switch on can hold, is never lowered.
    */
-  private void keepFormatVersionOnReplace(
-      TableIdentifier tableIdentifier, TableDto tableDto, Map<String, String> tableProps) {
-    if (!IcebergV3.supported()) {
-      return;
+  private int formatVersionOfReplace(
+      TableIdentifier tableIdentifier, int stored, Map<String, String> requested) {
+    FormatVersionRule rule = formatVersionRule();
+    if (rule.switchOn() && IcebergV3.supported()) {
+      return rule.versionOfReplace(tableIdentifier.toString(), stored, requested);
     }
-    int stored = InternalRepositoryUtils.formatVersion(catalog.loadTable(tableIdentifier));
-    tableProps.put(
-        TableProperties.FORMAT_VERSION,
-        Integer.toString(
-            formatVersionRule()
-                .versionOfReplace(
-                    tableIdentifier.toString(), stored, tableDto.getTableProperties())));
+    if (stored >= IcebergV3.VERSION) {
+      return stored;
+    }
+    rule.refuseClusterVersionAboveTwo(stored);
+    return rule.clusterVersion();
   }
 
   protected Table createTable(
@@ -382,13 +404,24 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
         .create();
   }
 
+  /**
+   * Replaces the table in one transaction. {@code tableProps} carry no format version, except an
+   * upgrade to 3 the cluster allows: the replacement keeps the one its base has (or is built at 3),
+   * and moves to the one {@link #formatVersionOfReplace} gives for that base, read from the
+   * transaction itself, so no other read decides it; that decision also refuses what the rule
+   * refuses.
+   *
+   * @param requested the table properties the replace was asked for, which may ask for a format
+   *     version
+   */
   protected Table replaceTable(
       TableIdentifier tableIdentifier,
       Schema writeSchema,
       PartitionSpec partitionSpec,
       String tableLocation,
       Map<String, String> tableProps,
-      SortOrder sortOrder) {
+      SortOrder sortOrder,
+      Map<String, String> requested) {
     BaseTransaction txn =
         (BaseTransaction)
             catalog
@@ -398,6 +431,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                 .withProperties(tableProps)
                 .withSortOrder(sortOrder)
                 .replaceTransaction();
+    int stored = txn.underlyingOps().current().formatVersion();
+    int version = formatVersionOfReplace(tableIdentifier, stored, requested);
+    if (version != txn.currentMetadata().formatVersion()) {
+      txn.updateProperties()
+          .set(TableProperties.FORMAT_VERSION, Integer.toString(version))
+          .commit();
+    }
     txn.commitTransaction();
     // The transaction's table would refresh metadata from HTS on access, returning stale metadata.
     // Instead, use underlyingOps which has refresh disabled after commit and still holds the
@@ -913,12 +953,17 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
   }
 
-  /** @return Whether there are any schema-updates actually materialized. */
+  /**
+   * @param keepDefaults whether a re-cased field keeps its column defaults: where they are the
+   *     table's native ones (a format v3 table, or a cluster that has them)
+   * @return Whether there are any schema-updates actually materialized.
+   */
   private boolean doUpdateSchemaIfNeeded(
       Schema writeSchema,
       Schema tableSchema,
       TableDto tableDto,
-      UpdateProperties updateProperties) {
+      UpdateProperties updateProperties,
+      boolean keepDefaults) {
     // Normalize top-level column names in writeSchema to use the casing already present in
     // tableSchema (matched by Iceberg field ID). This enables case-insensitive writes: a writer
     // that submits "id" for a table column named "ID" will have its schema normalized to "ID"
@@ -926,7 +971,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     // Tables where two columns share a case-folded name are excluded (ambiguous target column).
     if (!SchemaValidationUtil.hasDuplicateCaseInsensitiveColumnNames(tableSchema)) {
       writeSchema =
-          BaseIcebergSchemaValidator.normalizeSchemaCasingToTable(writeSchema, tableSchema);
+          BaseIcebergSchemaValidator.normalizeSchemaCasingToTable(
+              writeSchema, tableSchema, keepDefaults);
     }
     if (!writeSchema.sameSchema(tableSchema)) {
       try {

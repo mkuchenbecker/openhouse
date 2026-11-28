@@ -32,9 +32,14 @@ public interface TablesService {
    * Same lookup and the same checks, in the same order, as {@link #getTable}; also returns the
    * Iceberg table metadata the {@link TableDto} was built from, from the same load.
    *
+   * <p>A service that does not offer it keeps the default, which refuses.
+   *
    * @throws com.linkedin.openhouse.common.exception.NoSuchUserTableException if table is not found.
    */
-  TableDtoWithMetadata loadTable(String databaseId, String tableId, String actingPrincipal);
+  default TableDtoWithMetadata loadTable(
+      String databaseId, String tableId, String actingPrincipal) {
+    throw new UnsupportedOperationException("loadTable is not supported by this service");
+  }
 
   /**
    * The checks {@link #loadTable} makes on a table it found, in its order, for a caller that holds
@@ -110,23 +115,30 @@ public interface TablesService {
    * #putTable(CreateUpdateTableRequestBody, String, Boolean)} with {@code failOnExist} creates one,
    * except that the table's OpenHouse UUID (which decides its location) is {@code tableUUID}
    * instead of one derived from the request. For a caller that told its client the table's location
-   * before the create, in a staged create ({@link #stageCreateTable}).
+   * before the create, in a staged create ({@link #stageCreateTable}). A service that does not
+   * offer it keeps the default, which refuses.
    */
-  Pair<TableDto, Boolean> createTable(
+  default Pair<TableDto, Boolean> createTable(
       CreateUpdateTableRequestBody createUpdateTableRequestBody,
       String tableCreator,
-      UUID tableUUID);
+      UUID tableUUID) {
+    throw new UnsupportedOperationException(
+        "createTable with a given UUID is not supported by this service");
+  }
 
   /**
    * What {@link #putTable(CreateUpdateTableRequestBody, String, Boolean)} would create for {@code
    * createUpdateTableRequestBody}, after the same create checks in the same order (existence,
    * create privilege, client capability, the create's own repository checks), with nothing written:
-   * no metadata file, no house-table row.
+   * no metadata file, no house-table row. A service that does not offer it keeps the default, which
+   * refuses.
    *
    * @return the table's Iceberg metadata as the create would initialize it
    */
-  TableMetadata stageCreateTable(
-      CreateUpdateTableRequestBody createUpdateTableRequestBody, String tableCreator);
+  default TableMetadata stageCreateTable(
+      CreateUpdateTableRequestBody createUpdateTableRequestBody, String tableCreator) {
+    throw new UnsupportedOperationException("stageCreateTable is not supported by this service");
+  }
 
   /**
    * Delete a table represented by databaseId and tableId if actingPrincipal has the right privilege

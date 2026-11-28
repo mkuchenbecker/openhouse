@@ -183,44 +183,50 @@ database ID as sent by the caller:
 
 #### Metadata location length limit
 
-The tables service refuses, with HTTP 400 and before it writes anything, a table or view write whose
-metadata location would not fit the HouseTables column that stores it (`user_table_row.metadata_location`).
-The location is the storage root, the database name, the table name, two UUIDs and the metadata file's
-name, so long names under a deep storage root reach the limit.
+A table or view write puts its metadata file on storage first and its HouseTables row second. A
+location the HouseTables column (`user_table_row.metadata_location`) cannot hold therefore fails at
+the row write, after the metadata file is written, and the caller is told the commit's state is
+unknown. The location is the storage root, the database name, the table name, two UUIDs and the
+metadata file's name, so long names under a deep storage root reach the column's width.
 
-`cluster.housetables.metadata-location-max-length` in the tables-service `cluster.yaml` states that
-column's width. The default is `255`, the width in `services/housetables/ddl/` (the production schema)
-and in every store built from those migrations; leave it there for such a store.
+`cluster.housetables.metadata-location-max-length` in the tables-service `cluster.yaml` lets the
+tables service refuse such a write instead, with HTTP 400 and before it writes anything. By default
+it is `0`, which checks nothing: every write goes to HouseTables as it always did, and the store
+decides. Set it to the column's width to turn the check on:
 
-Set it to `512` only when the HouseTables store's tables were created by that service's bootstrap
-`schema.sql` (it runs at start-up and creates the tables where they do not exist), which declares the
-column as `VARCHAR(512)`. On such a store a location of 256 to 512 characters was accepted before this limit
-existed and is refused by default now:
+- `255` for a store built from `services/housetables/ddl/` (the production schema);
+- `512` for a store whose tables were created by the HouseTables service's bootstrap `schema.sql`
+  (it runs at start-up and creates the tables where they do not exist), which declares
+  `VARCHAR(512)`.
 
 ```yaml
 cluster:
   housetables:
-    metadata-location-max-length: 512
+    metadata-location-max-length: 255
 ```
 
-Never set it above the column's real width: the row write would then fail after the metadata file
-is written, and the caller would be told the commit's state is unknown. A value that is not positive
-means the default. Changing it requires restarting or redeploying the tables service.
+Every write is checked, commits to existing tables included, so never set it below the column's real
+width: a table whose location is already longer could no longer be written. Never set it above the
+width either: the row write would then fail after the metadata file is written. A value that is not
+positive means no check. Changing it requires restarting or redeploying the tables service.
 
 #### Table name length limit
 
-The tables service refuses, with HTTP 400 and before it writes anything, a rename whose target name
-would not fit the HouseTables column that stores a table's name (`user_table_row.table_id`). A
-create's name is at most 128 characters by request validation; only a rename can be longer.
+A rename writes its metadata file before its HouseTables row. A target name the HouseTables column
+(`user_table_row.table_id`) cannot hold therefore fails at the row write, after the metadata file is
+written. A create's name is at most 128 characters by request validation; only a rename can be
+longer.
 
-`cluster.housetables.table-id-max-length` in the tables-service `cluster.yaml` states that column's
-width. The default is `255`, the width in `services/housetables/ddl/` (the production schema); leave
-it there for such a store.
+`cluster.housetables.table-id-max-length` in the tables-service `cluster.yaml` lets the tables
+service refuse such a rename instead, with HTTP 400 and before it writes anything. By default it is
+`0`, which checks nothing. Set it to turn the check on:
 
-Set it to `128` when the HouseTables store's tables were created by that service's bootstrap
-`schema.sql`, which declares the column as `VARCHAR(128)`. Without it, a rename to a name of 129 to
-255 characters writes its metadata file on such a store and then fails to write its row, and the
-caller is told the commit's state is unknown:
+- `128` for a store whose tables were created by the HouseTables service's bootstrap `schema.sql`,
+  which declares `user_table_row.table_id` as `VARCHAR(128)`;
+- for a store built from `services/housetables/ddl/` (the production schema),
+  `user_table_row.table_id` is `VARCHAR(255)` but `soft_deleted_user_table_row.table_id` is
+  `VARCHAR(128)`: a table renamed to 129 to 255 characters there is stored, and can then not be
+  soft-deleted. `128` keeps every table deletable; `255` refuses only what the row cannot hold.
 
 ```yaml
 cluster:
@@ -228,8 +234,8 @@ cluster:
     table-id-max-length: 128
 ```
 
-Never set it above the column's real width. A value that is not positive means the default.
-Changing it requires restarting or redeploying the tables service.
+Never set it above the column's real width. A value that is not positive means no check. Changing it
+requires restarting or redeploying the tables service.
 
 #### MySQL for HouseTables Service
 

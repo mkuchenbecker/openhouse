@@ -98,7 +98,9 @@ public class OpenHouseInternalTableOperations extends BaseMetastoreTableOperatio
 
   PreCommitCheckRunner preCommitCheckRunner;
 
-  /** What the cluster's House Tables row holds; the production store's widths unless set. */
+  /**
+   * What the cluster's House Tables row holds, as its configuration states; no limit unless set.
+   */
   HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 
   /**

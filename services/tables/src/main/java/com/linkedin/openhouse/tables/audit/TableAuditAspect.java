@@ -22,6 +22,7 @@ import com.linkedin.openhouse.tables.commit.CommitContext;
 import com.linkedin.openhouse.tables.commit.CommitKind;
 import com.linkedin.openhouse.tables.config.InternalCatalogProperties;
 import com.linkedin.openhouse.tables.config.TablesMvcConstants;
+import com.linkedin.openhouse.tables.formatversion.FormatVersionUpgrades;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import java.nio.charset.StandardCharsets;
@@ -854,6 +855,46 @@ public class TableAuditAspect {
             .currentTableRoot(currentTableRoot)
             .build();
     tableAuditHandler.audit(completeEvent);
+    if (status == OperationStatus.SUCCESS) {
+      try {
+        auditFormatVersionUpgrade(completeEvent);
+      } catch (RuntimeException e) {
+        // The write has succeeded and is audited: a failure to report its upgrade must not turn
+        // it into a failure.
+        log.error(
+            "Failed to audit the format version upgrade of table {}.{}",
+            completeEvent.getDatabaseName(),
+            completeEvent.getTableName(),
+            e);
+      }
+    } else if (completeEvent.getDatabaseName() != null && completeEvent.getTableName() != null) {
+      FormatVersionUpgrades.take(completeEvent.getDatabaseName(), completeEvent.getTableName());
+    }
+  }
+
+  /**
+   * After the event of a write that succeeded, the format version upgrade it made, if it made one:
+   * logged, and audited as an operation of its own, because it cannot be undone and cuts the table
+   * off from readers that cannot read its new format version.
+   */
+  private void auditFormatVersionUpgrade(TableAuditEvent write) {
+    if (write.getDatabaseName() == null || write.getTableName() == null) {
+      return;
+    }
+    FormatVersionUpgrades.take(write.getDatabaseName(), write.getTableName())
+        .ifPresent(
+            upgrade -> {
+              log.warn(
+                  "Table {}.{} was upgraded from format version {} to {} by {}; this cannot be"
+                      + " undone",
+                  write.getDatabaseName(),
+                  write.getTableName(),
+                  upgrade.getFrom(),
+                  upgrade.getTo(),
+                  write.getUser());
+              tableAuditHandler.audit(
+                  write.toBuilder().operationType(OperationType.UPGRADE_FORMAT_VERSION).build());
+            });
   }
 
   private static String actionTypeDeclaration() {

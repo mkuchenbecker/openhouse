@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import javax.validation.Validator;
@@ -115,6 +116,14 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       CreateUpdateTableRequestBody createUpdateTableRequestBody) {
     List<String> validationFailures = new ArrayList<>();
     ApiValidatorUtil.collectViolations(validator, createUpdateTableRequestBody, validationFailures);
+    // A create has no stored table, so whether it is held to the answer from before format v3 is
+    // known from the request alone; a replace is a write to a stored table, decided after the
+    // write's privilege check (FormatVersionRule.refuseFormatV3TypesBelowV3).
+    BooleanSupplier belowFormatV3 =
+        createUpdateTableRequestBody.isStageReplace()
+                || createUpdateTableRequestBody.isReplaceCommit()
+            ? () -> false
+            : () -> !formatV3Enabled();
     if (!createUpdateTableRequestBody.getClusterId().equals(clusterId)) {
       validationFailures.add(
           String.format(
@@ -128,7 +137,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
               databaseId, createUpdateTableRequestBody.getDatabaseId()));
     }
     if (createUpdateTableRequestBody.getSchema() != null) {
-      validateNoDuplicateColumns(createUpdateTableRequestBody.getSchema(), validationFailures)
+      validateNoDuplicateColumns(
+              createUpdateTableRequestBody.getSchema(), validationFailures, belowFormatV3)
           .filter(schema -> schema.columns().isEmpty())
           .ifPresent(
               schema ->
@@ -140,7 +150,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateSortOrder(
         createUpdateTableRequestBody.getSortOrder(),
         createUpdateTableRequestBody.getSchema(),
-        validationFailures);
+        validationFailures,
+        belowFormatV3);
     validationFailures.addAll(validateUUIDForReplicaTable(createUpdateTableRequestBody));
     validationFailures.addAll(
         validateUpdateTimestampForReplicatedTable(createUpdateTableRequestBody));
@@ -322,6 +333,9 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       CreateUpdateTableRequestBody createUpdateTableRequestBody) {
     List<String> validationFailures = new ArrayList<>();
     ApiValidatorUtil.collectViolations(validator, createUpdateTableRequestBody, validationFailures);
+    // An update, or a PUT that creates, is decided after its privilege check, where the stored
+    // table is known (FormatVersionRule.refuseFormatV3TypesBelowV3): nothing is read here.
+    BooleanSupplier belowFormatV3 = () -> false;
     if (!createUpdateTableRequestBody.getClusterId().equals(clusterId)) {
       validationFailures.add(
           String.format(
@@ -341,7 +355,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
               tableId, createUpdateTableRequestBody.getTableId()));
     }
     if (createUpdateTableRequestBody.getSchema() != null) {
-      validateNoDuplicateColumns(createUpdateTableRequestBody.getSchema(), validationFailures)
+      validateNoDuplicateColumns(
+              createUpdateTableRequestBody.getSchema(), validationFailures, belowFormatV3)
           .filter(schema -> schema.columns().isEmpty())
           .ifPresent(
               schema ->
@@ -369,7 +384,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     validateSortOrder(
         createUpdateTableRequestBody.getSortOrder(),
         createUpdateTableRequestBody.getSchema(),
-        validationFailures);
+        validationFailures,
+        belowFormatV3);
     if (!validationFailures.isEmpty()) {
       throw new RequestValidationFailureException(validationFailures);
     }
@@ -484,9 +500,16 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   }
 
   private Optional<Schema> validateNoDuplicateColumns(
-      String schemaJson, List<String> validationFailures) {
+      String schemaJson, List<String> validationFailures, BooleanSupplier belowFormatV3) {
     try {
       Schema schema = SchemaParser.fromJson(schemaJson);
+      Optional<Type> formatV3Type = FormatV3Types.firstFormatV3Type(schema);
+      if (formatV3Type.isPresent() && belowFormatV3.getAsBoolean()) {
+        // Below format v3, on a cluster that cannot have v3 tables, a type that exists only from
+        // format v3 on gets the answer it had where the schema parser did not know it.
+        validationFailures.add(FormatV3Types.belowV3SchemaFailure(formatV3Type.get()));
+        return Optional.empty();
+      }
       checkDuplicates(schema.asStruct(), new ArrayDeque<>(), validationFailures);
       return Optional.of(schema);
     } catch (org.apache.iceberg.exceptions.ValidationException e) {
@@ -503,9 +526,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   /**
    * The duplicate column check of {@link #validateNoDuplicateColumns}, at every depth: a struct's
    * fields after its children, as Iceberg's schema visitor walks them. A variant column has no
-   * names inside it. Where this cluster cannot have format v3 tables it is refused here, with the
-   * answer it always had ({@code Unsupported type: variant}, the message of Iceberg's visitor);
-   * where it can, whether the table takes one is the format version policy's to say (work item X5).
+   * names inside it; where this cluster can have format v3 tables, whether the table takes one is
+   * the format version policy's to say, and elsewhere it was refused before this check.
    */
   private void checkDuplicates(Type type, Deque<String> path, List<String> validationFailures) {
     if (type.isStructType()) {
@@ -542,8 +564,6 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       path.push("{value}");
       checkDuplicates(type.asMapType().valueType(), path, validationFailures);
       path.pop();
-    } else if (FormatV3Types.isVariant(type) && !formatV3Enabled()) {
-      throw new UnsupportedOperationException("Unsupported type: variant");
     }
   }
 
@@ -560,10 +580,19 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     ApiValidatorUtil.validateIdentifier("tableId", tableId, validationFailures);
   }
 
-  private void validateSortOrder(String sortOrder, String schema, List<String> validationFailures) {
+  private void validateSortOrder(
+      String sortOrder,
+      String schema,
+      List<String> validationFailures,
+      BooleanSupplier belowFormatV3) {
     if (sortOrder != null) {
       try {
         Schema icebergSchema = getSchemaFromSchemaJson(schema);
+        if (FormatV3Types.firstFormatV3Type(icebergSchema).isPresent()
+            && belowFormatV3.getAsBoolean()) {
+          // As where the schema parser did not know the type: the sort order cannot be read.
+          throw new IllegalArgumentException("Cannot parse the schema of the sort order");
+        }
         SortOrder icebergSortOrder = SortOrderParser.fromJson(icebergSchema, sortOrder);
       } catch (IllegalArgumentException e) {
         validationFailures.add(

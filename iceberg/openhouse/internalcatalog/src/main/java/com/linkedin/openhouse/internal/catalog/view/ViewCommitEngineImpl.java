@@ -78,7 +78,9 @@ public class ViewCommitEngineImpl implements ViewCommitEngine {
 
   private final MetricsReporter metricsReporter;
 
-  /** What the cluster's House Tables row holds; the production store's widths unless given. */
+  /**
+   * What the cluster's House Tables row holds, as its configuration states; no limit unless given.
+   */
   private HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 
   @Override
