@@ -281,14 +281,29 @@ public class FormatVersionRule {
 
   /**
    * Refuses, whatever the switch, an update that asks for a version above the table's that it
-   * cannot have, or below a v3 table's, with this rule's own 400 ({@value #REFUSED}). For the
-   * Iceberg REST commit routes, which have no answer of LinkedIn main to keep and on which a server
-   * failure would tell the client that the commit's state is unknown.
+   * cannot have, or any version below the table's, with this rule's own 400 ({@value #REFUSED}).
+   * For the Iceberg REST commit routes, which have no answer of LinkedIn main to keep and on which
+   * a server failure (Iceberg's own refusal of a downgrade) would tell the client that the commit's
+   * state is unknown.
    *
-   * @throws RequestValidationFailureException as {@link #checkUpdate} does with the switch on
+   * @throws RequestValidationFailureException as {@link #checkUpdate} does with the switch on, and
+   *     for any version below the table's
    */
   public void refuseUpdate(String table, int stored, Map<String, String> properties) {
+    OptionalInt asked = requested(properties);
+    if (asked.isPresent() && asked.getAsInt() < stored) {
+      throw lowered("Update", table, asked.getAsInt(), stored);
+    }
     checkUpdate("Update", table, stored, properties);
+  }
+
+  private static RequestValidationFailureException lowered(
+      String operation, String table, int asked, int stored) {
+    return new RequestValidationFailureException(
+        String.format(
+            "%s: %s of table %s asks for format version %d: the table is format version %d, and "
+                + "a table's format version is never lowered",
+            REFUSED, operation, table, asked, stored));
   }
 
   private void checkUpdate(
@@ -304,11 +319,7 @@ public class FormatVersionRule {
       return;
     }
     if (stored > clusterVersion()) {
-      throw new RequestValidationFailureException(
-          String.format(
-              "%s: %s of table %s asks for format version %d: the table is format version %d, and "
-                  + "a table's format version is never lowered",
-              REFUSED, operation, table, asked.getAsInt(), stored));
+      throw lowered(operation, table, asked.getAsInt(), stored);
     }
   }
 

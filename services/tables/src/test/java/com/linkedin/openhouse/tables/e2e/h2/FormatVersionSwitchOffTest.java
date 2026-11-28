@@ -76,6 +76,11 @@ public class FormatVersionSwitchOffTest {
   @Autowired HouseTableRepository houseTableRepository;
   @Autowired MeterRegistry meterRegistry;
 
+  @Autowired
+  com.linkedin.openhouse.common.audit.AuditHandler<
+          com.linkedin.openhouse.tables.audit.model.TableAuditEvent>
+      tableAuditHandler;
+
   private final List<String> created = new ArrayList<>();
 
   @AfterEach
@@ -309,6 +314,7 @@ public class FormatVersionSwitchOffTest {
             base,
             Collections.singletonList(
                 new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "1"))));
+    org.mockito.Mockito.clearInvocations(tableAuditHandler);
     for (org.springframework.test.web.servlet.MvcResult answer :
         Arrays.asList(
             IrcWrite.commit(mvc, db, "t", commit),
@@ -318,6 +324,21 @@ public class FormatVersionSwitchOffTest {
       assertTrue(refusal.contains("asks for format version 1"), refusal);
       assertTrue(refusal.contains("never lowered"), refusal);
     }
+    // Each refusal is audited as the commit's refusal is: one FAILED UPDATE per request.
+    assertEquals(
+        Arrays.asList("UPDATE FAILED", "UPDATE FAILED"),
+        org.mockito.Mockito.mockingDetails(tableAuditHandler).getInvocations().stream()
+            .map(
+                invocation ->
+                    (com.linkedin.openhouse.tables.audit.model.TableAuditEvent)
+                        invocation.getArgument(0))
+            .filter(event -> db.equals(event.getDatabaseName()))
+            .filter(
+                event ->
+                    event.getOperationType()
+                        != com.linkedin.openhouse.tables.audit.model.OperationType.READ)
+            .map(event -> event.getOperationType() + " " + event.getOperationStatus())
+            .collect(java.util.stream.Collectors.toList()));
     assertEquals(2, version(db));
     assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, db, "t").metadataFileLocation());
   }
