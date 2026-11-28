@@ -296,6 +296,52 @@ public final class FormatV3Types {
     }
   }
 
+  /** The ids of the types that exist only from format version 3 on, by name. */
+  private static final Set<String> FORMAT_V3_ONLY =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              java.util.Arrays.asList(
+                  "TIMESTAMP_NANO", "UNKNOWN", VARIANT, "GEOMETRY", "GEOGRAPHY")));
+
+  /**
+   * The first column type of {@code schema} that exists only from format version 3 on, in the order
+   * a schema's JSON is read: a struct's fields in order, each with everything inside it, a list's
+   * element, a map's key then its value.
+   */
+  public static Optional<Type> firstFormatV3Type(Schema schema) {
+    return firstFormatV3Type(schema.asStruct());
+  }
+
+  private static Optional<Type> firstFormatV3Type(Type type) {
+    if (FORMAT_V3_ONLY.contains(name(type))) {
+      return Optional.of(type);
+    }
+    if (type.isNestedType()) {
+      for (Types.NestedField field : type.asNestedType().fields()) {
+        Optional<Type> found = firstFormatV3Type(field.type());
+        if (found.isPresent()) {
+          return found;
+        }
+      }
+    }
+    return Optional.empty();
+  }
+
+  /**
+   * {@code type} as a schema's JSON spells it, the short name for a geometry or geography of the
+   * default reference system and algorithm, as a request most often spells it.
+   */
+  public static String spelled(Type type) {
+    String spelled = type.toString();
+    if ("geometry(OGC:CRS84)".equalsIgnoreCase(spelled)) {
+      return "geometry";
+    }
+    if ("geography(OGC:CRS84, spherical)".equalsIgnoreCase(spelled)) {
+      return "geography";
+    }
+    return spelled;
+  }
+
   /** Whether the table's {@code policies} property sets a retention policy. */
   private static boolean hasRetention(String policies) {
     try {

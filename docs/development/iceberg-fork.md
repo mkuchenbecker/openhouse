@@ -221,7 +221,9 @@ Iceberg format version 3 exists on the 1.12 line only, and a cluster allows it w
 - The v3-only column types (work item X5, `FormatV3Types`): `unknown` (Spark's `void`) is taken;
   `timestamp_ns`, `timestamptz_ns`, `geometry` and `geography` are refused
   (`FORMAT_V3_TYPE_NOT_SUPPORTED`, with the reason); `variant` is off by default, behind its own
-  property, below.
+  property, below. With the switch off, every one of them is refused by the native request
+  validation with LinkedIn main's answer, 400 `schema : Cannot parse type string to primitive:
+  <type>`.
 - `cluster.iceberg.format-v3.variant.enabled` (default `false`; needs the v3 switch) lets a v3
   table take a variant column. Off, a variant column is refused on create and on evolution, on
   both APIs. Turning it on costs this, for every table that takes one: the column can never be

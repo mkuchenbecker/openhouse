@@ -487,6 +487,17 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       String schemaJson, List<String> validationFailures) {
     try {
       Schema schema = SchemaParser.fromJson(schemaJson);
+      if (!formatV3Enabled()) {
+        Optional<Type> formatV3Type = FormatV3Types.firstFormatV3Type(schema);
+        if (formatV3Type.isPresent()) {
+          // Where this cluster cannot have format v3 tables, a type that exists only from format
+          // v3 on gets the answer it had where the schema parser did not know it.
+          validationFailures.add(
+              "schema : Cannot parse type string to primitive: "
+                  + FormatV3Types.spelled(formatV3Type.get()));
+          return Optional.empty();
+        }
+      }
       checkDuplicates(schema.asStruct(), new ArrayDeque<>(), validationFailures);
       return Optional.of(schema);
     } catch (org.apache.iceberg.exceptions.ValidationException e) {
@@ -503,9 +514,8 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
   /**
    * The duplicate column check of {@link #validateNoDuplicateColumns}, at every depth: a struct's
    * fields after its children, as Iceberg's schema visitor walks them. A variant column has no
-   * names inside it. Where this cluster cannot have format v3 tables it is refused here, with the
-   * answer it always had ({@code Unsupported type: variant}, the message of Iceberg's visitor);
-   * where it can, whether the table takes one is the format version policy's to say (work item X5).
+   * names inside it; where this cluster can have format v3 tables, whether the table takes one is
+   * the format version policy's to say, and elsewhere it was refused before this check.
    */
   private void checkDuplicates(Type type, Deque<String> path, List<String> validationFailures) {
     if (type.isStructType()) {
@@ -542,8 +552,6 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
       path.push("{value}");
       checkDuplicates(type.asMapType().valueType(), path, validationFailures);
       path.pop();
-    } else if (FormatV3Types.isVariant(type) && !formatV3Enabled()) {
-      throw new UnsupportedOperationException("Unsupported type: variant");
     }
   }
 
@@ -564,6 +572,10 @@ public class OpenHouseTablesApiValidator implements TablesApiValidator {
     if (sortOrder != null) {
       try {
         Schema icebergSchema = getSchemaFromSchemaJson(schema);
+        if (!formatV3Enabled() && FormatV3Types.firstFormatV3Type(icebergSchema).isPresent()) {
+          // As where the schema parser did not know the type: the sort order cannot be read.
+          throw new IllegalArgumentException("Cannot parse the schema of the sort order");
+        }
         SortOrder icebergSortOrder = SortOrderParser.fromJson(icebergSchema, sortOrder);
       } catch (IllegalArgumentException e) {
         validationFailures.add(
