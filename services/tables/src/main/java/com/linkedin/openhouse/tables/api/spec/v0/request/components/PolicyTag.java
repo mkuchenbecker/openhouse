@@ -27,9 +27,9 @@ import lombok.NoArgsConstructor;
  * <p>The tags are a set: two lists of the same tags in different orders are the same tags ({@link
  * #equals} compares them as sets). Wherever they are written out, in the stored {@code policies}
  * table property (Gson) and in API responses (Jackson), they are written in the declaration order
- * of {@link Tag} ({@code PII} before {@code HC}), so every service process writes the same text.
- * Before, the order was a {@code HashSet}'s, which follows the enum constants' identity hash codes
- * and so differed from one service process to the next (work item N8).
+ * of {@link Tag} ({@code PII} before {@code HC}), so every service process writes the same text. A
+ * {@code HashSet}'s order would follow the enum constants' identity hash codes and so differ from
+ * one service process to the next.
  */
 @Builder
 @EqualsAndHashCode

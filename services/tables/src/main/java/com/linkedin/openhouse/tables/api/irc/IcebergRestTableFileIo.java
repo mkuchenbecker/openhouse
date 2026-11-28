@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * The per-table {@code io-impl} of an Iceberg REST table response, for a table that the storage
- * selector placed on another storage type than the cluster's default (work item V20).
+ * selector placed on another storage type than the cluster's default.
  *
  * <p>The config route advertises the default storage's FileIO class as the catalog's {@code
  * io-impl} ({@link IcebergRestApiHandler#config}). An Iceberg client lays a table response's {@code

@@ -27,12 +27,12 @@ import org.apache.iceberg.types.Types;
  * <ol>
  *   <li>The format version the commit leaves is one {@link FormatVersionRule#checkCommitted}
  *       allows.
- *   <li>A commit that leaves a format v3 table may not carry what OpenHouse does not yet handle on
- *       v3, and is refused with the work item that will: a replica or replicated table (X7), table
- *       encryption; and the format v3 types are checked type by type ({@link FormatV3Types}, X5).
- *   <li>Column defaults (work item W6). On v3, defaults are Iceberg's native ones and are stored as
- *       committed: a field the table already has keeps its {@code initial-default}, only a field
- *       new in the commit may carry one, and the read-bridge opt-in {@code
+ *   <li>A commit that leaves a format v3 table may not carry what OpenHouse does not handle on v3,
+ *       and is refused with a message that says so: a replica or replicated table, table
+ *       encryption; and the format v3 types are checked type by type ({@link FormatV3Types}).
+ *   <li>Column defaults. On v3, defaults are Iceberg's native ones and are stored as committed: a
+ *       field the table already has keeps its {@code initial-default}, only a field new in the
+ *       commit may carry one, and the read-bridge opt-in {@code
  *       required-capability.column-defaults} is refused. Below v3, a commit may not introduce or
  *       change a non-null {@code write-default}.
  * </ol>

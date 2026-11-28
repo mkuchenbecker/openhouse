@@ -447,9 +447,9 @@ public class IcebergRestApiHandler {
    *
    * <p>Whether it holds a table is one row of the native paged table search, which reads the same
    * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
-   * listing of every table of the database (V17). The database list is read only when it holds
-   * none, and the record (one keyed read) before it; that list has no lookup by name in House
-   * Tables, so a miss still reads it.
+   * listing of every table of the database. The database list is read only when it holds none, and
+   * the record (one keyed read) before it; that list has no lookup by name in House Tables, so a
+   * miss still reads it.
    */
   void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);

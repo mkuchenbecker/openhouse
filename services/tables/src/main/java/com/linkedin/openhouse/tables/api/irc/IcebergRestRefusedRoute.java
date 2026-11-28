@@ -8,8 +8,8 @@ import java.lang.annotation.Target;
 
 /**
  * Marks a spec route that is mapped only to refuse it with the spec's 406 and a specific message
- * (view rename, which the native API lacks: D27). It is not served, so the config response does not
- * list it ({@link IcebergRestServedRoutes}).
+ * (view rename, which the native API lacks). It is not served, so the config response does not list
+ * it ({@link IcebergRestServedRoutes}).
  */
 @Documented
 @Retention(RetentionPolicy.RUNTIME)

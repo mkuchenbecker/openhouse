@@ -47,14 +47,15 @@ import org.springframework.stereotype.Component;
  *       catalog and namespace, properties, and the source dialect derived from a single SQL
  *       representation when the request does not name one. The server owns location and UUID: a
  *       location the create names is ignored, and the view is created, and returned, where the
- *       server puts it (D30).
+ *       server puts it.
  *   <li>A commit is first authorized as the native replace is, on the stored view's House Tables
  *       row ({@link #authorizeCommit}), then checked here, against the stored view: each
  *       requirement, then each update is applied to it (an update that sets another location, UUID
  *       or format version is refused, except that a replace, which sets a new current version,
- *       ignores a set-location, which is how a client's replace that names a location arrives:
- *       D30). The result is sent as the native PUT of the complete definition on the stored
- *       metadata location, so the native base-version check refuses a base that moved meanwhile.
+ *       ignores a set-location, which is how a client's replace that names a location arrives,
+ *       since the server owns the location). The result is sent as the native PUT of the complete
+ *       definition on the stored metadata location, so the native base-version check refuses a base
+ *       that moved meanwhile.
  *   <li>The native view API has no rename, so the rename route answers the spec's 406.
  *   <li>A registration (Iceberg 1.12 line only) is {@code IcebergRestViewRegistration}'s: it runs
  *       the native create's gate, database, name and authorization checks, then stores the view row
@@ -147,7 +148,7 @@ public class IcebergRestViewHandler {
   public LoadViewResponse createView(
       String namespace, CreateViewRequest request, String actingPrincipal) {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
-    // request.location() is not read: the server owns the location (D30), and the native create
+    // request.location() is not read: the server owns the location, and the native create
     // allocates it as for a request that names none.
     CreateUpdateViewRequestBody body = IcebergRestViewSpelling.createBody(databaseId, request);
     onNamespace(() -> viewsApiHandler.createView(body, actingPrincipal));
