@@ -45,9 +45,6 @@ sourceSets {
     java {
       srcDirs = ["${apps35}/src/shared/main/java"]
     }
-    resources {
-      srcDirs = ["${apps35}/src/shared/main/resources"]
-    }
   }
   test {
     java {

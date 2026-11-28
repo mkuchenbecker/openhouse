@@ -31,7 +31,15 @@ import org.apache.spark.sql.connector.catalog.CatalogPlugin;
  *       RestCapabilityClient} built from the catalog's own name and merged properties, so it
  *       reaches the same server with the same authentication.
  *   <li>Any other Iceberg catalog: no grants or unlock; policies are not refused here.
+ *   <li>A catalog that is not Iceberg's {@link SparkCatalog} or {@link SparkSessionCatalog}: the
+ *       same as any other Iceberg catalog. The statements are planned only for those two classes,
+ *       so on such a catalog they fail at planning before they get here; a caller that asks anyway
+ *       is not told that a server does not advertise policies, since there is no such server.
  * </ol>
+ *
+ * <p>Policies are refused only on Iceberg's {@code RESTCatalog} whose server does not advertise
+ * them. Everywhere else a policy statement commits only to a table that loads as an Iceberg {@code
+ * SparkTable} carrying {@code openhouse.tableId}, and refuses any other table itself.
  *
  * <p>A capability that is not offered fails with {@link UnsupportedOperationException}; for grants
  * and unlock the message is the one the statements have always given.
@@ -47,7 +55,7 @@ public final class OpenHouseCapabilities {
       return new CatalogCapabilities(
           CatalogCapabilities.Path.NOT_ICEBERG,
           Collections.emptySet(),
-          false,
+          true,
           Optional.empty(),
           Optional.empty());
     }

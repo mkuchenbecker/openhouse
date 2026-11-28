@@ -90,6 +90,13 @@ public final class Operations implements AutoCloseable {
    * connection pool that is never disposed; on RESTCatalog a {@code GET /config} when built).
    * Neither catalog keeps loaded tables (each load asks the service), so reuse serves no older
    * table state.
+   *
+   * <p>Why not one per load, as before: building a catalog for every {@code getTable} and {@code
+   * createTransaction} left one undisposed client and connection pool per load for the rest of the
+   * JVM, and the batched apps build them from parallel threads, where each {@code
+   * OpenHouseCatalog.initialize} mutates the shared {@code TablesApiClientFactory} singleton
+   * (connection strategy, session id) while other threads create clients from it. Nothing was ever
+   * closed: {@link #close()} stopped the Spark session only.
    */
   private Catalog catalog;
 
@@ -561,12 +568,18 @@ public final class Operations implements AutoCloseable {
   }
 
   /**
-   * Signals (work item X9) that the expired partitions of a backup-enabled table carry delete
-   * files: the backup holds their data files and a manifest of data files only, so rows deleted
-   * before retention are in it with nothing recording the deletes (decision D46, not decided). A
-   * WARN log naming the table and the counts, and one metric per kind of delete; what is backed up
-   * and deleted does not change. Counts: position-delete files and equality-delete files (distinct
-   * files), deletion vectors (one per data file: {@code planFiles} gives one task per data file).
+   * Signals that the expired partitions of a backup-enabled table carry delete files: the backup
+   * holds their data files and a manifest of data files only, so rows deleted before retention are
+   * in it with nothing recording the deletes. A WARN log naming the table and the counts, and one
+   * metric per kind of delete; what is backed up and deleted does not change. Counts:
+   * position-delete files and equality-delete files (distinct files), deletion vectors (one per
+   * data file: {@code planFiles} gives one task per data file).
+   *
+   * <p>Why: {@link #prepareBackupDataManifests} has always collected only {@code task.file()} of
+   * each planned task and dropped {@code task.deletes()}, so on a merge-on-read table a restore
+   * from the backup brings back rows that had been deleted, and nothing said so. Whether the backup
+   * should carry the deletes is a separate, open question; until it is answered the loss is
+   * reported instead of silent.
    */
   private void reportDeleteFilesInBackup(String fqtn, List<FileScanTask> expiredFiles) {
     Set<String> positionDeleteFiles = new HashSet<>();

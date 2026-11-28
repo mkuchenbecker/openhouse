@@ -3,11 +3,13 @@
 // Spring, no generated client and no Spark or Scala dependency, so one jar serves every engine line
 // (the Spark 3.5 / Scala 2.12 extensions now, a Spark 4.2 / Scala 2.13 port later). Iceberg's API is
 // compileOnly: the interfaces name its TableIdentifier and Namespace, which every engine line already
-// carries in its own Iceberg runtime. Not published on its own (its API is a one-way door, D24); the
-// Spark runtime packs it into its uber jar.
+// carries in its own Iceberg runtime. The Spark runtime packs it into its uber jar, and its thin jar
+// names it as a runtime dependency, so it is published as the Spark runtime is (same group, version
+// and repositories, through openhouse.maven-publish).
 plugins {
   id 'java-library'
   id 'checkstyle'
+  id 'openhouse.maven-publish'
 }
 
 // Same target as openhouse.java-minimal-conventions (Java 17, or 8 under -PicebergLinkedIn),
