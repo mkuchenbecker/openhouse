@@ -16,10 +16,13 @@ import com.linkedin.openhouse.common.security.DummyTokenInterceptor;
 import com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer;
 import com.linkedin.openhouse.tables.mock.properties.CustomClusterPropertiesInitializer;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import javax.servlet.Filter;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,14 +31,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.core.annotation.AnnotatedElementUtils;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.core.type.AnnotationMetadata;
+import org.springframework.core.type.classreading.CachingMetadataReaderFactory;
+import org.springframework.core.type.classreading.MetadataReaderFactory;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.test.context.ContextConfiguration;
@@ -83,9 +87,8 @@ public class IcebergRestRoutesOffTest {
   /** The package of the Iceberg REST routes' classes. */
   private static final String ROUTES_PACKAGE = "com.linkedin.openhouse.tables.api.irc";
 
-  /** The classes outside that package that exist only for those routes. */
-  private static final List<String> ROUTES_ONLY_CLASSES =
-      Arrays.asList("com.linkedin.openhouse.tables.services.TableCommitService");
+  /** The annotation every bean that exists only for those routes carries, on this branch. */
+  private static final String SWITCH_ANNOTATION = ROUTES_PACKAGE + ".ConditionalOnIcebergRest";
 
   private static final List<String> PATHS =
       Arrays.asList(
@@ -247,32 +250,48 @@ public class IcebergRestRoutesOffTest {
   }
 
   @Test
-  public void noBeanOfTheIcebergRestRoutesIsCreated() {
+  public void noBeanOfTheIcebergRestRoutesIsCreated() throws IOException {
+    Set<String> switched = classesCarryingTheSwitch();
     List<String> found = new ArrayList<>();
-    ConfigurableListableBeanFactory beans =
-        ((ConfigurableApplicationContext) context).getBeanFactory();
     for (String name : context.getBeanDefinitionNames()) {
       Class<?> type = context.getType(name);
-      // A test's own configuration in that package (scanned on the default line), and the beans
-      // it declares, are not the service's.
-      String factory = beans.getBeanDefinition(name).getFactoryBeanName();
-      if (type == null
-          || isTestConfiguration(context.getType(name))
-          || (factory != null && isTestConfiguration(context.getType(factory)))) {
+      if (type == null) {
         continue;
       }
       String className = ClassUtils.getUserClass(type).getName();
-      if (className.startsWith(ROUTES_PACKAGE + ".") || ROUTES_ONLY_CLASSES.contains(className)) {
+      if (className.startsWith(ROUTES_PACKAGE + ".") || switched.contains(className)) {
         found.add(name + " (" + className + ")");
       }
     }
     assertEquals(new ArrayList<String>(), found);
   }
 
-  private static boolean isTestConfiguration(Class<?> type) {
-    return type != null
-        && AnnotatedElementUtils.hasAnnotation(
-            ClassUtils.getUserClass(type), TestConfiguration.class);
+  /**
+   * Every class of the service carrying the routes' switch, found by scanning its packages (none on
+   * LinkedIn main, which has no such annotation): the beans outside the routes' package that exist
+   * only for them are found here, not listed by hand.
+   */
+  private static Set<String> classesCarryingTheSwitch() throws IOException {
+    // Read from the class files, not through a component scan, which would apply the switch's own
+    // condition and find none.
+    PathMatchingResourcePatternResolver resolver = new PathMatchingResourcePatternResolver();
+    MetadataReaderFactory readers = new CachingMetadataReaderFactory(resolver);
+    Set<String> found = new TreeSet<>();
+    for (Resource resource :
+        resolver.getResources("classpath*:com/linkedin/openhouse/tables/**/*.class")) {
+      AnnotationMetadata metadata = readers.getMetadataReader(resource).getAnnotationMetadata();
+      if (metadata.hasAnnotation(SWITCH_ANNOTATION)
+          || metadata.hasMetaAnnotation(SWITCH_ANNOTATION)) {
+        found.add(metadata.getClassName());
+      }
+    }
+    if (ClassUtils.isPresent(SWITCH_ANNOTATION, null)) {
+      // On this branch the scan must find them, the one outside the routes' package included.
+      assertTrue(
+          found.contains("com.linkedin.openhouse.tables.services.TableCommitService"),
+          found.toString());
+    }
+    return found;
   }
 
   @Test
