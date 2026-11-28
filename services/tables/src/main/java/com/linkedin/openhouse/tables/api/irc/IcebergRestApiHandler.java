@@ -229,10 +229,13 @@ public class IcebergRestApiHandler {
     String databaseId = databaseId(namespace);
     tablesApiValidator.validateSearchTables(databaseId);
     Optional<NamespaceMetadata> record;
+    // What the namespace holds, under which spelling: asked at most once per load.
+    Optional<String> held = null;
     try {
       record = readRecord(databaseId);
     } catch (RuntimeException failure) {
-      if (!holdsSomething(databaseId)) {
+      held = heldAs(databaseId);
+      if (!held.isPresent()) {
         throw failure;
       }
       log.warn(
@@ -250,11 +253,14 @@ public class IcebergRestApiHandler {
           .setProperties(new HashMap<>(record.get().getProperties()))
           .build();
     }
-    if (!holdsSomething(databaseId)) {
+    if (held == null) {
+      held = heldAs(databaseId);
+    }
+    if (!held.isPresent()) {
       throw missing(databaseId);
     }
     return GetNamespaceResponse.builder()
-        .withNamespace(Namespace.of(databaseId))
+        .withNamespace(Namespace.of(held.get()))
         .setProperties(Collections.emptyMap())
         .build();
   }
@@ -433,8 +439,9 @@ public class IcebergRestApiHandler {
    * Fails unless {@code databaseId} exists as a namespace, by the one existence rule of these
    * routes: it holds a table, it has a stored record the caller may read ({@link
    * #storedNamespace}), or the database list shows it (it holds a view, whether or not its views
-   * are enabled: the list is every House Tables row's database, of any type). {@link
-   * #holdsSomething} is the same rule without the record, in the same order.
+   * are enabled: the list is every House Tables row's database, of any type). Every part ignores
+   * letter case, as House Tables' lookups do. {@link #holdsSomething} is the same rule without the
+   * record, in the same order.
    *
    * <p>Whether it holds a table is one row of the native paged table search, which reads the same
    * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
@@ -462,12 +469,33 @@ public class IcebergRestApiHandler {
    * decide "exists" (create) and "not empty" (drop) with this.
    */
   boolean holdsSomething(String databaseId) {
-    return holdsATable(databaseId) || isListed(databaseId);
+    return heldAs(databaseId).isPresent();
   }
 
-  /** Whether the native database list shows {@code databaseId}, spelled exactly so. */
+  /**
+   * The spelling under which {@code databaseId} holds something, if it does: the requested one when
+   * it holds a table (the table probe ignores letter case and keeps the request's spelling, as
+   * before), otherwise the database list's stored spelling of it, compared ignoring letter case.
+   */
+  private Optional<String> heldAs(String databaseId) {
+    if (holdsATable(databaseId)) {
+      return Optional.of(databaseId);
+    }
+    return listedAs(databaseId);
+  }
+
+  /**
+   * The native database list's spelling of {@code databaseId}, compared ignoring letter case, as
+   * House Tables' own lookups of a database (its table listing, the namespace records) compare
+   * names: a database is one namespace under any spelling of its name.
+   */
+  private Optional<String> listedAs(String databaseId) {
+    return databaseIds().stream().filter(id -> id.equalsIgnoreCase(databaseId)).findFirst();
+  }
+
+  /** Whether the native database list shows {@code databaseId}, ignoring letter case. */
   private boolean isListed(String databaseId) {
-    return databaseIds().contains(databaseId);
+    return listedAs(databaseId).isPresent();
   }
 
   private static NoSuchNamespaceException missing(String databaseId) {
