@@ -281,10 +281,49 @@ public final class LinkedInMainRecording {
     }
   }
 
-  /** The directory to record into, from {@value #RECORD_DIR_ENV}, or null when the run compares. */
+  /**
+   * A class that this branch has and LinkedIn main does not: present on the classpath, the build is
+   * not main's, and the run may not record.
+   */
+  static final String BRANCH_ONLY_CLASS = "com.linkedin.openhouse.javaclient.IcebergLine";
+
+  /**
+   * The directory to record into, from {@value #RECORD_DIR_ENV}, or null when the run compares.
+   * Recording compares nothing, so it is refused unless the build is LinkedIn main's: the commit
+   * the recording step names ({@value #COMMIT_ENV}) must be {@value #COMMIT}, and a class only this
+   * branch has ({@value #BRANCH_ONLY_CLASS}) must be absent.
+   */
   public static Path recordDirectory() {
     String dir = System.getenv(RECORD_DIR_ENV);
-    return dir == null || dir.isEmpty() ? null : Paths.get(dir);
+    if (dir == null || dir.isEmpty()) {
+      return null;
+    }
+    checkRecordable(System.getenv(COMMIT_ENV), classPresent(BRANCH_ONLY_CLASS));
+    return Paths.get(dir);
+  }
+
+  /** Fails unless a run naming {@code commit}, with or without the branch's class, may record. */
+  public static void checkRecordable(String commit, boolean branchClassPresent) {
+    if (commit == null || !commit.startsWith(COMMIT) || branchClassPresent) {
+      throw new IllegalStateException(
+          RECORD_DIR_ENV
+              + " is set, but this build is not LinkedIn main "
+              + COMMIT
+              + " (commit named: "
+              + commit
+              + (branchClassPresent ? "; " + BRANCH_ONLY_CLASS + " is on the classpath" : "")
+              + "): only scripts/linkedin-main-baseline/record.sh records, against a checkout of"
+              + " main. Unset it to compare.");
+    }
+  }
+
+  private static boolean classPresent(String className) {
+    try {
+      Class.forName(className, false, LinkedInMainRecording.class.getClassLoader());
+      return true;
+    } catch (ClassNotFoundException | LinkageError e) {
+      return false;
+    }
   }
 
   /**

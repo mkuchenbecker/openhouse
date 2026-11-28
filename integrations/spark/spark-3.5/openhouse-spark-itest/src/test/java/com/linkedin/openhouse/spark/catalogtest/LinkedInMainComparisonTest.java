@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 /**
  * The comparison with LinkedIn main's recording cannot be satisfied by anything but main's answer
  * or a declaration that pins this build's: no marker in the file excuses a statement, a test that
- * is gone takes no rows out of view unseen.
+ * is gone takes no rows out of view unseen, and a build that is not main cannot record.
  */
 public class LinkedInMainComparisonTest {
 
@@ -104,5 +104,18 @@ public class LinkedInMainComparisonTest {
     Assertions.assertEquals(
         Collections.singleton("enabled"),
         LinkedInMainComparison.enabledTests(TwoTests.class, m -> m));
+  }
+
+  @Test
+  void onlyLinkedInMainMayRecord() {
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () -> LinkedInMainRecording.checkRecordable("bb8929e1004afe1a", true));
+    Assertions.assertThrows(
+        IllegalStateException.class,
+        () -> LinkedInMainRecording.checkRecordable("0d54d2fd", false));
+    Assertions.assertThrows(
+        IllegalStateException.class, () -> LinkedInMainRecording.checkRecordable(null, false));
+    LinkedInMainRecording.checkRecordable("bb8929e1004afe1a", false);
   }
 }
