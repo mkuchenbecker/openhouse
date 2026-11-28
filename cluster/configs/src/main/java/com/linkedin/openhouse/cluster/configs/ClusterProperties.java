@@ -156,23 +156,25 @@ public class ClusterProperties {
   @Value("${cluster.tables.max-tables-per-database:0}")
   private long maxTablesPerDatabase;
 
-  /** The property that turns on the tables service's Iceberg REST Catalog routes. */
-  public static final String IRC_ENABLED = "cluster.tables.irc.enabled";
-
   /**
-   * Whether the tables service serves the Iceberg REST Catalog protocol under {@code /iceberg}: the
-   * config, namespace, table, view, commit, transaction, register and metrics routes, and the error
-   * mapping and authentication those routes answer with. Off by default: nothing is then mapped
-   * under {@code /iceberg}, none of these routes' beans is created, and a request there is answered
-   * as any path the service does not map (a 400 "cannot be resolved by server").
+   * The property that turns on the tables service's Iceberg REST Catalog protocol under {@code
+   * /iceberg}: the config, namespace, table, view, commit, transaction, register and metrics
+   * routes, and the error mapping and authentication those routes answer with. Off by default:
+   * nothing is then mapped under {@code /iceberg}, none of these routes' beans is created, and a
+   * request there is answered as any path the service does not map (a 400 "cannot be resolved by
+   * server").
    *
    * <p>Every other {@code cluster.tables.irc.*} setting applies only with this one on: scan
    * planning ({@link #IRC_SCAN_PLANNING_ENABLED}) needs both, and with this one off it is ignored,
    * with a warning at start-up. The register-view route needs this one and an Iceberg line that has
    * the route's request class.
+   *
+   * <p>Only the value {@code true} (in any letter case) turns them on, as {@code
+   * ConditionalOnProperty(havingValue = "true")} reads it: {@code on}, {@code yes} or {@code 1} do
+   * not. The routes' beans read the property through that condition; it has no field here, so that
+   * nothing reads it another way.
    */
-  @Value("${" + IRC_ENABLED + ":false}")
-  private boolean clusterTablesIrcEnabled;
+  public static final String IRC_ENABLED = "cluster.tables.irc.enabled";
 
   /** The property that turns on the tables service's Iceberg REST scan planning routes. */
   public static final String IRC_SCAN_PLANNING_ENABLED = "cluster.tables.irc.scan-planning.enabled";

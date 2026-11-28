@@ -253,7 +253,8 @@ cluster:
       enabled: true
 ```
 
-The other `cluster.tables.irc.*` settings take effect only with this one on. Scan planning (below)
+Only the value `true` turns it on (in any letter case); `on`, `yes` or `1`, set as a property,
+environment variable or command-line argument, leave it off. The other `cluster.tables.irc.*` settings take effect only with this one on. Scan planning (below)
 needs both; with the routes off and scan planning set on, the service starts, serves nothing under
 `/iceberg` and logs a warning. The view register route (`POST .../namespaces/{namespace}/register-view`)
 needs the routes on and an Iceberg line with its request class (the fork's 1.12). The format v3
