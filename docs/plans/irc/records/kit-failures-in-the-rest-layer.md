@@ -36,3 +36,8 @@ Left: MISSINGMETA, VIEWERRTYPE (reasons in docs). Next: kit runs (default, v3), 
 Kit at head: default 160 = 63 passed / 81 failed / 16 skipped; v3 160 = 65 / 79 / 16; all listed.
 Default line IRC suite 52 classes 487 tests 0 failures; reference line 40 classes 417 tests 17 skipped 0 failures;
 Spark 3.5 IcebergRestCatalogViewTest 7/7. Waiting for CI.
+
+## Final (bottom line)
+11 of the 13 REST-layer kit failures pass. Draft pull request 169, head ce78afdf49819afb9518abcbf885d27732dd7b9c (base 66a3c75a merged after 168).
+Kit default 63/81/16, v3 65/79/16. CI: every job on ce78afdf succeeded (Reference Docker skipped by design). MISSINGMETA and VIEWERRTYPE left (reasons in the pull request body and the docs).
+Merged into irc-integration as 00d78552a35f02194d0b319f78d6008b0fff08f4 (review: MERGE AS IS). Execution paused by the owner; all pollers stopped, nothing further pushed.

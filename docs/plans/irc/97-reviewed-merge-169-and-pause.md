@@ -67,6 +67,7 @@ is true, since 168). Ledger rows in `85-behavior-change-ledger.md`, part F:
   It costs latency on the refusal path during an outage and reveals nothing new.
 - M4: the ledger had no rows for these changes (closed by BC-113 to BC-115).
 - Also unpinned: a commit to a missing view over the Iceberg REST route.
+- Left for when work resumes (the orchestrator's decision, not done): the author recommends refiling the missing-metadata-file kit entry in `expected-outcomes.txt` from category d (the server breaks the specification) to e (the kit assumes the reference implementation's answer), since a 500 is allowed there. [As relayed by the coordinator; the final record's text, `records/kit-failures-in-the-rest-layer.md`, says only that the entry is left, with its reasons in the pull request body and the docs: not verified there.]
 - Where they are tracked: no work item existed for the thirteen; `86-review-findings-and-fix-forward.md` tracks them under FF-53
   ("169" in its list) and no id was created.
 
