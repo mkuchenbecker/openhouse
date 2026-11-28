@@ -242,4 +242,21 @@ public class IrcRegisterViewAuthTest {
                             == com.linkedin.openhouse.tables.audit.model.OperationStatus.FAILED
                         && "VIEW_ALREADY_EXISTS".equals(event.getFailureCode())));
   }
+
+  /**
+   * A view brought back by registration is read as any other: its IRC load needs the read
+   * privilege, though the registration's own answer, decided on the create privilege, carries it.
+   */
+  @Test
+  void aRegisteredViewsLoadNeedsTheReadPrivilege() throws Exception {
+    assertEquals(200, register("v").getResponse().getStatus());
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(TableDto.class), any(Privileges.class)))
+        .thenAnswer(call -> call.getArgument(2) != Privileges.GET_TABLE_METADATA);
+    MvcResult denied = IrcHttp.get(mvc, IrcViewWrite.view(DB, "v"));
+    assertIrcError(denied, 403, "ForbiddenException");
+    org.junit.jupiter.api.Assertions.assertFalse(IrcHttp.body(denied).contains("SELECT 1"));
+    stubDecision(true);
+    assertEquals(200, IrcHttp.get(mvc, IrcViewWrite.view(DB, "v")).getResponse().getStatus());
+  }
 }

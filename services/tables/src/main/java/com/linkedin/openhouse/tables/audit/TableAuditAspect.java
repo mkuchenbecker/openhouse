@@ -225,6 +225,45 @@ public class TableAuditAspect {
     }
   }
 
+  /**
+   * Runs {@code decision}, an authorization decision a route makes before the audited operation
+   * that would make it, and audits its refusal as that operation's refusal is audited: a FAILED
+   * event of {@code operationType} with no table root. An allowed decision is not audited; the
+   * operation that follows is. The refusal is rethrown unchanged.
+   */
+  public void auditRefusal(
+      String databaseId, String tableId, OperationType operationType, Runnable decision) {
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(operationType)
+            .build();
+    try {
+      decision.run();
+    } catch (RuntimeException e) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw e;
+    }
+  }
+
+  /**
+   * Audits a read a route answers outside the audited load, as the IRC load's success is audited: a
+   * READ SUCCESS event with {@code currentTableRoot}, the metadata location it answers.
+   */
+  public void auditRead(String databaseId, String tableId, String currentTableRoot) {
+    buildAndSendEvent(
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(OperationType.READ)
+            .build(),
+        OperationStatus.SUCCESS,
+        currentTableRoot);
+  }
+
   @SuppressWarnings("unchecked")
   private Pair<TableDto, Boolean> auditTableWrite(
       ProceedingJoinPoint point, String databaseId, String tableId, OperationType operationType)

@@ -156,6 +156,23 @@ public class ViewAuditAspect {
     return result;
   }
 
+  /**
+   * Runs {@code decision}, an authorization decision a route makes before the audited view handler
+   * call that would make it, and audits its refusal exactly as that call audits it: a FAILED event
+   * of {@code type}, named from the request, with the controlled code of the failure. An allowed
+   * decision is not audited; the handler call that follows is. The refusal is rethrown unchanged.
+   */
+  public void auditRefusal(
+      String databaseId, String viewId, ViewOperationType type, Runnable decision) {
+    ViewAuditEvent event = namedEvent(databaseId, viewId);
+    try {
+      decision.run();
+    } catch (RuntimeException e) {
+      deliver(OperationStatus.FAILED, () -> failed(event, type, e));
+      throw e;
+    }
+  }
+
   private static ViewAuditEvent namedEvent(String databaseId, String viewId) {
     return ViewAuditEvent.builder()
         .eventTimestamp(Instant.now())

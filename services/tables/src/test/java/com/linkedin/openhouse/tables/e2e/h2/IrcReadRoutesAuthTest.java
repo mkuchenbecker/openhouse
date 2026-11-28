@@ -43,6 +43,7 @@ import org.springframework.web.context.WebApplicationContext;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@org.springframework.context.annotation.Import(IrcViewRoutesTest.ViewAudit.class)
 @ContextConfiguration(
     initializers = {
       PropertyOverrideContextInitializer.class,
