@@ -11,5 +11,3 @@ integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/op
 # The test's own numbering of its cases, defined in the class.
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F4 | *
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F5 | *
-# A constant naming format version 3.
-services/tables/src/test/java/com/linkedin/openhouse/tables/readbridge/ClientCapabilityGateTest.java | V3 | *

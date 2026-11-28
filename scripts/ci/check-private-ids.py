@@ -32,7 +32,8 @@ SKIPPED_DIRS = ("docs/", "integrations/spark/delta-harness/")
 # An id is a capital letter of the planning list's series followed by a number, optionally a
 # lower-case suffix and a hyphenated part (X5, V11e, D14b, C2-3, N3-x1, N1-c), standing alone: not
 # inside a word (FormatV3Types), a path or a version (v1, 1.5.2). V0 to V3 alone are names of
-# Iceberg format and API versions and of constants here; they count only in parentheses, "(V2)".
+# Iceberg format and API versions and of constants here; they count only alone in parentheses,
+# "(V2)".
 ID = r"(?:[CDFINTUVWX]\d{1,3}[a-z]?(?:-[a-z0-9]{1,3})?|(?:RF|FF|BC)-\d{1,3})"
 PATTERNS = [
     re.compile(r"(?<![\w$.\-/#])" + ID + r"(?![\w])"),
@@ -51,7 +52,7 @@ def matches(line):
             token = m.group(0)
             if FORMAT_VERSION.fullmatch(token):
                 before, after = line[: m.start()], line[m.end():]
-                if not (before.endswith("(") or after.startswith(")")):
+                if not (before.endswith("(") and after.startswith(")")):
                     continue
             found.append(token)
     return found
