@@ -127,26 +127,6 @@ jobs:
         if: inputs.line == 'default'
         uses: ./.github/actions/iceberg-fork
 
-      # TEMPORARY, evidence for the pull request only, removed by the next commit: every request
-      # to a repository while a reader configures the build (plugins included) and resolves the
-      # dynamic versions of five projects, with --info.
-      - name: TEMPORARY repository requests of a reader
-        if: ${{ env.GRADLE_CACHE_WRITER != 'true' }}
-        continue-on-error: true
-        env:
-          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
-        run: |
-          ./gradlew $LINE_FLAG --info \
-            :scripts:java:tools:dummytokens:dependencies --configuration runtimeClasspath \
-            :iceberg:openhouse:htscatalog:dependencies --configuration compileClasspath \
-            :services:optimizer:dependencies --configuration compileClasspath \
-            :services:housetables:dependencies --configuration runtimeClasspath \
-            :iceberg:openhouse:internalcatalog:dependencies --configuration runtimeClasspath 2>&1 \
-            | grep -E 'repo\.maven\.apache\.org|plugins\.gradle\.org|maven-metadata|429|Failed to get resource|json-smart:\[|mysql-connector-java:8\.\+|FAILED|BUILD ' \
-            | sed -E 's/^ *[|+\\ -]*//' | sort | uniq -c > "$RUNNER_TEMP/requests.txt" || true
-          cat "$RUNNER_TEMP/requests.txt"
-          echo "Lines naming a repository: $(grep -cE 'repo\.maven\.apache\.org|plugins\.gradle\.org' "$RUNNER_TEMP/requests.txt")"
-
       # The line's whole build, cut to this job's share by the init script (it prints what it
       # runs). With --continue, so that one red suite does not hide the others.
       - name: Run the group's Gradle tasks
@@ -164,10 +144,11 @@ jobs:
       # The writer also fetches the files that only the other jobs use (the Spark 4.2 apps' and the
       # itests' test dependencies, the Docker job's agent), so that the cache it saves serves them
       # without downloads (scripts/ci/resolve-all-dependencies.gradle). It builds and tests nothing
-      # and is not part of the job's verdict; the time limit keeps a stalled download from holding
-      # the job (and the post-merge run) open.
+      # and is not part of the job's verdict (so the step's conclusion is always success: its log's
+      # BUILD line and per-project lines tell); the time limit keeps a stalled download from holding
+      # the job (and the post-merge run) open. Not when the build did not run (the fork failed).
       - name: Fetch every configuration's files into the Gradle cache
-        if: ${{ !cancelled() && env.GRADLE_CACHE_WRITER == 'true' }}
+        if: ${{ !cancelled() && env.GRADLE_CACHE_WRITER == 'true' && steps.suites.outcome != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 10
         env:

@@ -388,19 +388,26 @@ request to Central. A reader that must still download something (a dependency a 
 or changes, which is in the cache after its merge) makes those requests, and a refusal of one that
 outlasts the retries still fails that Gradle command.
 
-To check the writer after a merge, read the `Fetch` step's conclusion and its lines, and the next
-jobs' download lists (`<id>`: the job's or the run's id):
+To check the writer after a merge: the `Fetch` step runs with `continue-on-error`, so its conclusion
+is always `success`; read its timing and its own output instead (the task's `BUILD` line, one
+`<project>: <files> files, <failures> failures` line a project, any `could not resolve:` line), then
+the download lists of the jobs of a pull request run that started after the writer saved
+(`<id>`: the job's or the run's id):
 
 ```
 gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id> \
   --jq '.steps[] | select(.name | startswith("Fetch")) | [.conclusion, .started_at, .completed_at] | @tsv'
 gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id>/logs \
-  | grep -E '^[^ ]+ :[^ ]*: [0-9]+ files, [0-9]+ failures$|could not resolve:'
+  | sed -n '/Run .\/gradlew .*ciResolveDependencies/,/BUILD /p' \
+  | grep -E ' [0-9]+ files, [0-9]+ failures$|could not resolve:|BUILD ' | grep -vE ' 0 failures$'
 for j in $(gh api "repos/mkuchenbecker/openhouse/actions/runs/<run id>/jobs?per_page=100" --jq '.jobs[].id'); do
   gh api repos/mkuchenbecker/openhouse/actions/jobs/$j/logs \
-    | grep -hE 'beyond the restored Gradle cache|Restored Gradle cache: [0-9]+ days|429|Failed to get resource'
+    | grep -hE 'beyond the restored Gradle cache|Restored Gradle cache: [0-9]+ days|status code 429|Failed to get resource'
 done
 ```
+
+The second command prints only the `BUILD` line when nothing failed; any project line with failures
+or `could not resolve:` line, or `BUILD FAILED`, is a fetch that did not complete.
 
 ## Spark 4.2 over the IRC read routes
 
