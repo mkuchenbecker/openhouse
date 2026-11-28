@@ -7,7 +7,7 @@ plugins {
 // The fork's Iceberg 1.12 artifacts (gradle/iceberg-fork.gradle) are Java 17 bytecode and declare
 // org.gradle.jvm.version=17, so every module targets 17. The reference line (-PicebergLinkedIn,
 // LinkedIn's Iceberg 1.5.2) keeps the Java 8 target it has always had.
-def javaTarget = rootProject.hasProperty('icebergLinkedIn') ? JavaVersion.VERSION_1_8 : JavaVersion.VERSION_17
+def javaTarget = gradle.ext.icebergLinkedIn ? JavaVersion.VERSION_1_8 : JavaVersion.VERSION_17
 sourceCompatibility = javaTarget
 targetCompatibility = javaTarget
 

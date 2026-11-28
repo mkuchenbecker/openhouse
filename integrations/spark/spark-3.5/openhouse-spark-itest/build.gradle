@@ -32,7 +32,7 @@ sourceSets {
 // it the same way and its merge-on-read tests read tables back.
 configurations.testRuntimeClasspath {
   exclude group: 'com.linkedin.iceberg', module: 'iceberg-data'
-  if (!rootProject.hasProperty('icebergLinkedIn')) {
+  if (!gradle.ext.icebergLinkedIn) {
     // Same clash for the thin jars the Iceberg 1.12 line adds (openhouse.iceberg-conventions-1.5.2).
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-orc'
     exclude group: 'com.linkedin.iceberg', module: 'iceberg-parquet'
@@ -96,7 +96,7 @@ task catalogTest(type: Test) {
   // One line per smoke statement and catalog path: the statement, the baseline, the outcome.
   systemProperty 'smoke.outcomes.dir', layout.buildDirectory.dir('reports/smoke').get().asFile.path
   // Which Iceberg line this build is, for RestHttpPathLineTest.
-  systemProperty 'smoke.iceberg.build', rootProject.hasProperty('icebergLinkedIn') ? 'linkedin-1.5.2' : 'iceberg-1.12'
+  systemProperty 'smoke.iceberg.build', gradle.ext.icebergLinkedIn ? 'linkedin-1.5.2' : 'iceberg-1.12'
   if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
     jvmArgs \
         '--add-opens=java.base/java.nio=ALL-UNNAMED',

@@ -16,7 +16,7 @@
 # Env: ICEBERG_FORK_HOME     checkout + repositories (default: ${GRADLE_USER_HOME:-~/.gradle}/iceberg-fork);
 #                            set it the same way for the Gradle build
 #      ICEBERG_GRADLE_ARGS   extra Gradle arguments for the Iceberg build
-#      JAVA_HOME             a JDK 17 or 21 (Iceberg 1.12 needs 17+)
+#      JAVA_HOME             a JDK 17 or 21 (Iceberg 1.12 needs 17+); else `java` on the PATH
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,6 +39,19 @@ rck_marker="$repo/.published-$version-open-api"
 if [[ -f "$marker" && -f "$spark42_marker" && -f "$rck_marker" && "${FORCE:-0}" != 1 ]]; then
   echo "Iceberg $group:$version already published in $repo (FORCE=1 to republish)"
   exit 0
+fi
+
+# Iceberg 1.12's build needs Java 17 or later. The fork's gradlew runs $JAVA_HOME/bin/java, else
+# `java` on the PATH; an older one would fail inside Iceberg's build, minutes in, with an error that
+# does not say why.
+java_cmd="${JAVA_HOME:+$JAVA_HOME/bin/}java"
+java_version="$("$java_cmd" -version 2>&1 | sed -n 's/.* version "\([^"]*\)".*/\1/p' | head -n 1)" || true
+# "17.0.13", "21", "17-ea", "21-ea" and the old "1.8.0_392" form: the major version.
+java_major="$(echo "$java_version" | sed -E 's/^1\.([0-9]+).*/\1/; s/^([0-9]+).*/\1/')"
+if ! [[ "$java_major" =~ ^[0-9]+$ ]] || (( java_major < 17 )); then
+  echo "publish-local.sh: Iceberg 1.12 needs Java 17 or later; $java_cmd is '${java_version:-not a JDK}'." >&2
+  echo "Set JAVA_HOME to a JDK 17 or 21." >&2
+  exit 1
 fi
 
 # One checkout serves every pin and every worktree, so concurrent runs take turns (flock is absent
@@ -64,6 +77,27 @@ if ! git -C "$src" cat-file -e "$commit^{commit}" 2>/dev/null; then
 fi
 git -C "$src" -c advice.detachedHead=false checkout -q --force "$commit"
 test "$(git -C "$src" rev-parse HEAD)" = "$commit"
+
+# The fork's gradlew downloads its wrapper jar, if absent, with no checksum and then runs it. Fetch
+# it here instead and run the build only with the jar whose SHA-256 is pinned in the properties; a
+# jar left by an earlier run that does not match is replaced, and a download that does not match
+# stops the script before anything runs.
+wrapper_jar="$src/gradle/wrapper/gradle-wrapper.jar"
+wrapper_sha256="$(prop gradleWrapperJarSha256)"
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+if [[ ! -f "$wrapper_jar" || "$(sha256 "$wrapper_jar")" != "$wrapper_sha256" ]]; then
+  rm -f "$wrapper_jar"
+  curl -fsSL -o "$wrapper_jar.download" "$(prop gradleWrapperJarUrl)"
+  actual="$(sha256 "$wrapper_jar.download")"
+  if [[ "$actual" != "$wrapper_sha256" ]]; then
+    rm -f "$wrapper_jar.download"
+    echo "publish-local.sh: the fork's gradle-wrapper.jar has SHA-256 $actual, not the pinned" >&2
+    echo "$wrapper_sha256 (scripts/iceberg-fork/iceberg-fork.properties); not running it." >&2
+    exit 1
+  fi
+  mv "$wrapper_jar.download" "$wrapper_jar"
+fi
+echo "The fork's gradle-wrapper.jar has the pinned SHA-256 $wrapper_sha256"
 
 # publish <marker> <sparkVersion> <scalaVersion> <module>...: one Iceberg build, then the marker.
 publish() {

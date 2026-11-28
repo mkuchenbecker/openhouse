@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,7 +41,7 @@ import org.springframework.context.annotation.Primary;
  *
  * <p>It writes {@code ready.json} (port, warehouse and token) and serves until its standard input
  * closes, which happens when the test JVM stops it or dies. Usage: {@code RestCompatKitService
- * <work directory>}.
+ * <work directory> [<property>=<value>]...}.
  */
 public final class RestCompatKitService {
 
@@ -61,9 +62,9 @@ public final class RestCompatKitService {
     Path work = Paths.get(args[0]).toAbsolutePath();
     // Not under the work directory: a metadata location has to fit House Tables' 255 characters.
     Path warehouse = ServiceWarehouse.create();
-    ConfigurableApplicationContext context =
-        new SpringApplication(SpringH2TestApplication.class, AllowAllConfig.class)
-            .run(
+    List<String> arguments =
+        new ArrayList<>(
+            Arrays.asList(
                 "--server.port=0",
                 "--server.shutdown=immediate",
                 "--server.tomcat.basedir=" + work.resolve("tomcat"),
@@ -72,11 +73,8 @@ public final class RestCompatKitService {
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
                 "--cluster.storages.types.local.rootpath=" + warehouse,
-                // The Iceberg REST routes the kit tests (off by default).
+                // The Iceberg REST routes the kit tests (off by default), in every run.
                 "--cluster.tables.irc.enabled=true",
-                // Format v3 tables may exist on this cluster (off by default): the kit asks for
-                // them by format-version, and what it finds is what the routes do with v3.
-                "--cluster.iceberg.format-v3.enabled=true",
                 // Every request and its status, unbuffered, to read what the kit sent.
                 "--server.tomcat.accesslog.enabled=true",
                 "--server.tomcat.accesslog.directory=" + work.resolve("access"),
@@ -84,7 +82,17 @@ public final class RestCompatKitService {
                 "--server.tomcat.accesslog.suffix=.log",
                 "--server.tomcat.accesslog.rotate=false",
                 "--server.tomcat.accesslog.buffered=false",
-                "--server.tomcat.accesslog.pattern=%m %U%q %s");
+                "--server.tomcat.accesslog.pattern=%m %U%q %s"));
+    // The configuration the kit runs at, beyond the service's defaults (the build's
+    // restCompatKit* tasks): each further argument is a service property, name=value. None is the
+    // default configuration; the format v3 run turns cluster.iceberg.format-v3.enabled on, so that
+    // the kit's format v3 creates are honoured and what it finds is what the routes do with v3.
+    for (int i = 1; i < args.length; i++) {
+      arguments.add("--" + args[i]);
+    }
+    ConfigurableApplicationContext context =
+        new SpringApplication(SpringH2TestApplication.class, AllowAllConfig.class)
+            .run(arguments.toArray(new String[0]));
     ToggleStatusesRepository toggles = context.getBean(ToggleStatusesRepository.class);
     for (String namespace : KIT_NAMESPACES) {
       toggles.save(

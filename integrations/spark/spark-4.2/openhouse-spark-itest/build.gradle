@@ -23,12 +23,6 @@ def pin = new Properties()
 rootProject.file('scripts/iceberg-fork/iceberg-fork.properties').withInputStream { pin.load(it) }
 def spark42Version = pin.getProperty('spark42Version')
 def icebergVersion = rootProject.ext.iceberg_1_5_version
-def forkRepo = rootProject.ext.icebergForkRepo
-if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
-  throw new GradleException(
-      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
-          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
-}
 
 java {
   sourceCompatibility = JavaVersion.VERSION_17

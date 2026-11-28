@@ -25,7 +25,7 @@ plugins {
 
 // Same target as openhouse.java-minimal-conventions (Java 17, or 8 under -PicebergLinkedIn),
 // without that convention's mapstruct and servlet-api dependencies.
-def javaTarget = rootProject.hasProperty('icebergLinkedIn') ? JavaVersion.VERSION_1_8 : JavaVersion.VERSION_17
+def javaTarget = gradle.ext.icebergLinkedIn ? JavaVersion.VERSION_1_8 : JavaVersion.VERSION_17
 sourceCompatibility = javaTarget
 targetCompatibility = javaTarget
 
@@ -36,7 +36,7 @@ targetCompatibility = javaTarget
 sourceSets {
   main {
     java {
-      srcDir rootProject.hasProperty('icebergLinkedIn') ? 'src/iceberg-1.5/java' : 'src/iceberg-1.12/java'
+      srcDir gradle.ext.icebergLinkedIn ? 'src/iceberg-1.5/java' : 'src/iceberg-1.12/java'
     }
   }
 }

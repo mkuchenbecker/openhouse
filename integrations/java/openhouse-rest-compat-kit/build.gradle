@@ -11,20 +11,16 @@
 //   stores, local storage). RestCompatKitServiceListener starts it in its own JVM when the test
 //   JVM's JUnit session opens and stops it when the session closes.
 //
-// restCompatKitTest runs every test of the kit's table and view suites, through subclasses that set
-// only the kit's capability flags (OpenHouseRestCompatibilityKit*Tests), and passes exactly when the
-// tests that do not pass are the ones listed, with the outcome listed, in expected-outcomes.txt.
+// restCompatKitTest (the default configuration) and restCompatKitFormatV3Test (format v3 tables
+// enabled) each run every test of the kit's table and view suites, through subclasses that set only
+// the kit's capability flags (OpenHouseRestCompatibilityKit*Tests), and pass exactly when every test
+// has the outcome listed in expected-outcomes.txt for that configuration and every test that does
+// not pass fails, or is skipped, with the throwable type and message prefix listed.
 plugins {
   id 'java'
 }
 
 def icebergVersion = rootProject.ext.iceberg_1_5_version
-def forkRepo = rootProject.ext.icebergForkRepo
-if (!new File(forkRepo, ".published-${icebergVersion}-open-api").exists()) {
-  throw new GradleException(
-      "The fork's iceberg-open-api:${icebergVersion} (the REST compatibility kit) is not "
-          + "published in ${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
-}
 
 java {
   sourceCompatibility = JavaVersion.VERSION_17
@@ -109,7 +105,7 @@ dependencies {
 
 def kitClasses = 'com.linkedin.openhouse.irc.rck.OpenHouseRestCompatibilityKit*'
 
-// The module's own unit tests, if any; the kit runs only in restCompatKitTest. There are none yet,
+// The module's own unit tests, if any; the kit runs only in its own tasks below. There are none yet,
 // and a filter that matches no test must not fail `./gradlew build`.
 tasks.named('test') {
   filter {
@@ -118,94 +114,246 @@ tasks.named('test') {
   }
 }
 
-// The expected outcome of every kit test that does not pass, one per line:
-//   <test class simple name>.<test name> | FAILED or SKIPPED | <class a to e> | <reason>
+// The expected outcome of every kit test, at each configuration the kit runs at, with the cause of
+// each test that does not pass: expected-outcomes.txt (its header says how to read it, and
+// docs/development/iceberg-fork.md how to change it). One line per test, or one per test and
+// configuration where the configurations differ:
+//   category <NAME> | <class a to e> | <reason>
+//   [<configuration>: ]<test> | PASSED
+//   [<configuration>: ]<test> | FAILED or SKIPPED | <NAME> | <throwable type> | <message prefix>
 def expectedFile = file('expected-outcomes.txt')
+
+// The configurations the kit runs at: a task each, the service properties it sets beyond the
+// service's defaults, and the tag that marks a line of the list that holds for it alone.
+def kitConfigurations = [
+    [id: 'default', task: 'restCompatKitTest', properties: [],
+        description: 'the default configuration'],
+    [id: 'v3', task: 'restCompatKitFormatV3Test',
+        properties: ['cluster.iceberg.format-v3.enabled=true'],
+        description: 'format v3 tables enabled (cluster.iceberg.format-v3.enabled=true)'],
+]
+def configurationIds = kitConfigurations.collect { it.id }
+
+// Whitespace (line breaks in assertion messages included) as single spaces, so that a prefix is
+// one line in the list.
+def normalize = { String text -> text == null ? '' : text.replaceAll(/\s+/, ' ').trim() }
+
+// Whether a message starts with a listed prefix. " ... " in a prefix stands for any text, for a
+// message whose cause comes after a part that is long or varies (a schema printed in full).
+def matchesPrefix = { String message, String prefix ->
+  def pattern = prefix.split(/ \.\.\. /, -1).collect { java.util.regex.Pattern.quote(it) }.join(' .*?')
+  java.util.regex.Pattern.compile(pattern).matcher(normalize(message)).lookingAt()
+}
+
+// A candidate for the message prefix column: the message up to the first part that differs from
+// run to run (a UUID, a path, a port, a long number, a stack frame), at most 240 characters. It
+// is a candidate: whoever lists it reviews it.
+def stablePrefix = { String message ->
+  def text = normalize(message)
+  def unstable = ~/[0-9a-f]{8}-[0-9a-f]{4}-|[0-9a-f]{16,}|file:|(?<![\w.])\/[\w.-]+\/|localhost:\d+|\b\d{4,}\b| at [\w.$]+\(/
+  def matcher = unstable.matcher(text)
+  if (matcher.find()) {
+    text = text.substring(0, matcher.start())
+  }
+  if (text.length() > 240) {
+    text = text.substring(0, 240)
+  }
+  text.trim()
+}
+
 def readExpected = {
-  Map<String, String> expected = new TreeMap<>()
+  Map<String, List> categories = new TreeMap<>()
+  Map<String, Map<String, Map>> byConfiguration = configurationIds.collectEntries { [(it): new TreeMap<>()] }
+  Map<String, Set<String>> tagged = new TreeMap<>()
+  Set<String> untagged = new TreeSet<>()
+  def fail = { int i, String why -> throw new GradleException("${expectedFile.name}:${i + 1}: ${why}") }
   expectedFile.readLines().eachWithIndex { line, i ->
     def trimmed = line.trim()
     if (trimmed.isEmpty() || trimmed.startsWith('#')) {
       return
     }
-    def parts = trimmed.split(/\s*\|\s*/, 4)
-    if (parts.length != 4 || !(parts[1] in ['FAILED', 'SKIPPED']) || !(parts[2] ==~ /[a-e]/)) {
-      throw new GradleException(
-          "${expectedFile.name}:${i + 1}: expected '<test> | FAILED|SKIPPED | <a-e> | <reason>': ${line}")
-    }
-    if (expected.put(parts[0], parts[1]) != null) {
-      throw new GradleException("${expectedFile.name}:${i + 1}: ${parts[0]} is listed twice")
-    }
-  }
-  expected
-}
-
-tasks.register('restCompatKitTest', Test) {
-  description = "Runs Apache Iceberg's REST compatibility kit against the tables service and " +
-      "compares the outcome with ${expectedFile.name}."
-  group = 'verification'
-  testClassesDirs = sourceSets.test.output.classesDirs
-  classpath = sourceSets.test.runtimeClasspath
-  dependsOn tasks.named('serviceClasses')
-  maxHeapSize = '1g'
-  filter {
-    includeTestsMatching kitClasses
-  }
-  def serviceClasspath = sourceSets.service.runtimeClasspath
-  inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
-  inputs.file(expectedFile).withPropertyName('expectedOutcomes')
-  // Point the kit at an external server (the service), not its own in-process reference server.
-  systemProperty 'rck.local', 'false'
-  doFirst {
-    systemProperty 'rck.service.classpath', serviceClasspath.asPath
-    systemProperty 'rck.service.java', "${System.getProperty('java.home')}/bin/java"
-    systemProperty 'rck.service.workdir', "${temporaryDir}"
-  }
-  // The outcome depends on a server outside Gradle's view: never skip the run as up to date.
-  outputs.upToDateWhen { false }
-  // A failing kit test is not this task's failure; a change in which tests do not pass is (below).
-  ignoreFailures = true
-
-  Map<String, String> actual = new TreeMap<>()
-  afterTest { descriptor, result ->
-    if (result.resultType != TestResult.ResultType.SUCCESS) {
-      def simpleName = descriptor.className.substring(descriptor.className.lastIndexOf('.') + 1)
-      actual.put("${simpleName}.${descriptor.name}".toString(),
-          result.resultType == TestResult.ResultType.SKIPPED ? 'SKIPPED' : 'FAILED')
-    }
-  }
-  afterSuite { descriptor, result ->
-    if (descriptor.parent == null) {
-      logger.lifecycle("REST compatibility kit: ${result.testCount} tests, " +
-          "${result.successfulTestCount} passed, ${result.failedTestCount} failed, " +
-          "${result.skippedTestCount} skipped")
-    }
-  }
-  doLast {
-    Map<String, String> expected = readExpected()
-    def problems = []
-    (expected.keySet() + actual.keySet()).toSorted().each { name ->
-      def want = expected.get(name)
-      def got = actual.get(name)
-      if (want == got) {
-        return
+    if (trimmed.startsWith('category ')) {
+      def parts = trimmed.substring('category '.length()).split(/\s*\|\s*/, 3)
+      if (parts.length != 3 || !(parts[0] ==~ /[A-Z0-9]+/) || !(parts[1] ==~ /[a-e]/) || parts[2].isEmpty()) {
+        fail(i, "expected 'category <NAME> | <a-e> | <reason>': ${line}")
       }
-      if (want == null) {
-        problems << "  ${name}: ${got}, not listed (a regression, or list it with its class and reason)"
-      } else if (got == null) {
-        problems << "  ${name}: passed or did not run, listed as ${want} (remove it from the list)"
-      } else {
-        problems << "  ${name}: ${got}, listed as ${want}"
+      if (categories.put(parts[0], [parts[1], parts[2]]) != null) {
+        fail(i, "category ${parts[0]} is defined twice")
+      }
+      return
+    }
+    List<String> configurations = configurationIds
+    def tag = (trimmed =~ /^([a-z0-9]+):\s+(.*)$/)
+    if (tag.matches()) {
+      if (!(tag.group(1) in configurationIds)) {
+        fail(i, "unknown configuration '${tag.group(1)}' (one of ${configurationIds}): ${line}")
+      }
+      configurations = [tag.group(1)]
+      trimmed = tag.group(2)
+    }
+    def parts = trimmed.split(/\s*\|\s*/, 5)
+    def entry
+    if (parts.length == 2 && parts[1] == 'PASSED') {
+      entry = [outcome: 'PASSED']
+    } else if (parts.length == 5 && parts[1] in ['FAILED', 'SKIPPED'] && !parts[3].isEmpty() && !parts[4].isEmpty()) {
+      if (!categories.containsKey(parts[2])) {
+        fail(i, "category ${parts[2]} is not defined above its first use: ${line}")
+      }
+      entry = [outcome: parts[1], category: parts[2], type: parts[3], prefix: normalize(parts[4])]
+    } else {
+      fail(i, "expected '<test> | PASSED' or '<test> | FAILED|SKIPPED | <category> | <type> | <message prefix>': ${line}")
+    }
+    def name = parts[0]
+    if (configurations.size() == 1) {
+      tagged.computeIfAbsent(name) { new TreeSet<>() }
+    } else {
+      untagged << name
+    }
+    configurations.each { c ->
+      if (byConfiguration[c].put(name, entry) != null) {
+        fail(i, "${name} is listed twice for the configuration '${c}'")
+      }
+      if (configurations.size() == 1) {
+        tagged[name] << c
       }
     }
-    if (!problems.isEmpty()) {
-      throw new GradleException(
-          "The REST compatibility kit's outcome differs from ${expectedFile}:\n" + problems.join('\n'))
+  }
+  tagged.each { name, configurations ->
+    if (untagged.contains(name) || configurations.size() != configurationIds.size()) {
+      throw new GradleException("${expectedFile.name}: ${name} is listed for ${configurations} only: " +
+          "list it once untagged, or once for each of ${configurationIds}")
     }
-    logger.lifecycle("REST compatibility kit: the ${expected.size()} tests that do not pass are " +
-        "exactly the ones listed in ${expectedFile.name}")
+  }
+  def used = byConfiguration.values().collectMany { it.values().collect { e -> e.category } }.findAll { it } as Set
+  def unused = categories.keySet() - used
+  if (!unused.isEmpty()) {
+    throw new GradleException("${expectedFile.name}: categories no test is listed under: ${unused} (remove them)")
+  }
+  [categories: categories, byConfiguration: byConfiguration]
+}
+
+kitConfigurations.each { configuration ->
+  tasks.register(configuration.task, Test) {
+    description = "Runs Apache Iceberg's REST compatibility kit against the tables service at " +
+        "${configuration.description} and compares every test's outcome and cause with " +
+        "${expectedFile.name}."
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    dependsOn tasks.named('serviceClasses')
+    maxHeapSize = '1g'
+    filter {
+      includeTestsMatching kitClasses
+    }
+    def serviceClasspath = sourceSets.service.runtimeClasspath
+    inputs.files(serviceClasspath).withPropertyName('serviceClasspath').withNormalizer(ClasspathNormalizer)
+    inputs.file(expectedFile).withPropertyName('expectedOutcomes')
+    // Point the kit at an external server (the service), not its own in-process reference server.
+    systemProperty 'rck.local', 'false'
+    systemProperty 'rck.service.properties', configuration.properties.join('\n')
+    def outcomesFile = new File(temporaryDir, 'outcomes.jsonl')
+    def actualFile = new File(temporaryDir, 'actual-outcomes.txt')
+    doFirst {
+      outcomesFile.delete()
+      actualFile.delete()
+      systemProperty 'rck.service.classpath', serviceClasspath.asPath
+      systemProperty 'rck.service.java', "${System.getProperty('java.home')}/bin/java"
+      systemProperty 'rck.service.workdir', "${temporaryDir}"
+      systemProperty 'rck.outcomes.file', outcomesFile.path
+    }
+    // The outcome depends on a server outside Gradle's view: never skip the run as up to date.
+    outputs.upToDateWhen { false }
+    // A failing kit test is not this task's failure; a change in any test's outcome or cause is
+    // (below).
+    ignoreFailures = true
+
+    long gradleCount = -1
+    afterSuite { descriptor, result ->
+      if (descriptor.parent == null) {
+        gradleCount = result.testCount
+        logger.lifecycle("REST compatibility kit, ${configuration.id}: ${result.testCount} tests, " +
+            "${result.successfulTestCount} passed, ${result.failedTestCount} failed, " +
+            "${result.skippedTestCount} skipped")
+      }
+    }
+    doLast {
+      def expectedAll = readExpected()
+      Map<String, Map> expected = expectedAll.byConfiguration[configuration.id]
+      if (!outcomesFile.exists()) {
+        throw new GradleException("The kit wrote no outcomes (${outcomesFile}): its test JVM did not finish")
+      }
+      Map<String, Map> actual = new TreeMap<>()
+      def problems = []
+      def slurper = new groovy.json.JsonSlurper()
+      outcomesFile.readLines().findAll { !it.trim().isEmpty() }.each { line ->
+        Map o = slurper.parseText(line)
+        if (o.container) {
+          problems << "  ${o.name}: a class or the plan itself ${o.outcome}: ${o.type}: ${normalize(o.message).take(300)}"
+        } else if (actual.put(o.name, o) != null) {
+          problems << "  ${o.name}: reported twice"
+        }
+      }
+      if (gradleCount >= 0 && gradleCount != actual.size()) {
+        problems << "  Gradle counted ${gradleCount} tests and the outcome listener ${actual.size()}"
+      }
+      def show = { Map e -> e.outcome == 'PASSED' ? 'PASSED' : "${e.outcome} ${e.type}: '${e.prefix}...'" }
+      def showActual = { Map o -> o.outcome == 'PASSED' ? 'PASSED' : "${o.outcome} ${o.type}: '${normalize(o.message).take(300)}'" }
+      (expected.keySet() + actual.keySet()).toSorted().each { name ->
+        def want = expected.get(name)
+        def got = actual.get(name)
+        if (want == null) {
+          problems << "  ${name}: ${showActual(got)}; not listed (a new test: list it, with its cause if it does not pass)"
+        } else if (got == null) {
+          problems << "  ${name}: did not run; listed as ${show(want)} (a test the kit no longer has, or one not discovered)"
+        } else if (want.outcome != got.outcome) {
+          def hint = want.outcome == 'PASSED' ? 'a regression' :
+              (got.outcome == 'PASSED' ? 'it passes now: list it as PASSED' : 'its outcome changed')
+          problems << "  ${name}: ${hint}\n      listed: ${show(want)}\n      actual: ${showActual(got)}"
+        } else if (want.outcome != 'PASSED' &&
+            (want.type != got.type || !matchesPrefix(got.message, want.prefix))) {
+          problems << "  ${name}: ${got.outcome} for another cause than listed (${want.category})\n" +
+              "      listed: ${show(want)}\n      actual: ${showActual(got)}"
+        }
+      }
+      // The actual outcomes in the list's format, to compare or to copy from after review.
+      actualFile.withWriter('UTF-8') { w ->
+        actual.each { name, o ->
+          if (o.outcome == 'PASSED') {
+            w << "${name} | PASSED\n"
+          } else {
+            def category = expected.get(name)?.category ?: '?'
+            w << "${name} | ${o.outcome} | ${category} | ${o.type} | ${stablePrefix(o.message)}\n"
+          }
+        }
+      }
+      if (!problems.isEmpty()) {
+        throw new GradleException(
+            "The REST compatibility kit at ${configuration.description} differs from ${expectedFile} " +
+                "in ${problems.size()} place(s):\n" + problems.join('\n') +
+                "\nThe actual outcomes, in the list's format: ${actualFile}")
+      }
+      Map<String, Integer> counts = [:]
+      expected.values().each { e ->
+        def key = e.outcome == 'PASSED' ? 'PASSED' : e.category
+        counts[key] = (counts[key] ?: 0) + 1
+      }
+      def width = (counts.keySet()*.length().max() ?: 0)
+      def summary = counts.entrySet().toSorted { a, b -> b.value <=> a.value ?: a.key <=> b.key }.collect { e ->
+        def category = expectedAll.categories[e.key]
+        "  ${e.value.toString().padLeft(4)}  ${e.key.padRight(width)}" +
+            (category ? "  (${category[0]}) ${category[1]}" : '')
+      }
+      logger.lifecycle("REST compatibility kit, ${configuration.id}: all ${actual.size()} tests have " +
+          "the outcome and cause listed in ${expectedFile.name}; by cause:\n" + summary.join('\n'))
+    }
   }
 }
 
-// `./gradlew build` runs the kit, as it runs the Spark 4.2 itest's extra test tasks.
-tasks.named('check') { dependsOn tasks.named('restCompatKitTest') }
+// The format v3 run after the default one, never beside it: each starts a service.
+tasks.named('restCompatKitFormatV3Test') { mustRunAfter tasks.named('restCompatKitTest') }
+
+// `./gradlew build` runs the kit at both configurations, as it runs the Spark 4.2 itest's extra
+// test tasks.
+tasks.named('check') {
+  dependsOn kitConfigurations.collect { tasks.named(it.task) }
+}
