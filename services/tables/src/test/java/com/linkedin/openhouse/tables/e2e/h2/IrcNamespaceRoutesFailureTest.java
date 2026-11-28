@@ -192,16 +192,17 @@ public class IrcNamespaceRoutesFailureTest {
 
   /**
    * The authorization service's failure ({@link AuthorizationServiceException}) on a name that
-   * holds nothing is the answer of load and of the writes. The IRC error mapping answers it 503
-   * {@code ServiceUnavailableException} with the service's message, as the native routes answer it
-   * and as on every IRC route that asks the authorization service (the mapping tests for this
-   * subtype of the denial before the denial).
+   * holds nothing is the answer of load, of the writes, and of every existence check: whether such
+   * a name has a record cannot be known while the service fails, so none of them answers "does not
+   * exist". The IRC error mapping answers it 503 {@code ServiceUnavailableException} with the
+   * service's message, as the native routes answer it and as on every IRC route that asks the
+   * authorization service (the mapping tests for this subtype of the denial before the denial).
    */
   @Test
   void whenTheAuthorizationServiceFailsANamespaceThatHoldsATableReadsAsBefore() throws Exception {
     authorizationServiceFails();
     tabledReadsAsBefore();
-    missesAsBefore();
+    existenceChecksAnswerTheOutage(NONE);
     for (MvcResult result :
         new MvcResult[] {
           IrcHttp.get(mvc, "/v1/namespaces/" + NONE),
@@ -213,6 +214,97 @@ public class IrcNamespaceRoutesFailureTest {
       assertEquals(
           "authorization service unavailable",
           assertIrcError(result, 503, "ServiceUnavailableException").message());
+    }
+  }
+
+  /** A namespace that has a stored record and holds nothing (no table, no view). */
+  private static final String RECORDED = "irc_nsf_recorded";
+
+  /** The same, in a database whose views are enabled (the view list's other existence check). */
+  private static final String RECORDED_VIEWS = "irc_nsf_recorded_v";
+
+  private void recordOnly() throws Exception {
+    for (String name : new String[] {RECORDED, RECORDED_VIEWS}) {
+      // doReturn: the healthy stub throws for any name, so calling getByName to stub it would.
+      org.mockito.Mockito.doReturn(
+              new NamespaceMetadata("u-" + name, name, Collections.emptyMap(), "0"))
+          .when(records)
+          .getByName(name);
+    }
+    NativeViewHttp.enableViews(toggles, RECORDED_VIEWS);
+  }
+
+  /**
+   * The existence checks of {@code db}: exists (HEAD), list tables, list the children, list views
+   * (views disabled, and views enabled with none), and a cross-database rename into it.
+   */
+  private List<MvcResult> existenceChecks(String db, String dbWithViews) throws Exception {
+    return List.of(
+        IrcHttp.head(mvc, "/v1/namespaces/" + db),
+        IrcHttp.get(mvc, "/v1/namespaces/" + db + "/tables"),
+        children(db),
+        IrcHttp.get(mvc, IrcViewWrite.views(db)),
+        IrcHttp.get(mvc, IrcViewWrite.views(dbWithViews)),
+        IrcWrite.rename(mvc, TableIdentifier.of(TABLED, "t1"), TableIdentifier.of(db, "t1")));
+  }
+
+  private void existenceChecksAnswerTheOutage(String db) throws Exception {
+    List<MvcResult> results = existenceChecks(db, db);
+    // HEAD has no body.
+    assertEquals(503, results.get(0).getResponse().getStatus());
+    for (MvcResult result : results.subList(1, results.size())) {
+      assertEquals(
+          "authorization service unavailable",
+          assertIrcError(result, 503, "ServiceUnavailableException").message());
+    }
+  }
+
+  /**
+   * While the authorization service fails, a namespace that has only a record cannot be told from
+   * one that does not exist, so no existence check answers it "does not exist" (404): each answers
+   * the outage (503), as its load does. Nothing is renamed into it.
+   */
+  @Test
+  void whenTheAuthorizationServiceFailsANamespaceThatHasOnlyARecordAnswersTheOutage()
+      throws Exception {
+    recordOnly();
+    authorizationServiceFails();
+    List<MvcResult> results = existenceChecks(RECORDED, RECORDED_VIEWS);
+    assertEquals(503, results.get(0).getResponse().getStatus());
+    for (MvcResult result : results.subList(1, results.size())) {
+      assertEquals(
+          "authorization service unavailable",
+          assertIrcError(result, 503, "ServiceUnavailableException").message());
+    }
+    assertIrcError(
+        IrcHttp.get(mvc, "/v1/namespaces/" + RECORDED), 503, "ServiceUnavailableException");
+    decide(null);
+    assertEquals(200, IrcHttp.get(mvc, IrcWrite.table(TABLED, "t1")).getResponse().getStatus());
+  }
+
+  /**
+   * A caller refused the read privilege on a namespace that has only a record is answered as if it
+   * had none: every existence check answers 404, so the record's existence is not shown to it. The
+   * same checks find the namespace when the decision allows.
+   */
+  @Test
+  void aNamespaceThatHasOnlyARecordIsMissingToACallerRefusedItsRecord() throws Exception {
+    recordOnly();
+    assertEquals(204, IrcHttp.head(mvc, "/v1/namespaces/" + RECORDED).getResponse().getStatus());
+    assertEquals(
+        200, IrcHttp.get(mvc, "/v1/namespaces/" + RECORDED + "/tables").getResponse().getStatus());
+    assertEquals(200, children(RECORDED).getResponse().getStatus());
+    assertEquals(200, IrcHttp.get(mvc, IrcViewWrite.views(RECORDED)).getResponse().getStatus());
+    assertEquals(
+        200, IrcHttp.get(mvc, IrcViewWrite.views(RECORDED_VIEWS)).getResponse().getStatus());
+
+    when(authorizationHandler.checkAccessDecision(
+            any(), any(DatabaseDto.class), any(Privileges.class)))
+        .thenReturn(false);
+    List<MvcResult> results = existenceChecks(RECORDED, RECORDED_VIEWS);
+    assertEquals(404, results.get(0).getResponse().getStatus());
+    for (MvcResult result : results.subList(1, results.size())) {
+      assertIrcError(result, 404, "NoSuchNamespaceException");
     }
   }
 
