@@ -273,7 +273,7 @@ public class IcebergRestApiHandler {
     String databaseId = databaseId(namespace);
     tablesApiValidator.validateSearchTables(databaseId);
     List<TableDto> tables = tablesService.searchTables(databaseId);
-    if (tables.isEmpty() && !storedNamespace(databaseId).isPresent() && !isListed(databaseId)) {
+    if (tables.isEmpty() && !hasRecordOrIsListed(databaseId)) {
       // The listing just read is the table probe: no table and no record, so only the database
       // list is left.
       throw missing(databaseId);
@@ -440,10 +440,10 @@ public class IcebergRestApiHandler {
   /**
    * Fails unless {@code databaseId} exists as a namespace, by the one existence rule of these
    * routes: it holds a table, it has a stored record the caller may read ({@link
-   * #storedNamespace}), or the database list shows it (it holds a view, whether or not its views
-   * are enabled: the list is every House Tables row's database, of any type). Every part ignores
-   * letter case, as House Tables' lookups do. {@link #holdsSomething} is the same rule without the
-   * record, in the same order.
+   * #hasRecordOrIsListed}), or the database list shows it (it holds a view, whether or not its
+   * views are enabled: the list is every House Tables row's database, of any type). Every part
+   * ignores letter case, as House Tables' lookups do. {@link #holdsSomething} is the same rule
+   * without the record, in the same order.
    *
    * <p>Whether it holds a table is one row of the native paged table search, which reads the same
    * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
@@ -453,9 +453,7 @@ public class IcebergRestApiHandler {
    */
   void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);
-    if (!holdsATable(databaseId)
-        && !storedNamespace(databaseId).isPresent()
-        && !isListed(databaseId)) {
+    if (!holdsATable(databaseId) && !hasRecordOrIsListed(databaseId)) {
       throw missing(databaseId);
     }
   }
@@ -505,22 +503,47 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * The stored namespace record of {@code databaseId} for an existence check: as {@link
-   * #readRecord}, except that a failure to read the record or to decide on it counts as no record
-   * (logged), so that a namespace that holds a table or a view is answered as before records
-   * existed while the namespace store or the authorization service fails.
+   * Whether {@code databaseId}, which holds no table, exists by the rest of the existence rule: it
+   * has a stored record the caller may read ({@link #readRecord}), or the database list shows it.
+   * When the record cannot be read, the two kinds of failure are answered differently:
+   *
+   * <ul>
+   *   <li>When the authorization service fails, whether there is a record cannot be known, so a
+   *       namespace the database list does not show has no answer but that failure (503), never
+   *       "does not exist"; one the list shows exists, as before records existed. This is the rule
+   *       {@link #loadNamespace} applies to every failure.
+   *   <li>When the namespace store fails, the failure counts as no record (logged), and the
+   *       database list alone decides. Here the two differ: a namespace that has only a record
+   *       answers "does not exist" (404) on these checks while its load answers the store's failure
+   *       (500).
+   * </ul>
+   *
+   * A caller refused the read privilege on the record is answered as if there were none, as {@link
+   * #readRecord} answers it.
    */
-  Optional<NamespaceMetadata> storedNamespace(String databaseId) {
+  private boolean hasRecordOrIsListed(String databaseId) {
     try {
-      return readRecord(databaseId);
+      if (readRecord(databaseId).isPresent()) {
+        return true;
+      }
+    } catch (AuthorizationServiceException outage) {
+      if (isListed(databaseId)) {
+        log.warn(
+            "IRC existence check of namespace {}: its record could not be decided on ({});"
+                + " it exists, as the database list shows it",
+            databaseId,
+            outage.toString());
+        return true;
+      }
+      throw outage;
     } catch (RuntimeException failure) {
       log.warn(
           "IRC existence check of namespace {}: its record could not be read ({}); counted as"
               + " no record",
           databaseId,
           failure.toString());
-      return Optional.empty();
     }
+    return isListed(databaseId);
   }
 
   /**
