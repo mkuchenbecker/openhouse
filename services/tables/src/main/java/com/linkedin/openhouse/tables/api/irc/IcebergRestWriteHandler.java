@@ -52,6 +52,7 @@ import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.SnapshotRefParser;
+import org.apache.iceberg.Table;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableMetadataParser;
 import org.apache.iceberg.catalog.TableIdentifier;
@@ -190,9 +191,12 @@ public class IcebergRestWriteHandler {
       String databaseId, CreateTableRequest request, String actingPrincipal) {
     TableIdentifier identifier = TableIdentifier.of(databaseId, request.name());
     CreateUpdateTableRequestBody body = createBody(identifier, request);
-    tablesApiHandler.createTable(
-        databaseId, withPatchApplied(identifier, body, null), actingPrincipal);
-    return loaded(identifier);
+    String created =
+        tablesApiHandler
+            .createTable(databaseId, withPatchApplied(identifier, body, null), actingPrincipal)
+            .getResponseBody()
+            .getTableLocation();
+    return answered(identifier, created, null);
   }
 
   /**
@@ -270,8 +274,9 @@ public class IcebergRestWriteHandler {
     }
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, request, actingPrincipal);
-    if (commitOn(identifier, base, request, actingPrincipal)) {
-      return loaded(identifier);
+    Optional<TableDto> committed = commitOn(identifier, base, request, actingPrincipal);
+    if (committed.isPresent()) {
+      return answered(identifier, committed.get().getTableLocation(), base.getTable());
     }
     answerAsALoad(identifier, base, request, actingPrincipal);
     return new IcebergRestLoadedTable(
@@ -320,7 +325,7 @@ public class IcebergRestWriteHandler {
     TableIdentifier identifier = TableIdentifier.of(databaseId, tableId);
     TableDtoWithMetadata base = tableCommitService.loadBase(identifier);
     authorize(identifier, base, change, actingPrincipal);
-    if (!commitOn(identifier, base, change, actingPrincipal)) {
+    if (!commitOn(identifier, base, change, actingPrincipal).isPresent()) {
       answerAsALoad(identifier, base, change, actingPrincipal);
     }
   }
@@ -370,6 +375,12 @@ public class IcebergRestWriteHandler {
    *       an unlocked table is answered exactly as before. If its updates turn out to change
    *       nothing, it is a load after all, and passes the load's checks before it is answered
    *       ({@link #answerAsALoad}).
+   *   <li>Such a request also needs the read privilege the load needs, decided with the others: the
+   *       commit answers the table's whole Iceberg metadata (every snapshot with its manifest list,
+   *       the logs, the refs, every schema), where the native update answers a summary of the
+   *       table; and an Iceberg client loads a table before it commits to it, so a caller that may
+   *       not read the table could not commit through one either. The one-table transaction, which
+   *       answers nothing, is decided as the commit it is.
    * </ul>
    *
    * A refusal is audited as the refusal of the operation the request would be: a READ for a load,
@@ -394,7 +405,11 @@ public class IcebergRestWriteHandler {
           databaseId,
           tableId,
           auditedKind(request),
-          () -> tableCommitService.authorizeWrite(identifier, stored, principal, kind(request)));
+          () -> {
+            tableCommitService.authorizeWrite(identifier, stored, principal, kind(request));
+            authorizationUtils.checkTablePrivilege(
+                stored, principal, Privileges.GET_TABLE_METADATA);
+          });
     }
   }
 
@@ -451,10 +466,10 @@ public class IcebergRestWriteHandler {
    * to the commit core with {@code base}'s version, so a commit that landed since {@code base} was
    * loaded is refused by the core's guards.
    *
-   * @return whether anything was committed: {@code false} for a request that changes nothing, which
+   * @return the table as the commit stored it; empty for a request that changes nothing, which
    *     writes nothing
    */
-  private boolean commitOn(
+  private Optional<TableDto> commitOn(
       TableIdentifier identifier,
       TableDtoWithMetadata base,
       UpdateTableRequest request,
@@ -464,7 +479,7 @@ public class IcebergRestWriteHandler {
     TableMetadata baseMetadata = base.getMetadata();
     IcebergRestRequirements.validate(request, baseMetadata);
     if (request.updates().isEmpty()) {
-      return false;
+      return Optional.empty();
     }
     boolean replace = IcebergRestRequirements.isReplace(request);
     // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
@@ -480,7 +495,7 @@ public class IcebergRestWriteHandler {
     Optional<String> patch = applyTakingOutThePatch(builder, baseMetadata, updates);
     TableMetadata candidate = builder.build();
     if (candidate.changes().isEmpty() && !patch.isPresent()) {
-      return false;
+      return Optional.empty();
     }
     // The policies the OpenHouse client would send: the stored ones, or a patch merged onto them.
     Policies requestedPolicies =
@@ -491,39 +506,44 @@ public class IcebergRestWriteHandler {
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
             : CommitKind.TABLE_UPDATE;
-    tableCommitService.commit(
-        identifier,
-        base.getTableDto().getTableLocation(),
-        base,
-        candidate,
-        CommitContext.builder()
-            .kind(kind)
-            .principal(actingPrincipal)
-            .clusterId(clusterProperties.getClusterName())
-            .replace(replace)
-            .requestedPolicies(requestedPolicies)
-            // The native update validation, which the native table PUT and snapshots PUT (replace
-            // included) run before the service layer, on the request the OpenHouse client would
-            // send for this commit.
-            .validation(
-                () ->
-                    tablesApiValidator.validateUpdateTable(
-                        clusterProperties.getClusterName(),
-                        databaseId,
-                        tableId,
-                        IcebergUpdates.toUpdateBody(
-                            identifier,
-                            clusterProperties.getClusterName(),
-                            base.getTableDto(),
-                            base.getTableDto().getTableLocation(),
-                            candidate,
-                            replace,
-                            requestedPolicies != null
-                                ? requestedPolicies
-                                : base.getTableDto().getPolicies(),
-                            partitionSpecMapper)))
-            .build());
-    return true;
+    TableDto committed =
+        tableCommitService
+            .commit(
+                identifier,
+                base.getTableDto().getTableLocation(),
+                base,
+                candidate,
+                CommitContext.builder()
+                    .kind(kind)
+                    .principal(actingPrincipal)
+                    .clusterId(clusterProperties.getClusterName())
+                    .replace(replace)
+                    .requestedPolicies(requestedPolicies)
+                    // The native update validation, which the native table PUT and snapshots PUT
+                    // (replace
+                    // included) run before the service layer, on the request the OpenHouse client
+                    // would
+                    // send for this commit.
+                    .validation(
+                        () ->
+                            tablesApiValidator.validateUpdateTable(
+                                clusterProperties.getClusterName(),
+                                databaseId,
+                                tableId,
+                                IcebergUpdates.toUpdateBody(
+                                    identifier,
+                                    clusterProperties.getClusterName(),
+                                    base.getTableDto(),
+                                    base.getTableDto().getTableLocation(),
+                                    candidate,
+                                    replace,
+                                    requestedPolicies != null
+                                        ? requestedPolicies
+                                        : base.getTableDto().getPolicies(),
+                                    partitionSpecMapper)))
+                    .build())
+            .getFirst();
+    return Optional.of(committed);
   }
 
   /**
@@ -705,8 +725,10 @@ public class IcebergRestWriteHandler {
     }
     if (candidate.snapshots().isEmpty()) {
       tablesApiValidator.validateCreateTable(clusterProperties.getClusterName(), databaseId, body);
-      tablesService.createTable(body, actingPrincipal, tableUUID);
-      return loaded(identifier);
+      return answered(
+          identifier,
+          tablesService.createTable(body, actingPrincipal, tableUUID).getFirst().getTableLocation(),
+          null);
     }
     // A create with data: what the OpenHouse Java client sends for a CTAS. The table's UUID comes
     // from where the snapshot's files are, as natively; the three properties below are the ones
@@ -715,24 +737,29 @@ public class IcebergRestWriteHandler {
     withIds.put(CatalogConstants.OPENHOUSE_DATABASEID_KEY, databaseId);
     withIds.put(CatalogConstants.OPENHOUSE_TABLEID_KEY, tableId);
     withIds.put(TABLE_LOCATION_KEY, location);
-    icebergSnapshotsApiHandler.putIcebergSnapshots(
-        databaseId,
-        tableId,
-        IcebergSnapshotsRequestBody.builder()
-            .baseTableVersion(INITIAL_TABLE_VERSION)
-            .jsonSnapshots(
-                candidate.snapshots().stream()
-                    .map(SnapshotParser::toJson)
-                    .collect(Collectors.toList()))
-            .snapshotRefs(
-                candidate.refs().entrySet().stream()
-                    .collect(
-                        Collectors.toMap(
-                            Map.Entry::getKey, e -> SnapshotRefParser.toJson(e.getValue()))))
-            .createUpdateTableRequestBody(body.toBuilder().tableProperties(withIds).build())
-            .build(),
-        actingPrincipal);
-    return loaded(identifier);
+    String created =
+        icebergSnapshotsApiHandler
+            .putIcebergSnapshots(
+                databaseId,
+                tableId,
+                IcebergSnapshotsRequestBody.builder()
+                    .baseTableVersion(INITIAL_TABLE_VERSION)
+                    .jsonSnapshots(
+                        candidate.snapshots().stream()
+                            .map(SnapshotParser::toJson)
+                            .collect(Collectors.toList()))
+                    .snapshotRefs(
+                        candidate.refs().entrySet().stream()
+                            .collect(
+                                Collectors.toMap(
+                                    Map.Entry::getKey,
+                                    e -> SnapshotRefParser.toJson(e.getValue()))))
+                    .createUpdateTableRequestBody(body.toBuilder().tableProperties(withIds).build())
+                    .build(),
+                actingPrincipal)
+            .getResponseBody()
+            .getTableLocation();
+    return answered(identifier, created, null);
   }
 
   /**
@@ -1206,13 +1233,28 @@ public class IcebergRestWriteHandler {
     }
   }
 
-  /** The table as stored now, at the location the native API reports. */
-  private IcebergRestLoadedTable loaded(TableIdentifier identifier) {
+  /**
+   * The answer to a write that stored the table at {@code committed} (its metadata file, as the
+   * native API reports it): that version of the table, and never a later one, or another table of
+   * the same name, that the write's decisions were not made on. The table is read back as stored
+   * now, which is that version unless another write landed after this one; then the version this
+   * write stored is read from its own metadata file.
+   *
+   * @param written the table the write was made on, whose FileIO reads that file; {@code null} for
+   *     a create, which reads it with the table's own
+   */
+  private IcebergRestLoadedTable answered(
+      TableIdentifier identifier, String committed, Table written) {
     TableDtoWithMetadata stored = tableCommitService.loadBase(identifier);
+    if (stored.getTableDto().getTableLocation().equals(committed)) {
+      return new IcebergRestLoadedTable(
+          committed, stored.getMetadata(), tableFileIo.config(stored.getTable()), false);
+    }
+    Table table = written != null ? written : stored.getTable();
     return new IcebergRestLoadedTable(
-        stored.getTableDto().getTableLocation(),
-        stored.getMetadata(),
-        tableFileIo.config(stored.getTable()),
+        committed,
+        TableMetadataParser.read(table.io(), committed),
+        tableFileIo.config(table),
         false);
   }
 

@@ -328,6 +328,50 @@ public class IrcViewRoutesAuthTest {
   }
 
   /**
+   * A view commit answers the whole definition, as the IRC view load does, so a principal who may
+   * replace the view but not read it (every privilege but GET_TABLE_METADATA) is refused a commit
+   * that changes it, with the load's refusal, audited as the native replace's refusal, before
+   * anything is checked against the stored view, and nothing is written. Allowed, the commit's
+   * answer is byte for byte the IRC view load's answer after it, as before.
+   */
+  @Test
+  void aViewWriterThatMayNotReadIsRefusedACommitAndNothingIsWritten() throws Exception {
+    ViewMetadata base = IrcViewWrite.load(mvc, DB, "v");
+    String before = StoredViewMetadata.normalized(houseTables, DB, "v");
+    java.util.List<MetadataUpdate> setK =
+        IrcViewWrite.properties(base, Collections.singletonMap("k", "v")).changes();
+    org.apache.iceberg.rest.requests.UpdateTableRequest change =
+        IrcViewWrite.commitRequest(Collections.emptyList(), setK);
+    org.apache.iceberg.rest.requests.UpdateTableRequest failing =
+        IrcViewWrite.commitRequest(
+            Collections.singletonList(
+                new UpdateRequirement.AssertViewUUID(java.util.UUID.randomUUID().toString())),
+            setK);
+    denyOnly(Privileges.GET_TABLE_METADATA);
+    String loadMessage =
+        assertIrcError(IrcHttp.get(mvc, IrcViewWrite.view(DB, "v")), 403, "ForbiddenException")
+            .message();
+    for (org.apache.iceberg.rest.requests.UpdateTableRequest commit :
+        java.util.Arrays.asList(change, failing)) {
+      Mockito.clearInvocations(viewAuditHandler);
+      MvcResult result = IrcViewWrite.commit(mvc, DB, "v", commit);
+      assertEquals(loadMessage, assertIrcError(result, 403, "ForbiddenException").message());
+      assertNothingStoredIn(IrcHttp.body(result), base);
+      List<ViewAuditEvent> events = auditEvents("v");
+      assertEquals(1, events.size(), String.valueOf(events));
+      assertEquals(ViewOperationType.REPLACE, events.get(0).getOperationType());
+      assertEquals(OperationStatus.FAILED, events.get(0).getOperationStatus());
+    }
+    assertEquals(before, StoredViewMetadata.normalized(houseTables, DB, "v"));
+
+    stubDecision(true);
+    MvcResult allowed = IrcViewWrite.commit(mvc, DB, "v", change);
+    assertEquals(200, allowed.getResponse().getStatus());
+    assertEquals(IrcHttp.body(IrcHttp.get(mvc, IrcViewWrite.view(DB, "v"))), IrcHttp.body(allowed));
+    assertEquals("v", IrcViewWrite.parsed(allowed).metadata().properties().get("k"));
+  }
+
+  /**
    * A replace with no updates answers the definition and changes nothing, so it is a load too: a
    * principal who may replace the view but not read it is refused.
    */
