@@ -52,7 +52,8 @@
 #        [FIXTURES_STAND_IN=branch] scripts/linkedin-main-baseline/record.sh [main-worktree]
 #   RUNS               the number of runs, each in a fresh JVM (6 for the stored files)
 #   RECORD_WORK        where the raw runs go (default a new temporary directory); keep it
-#   TASKS              which suites to run: spark (smoke, write, contract), tables (commit path)
+#   TASKS              which suites to run: spark (smoke, write, contract; the default), tables
+#                      (commit path; refused except with MERGE_ONLY=1 until the stand-in is ported)
 #   MERGE_ONLY=1       run nothing: merge the raw runs already in RECORD_WORK again (a header
 #                      change only; the bodies stay the runs' union)
 #   FIXTURES_STAND_IN=branch
@@ -69,13 +70,26 @@ set -euo pipefail
 
 COMMIT=bb8929e1
 RUNS=${RUNS:-2}
-TASKS=${TASKS:-spark tables}
+TASKS=${TASKS:-spark}
 FIXTURES_STAND_IN=${FIXTURES_STAND_IN:-main}
 # What each recording's header says about the test doubles main ran with.
 DOUBLES_SPARK="House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at $COMMIT), not this branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization"
+# Only for MERGE_ONLY=1 over the stored commit-path runs (raw-final5 of 2026-11-28): what they ran
+# with. A new commit-path recording is refused below until the stand-in is ported.
 DOUBLES_TABLES="House Tables: this branch's earlier stand-in of services/tables' tests (e2e/h2/HouseTablesH2Repository at commit 0fe4678a, copied into main; not main's own), since replaced on the branch by the one held to the real store; the branch now runs tables-test-fixtures' stand-in, and the answers that changed with it are declared as stand-in differences; authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)"
-# The result of the last FIXTURES_STAND_IN=branch measurement, for the Spark recordings' header.
-STAND_IN_CHECK_SPARK="identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in: the repository and store held to the real House Tables store), checked on 2026-11-28 with one run each, before and after the branch moved to that stand-in"
+# The Spark recordings' "# stand-in check:" line comes only from a measurement made for this
+# recording (FIXTURES_STAND_IN=branch writes it to stand-in-check.txt in its RECORD_WORK; a
+# recording run makes that measurement itself). Without one the line is left out, and the files
+# test fails until it is there.
+case " $TASKS " in *" tables "*)
+  if [ "${MERGE_ONLY:-0}" != 1 ]; then
+    echo "TASKS contains tables: refused. The commit-path tests now inject the House Tables stand-in" >&2
+    echo "of tables-test-fixtures, which main's services/tables tests cannot see; port that stand-in" >&2
+    echo "into main's services/tables test sources (README.md, 'Waiting for a re-record') first." >&2
+    exit 1
+  fi
+  ;;
+esac
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -211,14 +225,30 @@ for k in bad:
 sys.exit(1 if bad else 0)
 PY
   done
+  if [ $status = 0 ]; then
+    echo "identical with either stand-in of tables-test-fixtures (main's, or this branch's copied into main), measured on $(date -u +%F) with $RUNS run(s)" > "$WORK/stand-in-check.txt"
+  else
+    echo "DIFFERENT with this branch's stand-in of tables-test-fixtures copied into main, measured on $(date -u +%F): see $WORK" > "$WORK/stand-in-check.txt"
+  fi
   echo "Measured $RUNS run(s) with the branch's fixtures stand-in; raw output in $WORK"
   exit $status
 fi
 
 case " $TASKS " in *" spark "*)
-  merge smoke-scenarios "$REPO/$ITEST/src/test/resources/linkedin-main" spark "$DOUBLES_SPARK" "$STAND_IN_CHECK_SPARK"
-  merge write-statements "$REPO/$ITEST/src/test/resources/linkedin-main" spark "$DOUBLES_SPARK" "$STAND_IN_CHECK_SPARK"
-  merge catalog-plugin-contract "$REPO/$ITEST/src/test/resources/linkedin-main" spark "$DOUBLES_SPARK" "$STAND_IN_CHECK_SPARK"
+  for suite in smoke-scenarios write-statements catalog-plugin-contract; do
+    merge $suite "$REPO/$ITEST/src/test/resources/linkedin-main" spark "$DOUBLES_SPARK"
+  done
+  # The stand-in check of this recording: measure now with the branch's fixtures stand-in, unless
+  # merging again runs that were measured already (their stand-in-check.txt is kept).
+  if [ "${MERGE_ONLY:-0}" != 1 ]; then
+    RECORD_WORK="$WORK/stand-in-measurement" RUNS=1 TASKS=spark FIXTURES_STAND_IN=branch "$0" "$MAIN" || true
+    cp "$WORK/stand-in-measurement/stand-in-check.txt" "$WORK/stand-in-check.txt"
+  fi
+  if [ -s "$WORK/stand-in-check.txt" ]; then
+    for suite in smoke-scenarios write-statements catalog-plugin-contract; do
+      merge $suite "$REPO/$ITEST/src/test/resources/linkedin-main" spark "$DOUBLES_SPARK" "$(cat "$WORK/stand-in-check.txt")"
+    done
+  fi
   ;;
 esac
 case " $TASKS " in *" tables "*)

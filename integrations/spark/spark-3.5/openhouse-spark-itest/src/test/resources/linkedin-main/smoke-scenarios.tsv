@@ -7,7 +7,7 @@
 # path: the OpenHouse catalog of Spark 3.5 over the native tables API
 # command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
 # test doubles: House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at bb8929e1), not this branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization
-# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in: the repository and store held to the real House Tables store), checked on 2026-11-28 with one run each, before and after the branch moved to that stand-in
+# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or this branch's copied into main), measured on 2026-11-28 with 1 run(s)
 # runs: 6
 # key<TAB>outcome, sorted by key
 s01 #1 CREATE TABLE openhouse.smoke_t1.s01_create (id bigint, name string, ts timestamp) PARTITIONED BY (days(ts), name)	rows []
