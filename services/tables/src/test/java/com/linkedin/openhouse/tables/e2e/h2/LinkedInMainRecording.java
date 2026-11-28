@@ -36,16 +36,22 @@ import java.util.stream.Collectors;
  * line is {@code key<TAB>outcome}, sorted, where the key names the statement and the outcome is
  * what the statement gave on main after {@link #normalize}: the rows, or the exception class and
  * message. A key on more than one line gave each of those outcomes in different recording runs
- * (main's answer was not stable from one JVM to the next); any of them is main's. An outcome that
- * starts with {@value #NOT_ON_MAIN} marks a statement main cannot run, with the reason.
+ * (main's answer was not stable from one JVM to the next); any of them is main's. There is no way
+ * to mark a statement as one main cannot run: such a statement has no line, and the build that runs
+ * it declares a difference that pins its own answer ({@code
+ * LinkedInMainComparison.NOT_OBSERVED_ON_MAIN}). A line with the old marker {@value
+ * #OLD_NOT_ON_MAIN_MARKER} is refused when the file is read.
  */
 public final class LinkedInMainRecording {
 
   /** The commit every recording is of. */
   public static final String COMMIT = "bb8929e1";
 
-  /** The prefix of an outcome that marks a statement main cannot run, followed by the reason. */
-  public static final String NOT_ON_MAIN = "NOT ON MAIN: ";
+  /**
+   * The prefix an outcome once had to mark a statement main cannot run. Such a line compared the
+   * statement with nothing, so it is refused.
+   */
+  public static final String OLD_NOT_ON_MAIN_MARKER = "NOT ON MAIN: ";
 
   /** The environment variable that switches a run on main from comparing to recording. */
   public static final String RECORD_DIR_ENV = "OPENHOUSE_LINKEDIN_MAIN_RECORD_DIR";
@@ -99,6 +105,12 @@ public final class LinkedInMainRecording {
       if (tab < 0) {
         throw new IllegalStateException("Not a key and an outcome: " + line);
       }
+      if (line.substring(tab + 1).startsWith(OLD_NOT_ON_MAIN_MARKER)) {
+        throw new IllegalStateException(
+            "A recorded outcome must be one main gave, not a marker; declare a difference that"
+                + " pins this build's answer instead: "
+                + line);
+      }
       outcomes
           .computeIfAbsent(line.substring(0, tab), k -> new LinkedHashSet<>())
           .add(line.substring(tab + 1));
@@ -130,12 +142,6 @@ public final class LinkedInMainRecording {
   public String quoted(String key) {
     Set<String> recorded = outcomes.get(key);
     return recorded == null ? null : String.join(" | one of | ", new TreeSet<>(recorded));
-  }
-
-  /** Whether {@code key} is marked as a statement main cannot run. */
-  public boolean notOnMain(String key) {
-    Set<String> recorded = outcomes.get(key);
-    return recorded != null && recorded.stream().anyMatch(o -> o.startsWith(NOT_ON_MAIN));
   }
 
   // ---------- normalization ----------

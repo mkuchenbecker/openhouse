@@ -108,6 +108,19 @@ public final class LinkedInMainComparison {
     }
   }
 
+  /** A comparison with {@code recording} (for tests of the comparison itself). */
+  public LinkedInMainComparison(
+      String suite, LinkedInMainRecording recording, Collection<MainDifference> differences) {
+    this.suite = suite;
+    this.recordDir = null;
+    this.recording = recording;
+    for (MainDifference difference : differences) {
+      if (declared.put(difference.key, difference) != null) {
+        throw new IllegalStateException("Two differences declared for " + difference.key);
+      }
+    }
+  }
+
   /** The stored recording this run compares with; null when the run records. */
   public LinkedInMainRecording recording() {
     return recording;
@@ -152,19 +165,10 @@ public final class LinkedInMainComparison {
           "  ["
               + name
               + "]\n    no outcome of LinkedIn main is recorded for this statement: record it"
-              + " against main (scripts/linkedin-main-baseline/record.sh), or add it to"
-              + " linkedin-main/"
-              + suite
-              + ".tsv as \""
-              + LinkedInMainRecording.NOT_ON_MAIN
-              + "<the reason>\"\n    here: "
+              + " against main (scripts/linkedin-main-baseline/record.sh); if main cannot reach it,"
+              + " declare a difference quoting NOT_OBSERVED_ON_MAIN that states this answer and"
+              + " why\n    here: "
               + here);
-    } else if (recording.notOnMain(name)) {
-      verdict = "not on main";
-      if (difference != null) {
-        consulted.add(name);
-        problems.add("  [" + name + "]\n    a difference is declared for a statement not on main");
-      }
     } else if (difference == null) {
       verdict = main.contains(here) ? "same" : "UNEXPECTED";
       if (!main.contains(here)) {
