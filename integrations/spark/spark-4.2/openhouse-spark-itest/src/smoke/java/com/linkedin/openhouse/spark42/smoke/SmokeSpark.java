@@ -15,9 +15,9 @@ import org.apache.spark.sql.SparkSession;
  *   <li>{@code openhouse_views}: the same with {@code cache-enabled=false}, as the Spark 3.5 suite
  *       configures the catalog of its views scenarios. The service has one database with views
  *       enabled.
- *   <li>{@code openhouse_second}: the smoke suite's second catalog (work items C3, C4): Iceberg's
- *       {@code RESTCatalog} over the same routes, with no table caching, whose table commits run
- *       the step a scenario armed first ({@code CommitRaceRestCatalog}).
+ *   <li>{@code openhouse_second}: the smoke suite's second catalog: Iceberg's {@code RESTCatalog}
+ *       over the same routes, with no table caching, whose table commits run the step a scenario
+ *       armed first ({@code CommitRaceRestCatalog}).
  *   <li>{@code local}: Iceberg's Hadoop catalog on a local directory. It has nothing of OpenHouse,
  *       so what a statement does there is what Spark 4.2 and Iceberg 1.12 do by themselves.
  * </ul>

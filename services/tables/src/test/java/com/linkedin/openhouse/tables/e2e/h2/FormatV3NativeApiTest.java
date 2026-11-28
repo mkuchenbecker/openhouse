@@ -56,8 +56,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * cluster.iceberg.format-v3.enabled} on: a table is v3 only when its create (or a replace of it)
  * asks for format version 3 or an update asks to upgrade it; it is never lowered; what v3 adds to a
  * metadata file is stored as committed across create, commit, rename and recreate; what the service
- * does not handle on v3 yet is refused with the work item that will; and the column default rules
- * of work item W6 hold.
+ * does not handle on v3 is refused with a message that says so; and the column default rules of
+ * format v3 hold.
  */
 @SpringBootTest(properties = SWITCH_ON)
 @AutoConfigureMockMvc
@@ -649,7 +649,7 @@ public class FormatV3NativeApiTest {
     assertEquals(v3, stored(db));
   }
 
-  // ---------------------------------------------------------------- W6: column defaults
+  // ---------------------------------------------------------------- column defaults
 
   private CreateUpdateTableRequestBody withSchema(String getJson, String schema) {
     return bodyFromGet(getJson).toBuilder().schema(schema).build();

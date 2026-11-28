@@ -39,15 +39,14 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * What an Iceberg 1.12 client does now that the service's config lists the spec routes it serves
- * ({@code endpoints}, V10a) and names the OpenHouse routes in {@code openhouse.capabilities}
- * (V5-3). The service's access log ({@code IrcReadTestService}) shows which requests reached it.
+ * What an Iceberg 1.12 client does when the service's config lists the spec routes it serves
+ * ({@code endpoints}) and names the OpenHouse routes in {@code openhouse.capabilities}. The
+ * service's access log ({@code IrcReadTestService}) shows which requests reached it.
  *
- * <p>Before the list, a 1.12 client assumed its default set (read: {@code RESTSessionCatalog}
- * {@code DEFAULT_ENDPOINTS}): existence checks loaded the table or namespace, views were refused
- * locally, and namespace writes, register and transactions were sent and answered 406. Register and
- * metrics reports are served and listed since V6 and V7, and the multi-table commit route, for
- * transactions of one table, since V8.
+ * <p>Without the list, a 1.12 client assumes its default set (read: {@code RESTSessionCatalog}
+ * {@code DEFAULT_ENDPOINTS}): existence checks load the table or namespace, views are refused
+ * locally, and namespace writes, register and transactions are sent. Register, metrics reports and
+ * the multi-table commit route (for transactions of one table) are served and listed.
  */
 public class SparkIrcEndpointsTest {
 
@@ -170,7 +169,7 @@ public class SparkIrcEndpointsTest {
       Assertions.assertTrue(
           rows("SHOW VIEWS IN irc." + VIEWS_DB).stream().anyMatch(r -> "v".equals(r.get(1))),
           String.valueOf(rows("SHOW VIEWS IN irc." + VIEWS_DB)));
-      // Renaming is not served (D27): refused on the client, no request reaches the service.
+      // Renaming is not served: refused on the client, no request reaches the service.
       assertRefusedLocally(
           failure("ALTER VIEW " + v + " RENAME TO irc." + VIEWS_DB + ".w"),
           "POST /v1/{prefix}/views/rename");
@@ -262,12 +261,12 @@ public class SparkIrcEndpointsTest {
   }
 
   /**
-   * The multi-table commit route is listed (V8), so the 1.12 client sends {@code
-   * commitTransaction}; before, it refused every transaction locally ("Server does not support
-   * endpoint"), a transaction of one table included, and it has no fallback to per-table commits. A
-   * transaction of one table commits. One of two tables reaches the server, which refuses it whole
-   * (OpenHouse cannot commit two tables atomically): Iceberg's {@link BadRequestException} with the
-   * server's message, and neither table changes.
+   * The multi-table commit route is listed, so the 1.12 client sends {@code commitTransaction};
+   * unlisted, it refuses every transaction locally ("Server does not support endpoint"), a
+   * transaction of one table included, and it has no fallback to per-table commits. A transaction
+   * of one table commits. One of two tables reaches the server, which refuses it whole (OpenHouse
+   * cannot commit two tables atomically): Iceberg's {@link BadRequestException} with the server's
+   * message, and neither table changes.
    *
    * <p>No Spark statement uses the route: every commit Spark makes, of whatever statement, is a
    * commit of one table on that table's own route. The access log shows it for the statements here
@@ -317,7 +316,7 @@ public class SparkIrcEndpointsTest {
   }
 
   /**
-   * Register is listed (V7), so the 1.12 client sends it (it used to refuse it locally). The server
+   * Register is listed, so the 1.12 client sends it (unlisted, it refuses it locally). The server
    * owns locations: metadata that does not lie in the directory OpenHouse assigned to a table of
    * that name is refused, as Iceberg's {@link BadRequestException} with the server's message.
    */
@@ -339,8 +338,8 @@ public class SparkIrcEndpointsTest {
   }
 
   /**
-   * The metrics route is listed (V6). The config still turns reporting off by default, so Spark's
-   * own catalog posts nothing; a 1.12 client that turns it on posts the report of a scan, from a
+   * The metrics route is listed. The config still turns reporting off by default, so Spark's own
+   * catalog posts nothing; a 1.12 client that turns it on posts the report of a scan, from a
    * background thread, and the service takes it.
    */
   @Test

@@ -394,7 +394,7 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
     // (IcebergRestSparkSqlTest.mergeOnReadDeleteAndUpdate).
     Assertions.assertEquals(HadoopFileIO.class, viaRest.io().getClass());
     Assertions.assertEquals(HadoopFileIO.class, viaOpenHouse.io().getClass());
-    // Table operations: Iceberg's REST operations commit through the IRC routes (V3); the
+    // Table operations: Iceberg's REST operations commit through the IRC routes; the
     // existing client's commit through the native API.
     Assertions.assertEquals(
         "org.apache.iceberg.rest.RESTTableOperations",
@@ -428,9 +428,9 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
    * properties; it does not apply column defaults.
    *
    * <p>The OpenHouse client that creates and loads the table must declare the capability. On the
-   * legacy line that is the engine's catalog. On the v3 line the engine's catalog declares nothing
-   * (decision D11a), so a Java client declaring it through its configured header stands in for a
-   * legacy client, and it applies no read-bridge overlay.
+   * legacy line that is the engine's catalog. On the v3 line the engine's catalog declares nothing,
+   * so a Java client declaring it through its configured header stands in for a legacy client, and
+   * it applies no read-bridge overlay.
    */
   @Test
   void aTableRequiringACapabilityIsGatedAsForTheExistingClient() throws Exception {
@@ -483,7 +483,7 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
           current(viaEngine).metadataFileLocation(), current(viaRest).metadataFileLocation());
       Assertions.assertEquals(viaEngine.properties(), viaRest.properties());
       // On the legacy line the engine's client applies the column defaults the config carries to
-      // its schema; on the v3 line it applies none (decision D11a). The RESTCatalog applies none
+      // its schema; on the v3 line it applies none. The RESTCatalog applies none
       // and shows the schema as stored.
       Assertions.assertEquals(
           legacyLine ? "US" : null, viaEngine.schema().findField("country").initialDefault());

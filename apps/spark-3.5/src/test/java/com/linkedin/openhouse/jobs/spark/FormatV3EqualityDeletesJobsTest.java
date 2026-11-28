@@ -24,11 +24,11 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The maintenance jobs on a table with equality deletes (work item X10), format v3 and v2. Spark
- * does not write equality deletes; an Iceberg API writer does (Flink, over the Iceberg REST
- * routes), and format v3 still allows them. Here they are written with Iceberg's own writer ({@link
- * IcebergFiles}) and committed through the Iceberg REST routes; the native API accepts them too
- * (pinned below). No OpenHouse check refers to equality deletes.
+ * The maintenance jobs on a table with equality deletes, format v3 and v2. Spark does not write
+ * equality deletes; an Iceberg API writer does (Flink, over the Iceberg REST routes), and format v3
+ * still allows them. Here they are written with Iceberg's own writer ({@link IcebergFiles}) and
+ * committed through the Iceberg REST routes; the native API accepts them too (pinned below). No
+ * OpenHouse check refers to equality deletes.
  *
  * <p>The shape: the base layout (4 daily partitions, 8 ORC data files, ids 1 to 32), then one row
  * delta of four equality delete files on {@code id} (2, 10, 18, 26, one per partition), a Spark
@@ -120,7 +120,7 @@ public class FormatV3EqualityDeletesJobsTest extends FormatV3ShapeJobsTestBase {
       }
     }
     System.out.println(
-        "X10B-EQ "
+        "EQUALITY-DELETES "
             + job
             + " v"
             + formatVersion

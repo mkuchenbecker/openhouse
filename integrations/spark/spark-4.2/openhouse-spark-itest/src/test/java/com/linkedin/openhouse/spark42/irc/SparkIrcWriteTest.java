@@ -10,9 +10,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Writes over IRC, since the service serves the IRC table write routes (work item V3): what a Spark
- * 4.2 user on Iceberg 1.12 sees for {@code CREATE TABLE} and {@code INSERT}. Both succeed and the
- * rows read back over the same catalog.
+ * Writes over IRC, since the service serves the IRC table write routes: what a Spark 4.2 user on
+ * Iceberg 1.12 sees for {@code CREATE TABLE} and {@code INSERT}. Both succeed and the rows read
+ * back over the same catalog.
  *
  * <p>Each case writes to a table it creates, never to the seeded tables, which the other classes
  * compare with what the OpenHouse client recorded when the service seeded them, and drops it

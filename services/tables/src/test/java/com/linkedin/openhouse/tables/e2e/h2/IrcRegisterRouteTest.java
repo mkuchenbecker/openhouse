@@ -203,7 +203,7 @@ public class IrcRegisterRouteTest {
 
   // ---------------------------------------------------------------- a registered table
 
-  /** The work item's proof: a registered table loads and commits. */
+  /** What registering is for: a registered table loads and commits. */
   @Test
   void aRegisteredTableLoadsAndCommits() throws Exception {
     String db = "irc_reg_ok";

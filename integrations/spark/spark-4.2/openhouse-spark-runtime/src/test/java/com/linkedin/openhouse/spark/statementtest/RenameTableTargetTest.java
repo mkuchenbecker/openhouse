@@ -39,7 +39,7 @@ import scala.jdk.javaapi.CollectionConverters;
  * catalogs. Iceberg's {@code RESTCatalog} does neither, so the extensions do it during analysis,
  * and these tests say exactly what: the analyzed plan for a parsed statement, and what reaches the
  * catalog when the statement runs. The outcomes named "as the OpenHouse catalog" are the ones Spark
- * 3.5 with that catalog class gives for the same statement (run there for N6).
+ * 3.5 with that catalog class gives for the same statement (run there for comparison).
  *
  * <p>The catalogs: {@code openhouse} is Iceberg's {@code RESTCatalog} on a server that advertises
  * OpenHouse capabilities; {@code rest_plain} is a {@code RESTCatalog} whose server advertises none;

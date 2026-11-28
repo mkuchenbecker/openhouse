@@ -38,8 +38,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * The column types that exist only from Iceberg format version 3 on (work item X5), type by type,
- * through the native API and the Iceberg REST routes, on a cluster with {@code
+ * The column types that exist only from Iceberg format version 3 on, type by type, through the
+ * native API and the Iceberg REST routes, on a cluster with {@code
  * cluster.iceberg.format-v3.enabled} on: a create with a column of the type, the column added by
  * schema evolution, and the same on a format v2 table. Schemas are written as schema JSON, the way
  * a client sends them, so the native cases compile and run on both Iceberg lines. Variant columns

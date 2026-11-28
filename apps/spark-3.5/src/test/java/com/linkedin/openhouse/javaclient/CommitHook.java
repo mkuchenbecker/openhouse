@@ -7,12 +7,12 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Interleaves two writers by construction, for the concurrency tests (work item X10): a {@link
- * CommitHookCatalog} runs the step armed for a table at the start of that table's next commit
- * attempt, after Iceberg built and validated the commit against its base and before the client
- * sends it to the tables service. The step runs to completion before the attempt goes on, so what
- * it commits lands between the writer's base and its commit, every time, with no sleeps and no
- * reliance on thread timing. The hook fires once; every attempt's outcome is recorded.
+ * Interleaves two writers by construction, for the concurrency tests: a {@link CommitHookCatalog}
+ * runs the step armed for a table at the start of that table's next commit attempt, after Iceberg
+ * built and validated the commit against its base and before the client sends it to the tables
+ * service. The step runs to completion before the attempt goes on, so what it commits lands between
+ * the writer's base and its commit, every time, with no sleeps and no reliance on thread timing.
+ * The hook fires once; every attempt's outcome is recorded.
  */
 public final class CommitHook {
   private static final Map<String, Runnable> ARMED = new ConcurrentHashMap<>();

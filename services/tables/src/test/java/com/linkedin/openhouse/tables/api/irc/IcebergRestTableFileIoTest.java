@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Which per-table {@code io-impl} a table is given, for each pair of the table's storage type and
- * the cluster's default (work item V20). A table is given its own storage's class exactly when that
- * class is known and is not the class the config route advertises for the default.
+ * the cluster's default. A table is given its own storage's class exactly when that class is known
+ * and is not the class the config route advertises for the default.
  */
 class IcebergRestTableFileIoTest {
 
