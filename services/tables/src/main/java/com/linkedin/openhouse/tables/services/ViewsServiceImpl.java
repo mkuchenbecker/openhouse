@@ -31,6 +31,7 @@ import com.linkedin.openhouse.tables.model.ReservedViewProperties;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.model.ViewDto;
 import com.linkedin.openhouse.tables.model.ViewListResult;
+import com.linkedin.openhouse.tables.utils.AllocatedDirectory;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -145,7 +146,9 @@ public class ViewsServiceImpl implements ViewsService {
    */
   public LoadedView loadReadableView(String databaseId, String viewId, String actingPrincipal) {
     return load(
-        databaseId, viewId, row -> authorizeRead(authorizationReference(row), actingPrincipal));
+        databaseId,
+        viewId,
+        row -> authorizeRead(icebergRestAuthorizationReference(row), actingPrincipal));
   }
 
   /**
@@ -155,7 +158,7 @@ public class ViewsServiceImpl implements ViewsService {
   public TableDto viewReference(String databaseId, String viewId) {
     try {
       requireEnabled(databaseId);
-      return authorizationReference(
+      return icebergRestAuthorizationReference(
           houseTableRepository
               .findViewById(primaryKey(databaseId, viewId))
               .orElseThrow(() -> noSuchView(databaseId, viewId)));
@@ -330,6 +333,27 @@ public class ViewsServiceImpl implements ViewsService {
    * The object resource of a captured view for authorization: its persisted identifiers and exact
    * metadata pointer, with no metadata read.
    */
+  /**
+   * {@link #authorizationReference}, with the view's UUID, for the Iceberg REST view routes that
+   * decide on it themselves (the load, and the commit's own read and replace decisions and reads).
+   * The row has no UUID (House Tables keeps none); the view's is in the name of the directory its
+   * metadata lies in ({@link AllocatedDirectory}). With no UUID there, the reference names none.
+   *
+   * <p>The native view replace and drop keep {@link #authorizationReference}, which names no UUID,
+   * as LinkedIn main does; the Iceberg REST view commit and drop reach them ({@code updateView},
+   * {@code deleteView}), so those two decisions name no UUID on the Iceberg REST routes either.
+   */
+  private static TableDto icebergRestAuthorizationReference(HouseTable viewRow) {
+    TableDto reference = authorizationReference(viewRow);
+    return reference
+        .toBuilder()
+        .tableUUID(
+            AllocatedDirectory.uuidOf(viewRow.getTableLocation())
+                .map(java.util.UUID::toString)
+                .orElse(reference.getTableUUID()))
+        .build();
+  }
+
   private static TableDto authorizationReference(HouseTable viewRow) {
     return TableDto.builder()
         .databaseId(viewRow.getDatabaseId())

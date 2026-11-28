@@ -64,7 +64,6 @@ public class IrcViewRoutesAuthTest {
   @Autowired ToggleStatusesRepository toggles;
   @MockBean AuthorizationHandler authorizationHandler;
   @Autowired AuditHandler<ViewAuditEvent> viewAuditHandler;
-  @Autowired javax.persistence.EntityManager entityManager;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -253,9 +252,8 @@ public class IrcViewRoutesAuthTest {
                     view != null
                         && "v".equals(view.getTableId())
                         && DB.equals(view.getDatabaseId())
-                        // Known defect, pinned: the resource is built from the House Tables row,
-                        // which keeps no UUID, so it names none; stored.uuid() is the view's.
-                        && view.getTableUUID() == null),
+                        // The row keeps no UUID; the resource takes it from the view's directory.
+                        && stored.uuid().equals(view.getTableUUID())),
             org.mockito.ArgumentMatchers.eq(Privileges.GET_TABLE_METADATA));
     // The native GET is unchanged: a pointer, with no decision.
     assertEquals(200, code(get(mvc, DB, "v")));
@@ -468,9 +466,6 @@ public class IrcViewRoutesAuthTest {
                 if (failed.get() != null) {
                   throw failed.get();
                 }
-                // The House Tables stand-in serves this request's reads from the request's own
-                // persistence context; the real House Tables service is read afresh each time.
-                entityManager.clear();
               }
               return null;
             })
