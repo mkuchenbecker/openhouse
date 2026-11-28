@@ -699,6 +699,9 @@ public abstract class HouseTableRepositoryContract {
     assertThrows(
         WebClientResponseException.BadRequest.class,
         () -> repository().searchSoftDeletedTables(invalid, null, PageRequest.of(0, 10)));
+    assertThrows(
+        WebClientResponseException.BadRequest.class,
+        () -> repository().searchSoftDeletedTables(db, invalid, PageRequest.of(0, 10)));
   }
 
   /** What the real repository refuses; the product calls none of these. */
