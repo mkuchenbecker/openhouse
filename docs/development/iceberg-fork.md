@@ -312,8 +312,13 @@ gets a job of its own, and any other new project runs in `rest`, without a chang
 workflow. On the reference line a matched project that is not in that build (Spark 4.2) is a job
 that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Gradle dry runs, that
 the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
-reads the list (and on the default line checks the merged optimizer migrations); a last one of the
-default line runs the Docker steps above, after `./gradlew clean assemble`. Each job restores the
+reads the list, runs that check (and on the default line checks the merged optimizer migrations);
+another of the default line runs the Docker steps above, after `./gradlew clean assemble`. The
+last job of each line, `Build and Run Tests`, needs all the others and is green only when each of
+them succeeded (the reference line's skipped Docker job aside). On a pull request the default
+line's is the check the single job reported, `build-run-tests / Build and Run Tests`, which branch
+protection can require; the reference line's, `iceberg-linkedin-build / Build and Run Tests`, is
+optional upstream. Each job restores the
 fork and the newest Gradle cache entry of its line, saved under one name a line
 (`GRADLE_BUILD_ACTION_CACHE_KEY_JOB`: `build-and-run-tests` or `iceberg-linkedin-build`, the ids
 the single jobs had). Only one job a line writes that cache, the `rest` job of the run after a
