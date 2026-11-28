@@ -1,0 +1,15 @@
+# Matches of scripts/ci/check-private-ids.py that are not private planning ids, each reviewed.
+# Format: <path> | <id> | <the line, trimmed>, or `*` for the line: that id on any line of the file.
+# A comment line above each group says why the group is allowed.
+
+# LinkedIn main's own lines (present at bb8929e1).
+# flake8's code for an unused import.
+integrations/python/dataloader/tests/test_scan_optimizer.py | F401 | *
+# Names of the test's two data files.
+integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F1 | *
+integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F2 | *
+# The test's own numbering of its cases, defined in the class.
+services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F4 | *
+services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F5 | *
+# A constant naming format version 3.
+services/tables/src/test/java/com/linkedin/openhouse/tables/readbridge/ClientCapabilityGateTest.java | V3 | *
