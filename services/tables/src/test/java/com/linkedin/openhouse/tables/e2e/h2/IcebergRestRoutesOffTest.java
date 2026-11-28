@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import javax.servlet.Filter;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,8 +44,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.ClassUtils;
+import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.NoHandlerFoundException;
@@ -96,7 +99,16 @@ public class IcebergRestRoutesOffTest {
   private static final List<HttpMethod> METHODS =
       Arrays.asList(HttpMethod.GET, HttpMethod.HEAD, HttpMethod.POST, HttpMethod.DELETE);
 
+  /**
+   * Sends every request with a token: this suite's {@code MockMvcBuilderConfig} gives the autowired
+   * {@code MockMvc} a default {@code Authorization} header.
+   */
   @Autowired private MockMvc mvc;
+
+  @Autowired private WebApplicationContext webApplicationContext;
+
+  /** Sends no {@code Authorization} header: built on the same context, without that default. */
+  private MockMvc tokenless;
 
   @Autowired private ApplicationContext context;
 
@@ -111,6 +123,14 @@ public class IcebergRestRoutesOffTest {
   @BeforeEach
   public void setup() throws Exception {
     token = new DummyTokenInterceptor.DummySecurityJWT("irc_off_user").buildNoopJWT();
+    // As the service's own dispatcher is set up (spring.mvc.throw-exception-if-no-handler-found),
+    // with the service's servlet filters.
+    tokenless =
+        MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .addFilters(context.getBeansOfType(Filter.class).values().toArray(new Filter[0]))
+            .addDispatcherServletCustomizer(
+                dispatcher -> dispatcher.setThrowExceptionIfNoHandlerFound(true))
+            .build();
   }
 
   @AfterAll
@@ -128,7 +148,12 @@ public class IcebergRestRoutesOffTest {
       request.contentType("application/json").content(body);
     }
     Mockito.clearInvocations(serviceAuditHandler);
-    return mvc.perform(request).andReturn();
+    MvcResult result = (credentials ? mvc : tokenless).perform(request).andReturn();
+    assertEquals(
+        credentials ? "Bearer " + token : null,
+        result.getRequest().getHeader("Authorization"),
+        method + " " + path);
+    return result;
   }
 
   private List<ServiceAuditEvent> audited() {
@@ -194,22 +219,19 @@ public class IcebergRestRoutesOffTest {
   }
 
   /**
-   * A mapped native route reached without a token is answered as on LinkedIn main in this context:
-   * its handler runs and the native advice answers the missing table (main's own code, run with
-   * this class, answers the same; why the token interceptor lets the request through in this
-   * context was not established).
+   * The token interceptor is on in this context: a mapped native route without a token is refused
+   * by it (401, no body, no handler call), so the 400 answered above to tokenless requests under
+   * {@code /iceberg} is not for want of an interceptor. It runs only where a handler is found, and
+   * under {@code /iceberg} none is.
    */
   @Test
-  public void aMappedNativeRouteWithoutATokenIsAnsweredAsOnMain() throws Exception {
+  public void aMappedNativeRouteWithoutATokenIsRefusedByTheTokenInterceptor() throws Exception {
     MvcResult result = perform(HttpMethod.GET, "/v1/databases/d1/tables/t1", false, null);
-    assertEquals(404, result.getResponse().getStatus());
+    assertEquals(401, result.getResponse().getStatus());
     assertNotNull(result.getHandler());
-    JsonNode body = new ObjectMapper().readTree(result.getResponse().getContentAsString());
-    assertEquals("NOT_FOUND", body.path("status").asText(), body.toString());
-    assertEquals("User table d1.t1 cannot be found", body.path("message").asText());
-    List<ServiceAuditEvent> events = audited();
-    assertEquals(1, events.size());
-    assertEquals(ServiceName.TABLES_SERVICE, events.get(0).getServiceName());
+    assertNull(result.getResolvedException());
+    assertEquals("", result.getResponse().getContentAsString());
+    assertEquals(new ArrayList<ServiceAuditEvent>(), audited());
   }
 
   /** A native route's error is answered by the native advice, in its error shape. */
