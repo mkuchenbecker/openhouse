@@ -6,6 +6,8 @@
 # LinkedIn main's own lines (present at bb8929e1).
 # flake8's code for an unused import.
 integrations/python/dataloader/tests/test_scan_optimizer.py | F401 | *
+# flake8's code for a comparison to True.
+integrations/python/dataloader/tests/test_filters.py | E712 | *
 # Names of the test's two data files.
 integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F1 | *
 integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F2 | *
@@ -25,10 +27,9 @@ libs/optimizer/analyzer/src/main/java/com/linkedin/openhouse/optimizer/analyzer/
 libs/optimizer/analyzer/src/main/java/com/linkedin/openhouse/optimizer/analyzer/CadencePolicy.java | #812 | * PR #812 review discussion.
 # The x86_64 platform name (LinkedIn main).
 integrations/python/dataloader/Makefile | x86 | *
-# LinkedIn main's line, in its Spark 3.1 itest and in the file this branch moved from there (linkedin/iceberg
+# LinkedIn main's line, in the file this branch moved from its Spark 3.1 itest (linkedin/iceberg
 # pull requests 267 to 269).
 integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/test/java/com/linkedin/openhouse/spark/catalogtest/ColumnDefaultSparkITest.java | #267 | /** Enable once Spark Parquet readers fill {@code initial-default}; #267–269 added ORC only. */
-integrations/spark/spark-3.1/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/ColumnDefaultSparkITest.java | #267 | /** Enable once Spark Parquet readers fill {@code initial-default}; #267–269 added ORC only. */
 
 # This branch's own lines.
 # Row values of the test's data (upper-cased names of the rows a statement changed).

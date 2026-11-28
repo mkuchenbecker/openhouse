@@ -42,3 +42,22 @@ shadowJar {
     mergeStrategy = "merge"
   }
 }
+
+// For JacksonShadedVersionsTest: the line, and the Jackson modules of the runtime classpath, which
+// the uber jar (shadowJar) is built from. An input of the task, so that a changed version reruns
+// the test instead of reusing a result.
+tasks.named('test') {
+  systemProperty 'openhouse.iceberg.line', gradle.ext.icebergLinkedIn ? 'linkedin' : 'default'
+  def runtime = configurations.runtimeClasspath
+  def jacksonRuntime = providers.provider {
+    runtime.incoming.resolutionResult.allComponents
+        .collect { it.moduleVersion }
+        .findAll { it != null && it.group.startsWith('com.fasterxml.jackson') }
+        .collect { "${it.group}:${it.name}:${it.version}".toString() }
+        .unique().sort().join(',')
+  }
+  inputs.property('jacksonRuntime', jacksonRuntime)
+  doFirst {
+    systemProperty 'openhouse.jackson.runtime', jacksonRuntime.get()
+  }
+}

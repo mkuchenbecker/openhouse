@@ -105,7 +105,7 @@ tasks.matching { it.name == 'generateOpenApiDocs' }.configureEach {
 // credentials routes). A build uses one Iceberg line for every module (1.12 by
 // default, LinkedIn's 1.5.2 under -PicebergLinkedIn), as openhouse-catalog-capabilities does: the
 // reference line compiles without them, and there those routes answer 406 as before.
-if (!rootProject.hasProperty('icebergLinkedIn')) {
+if (!gradle.ext.icebergLinkedIn) {
   sourceSets {
     main {
       java {
@@ -153,6 +153,22 @@ tasks.named('test') {
   // the heap in use after a full collection reaches about 500 MB late in the suite: above the
   // default 512 MB worker heap's margin, so a little more.
   maxHeapSize = '640m'
+  // For JacksonRuntimeVersionsTest: the line, and the Jackson modules of the runtime classpath (what
+  // the boot jar ships), resolved when the test task runs.
+  systemProperty 'openhouse.iceberg.line', gradle.ext.icebergLinkedIn ? 'linkedin' : 'default'
+  // An input of the task, so that a changed version reruns the test instead of reusing a result.
+  def runtime = configurations.runtimeClasspath
+  def jacksonRuntime = providers.provider {
+    runtime.incoming.resolutionResult.allComponents
+        .collect { it.moduleVersion }
+        .findAll { it != null && it.group.startsWith('com.fasterxml.jackson') }
+        .collect { "${it.group}:${it.name}:${it.version}".toString() }
+        .unique().sort().join(',')
+  }
+  inputs.property('jacksonRuntime', jacksonRuntime)
+  doFirst {
+    systemProperty 'openhouse.jackson.runtime', jacksonRuntime.get()
+  }
 }
 
 // Keep the HTS bootstrap resources isolated from existing Tables Service tests.

@@ -29,13 +29,6 @@ ext {
   antlrMainGeneratedSrcDir = "${project.buildDir}/generated-src/antlr/main/"
 }
 
-def forkRepo = rootProject.ext.icebergForkRepo
-if (!new File(forkRepo, ".published-${icebergVersion}-spark-4.2_2.13").exists()) {
-  throw new GradleException(
-      "The fork's iceberg-spark-runtime-4.2_2.13:${icebergVersion} is not published in "
-          + "${forkRepo}. Run scripts/iceberg-fork/publish-local.sh first.")
-}
-
 java {
   sourceCompatibility = JavaVersion.VERSION_17
   targetCompatibility = JavaVersion.VERSION_17

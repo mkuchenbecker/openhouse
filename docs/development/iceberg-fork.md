@@ -35,8 +35,18 @@ scripts/iceberg-fork/publish-local.sh  # once per pinned commit per machine; FOR
 ./gradlew -PicebergLinkedIn build      # the reference line; needs no publish-local.sh
 ```
 
-Every Gradle command on the default build, `help` and the git hooks' `spotlessCheck` included,
-needs the fork published first: until then it stops with a message that names the script.
+Until the fork is published, the default build still configures, so `help`, `projects` and the
+git hooks' `spotlessCheck` work, with a warning that names the script; a task that needs Iceberg (a
+compile, a test) fails where it resolves the fork's jars, with the same message. So does a set that
+is only partly published (its marker file is missing, say after an interrupted run). An IDE import
+resolves the modules' classpaths, so expect it to fail the same way until the script has run.
+`-PicebergLinkedIn` (or `-PicebergLinkedIn=true`) selects the reference line;
+`-PicebergLinkedIn=false` is the default build, and another value is refused.
+
+The script needs Java 17 or later (`JAVA_HOME`, else `java` on the `PATH`) and stops at once
+otherwise. The fork's tree has no Gradle wrapper jar; its `gradlew` would download one with no
+checksum and run it, so the script downloads it itself and runs the fork's build only when the
+jar's SHA-256 is the one pinned in `iceberg-fork.properties` (`gradleWrapperJarSha256`).
 
 `publish-local.sh` fetches the pinned commit into `~/.gradle/iceberg-fork/src`, then runs the fork's
 `publishToMavenLocal` for the modules OpenHouse consumes with `-Dmaven.repo.local` pointing at
@@ -312,8 +322,14 @@ gets a job of its own, and any other new project runs in `rest`, without a chang
 workflow. On the reference line a matched project that is not in that build (Spark 4.2) is a job
 that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Gradle dry runs, that
 the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
-reads the list (and on the default line checks the merged optimizer migrations); a last one of the
-default line runs the Docker steps above, after `./gradlew clean assemble`. Each job restores the
+reads the list (and on the default line checks the merged optimizer migrations); a job beside the
+groups, the test-group partition, runs that check (it needs no published fork); another of the
+default line runs the Docker steps above, after `./gradlew clean assemble`. The
+last job of each line, `Build and Run Tests`, needs all the others and is green only when each of
+them succeeded (the reference line's skipped Docker job aside). On a pull request the default
+line's is the check the single job reported, `build-run-tests / Build and Run Tests`, which branch
+protection can require; the reference line's, `iceberg-linkedin-build / Build and Run Tests`, is
+optional upstream. Each job restores the
 fork and the newest Gradle cache entry of its line, saved under one name a line
 (`GRADLE_BUILD_ACTION_CACHE_KEY_JOB`: `build-and-run-tests` or `iceberg-linkedin-build`, the ids
 the single jobs had). Only one job a line writes that cache, the `rest` job of the run after a
