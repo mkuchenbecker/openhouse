@@ -17,7 +17,6 @@ import org.springframework.util.AntPathMatcher;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -118,7 +117,8 @@ public class IcebergRestCatalogController {
    * Takes the metrics report a client posts after a scan or a commit. Secured like the load route;
    * the parameter names are the ones the authorization interceptor reads. Mapped here, with the
    * reads, and not with the writes: its request class exists on every Iceberg line this server runs
-   * on.
+   * on. The body is read with a bound, and audited by what identifies the report and its size, not
+   * its content ({@link IcebergRestMetricsReports}).
    */
   @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC report metrics: NO_CONTENT"))
   @PostMapping(V1 + "/namespaces/{namespace}/tables/{table}/metrics")
@@ -126,13 +126,12 @@ public class IcebergRestCatalogController {
   public ResponseEntity<byte[]> reportMetrics(
       @PathVariable("namespace") String databaseId,
       @PathVariable("table") String tableId,
-      @RequestBody(required = false) byte[] body) {
+      HttpServletRequest httpRequest) {
     String database = IcebergRestApiHandler.tableDatabaseId(databaseId, tableId);
-    handler.reportMetrics(
-        database,
-        tableId,
-        IcebergRestJson.read(body, ReportMetricsRequest.class),
-        extractAuthenticatedUserPrincipal());
+    byte[] body = IcebergRestMetricsReports.read(httpRequest);
+    ReportMetricsRequest request = IcebergRestJson.read(body, ReportMetricsRequest.class);
+    IcebergRestMetricsReports.audit(httpRequest, request, body.length);
+    handler.reportMetrics(database, tableId, request, extractAuthenticatedUserPrincipal());
     return IcebergRestJson.noContent();
   }
 
