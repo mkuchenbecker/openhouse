@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tablestest;
 
+import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_PATTERN_SEARCH_REGEX;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.ALPHA_NUM_UNDERSCORE_REGEX;
 import static com.linkedin.openhouse.common.api.validator.ValidatorConstants.INITIAL_TABLE_VERSION;
 import static com.linkedin.openhouse.internal.catalog.CatalogConstants.ENTITY_TYPE_TABLE;
@@ -84,8 +85,10 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
  *       findAll(Sort)}, {@code findAllById}, {@code deleteAllById}, {@code deleteAll(entities)},
  *       {@code delete(entity)}) are refused here too.
  *   <li>Names are checked as House Tables checks them (letters, digits and underscores) on the
- *       writes, the keyed reads and deletes, and the listings, but not on purge and restore, which
- *       the tables service reaches only with names it has checked.
+ *       writes, the keyed reads and deletes, and the listings (the soft-deleted listing's table
+ *       name against House Tables' search pattern, which allows a leading and trailing {@code %}),
+ *       but not on purge and restore, which the tables service reaches only with names it has
+ *       checked.
  *   <li>Sorting ignores letter case as Java does ({@code String.CASE_INSENSITIVE_ORDER}); the
  *       production collation ({@code utf8mb4_0900_ai_ci}) puts punctuation before digits, so names
  *       that differ in an underscore against a digit ({@code a_} and {@code a1}) sort the other way
@@ -407,6 +410,10 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   public Page<HouseTable> searchSoftDeletedTables(
       String databaseId, String tableId, Pageable pageable) {
     requireListableDatabase(databaseId);
+    if (tableId != null && !tableId.matches(ALPHA_NUM_UNDERSCORE_PATTERN_SEARCH_REGEX)) {
+      throw WebClientResponseException.create(
+          400, "Bad Request", HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8);
+    }
     List<HouseTable> rows;
     synchronized (softDeleted) {
       rows =
