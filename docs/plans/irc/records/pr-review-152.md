@@ -286,3 +286,120 @@ What matters most:
 - The 1.5.2 `RESTSessionCatalog` view-builder path behind F4, beyond the author's statement that it wraps the 403 in
   `NoSuchViewException`.
 - CI results. The author reports 14 of 14 jobs green on `478edea6`.
+
+## Re-check at 33797be0
+
+Read only. The fix commits are `1dd4e003` (tests), `51194711` (fix) and `cd3c0dfd` (Spark pin). The rest of
+`478edea6..33797be0` is the merge of `irc-integration` (#154 and FF-10, FF-14, FF-15, FF-16) and was not reviewed here.
+I read the main-source diff of the fix commits line by line and skimmed the tests. Nothing was run.
+
+**Verdict: MERGE.** F1 and F2 are closed. The one remaining gap (R1 below) is the RF-002 class, which the
+consolidation rated SHOULD FIX, and it gives out ids only, never metadata. It should still be closed in this pull
+request if that is cheap: it is a few lines.
+
+### Per finding
+- **F1: closed.**
+  - A commit that changed nothing now always ends in `answerAsALoad`
+    (`IcebergRestWriteHandler.java:283`, and the transaction route at `:323`). "Changed nothing" means `commitOn`
+    returned false: no updates, or the builder recorded no change and there is no policy patch.
+  - `answerAsALoad` runs `tablesService.checkLoad`, which is the same private `checkLoad` the native `loadTable` and
+    `getTable` run, now public. In order: LOCK_ADMIN, GET_TABLE_METADATA, the SYSTEM_ONLY decision, the capability
+    gate. A refusal is audited as a FAILED READ and an answer as a READ.
+  - An empty commit runs `checkLoad` in `authorize`, before its requirements. `answerAsALoad` skips it the second time
+    (`if (!request.updates().isEmpty())`), so there is one decision and one audit event.
+  - Tests that cover this:
+    - `aCommitThatChangesNothingIsALoad`: seven no-op shapes, on the commit and transaction routes.
+    - `onALegacyLockedTable...NeedsLockAdmin` and `onASystemOnlyLockedTable...` (423).
+    - `IrcReadRoutesTest.aCommitThatChangesNothingIsGatedAsTheLoad` (422).
+- **F2: closed.** The empty commit gets the full `checkLoad`.
+- **F3: not fixed. Pinned as a known defect** (`knownDefectAnAuthorizationBackendFailureIs403OnTheIrcTableRoutes`) and
+  listed under "left". That is acceptable: it predates this pull request and fails closed.
+- **F4: closed as asked.** It is declared as behavior change 5. The Spark tests `aWriterThatMayNotReadCannotReplaceThroughTheClient`
+  and `aReaderMayLoadAndIsForbiddenToReplace` restore the client-level denied replace (this also covers F9).
+- **F6 (audit): closed.** An answered no-change commit emits READ SUCCESS through `TableAuditAspect.auditRead`, the
+  same shape as the IRC load's event (the test compares the JSON).
+- **F11: closed.** The partial copy in `TableCommitService.authorizeRead` is removed. `ViewsServiceImpl` has a single
+  read decision, and it no longer translates through the write translator.
+- **F12: closed** for replica (`aReplicaTablesCommitIsDecidedOnSystemAdminFirst`, denyOnly(SYSTEM_ADMIN)), legacy lock,
+  SYSTEM_ONLY and the backend failure. The refused transaction's audit event is still untested (declared).
+- **F5, F7, F8, F10: left and declared.** F7 is judged below.
+
+### Point 1: shapes that still answer something to a caller the native load refuses
+- **R1 (SHOULD FIX, ids only, the RF-002 class; it was already there at `478edea6`, which I missed).**
+  - For a commit with updates, `authorize` decides only `checkTableWritePathPrivileges`. Then `commitOn` checks the
+    requirements and applies the updates, before the core's lock checks and before `answerAsALoad`.
+  - So on a legacy-locked table, a writer without LOCK_ADMIN who sends a failing `assert-table-uuid`
+    (`assert-ref-snapshot-id`, `assert-current-schema-id`, ...) gets 409 "UUID does not match: expected <stored> != ...",
+    with the stored ids. This holds whether the updates change the table or not.
+  - The same happens on a SYSTEM_ONLY-locked table for a writer without system-only access.
+  - Natively the PUT refuses a legacy-locked table for everyone before anything else (`TableCommitCore.java:69-78`), and
+    the load refuses this caller.
+  - What leaks: the UUID, ref snapshot ids, and schema, spec and last-column ids. No metadata body leaks: the no-change
+    answer is gated by `checkLoad`, and a changing commit is refused by the core with 400 or 423.
+  - Fix: in `authorize`'s write branch, decide what the native PUT decides before it touches the request, in its
+    order: the legacy-lock refusal (`UnsupportedClientOperationException`, "locked state and cannot be updated"), then
+    `checkTableWritePathPrivileges`, then `checkSystemOnlyLockAccess`. That is the core's order and moves toward
+    native: a denied caller on a legacy-locked table then gets the native 400 instead of 403.
+- A write-only caller (no read privilege) still learns ids from 409s before the no-change `checkLoad`. That adds nothing
+  to what F7 already gives such a caller on any real commit.
+- **Policy patch that changes nothing:** the patch is present, so the commit is a write through the core (lock,
+  privilege, SYSTEM_ONLY, capability) and is answered by `loaded()`. That is the F7 class, below.
+- **One-table transaction:** the same branches. It answers 204, so only R1's 409 applies.
+- **View commit with updates that change nothing:** `authorizeRead` now runs after `apply`
+  (`IcebergRestViewHandler.java:162-178`). A view writer without read can learn the view UUID from a 409 first, but a
+  real replace already answers that writer the whole definition (declared), and views have no locks. So this adds
+  nothing.
+- **Staged-create completion:** unchanged. It tells existence only.
+
+### Point 2: F7 parity judgement (a real commit by a writer without the read privilege)
+- **Native:**
+  - `PUT /v1/databases/{d}/tables/{t}` has no `@Secured` (`TablesController.java:221-228`; only the GET at `:62` has
+    `GET_TABLE_METADATA`).
+  - It runs `TableCommitCore`: legacy-lock refusal, write privilege, SYSTEM_ONLY, `clientCapabilityGate.checkWrite`
+    (the stored table's capabilities included).
+  - It answers `tablesMapper.toGetTableResponseBody(tableDto)` (`OpenHouseTablesApiHandler.java:132-137`). That body
+    is: ids, UUID, `tableLocation` (the metadata file path), version, creator, the current schema, properties,
+    partitioning, clustering, policies, type, sort order and timestamps.
+  - So natively a writer without read does get the table's current definition, policies included.
+- **`/iceberg`:**
+  - The checks are the same, because a real commit goes through the same core.
+  - It answers `loaded(identifier)`, a fresh `loadBase` with no checks. That is the **full Iceberg `TableMetadata`**:
+    every snapshot with its manifest-list path and summary, the snapshot log, the metadata log, refs, every historical
+    schema, spec and sort order, statistics files, plus the per-table `io-impl` config.
+  - It is also a reload, so a table dropped and recreated in between is answered with no decision on it (RF-007).
+- **Judgement: not parity, but not merge-blocking.**
+  - The extra is snapshot history and file paths. Natively the same content sits in the file at `tableLocation`, which
+    a writer can read only with storage access.
+  - The locks and the capability gate are not skipped.
+  - It predates this pull request (it is how the IRC write routes have always answered), and this pull request neither
+    claims nor widens it.
+  - It must be written down as a behavior change, not called parity. The PR body's "as the native table PUT answers
+    its full body to a writer" overstates the match. Add it to `85-behavior-change-ledger.md`.
+  - The narrowest later fix: answer `loaded()` through `checkLoad` when the caller lacks the read privilege, or answer
+    a writer without read with the committed metadata only (FF-41's "committed metadata, not a reload").
+
+### Point 3: `TablesService.checkLoad` default
+- The only implementation is `TablesServiceImpl` (grep), which overrides the default with its existing method, now
+  public and unchanged. The default (a `getTable` lookup) is therefore never used.
+- If another implementation did use it, it would read the table a second time. It would add no audit event: the table
+  audit advises `TablesApiHandler.getTable`, not the service.
+- Native callers of `checkLoad` (`getTable`, `loadTable`) are unchanged.
+- The default is safe. It would be cleaner as an abstract method, but that is minor.
+
+### Point 4: the author's reason for not going through the core
+- Sound. The core's "unchanged" shortcut comes after the write decision only, so a write-only principal would still be
+  answered, and the core never runs the read capability check before answering.
+- The stored table is what is answered, so the load's checks are the right gate.
+- One cost: a no-change commit on a legacy-locked table by a LOCK_ADMIN holder with write and read is answered (as the
+  load answers), where the native PUT answers 400. That moves toward the load and is acceptable.
+
+### Point 5: new in the fix commits, and native routes
+- Native: only `TablesServiceImpl.checkLoad` changed (`private` to `public @Override`) and the interface default was
+  added. `TableCommitService` lost `authorizeRead`, which had no native caller. The `ViewsServiceImpl` read decision
+  is now shared, and the native GET (`loadView`, no-op hook) is untouched. `TableAuditAspect.auditRead` is new and has
+  no pointcut. **No native route behavior changed.**
+- New in the IRC code:
+  - The view no-change path calls `viewsService.viewReference` again: a third House Tables read, with the same
+    narrow F5-style window. MINOR.
+  - `ViewsServiceImpl.authorizeRead` no longer goes through `translateWriteFailureTo`. That makes no difference,
+    because `AccessDeniedException` and `AuthorizationServiceException` passed through it unchanged anyway.

@@ -114,3 +114,7 @@ transcription error and should be fixed here.
 - S59. [fault 3] "(3) use the duplicate work for reference."
 - S60. [fault 4] "(4) is your big miss. This is a hard requirement in that this can't be contributed upstream given behavior changes without sufficient justification. it's not a two say door to change behavior. it is a two way door when it's documented for follow up and not a foundation decision that invalidates significant work. significant is a judgement call, but if a single agent can fix it with a single pull request less than a couple thousand lines with <20 files it's easily fixable."
 - S61. [fault 6] "6 i have no line limit. i want results as effectively as possible."
+
+## Statement of 2026-11-28
+
+- S62. [2026-11-28] "make sure you ar using opus vs fable for sub tasks"

@@ -1,7 +1,7 @@
 # Authorize first on the Iceberg REST commit routes: record
 
 ## Bottom line (kept current)
-Done. Draft pull request #152 (base `irc-integration`), head `478edea6dc7ebd62c9b1c21d55a1d9f5ecac1a04`, every CI job green.
+Done (review round included). Draft pull request #152 (base `irc-integration`), head `33797be07dbbd3f636c4c2c88cc9681eb7a9c7d9`, every CI job green.
 The table commit, one-table transaction and view commit routes now make the native privilege decision before anything
 stored is checked or answered, an empty commit needs the load's privileges, and the IRC view load needs GET_TABLE_METADATA
 on the view. Full route table, behavior changes and what is left: in the pull request body (copy in scratchpad/authz-first/pr-body.md).
@@ -79,3 +79,6 @@ on the view. Full route table, behavior changes and what is left: in the pull re
     (29 tests) and Spark view/read (19) on the default line: 0 failed; check-test-groups holds on both lines. Pushed.
     Pull request body replaced (behavior changes 1-6, route table rows for no-change commits, pins, left with review ids).
     Polling CI on `33797be07dbbd3f636c4c2c88cc9681eb7a9c7d9`.
+17. CI on `33797be07dbbd3f636c4c2c88cc9681eb7a9c7d9`: all 13 test jobs success (Default and Reference: test groups, rest,
+    apps-spark-3.5, apps-spark-4.2, spark-3.5 itest, spark-4.2 itest; Default Docker images and integration tests); the two
+    top-level entries and the reference-workflow Docker job skipped by design. Done; report sent.

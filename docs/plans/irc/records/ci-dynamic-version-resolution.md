@@ -76,3 +76,40 @@ Worktree /home/user/oh-ci-deps, branch irc/ci-dynamic-version-resolution, base o
 - FINAL: head 7cbfdd61beceb7d9c1bfa145a70aa46072da6d30, all split-build jobs and both Dataloader jobs success
   (reference Docker skipped by design; two top-level "skipped" entries are the edited-event runs). Download counts
   same as the evidence run (writer fetch only takes effect after merge). Pull request #155 body complete. Done.
+
+## Review round (pr-review-155.md: MERGE AFTER FIXES)
+- Merged bc0ff1e8 (d0e8d505). Review fixes commit 16a21187; temp evidence step ed17c207 (to be removed).
+- Gradle 8.14.5 bytecode (read): resolution retries in ErrorHandlingModuleComponentRepository$...Access,
+  props org.gradle.internal.repository.max.tentatives (default 3) / .initial.backoff (1000 ms, doubling);
+  transient = NetworkingIssueVerifier: SocketException, SocketTimeout, NoHttpResponse, ConnectionClosed, 5xx,
+  408, 429. org.gradle.internal.network.retry.* is used only by publishers. Measured: user-home gradle.properties
+  systemProp gives 4 waits 500/1000/2000/4000 ms.
+- Spring Boot plugin requests mapped to spring-boot-gradle-plugin (marker POM's one dependency); buildEnvironment
+  same module set on both lines, marker node gone.
+- log4j/logback: settled by fixed versions in the graph (insight: By constraint / conflict resolution); alone the
+  ranges resolve to 2.26.1 / 1.6.8 (scratch project, 2026-11-28). Lists decide only json-smart and mysql.
+- Warm task: 0 failures after leaving out incrementalScalaAnalysisFor* (45 plain-resolution variant failures there).
+- Dispatched post-merge-build.yml on the branch at ed17c207.
+- CORRECTION of my earlier entry: the marker HEAD 429 was observed in BOTH legs of job 140798103014 (three 429s),
+  and in the no-script leg json-smart and mysql FAILED with no request because Central was already disabled.
+- Dispatch run 46094839702 (head ed17c207, branch had no cache): Reference writer fetch 4 s, 52 projects, 29570
+  files, 0 failures; saved deps 656840800 B, home 93394474 B, transforms 25538315 B. Default line: fork publish
+  failed (429 via plugin portal redirect, ~134 s, consistent with 7 tries), build skipped, fetch BUILD FAILED.
+  Cold reader 140823748421: marker module never requested; spring-boot-gradle-plugin downloaded directly.
+- PR run 46094836051 (ed17c207): restored entry 0 days old; readers: 0 repository lines.
+- 5f6faa27: temp step removed, fetch gated on the build; 14adc5c1: merge of 68e2557d (#152). PR body rewritten.
+- FINAL (round 2): head 14adc5c11d518d10f7b5bb501b6aca8dfd0ea4f6. Every job success (reference Docker skipped
+  by design; two top-level skipped = edited-event). Restored cache 0 days old in every job; no 429 in any log;
+  downloads: Ref 3.5-itest 4, Def 3.5-itest 5, Def apps-3.5 1, Def Docker 2, Def apps-4.2 3, others 0 (unchanged,
+  as expected before the writer's fetch runs on irc-integration). Dispatch run 46094839702 ended with default
+  rest and 3.5-itest failed (cold cache, fork publish 429), everything else success.
+
+## Follow-up: default line still downloading after #155 (worktree /home/user/oh-ci-deps2, branch irc/ci-warm-up-default-line)
+- PR 157 (63c65e76) default jobs: same 11 files as before. Cause (evidence): default writer job 140839247995
+  (post-merge 4d9362ee) fetch stalled 02:50:04-02:52:11 then 52 "could not resolve: ... Repository maven is
+  disabled" lines incl. all 11 files; entry saved 02:52:30 without them. Next writer 140852687277 (0d54d2fd):
+  fetch 5 s, 0 failures, 29 downloads incl. all 11, saved 04:04:30. Refused request's status unknown (not printed).
+- Fix b5ec038d: innermost cause printed; failure count file; second fetch after 60 s; warning annotation. Draft PR opened.
+- PR 159 run on b5ec038d: restored 0d54d2fd entry (04:04 UTC); every job of both lines downloaded 0 files, no
+  429; all jobs success (reference Docker skipped by design). Success measure met by the warmed entry; the
+  second-try path is exercised only when a writer's first fetch is refused.

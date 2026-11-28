@@ -111,13 +111,21 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `review-ci-fixtures-tests.md` | retroactive review | pull requests 80, 81, 82, 83, 85, 90, 93, 104, 108, 111, 115, 133, 138, 140, 144, 146, 148, 150 | retroactive review, 2026-11-27 |
 | `fix-brief-common.md` | fix-forward work | the fix-forward pull requests of 2026-11-27 | the common brief every fix-forward agent works under (see `../86-review-findings-and-fix-forward.md`) |
 | `scout-namespace-and-prior-work.md` | scout of the owner's namespace line | upstream pull requests 869 to 871 and the earlier drafts on the fork | `../89-scout-namespace-and-prior-work-result.md` |
-| `authorize-first-on-rest-commits.md` | FF-01, FF-02, FF-03 | pull request 152, in review, not merged (branch `irc/authorize-first-on-rest-commits`) | `../18-state.md` (in flight) |
+| `authorize-first-on-rest-commits.md` | FF-01, FF-02, FF-03 | pull request 152 (merge `68e2557d`) | `../18-state.md` (in flight) |
 | `build-on-owner-namespace-stack.md` | merge of the owner's namespace stack, D54 | pull request 153 (merge `bc0ff1e8`) | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` part D |
 | `restore-jobs-and-client-behavior.md` | FF-10, FF-14, FF-15, FF-16, W13 | pull request 154 (merge `7cf347d7`) | `../91-first-reviewed-merges-result.md` |
-| `restore-native-service-behavior.md` | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40 | pull request 156, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
-| `ci-dynamic-version-resolution.md` | FF-47 (CI dependency resolution) | pull request 155, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `restore-native-service-behavior.md` | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40 | pull request 156 (merge `0d54d2fd`) | `../86-review-findings-and-fix-forward.md` (status) |
+| `ci-dynamic-version-resolution.md` | FF-47 (CI dependency resolution) | pull request 155 (merge `4d9362ee`); the cache writer part in pull request 159 (merge `8a5a9980`) | `../86-review-findings-and-fix-forward.md` (status) |
 | `pr-review-brief-common.md` | independent review of one pull request before merge | the pull requests merged under the owner's standing order S58 | the common brief every pull request reviewer works under |
 | `pr-review-151.md` | review of pull request 151 (X2, X3) | pull request 151 | `../91-first-reviewed-merges-result.md` |
-| `pr-review-152.md` | review of pull request 152 (FF-01, FF-02, FF-03) | pull request 152, not merged | `../91-first-reviewed-merges-result.md` (What the reviews are finding) |
+| `pr-review-152.md` | review of pull request 152 (FF-01, FF-02, FF-03), two rounds | pull request 152 | `../91-first-reviewed-merges-result.md` (What the reviews are finding) |
 | `pr-review-153.md` | review of pull request 153 (owner's namespace stack) | pull request 153 | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` part D |
 | `pr-review-154.md` | review of pull request 154 (restore jobs and client) | pull request 154 | `../91-first-reviewed-merges-result.md`, `../85-behavior-change-ledger.md` |
+| `pr-review-155.md` | review of pull request 155 (FF-47) | pull request 155 (merge `4d9362ee`) | `../92-reviewed-merges-152-to-159-result.md` |
+| `pr-review-156.md` | review of pull request 156 (restore native service behavior) | pull request 156 (merge `0d54d2fd`) | `../92-reviewed-merges-152-to-159-result.md`, `../85-behavior-change-ledger.md` |
+| `pr-review-157.md` | review of pull request 157 (namespace routes) | pull request 157 (merge `518a2134`) | `../92-reviewed-merges-152-to-159-result.md` |
+| `pr-review-158.md` | review of pull request 158 (authorization and exposure follow-up), first review, sent back | pull request 158, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `pr-review-159.md` | review of pull request 159 (cache writer fetch) | pull request 159 (merge `8a5a9980`) | `../92-reviewed-merges-152-to-159-result.md` |
+| `iceberg-rest-namespace-routes.md` | the Iceberg REST namespace write routes | pull request 157 (merge `518a2134`) | `../92-reviewed-merges-152-to-159-result.md` |
+| `rest-authorization-and-exposure-gaps.md` | FF-04, FF-06 (part), FF-07, FF-08, FF-48 and review leftovers | pull request 158, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `baseline-of-linkedin-main.md` | FF-20 to FF-24 (baseline of LinkedIn main) | branch `irc/baseline-of-linkedin-main`, in progress | `../86-review-findings-and-fix-forward.md` (status) |
