@@ -38,10 +38,11 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * Work item V14 at format v3 ({@code cluster.iceberg.format-v3.enabled} on): a create transaction
- * that asks for v3, appends, adds a column with native default values, partitions and sorts on it
- * and appends again keeps its history as Iceberg's in-memory catalog keeps it, with the row lineage
- * (next-row-id, each snapshot's first-row-id) and the column's defaults as the client built them.
+ * The create history at format v3 ({@code cluster.iceberg.format-v3.enabled} on): a create
+ * transaction that asks for v3, appends, adds a column with native default values, partitions and
+ * sorts on it and appends again keeps its history as Iceberg's in-memory catalog keeps it, with the
+ * row lineage (next-row-id, each snapshot's first-row-id) and the column's defaults as the client
+ * built them.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

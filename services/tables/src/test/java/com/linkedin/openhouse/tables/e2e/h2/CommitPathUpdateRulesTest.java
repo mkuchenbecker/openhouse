@@ -35,10 +35,11 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
- * Rules of an update commit on an existing table that had no pin at the HTTP boundary before work
- * item V1: reserved properties (including the raw {@code policies} key), the snapshots route's
- * locked-table wording, and the SYSTEM_ONLY lock that only the lock API may change. Each case pins
- * the status, the stable part of the message and that a follow-up GET shows nothing changed.
+ * Rules of an update commit on an existing table, pinned at the HTTP boundary so that the shared
+ * commit core ({@code TableCommitCore}) keeps them: reserved properties (including the raw {@code
+ * policies} key), the snapshots route's locked-table wording, and the SYSTEM_ONLY lock that only
+ * the lock API may change. Each case pins the status, the stable part of the message and that a
+ * follow-up GET shows nothing changed.
  */
 @SpringBootTest
 @AutoConfigureMockMvc

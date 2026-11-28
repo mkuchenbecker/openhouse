@@ -20,12 +20,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  * The view beans and the view commit contract of the embedded server. Both fixtures compile and run
  * this.
  *
- * <p>Until the Iceberg 1.2 line was removed this also audited every bean signature for Iceberg view
- * types (a view type on a bean signature stopped the server from starting under 1.2) and checked
- * that the view commit beans were registered only where the view API exists. Those checks went with
- * the guards they tested (work item V18). It also checked that exactly one of the real and the
- * disabled views service was registered, by the Iceberg line; the disabled service went with the
- * last of that line (work item V22). What remains has its own subject.
+ * <p>It does not audit bean signatures for Iceberg view types or check which views service is
+ * registered on which Iceberg line: those checks guarded the Iceberg 1.2 line, which the build no
+ * longer has.
  */
 public class IcebergViewBeanBoundaryTest {
 

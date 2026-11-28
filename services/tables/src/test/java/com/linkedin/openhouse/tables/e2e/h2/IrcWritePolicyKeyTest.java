@@ -41,10 +41,10 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * <p>OpenHouse's Spark policy statements ({@code ALTER TABLE ... SET POLICY}, column tags) set this
  * property; the OpenHouse Java client strips it and merges it into the request's policies. A plain
  * Iceberg client sends it as an ordinary property. The IRC create, staged create, staged-create
- * completion and commit routes now do what the client does (V5-1): the patch is merged onto the
- * stored policies and applied, and the key itself is never stored. (Until V5-1 these requests were
- * refused with 400; {@link IrcPolicyPatchTest} holds the equivalence with the client's native
- * requests.) The native API's handling of the key is unchanged.
+ * completion and commit routes do what the client does: the patch is merged onto the stored
+ * policies and applied, and the key itself is never stored ({@link IrcPolicyPatchTest} holds the
+ * equivalence with the client's native requests). The native API's handling of the key is
+ * unchanged.
  */
 @SpringBootTest
 @AutoConfigureMockMvc

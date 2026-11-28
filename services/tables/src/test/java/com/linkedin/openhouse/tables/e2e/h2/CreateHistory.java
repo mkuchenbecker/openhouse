@@ -21,10 +21,10 @@ import org.apache.iceberg.types.Types;
 
 /**
  * Create transactions that change the table's schema, partition spec and sort order before they
- * commit (work item V14), run the same way against any catalog, and the parts of the resulting
- * metadata that say what history the table kept: every schema, spec and sort order with its id, the
- * current ones, the last column and partition field ids, and for each snapshot its schema id and
- * the spec id of each file it added. Iceberg's own in-memory catalog is the reference.
+ * commit, run the same way against any catalog, and the parts of the resulting metadata that say
+ * what history the table kept: every schema, spec and sort order with its id, the current ones, the
+ * last column and partition field ids, and for each snapshot its schema id and the spec id of each
+ * file it added. Iceberg's own in-memory catalog is the reference.
  */
 final class CreateHistory {
   private CreateHistory() {}

@@ -36,13 +36,13 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * One plan is bounded (work item V11c): with the cluster property {@value #BOUND} set to 5, a scan
- * that plans more than five file scan tasks is answered {@code failed}, with an error that names
- * the bound and says to plan on the client, and no task; a scan that plans five or fewer is
- * answered as before, the tasks client planning gets. An unmodified Iceberg 1.12 {@link
- * RESTCatalog} configured to plan on the server fails the scan visibly ({@code
- * IllegalStateException} from its scan), never reads fewer rows; one that plans on the client is
- * not affected. The bound counts the tasks the scan plans, after pruning by the filter.
+ * One plan is bounded: with the cluster property {@value #BOUND} set to 5, a scan that plans more
+ * than five file scan tasks is answered {@code failed}, with an error that names the bound and says
+ * to plan on the client, and no task; a scan that plans five or fewer is answered as before, the
+ * tasks client planning gets. An unmodified Iceberg 1.12 {@link RESTCatalog} configured to plan on
+ * the server fails the scan visibly ({@code IllegalStateException} from its scan), never reads
+ * fewer rows; one that plans on the client is not affected. The bound counts the tasks the scan
+ * plans, after pruning by the filter.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

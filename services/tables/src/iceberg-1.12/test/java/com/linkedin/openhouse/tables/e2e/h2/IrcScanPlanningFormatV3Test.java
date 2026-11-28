@@ -33,13 +33,12 @@ import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
 
 /**
- * The service refuses to plan a scan of a format v3 table (work item V11e; the cluster switch
- * {@code cluster.iceberg.format-v3.enabled} on). A scan task in the specification carries no
- * sequence number, so a server-planned read of a v3 table would return a null inherited {@code
+ * The service refuses to plan a scan of a format v3 table (the cluster switch {@code
+ * cluster.iceberg.format-v3.enabled} on). A scan task in the specification carries no sequence
+ * number, so a server-planned read of a v3 table would return a null inherited {@code
  * _last_updated_sequence_number}, and a server-planned copy-on-write rewrite would store wrong row
  * lineage. The plan is answered {@code failed}, and an Iceberg 1.12 client fails the scan visibly;
- * client planning reads the table as before. Until V11e this class compared a v3 plan with deletion
- * vectors to client planning; that subject no longer exists.
+ * client planning reads the table as before.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

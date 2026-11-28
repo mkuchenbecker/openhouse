@@ -30,12 +30,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
- * Work item V14: a table an Iceberg {@link RESTCatalog} creates through a create transaction that
- * changed the schema, the partition spec and the sort order before it committed keeps that history,
- * and the native OpenHouse path (the OpenHouse Java client, and Spark SQL through the {@code
- * openhouse} catalog) reads and writes it: inserts land under the final spec, a later schema change
- * through Spark and a later commit through the REST catalog keep the history, and both clients see
- * the same metadata after each step.
+ * A table an Iceberg {@link RESTCatalog} creates through a create transaction that changed the
+ * schema, the partition spec and the sort order before it committed keeps that history, and the
+ * native OpenHouse path (the OpenHouse Java client, and Spark SQL through the {@code openhouse}
+ * catalog) reads and writes it: inserts land under the final spec, a later schema change through
+ * Spark and a later commit through the REST catalog keep the history, and both clients see the same
+ * metadata after each step.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class IcebergRestCreateHistoryTest extends OpenHouseSparkITest {

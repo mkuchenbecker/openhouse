@@ -1,6 +1,6 @@
 // Apache Iceberg's REST compatibility kit (RCK), from the fork's Iceberg 1.12 line, run against the
 // tables service's Iceberg REST Catalog (IRC) routes: the first objective measure of how far
-// OpenHouse is from a conforming IRC server (work item V13). Not in the -PicebergLinkedIn reference
+// OpenHouse is from a conforming IRC server. Not in the -PicebergLinkedIn reference
 // build (settings.gradle), which has no Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Two classpaths, two JVMs, as in the Spark 4.2 itest:

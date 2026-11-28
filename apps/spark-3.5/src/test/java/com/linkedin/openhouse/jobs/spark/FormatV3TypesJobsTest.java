@@ -32,9 +32,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 /**
- * The maintenance jobs on format v3 tables with the two column types the tables service takes there
- * (work item X5), on a tables service with the cluster switch on: stats collection (the one job
- * with type-specific code), data compaction and retention on a table with a {@code void} column
+ * The maintenance jobs on format v3 tables with the two column types the tables service takes
+ * there, on a tables service with the cluster switch on: stats collection (the one job with
+ * type-specific code), data compaction and retention on a table with a {@code void} column
  * (Iceberg's {@code unknown}); and what the Spark 3.5 jobs do with a table that has a {@code
  * variant} column, which Spark 3.5 cannot read. Format v3 needs the Iceberg 1.12 line, so these
  * tests are skipped on the reference line.

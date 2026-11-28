@@ -45,10 +45,10 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.util.ClassUtils;
 
 /**
- * What each Iceberg REST Catalog (IRC) route reads from House Tables (V17): every read call the
- * route makes on the {@link HouseTableRepository}, in order, with its kind and the number of rows
- * it returned, on a database of three tables. Three is enough to tell one keyed or one-row read
- * from a listing of the database, whose rows grow with the number of tables it holds.
+ * What each Iceberg REST Catalog (IRC) route reads from House Tables: every read call the route
+ * makes on the {@link HouseTableRepository}, in order, with its kind and the number of rows it
+ * returned, on a database of three tables. Three is enough to tell one keyed or one-row read from a
+ * listing of the database, whose rows grow with the number of tables it holds.
  *
  * <p>The repository is wrapped, once, in a stand-in that records each read and hands it on; the
  * store behind it is the H2 one every service test uses. A call made from inside the store (a

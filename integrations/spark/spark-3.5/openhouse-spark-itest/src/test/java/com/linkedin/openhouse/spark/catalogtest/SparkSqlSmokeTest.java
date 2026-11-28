@@ -23,10 +23,10 @@ import org.springframework.boot.web.context.WebServerApplicationContext;
 import org.springframework.context.ConfigurableApplicationContext;
 
 /**
- * The Spark SQL smoke suite (work item T1) on the Spark 3.5 catalog paths. The scenarios, their
- * statements and their baseline outcomes are {@link SparkSqlSmokeScenarios}, the one list the Spark
- * 4.2 itest runs too (work item N7). This class supplies only the sessions of each path and the
- * statements on which a path differs from the baseline.
+ * The Spark SQL smoke suite on the Spark 3.5 catalog paths. The scenarios, their statements and
+ * their baseline outcomes are {@link SparkSqlSmokeScenarios}, the one list the Spark 4.2 itest runs
+ * too. This class supplies only the sessions of each path and the statements on which a path
+ * differs from the baseline.
  *
  * <p>The catalog path is a parameter: a concrete subclass names its path in {@link #catalogPath()}
  * and {@link #sparkSession()} is the single place that turns the path into a session.
@@ -45,9 +45,9 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   /**
    * Iceberg's own {@code SparkCatalog} with {@code type=rest}, over HTTP to the tables service's
    * Iceberg REST routes, with no OpenHouse catalog class on the catalog: what a platform configures
-   * to reach OpenHouse through plain Iceberg REST (work item N1-c). The OpenHouse SQL extensions
-   * are in the session as on the other paths (the shared session loads them through {@code
-   * spark.sql.extensions}). On both Iceberg lines: see {@code RestHttpPathSparkSqlSmokeTest}.
+   * to reach OpenHouse through plain Iceberg REST. The OpenHouse SQL extensions are in the session
+   * as on the other paths (the shared session loads them through {@code spark.sql.extensions}). On
+   * both Iceberg lines: see {@code RestHttpPathSparkSqlSmokeTest}.
    */
   protected static final String REST_HTTP = "rest-http";
 
@@ -209,10 +209,8 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
    * The suite's own embedded tables service, one per test class, for every catalog path of the
    * class: the shared fixture's service, with two things added. Views are enabled for {@value
    * #VIEWS_DB} (the views feature gate; every other database keeps views off, as s28 shows), and
-   * the authorization backend stores grants ({@link GrantStoringAuthorization}, work item T6), so
-   * SHOW GRANTS lists what GRANT stored and REVOKE removed. Before T6 the main statements ran on
-   * the shared fixture, which drops grants, and the views statements on a second service like this
-   * one.
+   * the authorization backend stores grants ({@link GrantStoringAuthorization}), so SHOW GRANTS
+   * lists what GRANT stored and REVOKE removed; the shared fixture's service drops grants.
    */
   protected static synchronized String smokeServerUri() {
     if (smokeServer == null) {
@@ -293,7 +291,7 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
       differences.addAll(
           refusedReplaceLeavesItsDataFile(
               REFUSED_AT_COMMIT,
-              "Work item C3: Iceberg's RESTCatalog stages a replace on the client (it loads the"
+              "Iceberg's RESTCatalog stages a replace on the client (it loads the"
                   + " table, and no request carries the replace intent before Spark writes), so the"
                   + " gate runs when the adapter commits the replace, after the data file is"
                   + " written. The legacy catalog sends a native stage-replace first. Sending one"
@@ -312,11 +310,11 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
    * Iceberg 1.12's {@code SparkCatalog} checks a namespace's existence with {@code
    * catalog.namespaceExists} (apache/iceberg#14507), where 1.5.2 left Spark's default, which
    * describes the namespace. Still refused, as an {@code UnsupportedOperationException}; the
-   * wording is the OpenHouse catalog's answer to the other call (decision D14b).
+   * wording is the OpenHouse catalog's answer to the other call.
    */
   protected static List<Difference> namespaceExistsCheckOnIceberg112() {
     String why =
-        "Decision D14b: Iceberg 1.12's SparkCatalog checks existence with"
+        "Iceberg 1.12's SparkCatalog checks existence with"
             + " catalog.namespaceExists (apache/iceberg#14507), which the OpenHouse catalog"
             + " refuses with its own wording. Still refused, same class.";
     List<Difference> differences = new ArrayList<>();
@@ -349,8 +347,8 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
    * ({@code /v1/{prefix}/namespaces}): loading a namespace with no record, which is every database
    * that only holds tables (as {@value #DB} here), is NoSuchNamespaceException, which Spark answers
    * as SCHEMA_NOT_FOUND; a create of a new name stores a record. Where Iceberg 1.12's SparkCatalog
-   * first calls namespaceExists, still refused, the D14b difference stands instead (CREATE, DROP
-   * and USE on 1.12).
+   * first calls namespaceExists, still refused, that difference stands instead (CREATE, DROP and
+   * USE on 1.12).
    *
    * <p>These answers hold where House Tables stores namespace records (a JDBC store with the {@code
    * catalog_namespaces} table), as in this suite's embedded service. Without that table, or on the
@@ -416,10 +414,10 @@ public abstract class SparkSqlSmokeTest extends SparkSqlSmokeScenarios {
     return Collections.unmodifiableList(differences);
   }
 
-  /** The category of the files a replace leaves when the gate refuses only its commit (C3). */
+  /** The category of the files a replace leaves when the gate refuses only its commit. */
   protected static final String REFUSED_AT_COMMIT = "replace refused at commit, data file left";
 
-  /** The category of the commit attempts of a stale commit that meets no conflict (C4). */
+  /** The category of the commit attempts of a stale commit that meets no conflict. */
   protected static final String NO_CONFLICT = "stale commit applied without a conflict";
 
   /** The category of a difference that the Iceberg 1.12 line makes on every Spark 3.5 path. */

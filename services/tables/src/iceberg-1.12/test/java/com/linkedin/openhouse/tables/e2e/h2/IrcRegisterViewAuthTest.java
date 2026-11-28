@@ -162,7 +162,7 @@ public class IrcRegisterViewAuthTest {
     stubDecision(false);
     assertEquals(denied, assertIrcError(register("v"), 403, "ForbiddenException").message());
   }
-  // ---------------------------------------------------------------- who (decision A, U3)
+  // ---------------------------------------------------------------- who
 
   private static String bearer(String user) throws Exception {
     return "Bearer "

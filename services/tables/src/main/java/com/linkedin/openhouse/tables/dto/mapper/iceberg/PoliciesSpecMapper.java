@@ -156,10 +156,10 @@ public class PoliciesSpecMapper {
    * The stored {@code policies} text with the tags of each column in the declaration order of
    * {@link PolicyTag.Tag}, the order this mapper writes them in ({@link PolicyTag}), and nothing
    * else changed. Text written before the order was fixed holds them in whatever order its service
-   * process had (work item N8); comparing a request's policies with this, too, keeps the same tags
-   * in another order from counting as a change. Returns {@code stored} itself when anything other
-   * than the tag order would differ, that is when the text is not exactly what this mapper writes
-   * for its own parse, or cannot be parsed.
+   * process had; comparing a request's policies with this, too, keeps the same tags in another
+   * order from counting as a change. Returns {@code stored} itself when anything other than the tag
+   * order would differ, that is when the text is not exactly what this mapper writes for its own
+   * parse, or cannot be parsed.
    *
    * @param stored the stored {@code policies} text
    * @return the same text with the tags in declaration order, or {@code stored}

@@ -24,7 +24,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The maintenance jobs on a table with branches and tags (work item X10), format v3 and v2.
+ * The maintenance jobs on a table with branches and tags, format v3 and v2.
  *
  * <p>What OpenHouse allows: a table can have branches and tags through the native API (Spark SQL
  * {@code CREATE BRANCH}/{@code CREATE TAG} through the OpenHouse catalog; the snapshots PUT carries

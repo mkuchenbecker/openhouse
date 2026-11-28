@@ -26,13 +26,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * The stats collection job's type-specific code on the two format v3 types the tables service takes
- * (work item X5): the job collects column metrics for the columns of a table's {@code
- * readable_metrics} and converts each bound by the column's Iceberg type. An {@code unknown} column
- * is in {@code readable_metrics} with bounds that are always null, and yields a null count and no
- * bounds; a {@code variant} column is not in {@code readable_metrics} (Iceberg keeps metrics of
- * primitive columns only), so the job collects nothing for it. Format v3 needs the Iceberg 1.12
- * line, so these tests are skipped on the reference line.
+ * The stats collection job's type-specific code on the two format v3 types the tables service
+ * takes: the job collects column metrics for the columns of a table's {@code readable_metrics} and
+ * converts each bound by the column's Iceberg type. An {@code unknown} column is in {@code
+ * readable_metrics} with bounds that are always null, and yields a null count and no bounds; a
+ * {@code variant} column is not in {@code readable_metrics} (Iceberg keeps metrics of primitive
+ * columns only), so the job collects nothing for it. Format v3 needs the Iceberg 1.12 line, so
+ * these tests are skipped on the reference line.
  */
 public class TableStatsFormatV3TypesTest {
   private static final String SCHEMA =

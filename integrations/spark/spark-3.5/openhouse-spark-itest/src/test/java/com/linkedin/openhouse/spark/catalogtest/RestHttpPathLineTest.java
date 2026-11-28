@@ -6,10 +6,10 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The rest-http smoke path and its write checks run on both Iceberg lines the build has, with no
- * assumption that skips them (work item N10; before, the path was skipped on the LinkedIn Iceberg
- * 1.5.2 line). Their line-specific declarations follow {@link IcebergLine#current()}: this pins it
- * to the line the build states ({@code smoke.iceberg.build}, set from {@code -PicebergLinkedIn}),
- * so a build cannot run one line's declarations against the other line.
+ * assumption that skips them. Their line-specific declarations follow {@link
+ * IcebergLine#current()}: this pins it to the line the build states ({@code smoke.iceberg.build},
+ * set from {@code -PicebergLinkedIn}), so a build cannot run one line's declarations against the
+ * other line.
  */
 public class RestHttpPathLineTest {
 

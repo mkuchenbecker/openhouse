@@ -578,9 +578,9 @@ public class OpenHouseTableOperationsTest {
 
   /**
    * A stamped column default reaches the loaded schema on the legacy Iceberg line only. On the v3
-   * line the client applies no read-bridge overlay (decision D11a). On both lines the config is
-   * still decoded (so a malformed entry still fails the load, see
-   * testMalformedConfigFailsBeforeTouchingStorage) and captured.
+   * line the client applies no read-bridge overlay. On both lines the config is still decoded (so a
+   * malformed entry still fails the load, see testMalformedConfigFailsBeforeTouchingStorage) and
+   * captured.
    */
   @Test
   public void testDoRefreshOverlaysStampedDefaultOnLegacyLineOnly() {
@@ -910,10 +910,10 @@ public class OpenHouseTableOperationsTest {
   }
 
   /**
-   * The format version a commit asks the service for (work item X1). Iceberg keeps the reserved
-   * {@code format-version} property out of a table's properties, so the client adds it to the
-   * request's properties exactly when the metadata it commits is format v3 and the table is not: a
-   * create at v3 and the upgrade of a v2 table. Every other request is sent as it always was.
+   * The format version a commit asks the service for. Iceberg keeps the reserved {@code
+   * format-version} property out of a table's properties, so the client adds it to the request's
+   * properties exactly when the metadata it commits is format v3 and the table is not: a create at
+   * v3 and the upgrade of a v2 table. Every other request is sent as it always was.
    */
   @Test
   public void
@@ -1005,9 +1005,9 @@ public class OpenHouseTableOperationsTest {
    * {@link TableMetadata#newTableMetadata} reassigns ids and drops defaults. Put this schema back
    * so PUT tests can see writer/overlay defaults.
    *
-   * <p>The table's format version depends on the Iceberg line (work item W4). Iceberg 1.12 accepts
-   * a non-null {@code initial-default} only from format v3 on, so on the v3 line the fixture builds
-   * a v3 table; on the legacy line it builds the default v2 table, because LinkedIn's 1.2 and 1.5.2
+   * <p>The table's format version depends on the Iceberg line. Iceberg 1.12 accepts a non-null
+   * {@code initial-default} only from format v3 on, so on the v3 line the fixture builds a v3
+   * table; on the legacy line it builds the default v2 table, because LinkedIn's 1.2 and 1.5.2
    * cannot build v3 metadata. The assertions are the same on both lines.
    */
   private static TableMetadata tableWithSchema(String location, Schema schema) {

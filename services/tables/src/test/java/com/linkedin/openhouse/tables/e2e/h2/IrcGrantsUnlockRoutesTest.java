@@ -50,9 +50,9 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
- * The OpenHouse grants and unlock routes under the IRC base path (work item V5-3), against the
- * native routes they adapt. Every case runs the native request on one table (or database) and the
- * IRC request on an identical twin, and compares:
+ * The OpenHouse grants and unlock routes under the IRC base path, against the native routes they
+ * adapt. Every case runs the native request on one table (or database) and the IRC request on an
+ * identical twin, and compares:
  *
  * <ul>
  *   <li>the outcome: the success status, the success body byte for byte, or the error status and

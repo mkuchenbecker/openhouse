@@ -37,10 +37,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * PINNED DEFECT of the native API (work item N5; decisions D8 and D9: LinkedIn's line is the
- * behaviour reference, and a defect found in it is pinned by a test and reported, not changed).
- * These tests assert what the native API does today, which is wrong. A fix must change them
- * deliberately; nothing here says the behaviour is wanted.
+ * PINNED DEFECT of the native API (LinkedIn's line is the behaviour reference, and a defect found
+ * in it is pinned by a test and reported, not changed). These tests assert what the native API does
+ * today, which is wrong. A fix must change them deliberately; nothing here says the behaviour is
+ * wanted.
  *
  * <p>The defect: a native create can be given the directory of a live table, and the drop of the
  * table it creates then deletes the live table's files.

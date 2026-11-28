@@ -443,7 +443,7 @@ public class IrcRegisterViewRouteTest {
 
   /**
    * The registered file spelled otherwise than the engine stores it, with or without the storage's
-   * endpoint: the same file, refused with the spelling to use, which is the load route's (F3).
+   * endpoint: the same file, refused with the spelling to use, which is the load route's.
    */
   @Test
   void theSameFileSpelledOtherwiseIs400NamingTheSpellingToUse() throws Exception {
@@ -516,7 +516,7 @@ public class IrcRegisterViewRouteTest {
         location,
         json -> properties(json).put("openhouse.creationTime", "yesterday"),
         "its creation time is not a number");
-    // The view's load reads it as a number: refused before the row is written, not after (F1).
+    // The view's load reads it as a number: refused before the row is written, not after.
     assertRefused(
         location,
         json -> properties(json).put("openhouse.lastModifiedTime", "today"),
@@ -656,7 +656,7 @@ public class IrcRegisterViewRouteTest {
     return location;
   }
 
-  // ---------------------------------------------------------------- the directory in use (U1)
+  // ---------------------------------------------------------------- the directory in use
 
   /**
    * A table renamed away keeps the directory of its first name: a view file of that name in that
@@ -739,7 +739,7 @@ public class IrcRegisterViewRouteTest {
     assertAbsent(db, view);
   }
 
-  // ---------------------------------------------------------------- older files (decision B)
+  // ---------------------------------------------------------------- older files
 
   /** An older file of a dropped view registers too, and the view is that version. */
   @Test
@@ -771,7 +771,7 @@ public class IrcRegisterViewRouteTest {
     assertEquals(first.currentVersion(), loaded.currentVersion());
   }
 
-  // ---------------------------------------------------------------- drop (U6)
+  // ---------------------------------------------------------------- drop
 
   /**
    * A registered view drops like any view: the row goes, the files stay, and it registers again.
@@ -915,8 +915,8 @@ public class IrcRegisterViewRouteTest {
 
   /**
    * A location longer than the House Tables row holds: the engine's own refusal of such a create,
-   * before the row is written (F2). The name is the longest a create may carry; such a view could
-   * not have been created, so its file is forged.
+   * before the row is written. The name is the longest a create may carry; such a view could not
+   * have been created, so its file is forged.
    */
   @Test
   void aLocationLongerThanTheRowHoldsIsTheEnginesRefusal() throws Exception {

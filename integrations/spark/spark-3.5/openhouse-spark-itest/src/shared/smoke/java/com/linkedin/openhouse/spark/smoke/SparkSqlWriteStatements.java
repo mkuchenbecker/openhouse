@@ -10,11 +10,10 @@ import org.junit.jupiter.api.TestInstance;
 
 /**
  * The write statements Spark SQL users rely on, one small test each, as one list that more than one
- * platform runs (work item N10; the checks were Spark 4.2's {@code SparkIrcWriteStatementsTest},
- * work item N3-b). Where the smoke suite ({@link SparkSqlSmokeScenarios}) reads a statement's
- * effect back through the path under test, these read what the service stored, through something
- * other than the path under test ({@link #stored(String)}): the schema, the properties, the
- * snapshots and refs, and the rows a reader of each ref gets from the data and delete files.
+ * platform runs. Where the smoke suite ({@link SparkSqlSmokeScenarios}) reads a statement's effect
+ * back through the path under test, these read what the service stored, through something other
+ * than the path under test ({@link #stored(String)}): the schema, the properties, the snapshots and
+ * refs, and the rows a reader of each ref gets from the data and delete files.
  *
  * <p>The baseline is what Spark 4.2 over the service's Iceberg REST routes stores, the platform the
  * checks were written for. A platform states, in {@link #differences()}, every check on which it

@@ -39,12 +39,12 @@ import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
- * Work item V14: an unmodified Iceberg {@link RESTCatalog}, over HTTP, runs create transactions
- * that change the schema, the partition spec and the sort order before they commit, and the table
- * they create keeps that history with the client's ids, as Iceberg's in-memory catalog keeps it for
- * the same calls ({@link CreateHistory}). A create transaction without history stores what it
- * always stored, and one whose final spec OpenHouse refuses is still refused with the same answer.
- * A table created with history takes later commits through both APIs.
+ * An unmodified Iceberg {@link RESTCatalog}, over HTTP, runs create transactions that change the
+ * schema, the partition spec and the sort order before they commit, and the table they create keeps
+ * that history with the client's ids, as Iceberg's in-memory catalog keeps it for the same calls
+ * ({@link CreateHistory}). A create transaction without history stores what it always stored, and
+ * one whose final spec OpenHouse refuses is still refused with the same answer. A table created
+ * with history takes later commits through both APIs.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

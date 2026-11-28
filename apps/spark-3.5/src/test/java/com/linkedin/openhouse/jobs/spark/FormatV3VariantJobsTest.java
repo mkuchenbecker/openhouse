@@ -42,12 +42,12 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.function.Executable;
 
 /**
- * Every maintenance job's real app code on a format v3 table with a variant column that holds data
- * (work item X5), on a tables service with the cluster switch and the variant property on. The data
- * is written and read with Iceberg's own generic writers and readers ({@link VariantData}), since
- * Spark 3.5 has no variant type: Parquet data files in four daily partitions, two per partition,
- * with object, array, string and null variant values, and deletion vectors in two Puffin files on
- * six of the eight data files; every commit goes through the tables service.
+ * Every maintenance job's real app code on a format v3 table with a variant column that holds data,
+ * on a tables service with the cluster switch and the variant property on. The data is written and
+ * read with Iceberg's own generic writers and readers ({@link VariantData}), since Spark 3.5 has no
+ * variant type: Parquet data files in four daily partitions, two per partition, with object, array,
+ * string and null variant values, and deletion vectors in two Puffin files on six of the eight data
+ * files; every commit goes through the tables service.
  *
  * <p>The outcome differs by line ({@link JobsLine#sparkReadsVariant()}), and each test states both:
  * on Spark 3.5, which cannot read a variant column, the jobs that read the table through Spark fail
@@ -603,7 +603,7 @@ public class FormatV3VariantJobsTest extends OpenHouseSparkITest {
   }
 
   /**
-   * Sort stats collection, through {@code spark_catalog} as X6 runs it, on a v3 table with the
+   * Sort stats collection, through {@code spark_catalog} as the job runs it, on a v3 table with the
    * columns the app sorts by and a variant column. Spark 3.5: it fails in its own work (it copies a
    * partition through Spark) and the table is exactly as it was. Spark 4.2: it completes, sets its
    * compression rate property and changes no snapshot or row; its temporary copy is dropped.

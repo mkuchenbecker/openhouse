@@ -1,11 +1,22 @@
-// OpenHouse features as named capabilities (decision D23): the names, one interface per feature the
-// Spark SQL extensions call, and the small value types those interfaces take. Plain Java with no
-// Spring, no generated client and no Spark or Scala dependency, so one jar serves every engine line
-// (the Spark 3.5 / Scala 2.12 extensions now, a Spark 4.2 / Scala 2.13 port later). Iceberg's API is
-// compileOnly: the interfaces name its TableIdentifier and Namespace, which every engine line already
-// carries in its own Iceberg runtime. The Spark runtime packs it into its uber jar, and its thin jar
-// names it as a runtime dependency, so it is published as the Spark runtime is (same group, version
-// and repositories, through openhouse.maven-publish).
+// OpenHouse features as named capabilities: the names, one interface per feature the Spark SQL
+// extensions call, and the small value types those interfaces take. Plain Java with no Spring, no
+// generated client and no Spark or Scala dependency, so one jar serves every engine line (the Spark
+// 3.5 / Scala 2.12 and the Spark 4.2 / Scala 2.13 extensions). Iceberg's API is compileOnly: the
+// interfaces name its TableIdentifier and Namespace, which every engine line already carries in its
+// own Iceberg runtime. The Spark runtime packs it into its uber jar, and its thin jar names it as a
+// runtime dependency, so it is published as the Spark runtime is (same group, version and
+// repositories, through openhouse.maven-publish).
+//
+// Publishing makes this module's API public: CapabilityNames, the capability interfaces
+// (GrantsCapability, UnlockCapability), their value types and RestCapabilityClient are then
+// compiled against by consumers this repository does not build, so a change to any of them that is
+// not backward compatible breaks those consumers.
+//
+// The published jar's content depends on the Iceberg line of the build that publishes it: one
+// coordinate, but the REST capability client's transport is compiled for that line (sourceSets
+// below), and the POM names no Iceberg dependency, since Iceberg is compileOnly. A consumer on the
+// other line gets a transport built for another Iceberg. The thin Spark runtime shares this: its
+// POM names the Iceberg runtime of the line it was built on.
 plugins {
   id 'java-library'
   id 'checkstyle'
@@ -37,7 +48,7 @@ checkstyle {
 
 dependencies {
   compileOnly "com.linkedin.iceberg:iceberg-api:${rootProject.ext.iceberg_1_5_version}"
-  // The REST capability client (package rest, C2-3) uses the HTTP client, authentication, resource
+  // The REST capability client (package rest) uses the HTTP client, authentication, resource
   // paths and JSON mapper of the engine's own Iceberg runtime, so it is compileOnly too. It never
   // names a Jackson or Apache HTTP type, which the shaded Iceberg runtimes relocate.
   compileOnly "com.linkedin.iceberg:iceberg-core:${rootProject.ext.iceberg_1_5_version}"

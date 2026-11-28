@@ -33,7 +33,7 @@ import org.springframework.test.context.ContextConfiguration;
  * with {@code updateProperties}, as OpenHouse's Spark policy statements do: the policy is applied
  * as the OpenHouse client applies it and the key is not stored (see {@link IrcPolicyPatchTest}); a
  * patch a native policy rule refuses is Iceberg's {@link BadRequestException} with the native
- * message, and nothing is stored. (Before V5-1 every such update was refused.)
+ * message, and nothing is stored.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

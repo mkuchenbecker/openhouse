@@ -16,7 +16,7 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.Test;
 
-/** What {@link CreateHistory} hands over and keeps (work item V14). */
+/** What {@link CreateHistory} hands over and keeps. */
 class CreateHistoryTest {
   private static final Schema SCHEMA =
       new Schema(

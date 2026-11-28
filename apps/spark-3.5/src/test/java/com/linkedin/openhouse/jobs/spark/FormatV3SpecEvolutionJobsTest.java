@@ -34,20 +34,20 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The maintenance jobs on a table whose partition spec evolved (work item X10), format v3 and v2.
+ * The maintenance jobs on a table whose partition spec evolved, format v3 and v2.
  *
  * <p>What OpenHouse allows: a spec change on an existing table is refused, natively and over the
  * Iceberg REST routes, by the partition evolution rule (OpenHouseInternalRepositoryImpl
  * .checkPartitionSpecEvolution; pinned below). A table holds several specs only from birth: an
- * Iceberg REST create transaction keeps the specs its client built (pull request 134), and a
- * replace keeps the old specs (not built here). So the shape is built through the REST routes: a
- * create transaction with spec 0 = (day(ts), identity(category)) that appends one data file per
- * day, replaces {@code category} by {@code region} in the spec (spec 1 = (day(ts),
- * identity(region))), and appends one more file per day under spec 1 (each spec one the native
- * partitioning model expresses, time partitioning plus clustering: a staged create whose first spec
- * is not is refused); then Spark writes through the native catalog: the base fixture's DELETEs,
- * UPDATE and MERGE (deletion vectors on v3), on files of both specs. 12 snapshots, ids laid out as
- * in the base fixture (file k = 0 of each day under spec 0, k = 1 under spec 1).
+ * Iceberg REST create transaction keeps the specs its client built, and a replace keeps the old
+ * specs (not built here). So the shape is built through the REST routes: a create transaction with
+ * spec 0 = (day(ts), identity(category)) that appends one data file per day, replaces {@code
+ * category} by {@code region} in the spec (spec 1 = (day(ts), identity(region))), and appends one
+ * more file per day under spec 1 (each spec one the native partitioning model expresses, time
+ * partitioning plus clustering: a staged create whose first spec is not is refused); then Spark
+ * writes through the native catalog: the base fixture's DELETEs, UPDATE and MERGE (deletion vectors
+ * on v3), on files of both specs. 12 snapshots, ids laid out as in the base fixture (file k = 0 of
+ * each day under spec 0, k = 1 under spec 1).
  *
  * <p>The metadata tables' {@code partition} struct is the union of every spec's fields, by field
  * id: (ts_day, category, region). The current spec is (ts_day, region).
@@ -197,9 +197,9 @@ public class FormatV3SpecEvolutionJobsTest extends FormatV3ShapeJobsTestBase {
   }
 
   /**
-   * The suspect from pull request 134: partition-level stats label each value of the metadata
-   * tables' partition struct. That struct is the union of every spec's fields; every label must
-   * name the field the value belongs to: a ts_day value is a date, a category value is a, b.
+   * The suspect when a table holds several specs: partition-level stats label each value of the
+   * metadata tables' partition struct. That struct is the union of every spec's fields; every label
+   * must name the field the value belongs to: a ts_day value is a date, a category value is a, b.
    */
   @ParameterizedTest(name = "format v{0}")
   @ValueSource(ints = {2, 3})

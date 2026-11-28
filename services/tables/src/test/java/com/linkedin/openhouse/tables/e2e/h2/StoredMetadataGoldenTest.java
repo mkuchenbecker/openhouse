@@ -46,8 +46,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * Pins what the native API stores for a representative set of writes: every metadata file the
  * writes leave, in order, as written, after normalizing only what is time- or random-based. The
  * expected files under {@code stored-metadata/} were produced by this test on the commit path as it
- * was before work item V1 restructured it, so a change in stored content or in the number of
- * metadata versions a write produces fails here.
+ * was before it was restructured into one commit core, so a change in stored content or in the
+ * number of metadata versions a write produces fails here.
  *
  * <p>What is normalized, and nothing else, is listed on {@link StoredMetadata}.
  *
