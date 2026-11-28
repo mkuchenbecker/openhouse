@@ -30,7 +30,7 @@
 #   e  a kit or client assumption that holds only for Iceberg's reference implementation
 
 # VIEWDB: 24 test(s)
-category VIEWDB | b | the view suite creates no namespace first (requiresNamespaceCreate=false), and the native view create needs a database that already holds a table or a view: none does (404 NoSuchNamespace). Whether a view should create its database, as a table does, is not decided; if it should, this is a gap of the view route (class c), not a model difference
+category VIEWDB | d | a view create (and a view register) checks only whether the database holds a table or a view, and answers 404 NoSuchNamespace "Database not found" otherwise, while on the /iceberg routes a namespace exists when it holds something or has a record: a namespace that HEAD answers as existing (created, record only) still refuses its first view. The kit's view suite runs with requiresNamespaceCreate=false, because creating the namespace first would not help, so it creates each view in a namespace that holds nothing. The same rule is the root of LISTNS and KITNS (27 tests, one cause). Fixing it needs the owner's decision on the native view create (whether a record, or nothing, is enough for a database to take a view)
 OpenHouseRestCompatibilityKitViewCatalogTests.basicCreateView() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[1] | FAILED | VIEWDB | org.apache.iceberg.exceptions.NoSuchNamespaceException | Database not found: ns
@@ -76,7 +76,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testReplaceTableKeepsSnapshotLog() | F
 OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransaction() | FAILED | RTAS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: REPLACE TABLE AS SELECT is not enabled for table openhouse.newdb.newtable.
 
 # DIALECT: 12 test(s)
-category DIALECT | b | views accept the spark dialect only (OpenHouse view policy): a view with another dialect, the kit's trino, is refused 400
+category DIALECT | b | views accept the spark dialect only (OpenHouse view policy): a view with another dialect, the kit's trino, is refused 400. Behind VIEWDB: each of these tests creates its view in a namespace that holds no table, so allowing the dialect alone turns none green; it then fails as VIEWDB does
 OpenHouseRestCompatibilityKitViewCatalogTests.completeCreateView() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[1].dialect : must be one of the supported dialects: spark
 OpenHouseRestCompatibilityKitViewCatalogTests.createAndReplaceViewWithLocation() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewConflict() | FAILED | DIALECT | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark
@@ -127,7 +127,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithNonExistingNamespace(
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace() | FAILED | IDS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Bad Request
 
 # DIALECTRES: 2 test(s)
-category DIALECTRES | b | views accept the spark dialect only and refuse reserved view properties: the kit's trino dialect and its replace.drop-dialect.allowed are refused 400
+category DIALECTRES | b | views accept the spark dialect only and refuse reserved view properties: the kit's trino dialect and its replace.drop-dialect.allowed are refused 400. Behind VIEWDB, as DIALECT is
 OpenHouseRestCompatibilityKitViewCatalogTests.concurrentReplaceViewVersion() | FAILED | DIALECTRES | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark; viewProperties : reserved keys are not allowed: replace.drop-dialect.allowed
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersion() | FAILED | DIALECTRES | org.apache.iceberg.exceptions.BadRequestException | Malformed request: representations[0].dialect : must be one of the supported dialects: spark; viewProperties : reserved keys are not allowed: replace.drop-dialect.allowed
 
@@ -144,7 +144,7 @@ default: OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultCol
 v3: OpenHouseRestCompatibilityKitCatalogTests.testCreateTableWithDefaultColumnValue() | PASSED
 
 # LISTNS: 2 test(s)
-category LISTNS | b | the view suite never creates the namespace (requiresNamespaceCreate=false), and one that holds nothing and has no record does not exist: listing it is 404 NoSuchNamespace, not an empty list
+category LISTNS | b | the view suite never creates the namespace (requiresNamespaceCreate=false, which VIEWDB's rule forces), and one that holds nothing and has no record does not exist: listing it is 404 NoSuchNamespace, not an empty list
 OpenHouseRestCompatibilityKitViewCatalogTests.listViews() | FAILED | LISTNS | org.apache.iceberg.exceptions.NoSuchNamespaceException | Namespace does not exist: ns1
 OpenHouseRestCompatibilityKitViewCatalogTests.listViewsAndTables() | FAILED | LISTNS | org.apache.iceberg.exceptions.NoSuchNamespaceException | Namespace does not exist: ns
 
@@ -163,11 +163,11 @@ category DROPPURGE | b | the kit drops the table without purge and registers its
 OpenHouseRestCompatibilityKitCatalogTests.testRegisterTable() | FAILED | DROPPURGE | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Cannot register table newdb.newtable: there is no file at
 
 # KITNS: 1 test(s)
-category KITNS | e | with requiresNamespaceCreate=false the kit asserts a never-created namespace both absent and present
+category KITNS | e | with requiresNamespaceCreate=false (which VIEWDB's rule forces) the kit asserts a never-created namespace both absent and present
 OpenHouseRestCompatibilityKitViewCatalogTests.dropNonEmptyNamespace() | FAILED | KITNS | org.opentest4j.AssertionFailedError | [Namespace should exist] Expecting value to be true but was false
 
 # VIEWERRTYPE: 1 test(s)
-category VIEWERRTYPE | e | a view version with two queries for one dialect is refused 400, as the kit expects, but as a BadRequestException that also names the trino dialect; the kit expects the reference server's error type, IllegalArgumentException, which the client maps to that exception
+category VIEWERRTYPE | e | a view version with two queries for one dialect is refused 400, as the kit expects, but as a BadRequestException that also names the trino dialect; the kit expects the reference server's error type, IllegalArgumentException, which the client maps to that exception. Behind VIEWDB: the view is created in a namespace that holds nothing
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewErrorCases() | FAILED | VIEWERRTYPE | java.lang.AssertionError | Expecting actual throwable to be an instance of: java.lang.IllegalArgumentException but was: org.apache.iceberg.exceptions.BadRequestException: Malformed request: representations[0].dialect : must be one of the supported dialects: spark; representations[1].dialect : must be one of the supported dialects: spark; representations : dialects must be unique, duplicated: trino
 
 # MISSINGMETA: 1 test(s)
