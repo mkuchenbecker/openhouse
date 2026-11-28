@@ -497,9 +497,6 @@ public class IrcWriteRoutesAuthTest {
           if (failed.get() != null) {
             throw new IllegalStateException(failed.get());
           }
-          // The House Tables stand-in serves this request's reads from the request's own
-          // persistence context; the real House Tables service is read afresh each time.
-          entityManager.clear();
         });
     String message =
         assertIrcError(
