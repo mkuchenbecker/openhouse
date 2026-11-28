@@ -11,8 +11,8 @@ import java.util.List;
  * the catalog. {@link #restHttpDifferences()} is the complete list of statements whose outcome is
  * not the baseline's.
  *
- * <p>On both Iceberg lines (work item N10). The lines' clients differ on one statement, the
- * exception class a refused namespace drop is raised as ({@link #restHttpDifferences()}). {@code
+ * <p>On both Iceberg lines. The lines' clients differ on one statement, the exception class a
+ * refused namespace drop is raised as ({@link #restHttpDifferences()}). {@code
  * RestHttpPathLineTest} pins that the line the declarations follow is the build's line.
  */
 public class RestHttpPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
