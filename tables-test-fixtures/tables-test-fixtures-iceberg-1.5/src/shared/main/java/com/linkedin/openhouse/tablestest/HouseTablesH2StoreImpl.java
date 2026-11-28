@@ -11,6 +11,7 @@ import com.linkedin.openhouse.internal.catalog.model.SoftDeletedTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableCallerException;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,9 +33,11 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * The House Tables stand-in: what the real {@code HouseTableRepositoryImpl} answers over a House
@@ -77,6 +80,20 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *       here reproduces. A test that needs another store's widths alters the columns, as {@code
  *       HouseTableRowLimitsUnsetTest} does.
  *   <li>{@link #existsById} and {@link #deleteAll} serve tests; the real repository refuses both.
+ *       The other methods the real repository refuses ({@code saveAll}, {@code count}, {@code
+ *       findAll(Sort)}, {@code findAllById}, {@code deleteAllById}, {@code deleteAll(entities)},
+ *       {@code delete(entity)}) are refused here too.
+ *   <li>Names are checked as House Tables checks them (letters, digits and underscores) on the
+ *       writes, the keyed reads and deletes, and the listings, but not on purge and restore, which
+ *       the tables service reaches only with names it has checked.
+ *   <li>Sorting ignores letter case as Java does ({@code String.CASE_INSENSITIVE_ORDER}); the
+ *       production collation ({@code utf8mb4_0900_ai_ci}) puts punctuation before digits, so names
+ *       that differ in an underscore against a digit ({@code a_} and {@code a1}) sort the other way
+ *       there, which moves a page boundary only.
+ *   <li>The soft-deleted rows are held in memory, outside the database transaction: a soft delete
+ *       records its row after the row is deleted and a restore drops it after the row is written,
+ *       so a failure of either write leaves them as they were, but a failed commit of the
+ *       transaction itself is not undone in memory, where the store rolls both back together.
  * </ul>
  */
 public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
@@ -188,11 +205,14 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   @Override
   @Transactional
   public void deleteById(HouseTablePrimaryKey key, boolean purge) {
+    requireValidName(key.getDatabaseId(), key.getTableId());
     lockUntilCompletion();
     HouseTable table =
         read(key.getDatabaseId(), key.getTableId())
             .filter(HouseTablesH2StoreImpl::isTable)
             .orElseThrow(() -> notFound(key.getDatabaseId(), key.getTableId()));
+    // The row first: a failure there leaves the soft-deleted store as it was.
+    deleteRows(key.getDatabaseId(), key.getTableId(), TABLE_ROW);
     if (!purge) {
       long deletedAtMs = System.currentTimeMillis();
       softDeleted.put(
@@ -208,7 +228,6 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
               .purgeAfterMs(deletedAtMs + SOFT_DELETE_RETENTION_MS)
               .build());
     }
-    deleteRows(key.getDatabaseId(), key.getTableId(), TABLE_ROW);
   }
 
   @Override
@@ -227,6 +246,7 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   @Override
   @Transactional
   public boolean deleteViewById(HouseTablePrimaryKey key) {
+    requireValidName(key.getDatabaseId(), key.getTableId());
     lockUntilCompletion();
     return deleteRows(key.getDatabaseId(), key.getTableId(), VIEW_ROW) != 0;
   }
@@ -295,7 +315,8 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
     SoftDeletedTablePrimaryKey key =
         softDeletedKey(databaseId, tableId, deletedAtMs)
             .orElseThrow(() -> notFound(databaseId, tableId));
-    HouseTable archived = softDeleted.remove(key);
+    HouseTable archived = softDeleted.get(key);
+    // The row first: a failure there leaves the soft-deleted row in its store.
     insert(
         archived
             .toBuilder()
@@ -304,6 +325,7 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
             .deletedAtMs(0)
             .purgeAfterMs(0)
             .build());
+    softDeleted.remove(key);
   }
 
   @Override
@@ -323,6 +345,7 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
 
   @Override
   public Optional<HouseTable> findById(HouseTablePrimaryKey key) {
+    requireValidName(key.getDatabaseId(), key.getTableId());
     return Optional.of(
         read(key.getDatabaseId(), key.getTableId())
             .filter(HouseTablesH2StoreImpl::isTable)
@@ -331,11 +354,13 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
 
   @Override
   public Optional<HouseTable> findEntityById(HouseTablePrimaryKey key) {
+    requireValidName(key.getDatabaseId(), key.getTableId());
     return read(key.getDatabaseId(), key.getTableId());
   }
 
   @Override
   public Optional<HouseTable> findViewById(HouseTablePrimaryKey key) {
+    requireValidName(key.getDatabaseId(), key.getTableId());
     return read(key.getDatabaseId(), key.getTableId()).filter(HouseTablesH2StoreImpl::isView);
   }
 
@@ -346,16 +371,21 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
 
   @Override
   public List<HouseTable> findAllByDatabaseId(String databaseId) {
+    requireListableDatabase(databaseId);
     return sorted(inDatabase(databaseId, TABLE_ROW), Sort.unsorted(), "tableId");
   }
 
   @Override
   public Page<HouseTable> findAllByDatabaseId(String databaseId, Pageable pageable) {
+    requireListableDatabase(databaseId);
     return page(sorted(inDatabase(databaseId, TABLE_ROW), pageable.getSort(), "tableId"), pageable);
   }
 
   @Override
   public Page<HouseTable> findAllViewsByDatabaseId(String databaseId, Pageable pageable) {
+    if (databaseId != null && !databaseId.matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+      throw callerError(databaseId + ": a name is letters, digits and underscores");
+    }
     return page(sorted(inDatabase(databaseId, VIEW_ROW), pageable.getSort(), "tableId"), pageable);
   }
 
@@ -376,6 +406,7 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   @Override
   public Page<HouseTable> searchSoftDeletedTables(
       String databaseId, String tableId, Pageable pageable) {
+    requireListableDatabase(databaseId);
     List<HouseTable> rows;
     synchronized (softDeleted) {
       rows =
@@ -390,6 +421,38 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   @Override
   public Map<SoftDeletedTablePrimaryKey, HouseTable> softDeletedTables() {
     return softDeleted;
+  }
+
+  // what the real repository refuses
+
+  @Override
+  public <S extends HouseTable> Iterable<S> saveAll(Iterable<S> entities) {
+    throw new UnsupportedOperationException("saveAll is not supported.");
+  }
+
+  @Override
+  public long count() {
+    throw new UnsupportedOperationException("Count is not supported.");
+  }
+
+  @Override
+  public Iterable<HouseTable> findAll(Sort sort) {
+    throw new UnsupportedOperationException("FindAll by Sort is not supported.");
+  }
+
+  @Override
+  public Iterable<HouseTable> findAllById(Iterable<HouseTablePrimaryKey> keys) {
+    throw new UnsupportedOperationException("FindAllById is not supported.");
+  }
+
+  @Override
+  public void deleteAllById(Iterable<? extends HouseTablePrimaryKey> keys) {
+    throw new UnsupportedOperationException("deleteAllById is not supported.");
+  }
+
+  @Override
+  public void deleteAll(Iterable<? extends HouseTable> entities) {
+    throw new UnsupportedOperationException("Entity-deleteAll is not supported.");
   }
 
   // the rows
@@ -519,6 +582,17 @@ public class HouseTablesH2StoreImpl implements HouseTablesH2Store {
   }
 
   // the store's answers
+
+  /**
+   * The table listings and the soft-deleted listing of the real repository do not translate the
+   * House Tables service's 400 for a name it refuses: the caller gets the client's own exception.
+   */
+  private static void requireListableDatabase(String databaseId) {
+    if (databaseId != null && !databaseId.matches(ALPHA_NUM_UNDERSCORE_REGEX)) {
+      throw WebClientResponseException.create(
+          400, "Bad Request", HttpHeaders.EMPTY, new byte[0], StandardCharsets.UTF_8);
+    }
+  }
 
   private static void requireValidName(String databaseId, String tableId) {
     for (String name : new String[] {databaseId, tableId}) {
