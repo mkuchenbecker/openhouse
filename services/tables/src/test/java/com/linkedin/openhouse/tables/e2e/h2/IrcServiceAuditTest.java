@@ -313,7 +313,15 @@ public class IrcServiceAuditTest {
     ServiceAuditEvent nativeEvent = theAuditOf(nativePost(nativeCreate("c1")), 409);
     ServiceAuditEvent ircEvent = theAuditOf(ircPost(ircCreate("c1")), 409);
 
-    assertSameRefusal(nativeEvent, ircEvent, 409);
+    // The same refusal, worded on the IRC route as Iceberg's catalogs word it: the audit records
+    // the message answered and the failure answered with it.
+    assertSameAudit(nativeEvent, ircEvent, "requestPayload", "responseErrorMessage");
+    assertEquals(409, ircEvent.getStatusCode());
+    assertEquals("Table " + DB + ".c1 already exists", nativeEvent.getResponseErrorMessage());
+    assertEquals("Table already exists: " + DB + ".c1", ircEvent.getResponseErrorMessage());
+    assertEquals(
+        "org.apache.iceberg.exceptions.AlreadyExistsException: Table already exists: " + DB + ".c1",
+        failure(ircEvent));
   }
 
   /** A failure of the IRC layer itself, with no native request to compare with. */

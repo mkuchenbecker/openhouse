@@ -249,7 +249,8 @@ public class IcebergRestWriteHandler {
     } catch (RuntimeException lookup) {
       table = false;
     }
-    return table ? new AlreadyExistsException(e, "Table already exists: %s", identifier) : e;
+    // No cause: the refusal is audited as the native one is, whose cause is none.
+    return table ? new AlreadyExistsException("Table already exists: %s", identifier) : e;
   }
 
   /**
@@ -1297,12 +1298,10 @@ public class IcebergRestWriteHandler {
           actingPrincipal);
     } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
       // The native rename found a table of the target's name (a view there was refused above):
-      // its 409, worded as Iceberg's catalogs word it, as the refusals here are.
+      // its 409, worded as Iceberg's catalogs word it, as the refusals here are. No cause, as the
+      // native refusal has none (the audit records it).
       throw new AlreadyExistsException(
-          e,
-          "Cannot rename %s to %s. Table already exists",
-          request.source(),
-          request.destination());
+          "Cannot rename %s to %s. Table already exists", request.source(), request.destination());
     } catch (CommitFailedException e) {
       if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
         throw e;
