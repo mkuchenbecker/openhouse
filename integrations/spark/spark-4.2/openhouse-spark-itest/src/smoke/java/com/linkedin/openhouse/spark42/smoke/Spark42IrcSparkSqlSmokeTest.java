@@ -119,6 +119,24 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                         "The IRC namespace list answers an empty list under an existing database (V2;"
                             + " pinned for Spark 4.2 since N3a). OpenHouseCatalog refused the call in the"
                             + " engine. Iceberg's Hadoop catalog answers an empty list as well."),
+                // Baseline: refused. Here the existence check is answered from tables.
+                Difference.on("s24", "USE " + CAT_DB)
+                    .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+                    .here(succeeds())
+                    .because(
+                        IRC_UNDECIDED,
+                        "The IRC namespace route answers for a database that has tables (V2), so"
+                            + " the existence check passes. OpenHouseCatalog refused it in the"
+                            + " engine."),
+                Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
+                    .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
+                    .here(
+                        fails(
+                            "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+                            "[SCHEMA_NOT_FOUND] The schema `openhouse`.`smoke_t1_new_ns` cannot"
+                                + " be found."))
+                    .because(
+                        DECIDED, NAMESPACES_STAY_UNSUPPORTED + " So the namespace does not exist."),
 
                 // ---- s22: the snapshot a replace adds. Baseline: an append.
                 Difference.on(
