@@ -1493,4 +1493,100 @@ public class IrcWriteRoutesTest {
     }
     assertNotEquals(INITIAL_TABLE_VERSION, before);
   }
+
+  /**
+   * An update that only a view takes (a view version, the current view version), sent to the table
+   * commit route, is the client's mistake: 400, not a server failure, on an existing table and on
+   * the completion of a staged create alike, and nothing is written.
+   */
+  @Test
+  void aViewUpdateSentToTheTableCommitRouteIs400() throws Exception {
+    createNative(plainBody("irc_w_vupd"));
+    String before = stored("irc_w_vupd");
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_vupd", "t");
+    org.apache.iceberg.rest.requests.UpdateTableRequest viewUpdate =
+        IrcWrite.simple(
+            base, java.util.Collections.singletonList(new MetadataUpdate.SetCurrentViewVersion(1)));
+    assertEquals(
+        "Cannot apply update SetCurrentViewVersion to a table",
+        assertIrcError(
+                IrcWrite.commit(mvc, "irc_w_vupd", "t", viewUpdate), 400, "BadRequestException")
+            .message());
+    assertEquals(before, stored("irc_w_vupd"));
+
+    track("irc_w_vupd", "staged");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                "irc_w_vupd",
+                CreateTableRequest.builder()
+                    .withName("staged")
+                    .withSchema(SCHEMA)
+                    .stageCreate()
+                    .build()));
+    org.apache.iceberg.rest.requests.UpdateTableRequest completion =
+        IrcWrite.createCommit(staged, java.util.Collections.emptyList());
+    java.util.List<MetadataUpdate> updates = new java.util.ArrayList<>(completion.updates());
+    updates.add(new MetadataUpdate.SetCurrentViewVersion(1));
+    assertIrcError(
+        IrcWrite.commit(
+            mvc,
+            "irc_w_vupd",
+            "staged",
+            new org.apache.iceberg.rest.requests.UpdateTableRequest(
+                completion.requirements(), updates)),
+        400,
+        "BadRequestException");
+    assertEquals(404, CommitPathHttp.status(get(mvc, "irc_w_vupd", "staged")));
+  }
+
+  /**
+   * A policy patch that sets a lock state, on a table whose stored policies have none: the native
+   * table PUT's lock rule fails there with a NullPointerException (500), which is the native
+   * route's answer and stays so. The IRC commit reads the absent lock state as unlocked, the state
+   * the table is in, and gives the rule's own refusal: locking it through a commit is refused (400,
+   * the rule's message), and a patch that leaves it unlocked changes nothing about the lock.
+   */
+  @Test
+  void aLockStateInAPolicyPatchOnATableWithoutOneIsTheLockRulesRefusal() throws Exception {
+    createNative(plainBody("irc_w_lock").toBuilder().policies(null).build());
+    String before = stored("irc_w_lock");
+    TableMetadata base = IrcWrite.load(mvc, "irc_w_lock", "t");
+    assertEquals(
+        "Lock state cannot be updated for Table irc_w_lock.t",
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_lock",
+                    "t",
+                    IrcWrite.simple(
+                        base,
+                        java.util.Collections.singletonList(
+                            new MetadataUpdate.SetProperties(
+                                java.util.Collections.singletonMap(
+                                    "updated.openhouse.policy",
+                                    "{\"lockState\":{\"locked\":true}}"))))),
+                400,
+                "BadRequestException")
+            .message());
+    assertEquals(before, stored("irc_w_lock"));
+    TableMetadata unlocked =
+        IrcWrite.parsed(
+            IrcWrite.commit(
+                mvc,
+                "irc_w_lock",
+                "t",
+                IrcWrite.simple(
+                    base,
+                    java.util.Arrays.asList(
+                        new MetadataUpdate.SetProperties(
+                            java.util.Collections.singletonMap(
+                                "updated.openhouse.policy", "{\"lockState\":{\"locked\":false}}")),
+                        new MetadataUpdate.SetProperties(
+                            java.util.Collections.singletonMap("user.k", "v"))))));
+    assertEquals("v", unlocked.properties().get("user.k"));
+    assertEquals(
+        200, CommitPathHttp.status(get(mvc, "irc_w_lock", "t")), "the table is not locked");
+  }
 }

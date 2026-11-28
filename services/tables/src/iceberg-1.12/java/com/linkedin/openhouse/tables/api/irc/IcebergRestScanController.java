@@ -94,7 +94,9 @@ public class IcebergRestScanController {
     int bound = IcebergRestScanPlanner.bound(maxFileScanTasks);
     PlanTableScanResponse response = IcebergRestScanPlanner.plan(table, request, bound);
     if (response.planStatus() == PlanStatus.FAILED) {
-      log.warn(
+      // Debug, not warn: the client is answered the refusal, and a client that retries a refused
+      // plan would otherwise fill the log.
+      log.debug(
           "IRC plan of {}.{} refused ({}): {}",
           database,
           tableId,

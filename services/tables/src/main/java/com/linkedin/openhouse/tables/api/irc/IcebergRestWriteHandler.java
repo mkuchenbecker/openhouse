@@ -498,7 +498,7 @@ public class IcebergRestWriteHandler {
       return Optional.empty();
     }
     // The policies the OpenHouse client would send: the stored ones, or a patch merged onto them.
-    Policies requestedPolicies =
+    Policies patched =
         patch
             .map(p -> PolicyPatch.apply(base.getTableDto().getPolicies(), p, identifier.toString()))
             .orElse(null);
@@ -506,6 +506,10 @@ public class IcebergRestWriteHandler {
         replace || TableCommitService.changesSnapshots(baseMetadata, candidate)
             ? CommitKind.SNAPSHOTS_UPDATE
             : CommitKind.TABLE_UPDATE;
+    Policies requestedPolicies =
+        kind == CommitKind.TABLE_UPDATE
+            ? withTheLockRule(identifier, base.getTableDto(), patched)
+            : patched;
     TableDto committed =
         tableCommitService
             .commit(
@@ -547,6 +551,31 @@ public class IcebergRestWriteHandler {
   }
 
   /**
+   * {@code requested}, the policies of a commit of the table PUT's kind, as the table PUT's lock
+   * rule (a request may not change the stored lock) judges them on {@code stored}, a table whose
+   * stored policies have no lock state: that rule fails on such a table with a NullPointerException
+   * (the native PUT's 500, which stays its answer), so here the absent lock state is read as what
+   * it means, unlocked. A lock state that locks the table is the rule's refusal; one that leaves it
+   * unlocked changes nothing and is dropped, as the rule then has nothing to judge. Anything else
+   * is returned as it is, for the rule to judge in the commit core.
+   */
+  private static Policies withTheLockRule(
+      TableIdentifier identifier, TableDto stored, Policies requested) {
+    boolean storedHasNoLockState =
+        stored.getPolicies() == null || stored.getPolicies().getLockState() == null;
+    if (requested == null || requested.getLockState() == null || !storedHasNoLockState) {
+      return requested;
+    }
+    if (requested.getLockState().isLocked()) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Lock state cannot be updated for Table %s.%s",
+              identifier.namespace(), identifier.name()));
+    }
+    return requested.toBuilder().lockState(null).build();
+  }
+
+  /**
    * Applies {@code updates} to {@code builder} as the OpenHouse client's commit treats them: the
    * policy patch key is read from the properties the updates leave (a stored key included, as the
    * client reads it from the table's properties) and taken out of them, so it is never stored.
@@ -573,13 +602,27 @@ public class IcebergRestWriteHandler {
           builder.removeProperties(removed);
         }
       } else {
-        update.applyTo(builder);
+        applyTo(builder, update);
       }
     }
     if (base.properties().containsKey(PolicyPatch.KEY)) {
       builder.removeProperties(Collections.singleton(PolicyPatch.KEY));
     }
     return Optional.ofNullable(patch);
+  }
+
+  /**
+   * Applies {@code update} to table metadata. An update only a view takes (a view version, the
+   * current view version) has no meaning for a table, and Iceberg refuses it with {@code
+   * UnsupportedOperationException}: that is the request's fault, answered 400 with Iceberg's
+   * message, not a server failure.
+   */
+  private static void applyTo(TableMetadata.Builder builder, MetadataUpdate update) {
+    try {
+      update.applyTo(builder);
+    } catch (UnsupportedOperationException e) {
+      throw new BadRequestException(e, "%s", e.getMessage());
+    }
   }
 
   /**
@@ -619,7 +662,7 @@ public class IcebergRestWriteHandler {
     IcebergRestRequirements.validate(request, existing.orElse(null));
     TableMetadata.Builder builder = TableMetadata.buildFromEmpty();
     for (MetadataUpdate update : request.updates()) {
-      update.applyTo(builder);
+      applyTo(builder, update);
     }
     TableMetadata candidate = builder.build();
     Optional<String> patch = Optional.ofNullable(candidate.properties().get(PolicyPatch.KEY));
