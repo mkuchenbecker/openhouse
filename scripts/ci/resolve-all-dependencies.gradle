@@ -6,18 +6,33 @@
 // suite, the Docker job's OpenTelemetry agent) on every run, each a request Maven Central can
 // refuse.
 //
-// It resolves each resolvable configuration's files leniently: a configuration that does not
-// resolve is skipped (it fails where a task uses it, as before), and nothing is built. What a
-// configuration resolves to is Gradle's as always; this only fetches the files into the cache.
+// It resolves each resolvable configuration's files leniently: what does not resolve is printed,
+// one line per failure, and skipped (it fails where a task uses it, as before), and nothing is
+// built. What a configuration resolves to is Gradle's as always; this only fetches the files into
+// the cache. Each project prints one line, `<project>: <files> files, <failures> failures`.
+//
+// The Scala plugin's incrementalScalaAnalysisFor<sourceSet> configurations are left out: they are
+// resolvable, but only Gradle's Scala tasks can resolve them, with the analysis attributes those
+// tasks ask for (resolved plainly, every dependency fails variant selection), and they hold the
+// same modules as the source set's classpath, which is resolved here.
 allprojects {
   tasks.register('ciResolveDependencies') {
     description = 'Downloads the files of every resolvable configuration into the Gradle cache (CI).'
     doLast {
-      def count = 0
-      project.configurations.findAll { it.canBeResolved }.each { configuration ->
-        count += configuration.incoming.artifactView { lenient = true }.files.files.size()
+      def files = 0
+      def failures = 0
+      project.configurations.findAll {
+        it.canBeResolved && !it.name.startsWith('incrementalScalaAnalysisFor')
+      }.each { configuration ->
+        def artifacts = configuration.incoming.artifactView { lenient = true }.artifacts
+        files += artifacts.artifactFiles.files.size()
+        artifacts.failures.each { failure ->
+          failures++
+          def message = (failure.message ?: failure.class.name).readLines().find { it.trim() } ?: ''
+          logger.lifecycle("${project.path}:${configuration.name}: could not resolve: ${message.trim()}")
+        }
       }
-      logger.lifecycle("${project.path}: ${count} files")
+      logger.lifecycle("${project.path}: ${files} files, ${failures} failures")
     }
   }
 }

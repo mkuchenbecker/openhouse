@@ -88,6 +88,9 @@ jobs:
       # line's `rest` job saves under it, and every job, on a pull request and after a merge,
       # restores the newest entry.
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
+      # The one job of the line that saves the Gradle cache (after a merge, `rest`); every other job
+      # only reads it. Setup Gradle, the preparation and the fetch below all follow this.
+      GRADLE_CACHE_WRITER: ${{ inputs.gradle-cache-write && matrix.group == 'rest' }}
     steps:
       - name: Checkout project sources
         uses: actions/checkout@v6
@@ -106,24 +109,18 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-read-only: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
+          cache-read-only: ${{ env.GRADLE_CACHE_WRITER != 'true' }}
 
-      # A job that only reads the cache (the condition of cache-read-only above) resolves the build's
-      # dynamic versions (ranges, `8.+`) as the cache's writer last did, instead of asking Maven
-      # Central for their version lists again: the restored lookups are often older than Gradle's
-      # 24 hours, and a refused request kills the job before any test runs
-      # (scripts/ci/dependency-cache.gradle). From the Gradle user home's init.d it applies to every
-      # Gradle command of the job. The writer keeps Gradle's default, so each merge refreshes them.
-      # The marker dates the restore, for the count of downloads after the build.
+      # A reader resolves the build's dynamic versions (ranges, `8.+`) and the Spring Boot plugin
+      # from the restored cache, instead of asking Maven Central again: the restored answers are
+      # often older than Gradle's 24 hours, and a refused request disables Central for the rest of
+      # the Gradle command, so the job dies before its tests (scripts/ci/dependency-cache.gradle, in
+      # the Gradle user home's init.d for every Gradle command of the job). The writer keeps Gradle's
+      # periods, so each merge refreshes them. Every job gives Gradle more tries for a refused request,
+      # prints the restored cache's age and dates the restore for the download list after the build
+      # (scripts/ci/prepare-gradle-home.sh).
       - name: Prepare the restored Gradle cache
-        env:
-          CACHE_READ_ONLY: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
-        run: |
-          touch "$RUNNER_TEMP/gradle-cache-restored"
-          if [ "$CACHE_READ_ONLY" = true ]; then
-            mkdir -p "$GRADLE_USER_HOME/init.d"
-            cp scripts/ci/dependency-cache.gradle "$GRADLE_USER_HOME/init.d/"
-          fi
+        run: scripts/ci/prepare-gradle-home.sh ${{ env.GRADLE_CACHE_WRITER == 'true' && 'writer' || 'reader' }}
 
       # Every Gradle command of the default build needs it; the reference build needs none.
       - name: Restore or publish the Iceberg fork
@@ -147,10 +144,12 @@ jobs:
       # The writer also fetches the files that only the other jobs use (the Spark 4.2 apps' and the
       # itests' test dependencies, the Docker job's agent), so that the cache it saves serves them
       # without downloads (scripts/ci/resolve-all-dependencies.gradle). It builds and tests nothing
-      # and is not part of the job's verdict.
+      # and is not part of the job's verdict; the time limit keeps a stalled download from holding
+      # the job (and the post-merge run) open.
       - name: Fetch every configuration's files into the Gradle cache
-        if: ${{ !cancelled() && inputs.gradle-cache-write && matrix.group == 'rest' }}
+        if: ${{ !cancelled() && env.GRADLE_CACHE_WRITER == 'true' }}
         continue-on-error: true
+        timeout-minutes: 10
         env:
           LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
         run: ./gradlew $LINE_FLAG -I scripts/ci/resolve-all-dependencies.gradle ciResolveDependencies
@@ -220,12 +219,9 @@ jobs:
         with:
           cache-read-only: true
 
-      # As in the test jobs: a reader takes the dynamic versions from the restored cache.
+      # As in the test jobs; this job only reads the cache.
       - name: Prepare the restored Gradle cache
-        run: |
-          touch "$RUNNER_TEMP/gradle-cache-restored"
-          mkdir -p "$GRADLE_USER_HOME/init.d"
-          cp scripts/ci/dependency-cache.gradle "$GRADLE_USER_HOME/init.d/"
+        run: scripts/ci/prepare-gradle-home.sh reader
 
       - name: Restore or publish the Iceberg fork
         uses: ./.github/actions/iceberg-fork

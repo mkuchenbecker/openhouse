@@ -94,13 +94,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
 
       # Off the default branch the job only reads the Gradle cache (setup-gradle's default): it then
-      # resolves the build's dynamic versions as the cache's writer last did, as the split build's
-      # readers do (scripts/ci/dependency-cache.gradle, split-build.yml).
+      # resolves the build's dynamic versions and the Spring Boot plugin from it, as the split
+      # build's readers do (scripts/ci/prepare-gradle-home.sh, dependency-cache.gradle).
       - name: Prepare the restored Gradle cache
-        if: github.ref_name != github.event.repository.default_branch
-        run: |
-          mkdir -p "$GRADLE_USER_HOME/init.d"
-          cp scripts/ci/dependency-cache.gradle "$GRADLE_USER_HOME/init.d/"
+        run: >-
+          scripts/ci/prepare-gradle-home.sh
+          ${{ github.ref_name != github.event.repository.default_branch && 'reader' || 'writer' }}
 
       - name: Restore or publish the Iceberg fork
         uses: ./.github/actions/iceberg-fork
