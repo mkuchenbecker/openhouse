@@ -12,9 +12,10 @@ import org.apache.iceberg.rest.RESTCompatibilityKitCatalogTests;
 public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibilityKitCatalogTests {
 
   /**
-   * {@code rck.requires-namespace-create=false}. OpenHouse has no create-namespace: a namespace is
-   * a database, and a database comes into being with its first table (or view) and is gone when its
-   * last one is dropped. Creating a table in a namespace never created must therefore work.
+   * {@code rck.requires-namespace-create=false}. A namespace is a database, which comes into being
+   * with its first table (or view) and is gone when its last one is dropped; a namespace record
+   * (create namespace) is optional and a table create never needs one. Creating a table in a
+   * namespace never created must therefore work.
    */
   @Override
   protected boolean requiresNamespaceCreate() {
@@ -22,12 +23,12 @@ public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibility
   }
 
   /**
-   * Not exposed by the kit. OpenHouse databases carry no properties: load namespace answers an
-   * empty map, and the update-properties route is not served.
+   * Not exposed by the kit. A namespace's properties are those of its namespace record, set at
+   * create and by the update-properties route; a database with no record loads with none.
    */
   @Override
   protected boolean supportsNamespaceProperties() {
-    return false;
+    return true;
   }
 
   /** Not exposed by the kit; the default. OpenHouse namespaces have exactly one level. */
@@ -37,8 +38,8 @@ public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibility
   }
 
   /**
-   * Not exposed by the kit; the default. A database exists only while it holds a table or a view,
-   * so an empty namespace cannot exist.
+   * Not exposed by the kit; the default. The empty namespace (no level, {@code Namespace.empty()})
+   * is not an OpenHouse namespace: a namespace is one database name.
    */
   @Override
   protected boolean supportsEmptyNamespace() {

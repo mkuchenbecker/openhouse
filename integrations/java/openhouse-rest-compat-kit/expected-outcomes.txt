@@ -22,27 +22,18 @@ OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithDot() | SKIPPED | a |
 OpenHouseRestCompatibilityKitCatalogTests.testTableNameWithDot() | SKIPPED | a | supportsNamesWithDot=false (kit default): ids are letters, digits and underscores
 
 # (a) EMPTYNS: 5 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.createAndDropEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): a database exists only while it holds a table or view
-OpenHouseRestCompatibilityKitCatalogTests.listNamespacesWithEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): a database exists only while it holds a table or view
-OpenHouseRestCompatibilityKitCatalogTests.listTablesInEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): a database exists only while it holds a table or view
-OpenHouseRestCompatibilityKitCatalogTests.namespacePropertiesOnEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): a database exists only while it holds a table or view
-OpenHouseRestCompatibilityKitViewCatalogTests.listViewsInEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): a database exists only while it holds a table or view
+OpenHouseRestCompatibilityKitCatalogTests.createAndDropEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
+OpenHouseRestCompatibilityKitCatalogTests.listNamespacesWithEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
+OpenHouseRestCompatibilityKitCatalogTests.listTablesInEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
+OpenHouseRestCompatibilityKitCatalogTests.namespacePropertiesOnEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
+OpenHouseRestCompatibilityKitViewCatalogTests.listViewsInEmptyNamespace() | SKIPPED | a | supportsEmptyNamespace=false (kit default): the empty namespace (no level) is not an OpenHouse namespace, which is one database name
 
 # (a) NESTED: 2 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testDropNamespaceWithNestedNamespace() | SKIPPED | a | supportsNestedNamespaces=false (kit default): namespaces have one level
 OpenHouseRestCompatibilityKitCatalogTests.testListNestedNamespaces() | SKIPPED | a | supportsNestedNamespaces=false (kit default): namespaces have one level
 
 # (a) NOCREATE: 1 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.tableCreationWithoutNamespace() | SKIPPED | a | requiresNamespaceCreate=false: no create-namespace; a database comes into being with its first table
-
-# (a) NSPROPS: 7 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testCreateNamespaceWithProperties() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespaceProperties() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespacePropertiesNamespaceDoesNotExist() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testSetNamespaceProperties() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testSetNamespacePropertiesNamespaceDoesNotExist() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testUpdateAndSetNamespaceProperties() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
-OpenHouseRestCompatibilityKitCatalogTests.testUpdateNamespaceProperties() | SKIPPED | a | supportsNamespaceProperties=false: OpenHouse databases carry no properties
+OpenHouseRestCompatibilityKitCatalogTests.tableCreationWithoutNamespace() | SKIPPED | a | requiresNamespaceCreate=false: a table create needs no namespace record; a database comes into being with its first table
 
 # (a) SLASH: 2 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testNamespaceWithSlash() | SKIPPED | a | supportsNamesWithSlashes=false (kit's own answer): ids are letters, digits and underscores
@@ -85,8 +76,8 @@ OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithNonExistingNamespace(
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace() | FAILED | b | a namespace id with a hyphen is not an OpenHouse id: 400 BadRequest, the kit expects 404
 
 # (b) LISTNS: 2 test(s)
-OpenHouseRestCompatibilityKitViewCatalogTests.listViews() | FAILED | b | listing a namespace that holds nothing is 404 NoSuchNamespace (it does not exist), not an empty list
-OpenHouseRestCompatibilityKitViewCatalogTests.listViewsAndTables() | FAILED | b | listing a namespace that holds nothing is 404 NoSuchNamespace (it does not exist), not an empty list
+OpenHouseRestCompatibilityKitViewCatalogTests.listViews() | FAILED | b | the view suite never creates the namespace (requiresNamespaceCreate=false), and one that holds nothing and has no record does not exist: listing it is 404 NoSuchNamespace, not an empty list
+OpenHouseRestCompatibilityKitViewCatalogTests.listViewsAndTables() | FAILED | b | the view suite never creates the namespace (requiresNamespaceCreate=false), and one that holds nothing and has no record does not exist: listing it is 404 NoSuchNamespace, not an empty list
 
 # (b) RTAS: 16 test(s)
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionReplace() | FAILED | b | replace needs the table property replace.enabled=true (OpenHouse policy); refused 400
@@ -124,39 +115,34 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecThenRevert() | FAIL
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | b | partition evolution and bucket specs are refused 400 (not expressible as time partitioning plus clustering)
 
 # (b) VIEWDB: 24 test(s)
-OpenHouseRestCompatibilityKitViewCatalogTests.basicCreateView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[1] | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[2] | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExists() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.createViewWithCustomMetadataLocation() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.defaultViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.loadTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.overrideViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.registerExistingView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.registerTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.registerView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.registerViewThatAlreadyExistsAsTable() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.renameView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.renameViewNamespaceMissing() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.renameViewTargetAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.renameViewUsingDifferentNamespace() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.replaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionByUpdatingSQLForDialect() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForInvalidArguments() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.updateViewProperties() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
-OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesErrorCases() | FAILED | b | a view cannot create its database: a namespace exists only while it holds a table (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.basicCreateView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[1] | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceView(boolean)[2] | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExists() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.createViewWithCustomMetadataLocation() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.defaultViewProperties() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.loadTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.overrideViewProperties() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.registerExistingView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.registerTableThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.registerView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.registerViewThatAlreadyExistsAsTable() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.renameView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.renameViewNamespaceMissing() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.renameViewTargetAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.renameViewUsingDifferentNamespace() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.replaceTableViaTransactionThatAlreadyExistsAsView() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewVersionByUpdatingSQLForDialect() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.testSqlForInvalidArguments() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.updateViewProperties() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
+OpenHouseRestCompatibilityKitViewCatalogTests.updateViewPropertiesErrorCases() | FAILED | b | a view cannot create its database: the native view create needs a database that holds a table or a view, and a namespace record does not count (404 NoSuchNamespace)
 
-# (c) NSWRITE: 7 test(s)
-OpenHouseRestCompatibilityKitCatalogTests.testCreateExistingNamespace() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testCreateNamespace() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testDropNamespace() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testDropNonEmptyNamespace() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testDropNonexistentNamespace() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testListNamespaces() | FAILED | c | namespace create or drop is not served (406)
-OpenHouseRestCompatibilityKitCatalogTests.testLoadNamespaceMetadata() | FAILED | c | namespace create or drop is not served (406)
+# (d) LISTREC: 2 test(s)
+OpenHouseRestCompatibilityKitCatalogTests.testCreateNamespace() | FAILED | d | a created namespace (a stored record, no table) exists but is not listed: the list is the table-derived database list, since House Tables has no list of namespace records
+OpenHouseRestCompatibilityKitCatalogTests.testListNamespaces() | FAILED | d | a created namespace (a stored record, no table) exists but is not listed: the list is the table-derived database list, since House Tables has no list of namespace records
 
 # (c) VRENAME: 2 test(s)
 OpenHouseRestCompatibilityKitViewCatalogTests.renameViewSourceMissing() | FAILED | c | view rename is not served (406); OpenHouse has no view rename

@@ -10,7 +10,9 @@ public class OpenHouseRestCompatibilityKitViewCatalogTests
     extends RESTCompatibilityKitViewCatalogTests {
 
   /**
-   * {@code rck.requires-namespace-create=false}: a database comes into being with its first view.
+   * {@code rck.requires-namespace-create=false}: a view is created in a database that holds a table
+   * or a view (the native view create's rule); a namespace record does not make one, so creating
+   * the namespace first would not help.
    */
   @Override
   protected boolean requiresNamespaceCreate() {
@@ -23,7 +25,10 @@ public class OpenHouseRestCompatibilityKitViewCatalogTests
     return true;
   }
 
-  /** Not exposed by the kit; the default. A database exists only while it holds a table or view. */
+  /**
+   * Not exposed by the kit; the default. The empty namespace (no level) is not an OpenHouse
+   * namespace.
+   */
   @Override
   protected boolean supportsEmptyNamespace() {
     return false;
