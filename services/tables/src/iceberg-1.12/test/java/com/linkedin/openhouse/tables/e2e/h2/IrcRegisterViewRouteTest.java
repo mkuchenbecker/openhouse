@@ -688,19 +688,17 @@ public class IrcRegisterViewRouteTest {
   }
 
   /**
-   * Known gap, pinned: a live table's UUID alone, in another name's directory, is registered. The
-   * check compares the UUID with the House Tables rows' UUIDs, and House Tables keeps none, so only
-   * the location half of the check can refuse; this directory is not under any table's location.
+   * A live table's UUID alone, in another name's directory, is refused by the same check: the
+   * directory OpenHouse allocated to the table is named for its UUID, and the rows hold its
+   * location.
    */
   @Test
-  void aDirectoryNamedForALiveTablesUuidIsRegistered() throws Exception {
+  void aDirectoryNamedForALiveTablesUuidIs400() throws Exception {
     database("irc_rv_uuid");
     String template = template("irc_rv_uuid");
     HouseTable t = row("irc_rv_uuid", "t");
     String file = forged(template, "irc_rv_uuid", "w", UUID.fromString(t.getTableUUID()), j -> {});
-    MvcResult registered = register("irc_rv_uuid", "w", file);
-    assertEquals(200, registered.getResponse().getStatus(), IrcHttp.body(registered));
-    assertEquals(200, code(get(mvc, "irc_rv_uuid", "w")));
+    assertInUse("irc_rv_uuid", "w", file, "irc_rv_uuid.t");
   }
 
   /** A soft-deleted table's directory can be restored into: refused by the soft-deleted check. */

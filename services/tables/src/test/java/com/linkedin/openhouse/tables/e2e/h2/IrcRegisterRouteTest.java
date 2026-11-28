@@ -449,6 +449,26 @@ public class IrcRegisterRouteTest {
     assertEquals(location, row(db, "renamed").getTableLocation());
   }
 
+  /**
+   * A live table's UUID, in the directory OpenHouse would allocate to another name: refused before
+   * anything is read, as that UUID is the live table's. OpenHouse names a table's directory for its
+   * UUID, and the house-table row holds a location in it.
+   */
+  @Test
+  void aDirectoryNamedForALiveTablesUuidIsRefused() throws Exception {
+    String db = "irc_reg_uuid";
+    createNative(plain(db, "t"));
+    String location = row(db, "t").getTableLocation();
+    String directoryName = directory(location).substring(directory(location).lastIndexOf('/') + 1);
+    String uuid = directoryName.substring(directoryName.length() - 36);
+    String elsewhere =
+        "/tmp/" + db + "/w-" + uuid + "/00000-" + UUID.randomUUID() + ".metadata.json";
+
+    ErrorResponse error =
+        expectRefused(db, "w", elsewhere, 400, "BadRequestException", "belongs to");
+    assertTrue(error.message().contains(db + ".t"), error.message());
+  }
+
   /** A soft-deleted table's files are still that table's: it can be restored. */
   @Test
   void aMetadataLocationOfASoftDeletedTableIsRefused() throws Exception {
