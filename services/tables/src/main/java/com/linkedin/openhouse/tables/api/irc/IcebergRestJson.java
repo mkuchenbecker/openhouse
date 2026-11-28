@@ -140,6 +140,21 @@ public final class IcebergRestJson {
    * or requirement this Iceberg line does not know, is a 400 {@code BadRequestException}.
    */
   public static <T extends RESTRequest> T read(byte[] body, Class<T> type) {
+    T request = parse(body, type);
+    try {
+      request.validate();
+    } catch (RuntimeException e) {
+      throw new BadRequestException("Invalid %s: %s", type.getSimpleName(), e.getMessage());
+    }
+    return request;
+  }
+
+  /**
+   * Reads a request body of {@code type} as {@link #read} does, without its {@code validate()}: for
+   * a route whose checks run in another order than Iceberg's (the namespace property update, whose
+   * key overlap the namespace service refuses after its authorization decision).
+   */
+  public static <T extends RESTRequest> T parse(byte[] body, Class<T> type) {
     if (body == null || body.length == 0) {
       throw new BadRequestException("Invalid %s: no body", type.getSimpleName());
     }
@@ -152,11 +167,6 @@ public final class IcebergRestJson {
     }
     if (request == null) {
       throw new BadRequestException("Invalid %s: no body", type.getSimpleName());
-    }
-    try {
-      request.validate();
-    } catch (RuntimeException e) {
-      throw new BadRequestException("Invalid %s: %s", type.getSimpleName(), e.getMessage());
     }
     return request;
   }

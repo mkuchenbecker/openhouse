@@ -288,4 +288,25 @@ public class IcebergRestSparkSqlTest extends OpenHouseSparkITest {
       Assertions.assertFalse(exists(catalog, t + "_4"), catalog);
     }
   }
+
+  /**
+   * CREATE NAMESPACE over the plain Iceberg REST path stores a namespace record, with the
+   * properties Spark itself adds to the statement: its owner, the session's user.
+   */
+  @Test
+  void createNamespaceStoresSparksOwnProperties() throws Exception {
+    String ns = "irc_sql_ns_props";
+    spark.sql("CREATE NAMESPACE " + CATALOG + "." + ns);
+    java.util.Map<String, String> properties = new java.util.HashMap<>();
+    properties.put("uri", getOpenHouseLocalServerURI() + "/iceberg");
+    properties.put("token", new DummyTokenInterceptor.DummySecurityJWT("irc_sql").buildNoopJWT());
+    try (org.apache.iceberg.rest.RESTCatalog rest = new org.apache.iceberg.rest.RESTCatalog()) {
+      rest.initialize("probe", properties);
+      Assertions.assertEquals(
+          java.util.Collections.singletonMap("owner", spark.sparkContext().sparkUser()),
+          rest.loadNamespaceMetadata(org.apache.iceberg.catalog.Namespace.of(ns)));
+    } finally {
+      spark.sql("DROP NAMESPACE " + CATALOG + "." + ns);
+    }
+  }
 }

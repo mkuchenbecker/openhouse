@@ -1,9 +1,14 @@
 package com.linkedin.openhouse.tables.api.irc;
 
+import static com.linkedin.openhouse.common.security.AuthenticationUtils.extractAuthenticatedUserPrincipal;
+
 import com.linkedin.openhouse.capabilities.CapabilityNames;
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.checked.NotFoundException;
+import com.linkedin.openhouse.internal.catalog.model.NamespaceMetadata;
+import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
@@ -13,11 +18,14 @@ import com.linkedin.openhouse.tables.model.TableDtoWithMetadata;
 import com.linkedin.openhouse.tables.readbridge.ReadBridgeConfigResolver;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.DatabasesService;
+import com.linkedin.openhouse.tables.services.NamespacesService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -42,6 +50,9 @@ import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.stereotype.Component;
 
 /**
@@ -50,11 +61,16 @@ import org.springframework.stereotype.Component;
  * calls and checks:
  *
  * <ul>
- *   <li>A namespace is an OpenHouse database, one level only. The native API has no empty
- *       databases: a database exists while the native database list shows it, that is while it
- *       holds a table (or a view). So a namespace exists exactly then.
+ *   <li>A namespace is an OpenHouse database, one level only. It exists while it holds a table or a
+ *       view (the native database list shows it then), or while it has a stored namespace record
+ *       ({@link NamespacesService}), which may exist with no table. Loading a namespace answers the
+ *       record's spelling and properties where there is a record the caller may read, and an empty
+ *       property map otherwise.
  *   <li>Listing namespaces is the native database list; listing tables is the native table search.
- *       Neither makes an authorization decision, as natively.
+ *       Neither makes an authorization decision of its own. Reading a namespace's record (on load,
+ *       and on a miss of the existence checks) makes the namespace service's read decision for it,
+ *       whose refusal does not change the answer, and a failure to read the record or decide on it
+ *       does not change the answer for a namespace that holds a table or a view.
  *   <li>Table existence is the native existence check: a house-table lookup without loading the
  *       metadata, with no authorization decision and no capability check.
  *   <li>Loading a table is {@link TablesService#loadTable}: the native load with the same checks in
@@ -88,6 +104,12 @@ public class IcebergRestApiHandler {
   @Autowired private StorageManager storageManager;
 
   @Autowired private IcebergRestTableFileIo tableFileIo;
+
+  @Autowired private NamespacesService namespacesService;
+
+  @Autowired private HouseTableRepository houseTableRepository;
+
+  @Autowired private ViewsFeatureGate viewsFeatureGate;
 
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
@@ -197,8 +219,41 @@ public class IcebergRestApiHandler {
         .build();
   }
 
+  /**
+   * The namespace's stored record, if it has one the caller may read: its spelling and properties.
+   * Otherwise (no record, or a caller without the read privilege on it) what the route answered
+   * before records existed: the database if it holds a table or a view, with no properties.
+   *
+   * <p>If the record cannot be read or decided on (the namespace store or the authorization service
+   * fails), a namespace that holds a table or a view is answered as before records existed, with no
+   * properties, and the failure is logged; one that holds none has no answer but the failure. The
+   * holdings are probed only then, so a load still makes one keyed read when the store works.
+   */
   public GetNamespaceResponse loadNamespace(String namespace) {
     String databaseId = databaseId(namespace);
+    tablesApiValidator.validateSearchTables(databaseId);
+    Optional<NamespaceMetadata> record;
+    try {
+      record = readRecord(databaseId);
+    } catch (RuntimeException failure) {
+      if (!holdsATableOrIsListed(databaseId)) {
+        throw failure;
+      }
+      log.warn(
+          "IRC load of namespace {}: its record could not be read ({}); answered without"
+              + " properties, as it holds a table or a view",
+          databaseId,
+          failure.toString());
+      record = Optional.empty();
+    }
+    if (record.isPresent()) {
+      return GetNamespaceResponse.builder()
+          .withNamespace(Namespace.of(record.get().getNamespaceName()))
+          // A copy: Iceberg's builder asks the map for a null value, which an immutable map
+          // (the record's) refuses to be asked.
+          .setProperties(new HashMap<>(record.get().getProperties()))
+          .build();
+    }
     requireNamespace(databaseId);
     return GetNamespaceResponse.builder()
         .withNamespace(Namespace.of(databaseId))
@@ -214,8 +269,9 @@ public class IcebergRestApiHandler {
     String databaseId = databaseId(namespace);
     tablesApiValidator.validateSearchTables(databaseId);
     List<TableDto> tables = tablesService.searchTables(databaseId);
-    if (tables.isEmpty()) {
-      // The listing just read is the table probe: no table, so only the database list is left.
+    if (tables.isEmpty() && !storedNamespace(databaseId).isPresent()) {
+      // The listing just read is the table probe: no table and no record, so only the database
+      // list is left.
       requireListedDatabase(databaseId);
     }
     return ListTablesResponse.builder()
@@ -376,23 +432,87 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * Fails unless the native API reports {@code databaseId}: it holds a table, or the database list
-   * shows it (which also counts databases holding only views).
+   * Fails unless {@code databaseId} exists as a namespace: it holds a table, it has a stored record
+   * the caller may read ({@link #storedNamespace}), or the database list shows it (which also
+   * counts databases holding only views).
    *
    * <p>Whether it holds a table is one row of the native paged table search, which reads the same
    * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
    * listing of every table of the database (V17). The database list is read only when it holds
-   * none; that list has no lookup by name in House Tables, so a miss still reads it.
+   * none, and the record (one keyed read) before it; that list has no lookup by name in House
+   * Tables, so a miss still reads it.
    */
   void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);
-    if (!holdsATable(databaseId)) {
+    if (!holdsATable(databaseId) && !storedNamespace(databaseId).isPresent()) {
       requireListedDatabase(databaseId);
     }
   }
 
   private boolean holdsATable(String databaseId) {
     return tablesService.searchTables(databaseId, 0, 1, null, null, null).hasContent();
+  }
+
+  /**
+   * Whether {@code databaseId} exists as it did before namespace records: as {@link
+   * #requireNamespace} without the record.
+   */
+  private boolean holdsATableOrIsListed(String databaseId) {
+    return holdsATable(databaseId) || databaseIds().contains(databaseId);
+  }
+
+  /**
+   * Whether {@code databaseId} holds a table or a view: the one-row table probe of {@link
+   * #requireNamespace}, then, on a miss and where the database's views are enabled, the one-row
+   * view probe the native view create makes. A database whose views are disabled holds no views for
+   * these routes, as for the view list ({@code IcebergRestViewHandler#listViews}), which answers it
+   * an empty list.
+   */
+  boolean holdsATableOrView(String databaseId) {
+    return holdsATable(databaseId)
+        || (viewsFeatureGate.isEnabled(databaseId)
+            && houseTableRepository
+                .findAllViewsByDatabaseId(databaseId, PageRequest.of(0, 1))
+                .hasContent());
+  }
+
+  /**
+   * The stored namespace record of {@code databaseId} for an existence check: as {@link
+   * #readRecord}, except that a failure to read the record or to decide on it counts as no record
+   * (logged), so that a namespace that holds a table or a view is answered as before records
+   * existed while the namespace store or the authorization service fails.
+   */
+  Optional<NamespaceMetadata> storedNamespace(String databaseId) {
+    try {
+      return readRecord(databaseId);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "IRC existence check of namespace {}: its record could not be read ({}); counted as"
+              + " no record",
+          databaseId,
+          failure.toString());
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * The stored namespace record of {@code databaseId}, read through the namespace service with its
+   * read authorization for the request's principal: one keyed read. A caller the service refuses
+   * the read privilege is answered as if there were no record, so that neither the record nor its
+   * properties are shown to it, and the route answers it what it did before records existed. A
+   * failure of the authorization service (itself an access-denied type) or of the store is thrown.
+   */
+  private Optional<NamespaceMetadata> readRecord(String databaseId) {
+    try {
+      return Optional.of(
+          namespacesService.loadNamespaceMetadata(databaseId, extractAuthenticatedUserPrincipal()));
+    } catch (NotFoundException e) {
+      return Optional.empty();
+    } catch (AuthorizationServiceException e) {
+      throw e;
+    } catch (AccessDeniedException e) {
+      return Optional.empty();
+    }
   }
 
   /** Fails unless the native database list shows {@code databaseId}, spelled exactly so. */

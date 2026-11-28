@@ -20,6 +20,7 @@ import org.apache.iceberg.exceptions.BadRequestException;
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.CommitStateUnknownException;
 import org.apache.iceberg.exceptions.ForbiddenException;
+import org.apache.iceberg.exceptions.NamespaceNotEmptyException;
 import org.apache.iceberg.exceptions.NoSuchNamespaceException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.NoSuchViewException;
@@ -82,6 +83,9 @@ public final class IcebergRestErrors {
               CONFLICT_MSG_TMPL,
               conflict.getEntityId(),
               conflict.getCause() != null ? conflict.getCause().getMessage() : message));
+    }
+    if (failure instanceof NamespaceNotEmptyException) {
+      return error(HttpStatus.CONFLICT, NamespaceNotEmptyException.class, message);
     }
     if (failure instanceof CommitFailedException) {
       return error(HttpStatus.CONFLICT, CommitFailedException.class, message);
