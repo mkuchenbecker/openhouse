@@ -817,7 +817,19 @@ public class TableAuditAspect {
             .build();
     tableAuditHandler.audit(completeEvent);
     if (status == OperationStatus.SUCCESS) {
-      auditFormatVersionUpgrade(completeEvent);
+      try {
+        auditFormatVersionUpgrade(completeEvent);
+      } catch (RuntimeException e) {
+        // The write has succeeded and is audited: a failure to report its upgrade must not turn
+        // it into a failure.
+        log.error(
+            "Failed to audit the format version upgrade of table {}.{}",
+            completeEvent.getDatabaseName(),
+            completeEvent.getTableName(),
+            e);
+      }
+    } else if (completeEvent.getDatabaseName() != null && completeEvent.getTableName() != null) {
+      FormatVersionUpgrades.take(completeEvent.getDatabaseName(), completeEvent.getTableName());
     }
   }
 

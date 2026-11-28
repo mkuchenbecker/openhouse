@@ -5,11 +5,16 @@ import static com.linkedin.openhouse.tables.e2e.h2.FormatV3.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mockingDetails;
 
 import com.linkedin.openhouse.common.audit.AuditHandler;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
+import com.linkedin.openhouse.internal.catalog.HouseTableRowLimits;
 import com.linkedin.openhouse.tables.audit.model.OperationStatus;
 import com.linkedin.openhouse.tables.audit.model.OperationType;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
@@ -31,6 +36,8 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.util.AopTestUtils;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -142,5 +149,60 @@ public class FormatV3UpgradeAuditTest {
     assertEquals(
         Collections.singletonList(OperationType.UPDATE + " " + OperationStatus.FAILED),
         audited(db));
+  }
+
+  /**
+   * A write that passes the format version check and then fails (here: its House Tables row would
+   * not fit) is audited FAILED, with no upgrade event, and the table stays v2.
+   */
+  @Test
+  void aCommitThatFailsAfterTheCheckHasNoUpgradeEvent() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String db = "fv3_audit_failed";
+    String v2 = make(db);
+    audited(db);
+    Object target = AopTestUtils.getUltimateTargetObject(catalog);
+    HouseTableRowLimits limits =
+        (HouseTableRowLimits) ReflectionTestUtils.getField(target, "houseTableRowLimits");
+    ReflectionTestUtils.setField(target, "houseTableRowLimits", new HouseTableRowLimits(10));
+    try {
+      assertEquals(400, status(put(mvc, asking(bodyFromGet(v2), "3"))));
+    } finally {
+      ReflectionTestUtils.setField(target, "houseTableRowLimits", limits);
+    }
+    assertEquals(
+        Collections.singletonList(OperationType.UPDATE + " " + OperationStatus.FAILED),
+        audited(db));
+    assertEquals(2, metadata(catalog, db, "t").formatVersion());
+  }
+
+  /**
+   * An audit handler that fails on the upgrade event cannot fail the write: the upgrade is answered
+   * 200 and its write audited SUCCESS, once, and never FAILED.
+   */
+  @Test
+  void aFailureToAuditTheUpgradeDoesNotFailTheWrite() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String db = "fv3_audit_throws";
+    String v2 = make(db);
+    audited(db);
+    doThrow(new IllegalArgumentException("unknown operation type"))
+        .when(tableAuditHandler)
+        .audit(
+            argThat(
+                (TableAuditEvent event) ->
+                    event != null
+                        && event.getOperationType() == OperationType.UPGRADE_FORMAT_VERSION));
+    try {
+      assertEquals(200, status(put(mvc, asking(bodyFromGet(v2), "3"))));
+    } finally {
+      doNothing().when(tableAuditHandler).audit(any());
+    }
+    assertEquals(
+        java.util.Arrays.asList(
+            OperationType.UPDATE + " " + OperationStatus.SUCCESS,
+            OperationType.UPGRADE_FORMAT_VERSION + " " + OperationStatus.SUCCESS),
+        audited(db));
+    assertEquals(3, metadata(catalog, db, "t").formatVersion());
   }
 }

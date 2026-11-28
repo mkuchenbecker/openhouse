@@ -127,6 +127,7 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
     if (!applies(base, committed)) {
       return;
     }
+    FormatVersionUpgrades.discard(table.toString());
     rule.checkCommitted(
         table.toString(), base == null ? null : base.formatVersion(), committed.formatVersion());
     List<Schema> added = addedSchemas(base, committed);

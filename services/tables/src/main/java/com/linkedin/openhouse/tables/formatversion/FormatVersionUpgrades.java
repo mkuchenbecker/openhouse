@@ -14,8 +14,9 @@ import org.springframework.web.context.request.RequestContextHolder;
  * <p>An upgrade cannot be undone, and a table upgraded to format v3 can no longer be read by
  * LinkedIn's Iceberg 1.5.2 or by the readers built on it. The format version check records each
  * upgrade it lets through ({@link #record}); the table audit takes it once the write has succeeded
- * ({@link #take}), and logs and audits it as an operation of its own. A commit that fails after the
- * check leaves its record unread, and the request's end discards it.
+ * ({@link #take}), and logs and audits it as an operation of its own. Each check of a table's
+ * commit first discards what an earlier check of it recorded, so a retried commit is reported as
+ * what it did; a write that fails discards the record, and the request's end discards any other.
  *
  * <p>Records live in the request's attributes; outside a request nothing is recorded.
  */
@@ -37,6 +38,18 @@ public final class FormatVersionUpgrades {
     Map<String, Upgrade> upgrades = upgrades(true);
     if (upgrades != null) {
       upgrades.put(table, new Upgrade(from, to));
+    }
+  }
+
+  /**
+   * Forgets what was recorded for {@code table} ({@code db.table}) in this request: a commit that
+   * is checked again (Iceberg retries a commit on a refreshed base) decides afresh whether it
+   * upgrades.
+   */
+  public static void discard(String table) {
+    Map<String, Upgrade> upgrades = upgrades(false);
+    if (upgrades != null) {
+      upgrades.remove(table);
     }
   }
 

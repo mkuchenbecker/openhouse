@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,9 @@ import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 /**
  * Below format v3, on a cluster with the format v3 switch on, a commit is refused with {@code
@@ -156,5 +160,38 @@ class FormatVersionCommitPolicyTest {
     assertFalse(policy.appliesTo(commit(null, plain)));
     assertDoesNotThrow(() -> policy.check(TABLE, plain, introduced, introduced.properties()));
     assertTrue(policy(true).appliesTo(commit));
+  }
+
+  /**
+   * The check records an upgrade it lets through for the request's audit, and a commit checked
+   * again (a retry on a refreshed base that is already v3) leaves no record of an upgrade it did
+   * not make. A record is taken once.
+   */
+  @Test
+  void anUpgradeIsRecordedOnceAndARetryThatUpgradesNothingLeavesNoRecord() {
+    assumeTrue(IcebergV3.supported());
+    RequestContextHolder.setRequestAttributes(
+        new ServletRequestAttributes(new MockHttpServletRequest()));
+    try {
+      FormatVersionCommitPolicy policy = policy(true);
+      TableMetadata v2 =
+          TableMetadata.newTableMetadata(
+              SchemaParser.fromJson(WITHOUT_DEFAULT),
+              PartitionSpec.unpartitioned(),
+              "file:/tmp/format-version-commit-policy-test",
+              Collections.singletonMap(TableProperties.FORMAT_VERSION, "2"));
+      TableMetadata v3 = v2.upgradeToFormatVersion(3);
+      policy.check(TABLE, v2, v3, v3.properties());
+      assertEquals(
+          new FormatVersionUpgrades.Upgrade(2, 3), FormatVersionUpgrades.take("db", "t").get());
+      assertFalse(FormatVersionUpgrades.take("db", "t").isPresent());
+
+      policy.check(TABLE, v2, v3, v3.properties());
+      // The retry: its base is already v3, and it upgrades nothing.
+      policy.check(TABLE, v3, v3, v3.properties());
+      assertFalse(FormatVersionUpgrades.take("db", "t").isPresent());
+    } finally {
+      RequestContextHolder.resetRequestAttributes();
+    }
   }
 }
