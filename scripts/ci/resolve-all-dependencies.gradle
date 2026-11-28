@@ -9,12 +9,28 @@
 // It resolves each resolvable configuration's files leniently: what does not resolve is printed,
 // one line per failure, and skipped (it fails where a task uses it, as before), and nothing is
 // built. What a configuration resolves to is Gradle's as always; this only fetches the files into
-// the cache. Each project prints one line, `<project>: <files> files, <failures> failures`.
+// the cache. Each project prints one line, `<project>: <files> files, <failures> failures`; a
+// failure prints its first line and the innermost cause (a refused request names the URL and the
+// status there). With CI_RESOLVE_FAILURES set to a file, the total of failures is written to it, for
+// the workflow step that runs the task again when a refused request left the cache incomplete.
 //
 // The Scala plugin's incrementalScalaAnalysisFor<sourceSet> configurations are left out: they are
 // resolvable, but only Gradle's Scala tasks can resolve them, with the analysis attributes those
 // tasks ask for (resolved plainly, every dependency fails variant selection), and they hold the
 // same modules as the source set's classpath, which is resolved here.
+// The main build only writes the file; buildSrc, a build of its own, would overwrite it.
+def failuresFile = System.getenv('CI_RESOLVE_FAILURES') && gradle.parent == null ?
+  new File(System.getenv('CI_RESOLVE_FAILURES')) : null
+def totalFailures = new java.util.concurrent.atomic.AtomicInteger()
+if (failuresFile != null) {
+  // Not a count until the build finished: a build that failed (a plugin it could not resolve)
+  // fetched nothing, which the step must not read as no failures.
+  failuresFile.text = 'unknown\n'
+  gradle.buildFinished { result ->
+    failuresFile.text = result.failure == null ? "${totalFailures.get()}\n" : 'build failed\n'
+  }
+}
+def firstLine = { Throwable t -> ((t.message ?: t.class.name).readLines().find { it.trim() } ?: '').trim() }
 allprojects {
   tasks.register('ciResolveDependencies') {
     description = 'Downloads the files of every resolvable configuration into the Gradle cache (CI).'
@@ -28,10 +44,15 @@ allprojects {
         files += artifacts.artifactFiles.files.size()
         artifacts.failures.each { failure ->
           failures++
-          def message = (failure.message ?: failure.class.name).readLines().find { it.trim() } ?: ''
-          logger.lifecycle("${project.path}:${configuration.name}: could not resolve: ${message.trim()}")
+          def cause = failure
+          while (cause.cause != null && cause.cause != cause) {
+            cause = cause.cause
+          }
+          def detail = cause.is(failure) ? '' : " (cause: ${firstLine(cause)})"
+          logger.lifecycle("${project.path}:${configuration.name}: could not resolve: ${firstLine(failure)}${detail}")
         }
       }
+      totalFailures.addAndGet(failures)
       logger.lifecycle("${project.path}: ${files} files, ${failures} failures")
     }
   }
