@@ -1,10 +1,10 @@
 {
   "row" : {
     "entityType" : "VIEW",
-    "tableUUID" : "uuid",
+    "tableUUID" : null,
     "tableLocation" : "00003-uuid.metadata.json",
     "tableVersion" : "00003-uuid.metadata.json",
-    "tableCreator" : "undefined",
+    "tableCreator" : null,
     "storageType" : "local"
   },
   "versions" : [ {

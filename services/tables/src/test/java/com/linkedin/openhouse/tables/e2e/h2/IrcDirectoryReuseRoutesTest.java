@@ -14,6 +14,7 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.model.TableModelConstants;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -65,6 +66,8 @@ import org.springframework.test.web.servlet.MvcResult;
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 public class IrcDirectoryReuseRoutesTest {
 
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
+
   private static final Schema SCHEMA =
       IcebergSchemaHelper.getSchemaFromSchemaJson(TableModelConstants.HEALTH_SCHEMA_LITERAL);
 
@@ -79,7 +82,7 @@ public class IrcDirectoryReuseRoutesTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables.clear();
+    houseTablesH2Store.softDeletedTables().clear();
   }
 
   // ---------------------------------------------------------------- fixtures
@@ -105,10 +108,18 @@ public class IrcDirectoryReuseRoutesTest {
         .withPartitionSpec(PartitionSpec.unpartitioned());
   }
 
-  private HouseTable row(String db, String table) {
-    return houseTableRepository
-        .findById(HouseTablePrimaryKey.builder().databaseId(db).tableId(table).build())
-        .orElseThrow(() -> new AssertionError("no house-table row for " + db + "." + table));
+  /**
+   * The house-table row, with the table's UUID from its own metadata: House Tables keeps no UUID.
+   */
+  private HouseTable row(String db, String table) throws Exception {
+    HouseTable stored =
+        houseTableRepository
+            .findById(HouseTablePrimaryKey.builder().databaseId(db).tableId(table).build())
+            .orElseThrow(() -> new AssertionError("no house-table row for " + db + "." + table));
+    return stored
+        .toBuilder()
+        .tableUUID(IrcWrite.load(mvc, db, table).properties().get("openhouse.tableUUID"))
+        .build();
   }
 
   private boolean hasRow(String db, String table) {

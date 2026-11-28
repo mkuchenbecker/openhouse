@@ -18,6 +18,7 @@ import com.linkedin.openhouse.internal.catalog.OpenHouseInternalCatalog;
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.ClusteringColumn;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.History;
 import com.linkedin.openhouse.tables.api.spec.v0.request.components.Policies;
@@ -47,6 +48,7 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.sql.DataSource;
 import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
@@ -72,6 +74,7 @@ import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ContextConfiguration;
@@ -86,7 +89,7 @@ public class RepositoryTest {
 
   @Autowired HouseTableRepository houseTablesRepository;
 
-  @Autowired HouseTablesH2Repository h2Repository;
+  @Autowired DataSource dataSource;
 
   @SpyBean @Autowired OpenHouseInternalRepository openHouseInternalRepository;
 
@@ -1110,7 +1113,7 @@ public class RepositoryTest {
         houseTablesRepository
             .findById(getHouseTablePrimaryKey(key))
             .orElseThrow(NoSuchElementException::new);
-    verifyTable(houseTable);
+    verifyTable(houseTable, table.getTableUUID());
 
     Assertions.assertTrue(openHouseInternalRepository.existsById(key));
 
@@ -2208,16 +2211,18 @@ public class RepositoryTest {
     Assertions.assertTrue(table.getTableLocation().startsWith(path.toString()));
   }
 
-  private void verifyTable(HouseTable table) {
+  /** The House Tables row keeps the key and the location, not the cluster, URI or UUID. */
+  private void verifyTable(HouseTable table, String tableUuid) {
     Assertions.assertEquals(TABLE_DTO.getTableId(), table.getTableId());
     Assertions.assertEquals(TABLE_DTO.getDatabaseId(), table.getDatabaseId());
-    Assertions.assertEquals(TABLE_DTO.getClusterId(), table.getClusterId());
-    Assertions.assertEquals(TABLE_DTO.getTableUri(), table.getTableUri());
+    Assertions.assertNull(table.getClusterId());
+    Assertions.assertNull(table.getTableUri());
+    Assertions.assertNull(table.getTableUUID());
     Path path =
         Paths.get(
             storageManager.getDefaultStorage().getClient().getRootPrefix(),
             table.getDatabaseId(),
-            table.getTableId() + "-" + table.getTableUUID());
+            table.getTableId() + "-" + tableUuid);
     Assertions.assertTrue(table.getTableLocation().startsWith(path.toString()));
   }
 
@@ -2240,16 +2245,28 @@ public class RepositoryTest {
     return HouseTablePrimaryKey.builder().databaseId(ISOLATION_DB).tableId(tableId).build();
   }
 
+  /**
+   * Each type through its own route, as House Tables stamps the type from the route; a legacy row
+   * (no type, from before the discriminator) only by writing the database directly.
+   */
   private void seedIsolationRows() {
-    houseTablesRepository.save(isolationRow("view_a", "VIEW"));
-    houseTablesRepository.save(isolationRow("view_b", "VIEW"));
+    houseTablesRepository.saveView(isolationRow("view_a", "VIEW"));
+    houseTablesRepository.saveView(isolationRow("view_b", "VIEW"));
     houseTablesRepository.save(isolationRow("table_a", "TABLE"));
     houseTablesRepository.save(isolationRow("legacy_a", null));
+    new JdbcTemplate(dataSource)
+        .update(
+            "UPDATE house_table SET entity_type = NULL WHERE database_id = ? AND table_id = ?",
+            ISOLATION_DB,
+            "legacy_a");
   }
 
   private void deleteIsolationRows() {
     for (String tableId : Arrays.asList("view_a", "view_b", "view_c", "table_a", "legacy_a")) {
-      if (houseTablesRepository.findEntityById(isolationKey(tableId)).isPresent()) {
+      Optional<HouseTable> row = houseTablesRepository.findEntityById(isolationKey(tableId));
+      if (row.isPresent() && "VIEW".equals(row.get().getEntityType())) {
+        houseTablesRepository.deleteViewById(isolationKey(tableId));
+      } else if (row.isPresent()) {
         houseTablesRepository.deleteById(isolationKey(tableId));
       }
     }
@@ -2259,9 +2276,10 @@ public class RepositoryTest {
   void houseTableStandInKeepsTableAndViewReadsApart() {
     seedIsolationRows();
     try {
-      Assertions.assertFalse(
-          houseTablesRepository.findById(isolationKey("view_a")).isPresent(),
-          "a view at a shared key must be absent from the table point read");
+      Assertions.assertThrows(
+          HouseTableNotFoundException.class,
+          () -> houseTablesRepository.findById(isolationKey("view_a")),
+          "a view at a shared key is not found on the table point read, as House Tables answers");
       Assertions.assertEquals(
           "TABLE", houseTablesRepository.findById(isolationKey("table_a")).get().getEntityType());
       Assertions.assertEquals(
@@ -2340,9 +2358,13 @@ public class RepositoryTest {
     }
   }
 
-  /** The sort was applied in SQL; dropping it makes page two an arbitrary set of rows. */
+  /**
+   * The sort is applied in the store, so page two follows page one. The real repository sends House
+   * Tables the sort's property names only, so a descending request is answered ascending, and the
+   * page it answers carries no sort.
+   */
   @Test
-  void houseTableStandInHonoursTheRequestedSortAcrossPages() {
+  void houseTableStandInSortsInTheStoreAcrossPagesByPropertyOnly() {
     seedIsolationRows();
     houseTablesRepository.save(isolationRow("table_b", "TABLE"));
     try {
@@ -2354,13 +2376,15 @@ public class RepositoryTest {
 
       Assertions.assertEquals(3L, first.getTotalElements());
       Assertions.assertEquals(
-          Arrays.asList("table_b", "table_a"),
+          Arrays.asList("legacy_a", "table_a"),
           first.getContent().stream().map(HouseTable::getTableId).collect(Collectors.toList()));
       Assertions.assertEquals(
-          Collections.singletonList("legacy_a"),
+          Collections.singletonList("table_b"),
           second.getContent().stream().map(HouseTable::getTableId).collect(Collectors.toList()));
       Assertions.assertEquals(
-          descending, first.getSort(), "the returned page must report the sort it was asked for");
+          Sort.unsorted(),
+          first.getSort(),
+          "the page House Tables answers carries its number and size, not the sort");
     } finally {
       if (houseTablesRepository.findEntityById(isolationKey("table_b")).isPresent()) {
         houseTablesRepository.deleteById(isolationKey("table_b"));
@@ -2400,9 +2424,10 @@ public class RepositoryTest {
     try {
       HouseTable saved = houseTablesRepository.saveView(isolationRow("view_c", null));
       Assertions.assertEquals("VIEW", saved.getEntityType(), "the view route stamps the type");
-      Assertions.assertFalse(
-          houseTablesRepository.findById(isolationKey("view_c")).isPresent(),
-          "a stamped view stays out of the table path");
+      Assertions.assertThrows(
+          HouseTableNotFoundException.class,
+          () -> houseTablesRepository.findById(isolationKey("view_c")),
+          "a stamped view is not found on the table path");
 
       Assertions.assertTrue(houseTablesRepository.deleteViewById(isolationKey("view_c")));
       Assertions.assertFalse(
@@ -2489,7 +2514,9 @@ public class RepositoryTest {
       Assertions.assertEquals(before.getTableLocation(), after.getTableLocation());
     } finally {
       // Type-agnostic: without the fix the create overwrites the view, leaving a table row behind.
-      if (houseTablesRepository.findEntityById(occupationKey(tableId)).isPresent()) {
+      if (houseTablesRepository.findViewById(occupationKey(tableId)).isPresent()) {
+        houseTablesRepository.deleteViewById(occupationKey(tableId));
+      } else if (houseTablesRepository.findEntityById(occupationKey(tableId)).isPresent()) {
         houseTablesRepository.deleteById(occupationKey(tableId));
       }
     }
@@ -2501,9 +2528,18 @@ public class RepositoryTest {
     TableDto created = openHouseInternalRepository.save(createDtoFor(tableId));
     try {
       HouseTable stored = houseTablesRepository.findEntityById(occupationKey(tableId)).get();
-      houseTablesRepository.save(stored.toBuilder().entityType(null).build());
+      // A row from before the discriminator: no save writes one, as no House Tables write does.
+      JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+      jdbc.update(
+          "UPDATE house_table SET entity_type = NULL WHERE database_id = ? AND table_id = ?",
+          stored.getDatabaseId(),
+          stored.getTableId());
       Assertions.assertNull(
-          h2Repository.findByDatabaseIdAndTableId(OCCUPATION_DB, tableId).get().getEntityType(),
+          jdbc.queryForObject(
+              "SELECT entity_type FROM house_table WHERE database_id = ? AND table_id = ?",
+              String.class,
+              stored.getDatabaseId(),
+              stored.getTableId()),
           "the row must really be stored with no discriminator, not merely read back as one");
 
       TableDto update = created.toBuilder().tableVersion(created.getTableLocation()).build();
@@ -2572,7 +2608,7 @@ public class RepositoryTest {
           "VIEW",
           houseTablesRepository.findEntityById(occupationKey(tableId)).get().getEntityType());
     } finally {
-      houseTablesRepository.deleteById(occupationKey(tableId));
+      houseTablesRepository.deleteViewById(occupationKey(tableId));
     }
   }
 }

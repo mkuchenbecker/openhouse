@@ -50,6 +50,7 @@ import com.linkedin.openhouse.tables.model.TableModelConstants;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.toggle.model.TableToggleStatus;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import io.micrometer.core.instrument.search.MeterNotFoundException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.ArrayList;
@@ -100,6 +101,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
       AuthorizationPropertiesInitializer.class
     })
 public class TablesControllerTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
 
   @Autowired OpenHouseInternalRepository openHouseInternalRepository;
 
@@ -495,7 +498,10 @@ public class TablesControllerTest {
       Assertions.assertEquals("VIEW", after.getEntityType());
       Assertions.assertEquals(before.getTableLocation(), after.getTableLocation());
     } finally {
-      if (houseTablesRepository.findEntityById(key).isPresent()) {
+      // Whatever holds the key: a view through the view delete, a table through the table delete.
+      if (houseTablesRepository.findViewById(key).isPresent()) {
+        houseTablesRepository.deleteViewById(key);
+      } else if (houseTablesRepository.findEntityById(key).isPresent()) {
         houseTablesRepository.deleteById(key);
       }
     }
@@ -2043,13 +2049,15 @@ public class TablesControllerTest {
             .build();
 
     // Manually insert soft deleted tables in House tables repository
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(softDeletedTable.getDatabaseId())
-            .tableId(softDeletedTable.getTableId())
-            .deletedAtMs(softDeletedTable.getDeletedAtMs())
-            .build(),
-        softDeletedTable);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(softDeletedTable.getDatabaseId())
+                .tableId(softDeletedTable.getTableId())
+                .deletedAtMs(softDeletedTable.getDeletedAtMs())
+                .build(),
+            softDeletedTable);
 
     result =
         mvc.perform(
@@ -2220,13 +2228,15 @@ public class TablesControllerTest {
             .purgeAfterMs(System.currentTimeMillis() + 86400000) // 1 day from now
             .build();
 
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(softDeletedTable.getDatabaseId())
-            .tableId(softDeletedTable.getTableId())
-            .deletedAtMs(softDeletedTable.getDeletedAtMs())
-            .build(),
-        softDeletedTable);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(softDeletedTable.getDatabaseId())
+                .tableId(softDeletedTable.getTableId())
+                .deletedAtMs(softDeletedTable.getDeletedAtMs())
+                .build(),
+            softDeletedTable);
 
     MvcResult softDeletedResult =
         mvc.perform(

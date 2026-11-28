@@ -121,11 +121,12 @@ public class ViewsDualStorageH2IntegrationTest {
         com.jayway.jsonpath.JsonPath.read(
             create.getResponse().getContentAsString(), "$.metadataLocation");
     HouseTable created = findViewRow(databaseId);
-    UUID.fromString(created.getTableUUID());
+    Assertions.assertNull(created.getTableUUID(), "House Tables keeps no UUID");
     Assertions.assertEquals(expectedStorageType, created.getStorageType());
     Assertions.assertEquals(base, created.getTableLocation());
     String createdRoot = viewRoot(created.getTableLocation());
-    Assertions.assertTrue(createdRoot.contains(created.getTableUUID()), createdRoot);
+    // The root is named for the view's UUID: <view>-<uuid>.
+    UUID.fromString(createdRoot.substring(createdRoot.length() - 36));
 
     MvcResult replace =
         mvc.perform(
@@ -148,7 +149,6 @@ public class ViewsDualStorageH2IntegrationTest {
         base, replacement, "A changed definition must publish a different pointer.");
     HouseTable replaced = findViewRow(databaseId);
     Assertions.assertEquals(replacement, replaced.getTableLocation());
-    Assertions.assertEquals(created.getTableUUID(), replaced.getTableUUID());
     Assertions.assertEquals(created.getStorageType(), replaced.getStorageType());
     Assertions.assertEquals(createdRoot, viewRoot(replaced.getTableLocation()));
   }
