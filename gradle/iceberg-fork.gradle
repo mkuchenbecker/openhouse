@@ -62,8 +62,8 @@ allprojects {
 }
 
 // Nothing of this build may be published to a remote repository. Its Iceberg is built from a pinned
-// source commit into a directory on this machine and hosted nowhere (decision D7; hosting it is
-// work item I6d), so every published POM would name com.linkedin.iceberg:*:<fork version>, which no
+// source commit into a directory on this machine and hosted in no repository, so every published
+// POM would name com.linkedin.iceberg:*:<fork version>, which no
 // consumer can resolve. The check runs when the task graph is ready, before any task executes, for
 // every way a publish can be started (`publish`, a single publish task, CI). Publishing to a file
 // repository, `publishToMavenLocal` included, stays possible: it leaves the machine no more than

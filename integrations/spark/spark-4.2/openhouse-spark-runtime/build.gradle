@@ -1,10 +1,10 @@
 // The OpenHouse Spark SQL extensions (grammar, parser, analysis rule, exec nodes, the extensions
 // entry point) for Spark 4.2 / Scala 2.13 on the fork's Iceberg 1.12 line, ported from
-// :integrations:spark:spark-3.5:openhouse-spark-runtime (N3-x1). Not in the -PicebergLinkedIn
+// :integrations:spark:spark-3.5:openhouse-spark-runtime. Not in the -PicebergLinkedIn
 // reference build (settings.gradle), which has no Iceberg 1.12; see docs/development/iceberg-fork.md.
 //
 // Unlike the 3.5 runtime it has no OpenHouse catalog class and no OpenHouse Java client: the
-// extensions find OpenHouse features through the capabilities module (D23) and Iceberg's own
+// extensions find OpenHouse features through the capabilities module and Iceberg's own
 // SparkCatalog / RESTCatalog, so the engine needs no OpenHouse catalog. The uber jar holds this
 // module's classes and the capabilities module's, nothing else: Spark and Iceberg's Spark 4.2
 // runtime are the engine's own (compileOnly here).
@@ -83,7 +83,7 @@ dependencies {
   // shaded Iceberg Spark 4.2 runtime.
   compileOnly "org.apache.spark:spark-sql_2.13:${sparkVersion}"
   compileOnly "com.linkedin.iceberg:iceberg-spark-runtime-4.2_2.13:${icebergVersion}"
-  // The capability names, interfaces and value types (D23); packed into the uber jar.
+  // The capability names, interfaces and value types; packed into the uber jar.
   compileOnly project(':integrations:java:openhouse-catalog-capabilities')
   fatJarPackagedDependencies(project(':integrations:java:openhouse-catalog-capabilities')) {
     transitive = false
