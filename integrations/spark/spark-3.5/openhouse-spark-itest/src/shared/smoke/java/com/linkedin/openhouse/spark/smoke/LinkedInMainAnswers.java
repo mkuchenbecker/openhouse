@@ -38,14 +38,21 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
   private final String path;
   private final Class<?> owner;
   private final Supplier<List<MainDifference>> differences;
+  private final Map<String, String> absent;
   private LinkedInMainComparison comparison;
 
   /**
    * Compares the tests of {@code owner} itself (not of its subclasses) with {@code suite}'s
-   * recording; {@code path} says, in a recording's header, what the tests ran over.
+   * recording; {@code path} says, in a recording's header, what the tests ran over; {@code absent}
+   * names, with the reason, tests recorded on main that the class no longer runs.
    */
   public LinkedInMainAnswers(
-      String suite, String path, Class<?> owner, Supplier<List<MainDifference>> differences) {
+      String suite,
+      String path,
+      Class<?> owner,
+      Supplier<List<MainDifference>> differences,
+      Map<String, String> absent) {
+    this.absent = absent;
     this.suite = suite;
     this.path = path;
     this.owner = owner;
@@ -154,7 +161,13 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
     if (context.getRequiredTestClass() != owner || comparison == null) {
       return;
     }
-    List<String> wrong = comparison.endSuite(LinkedInMainRecording.header(path), null);
+    List<String> wrong =
+        new ArrayList<>(comparison.endSuite(LinkedInMainRecording.header(path), null));
+    wrong.addAll(
+        comparison.recordedTestsNotDeclared(
+            LinkedInMainComparison.enabledTests(owner, m -> owner.getSimpleName() + "." + m),
+            owner.getSimpleName() + ".",
+            absent));
     Assertions.assertEquals(Collections.emptyList(), wrong);
   }
 }

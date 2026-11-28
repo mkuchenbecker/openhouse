@@ -47,6 +47,12 @@ public class LegacyPathSparkSqlSmokeTest extends SparkSqlSmokeTest {
         main.endSuite(
             Collections.emptyMap(),
             dir == null ? null : dir + "/spark-3.5-legacy-vs-linkedin-main.tsv");
+    wrong.addAll(
+        main.recordedTestsNotDeclared(
+            LinkedInMainComparison.enabledTests(
+                getClass(), m -> m.contains("_") ? m.substring(0, m.indexOf('_')) : m),
+            "",
+            LinkedInMainDifferences.absentTests()));
     Assertions.assertEquals(Collections.emptyList(), wrong);
   }
 }

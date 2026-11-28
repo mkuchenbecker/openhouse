@@ -54,4 +54,12 @@ final class CommitPathLinkedInMainDifferences {
     }
     return differences;
   }
+
+  /**
+   * Tests recorded on main that this build no longer runs, each with the reason. None: a test that
+   * is removed or disabled must be named here, or the comparison fails.
+   */
+  static java.util.Map<String, String> absentTests() {
+    return java.util.Collections.emptyMap();
+  }
 }

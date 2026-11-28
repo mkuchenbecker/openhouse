@@ -133,8 +133,16 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
       return;
     }
     List<String> wrong =
-        comparison.endSuite(
-            LinkedInMainRecording.header("the native tables API over MockMvc"), null);
+        new ArrayList<>(
+            comparison.endSuite(
+                LinkedInMainRecording.header("the native tables API over MockMvc"), null));
+    Class<?> testClass = context.getRequiredTestClass();
+    wrong.addAll(
+        comparison.recordedTestsNotDeclared(
+            LinkedInMainComparison.enabledTests(
+                testClass, m -> testClass.getSimpleName() + "." + m),
+            testClass.getSimpleName() + ".",
+            CommitPathLinkedInMainDifferences.absentTests()));
     Assertions.assertEquals(Collections.emptyList(), wrong);
   }
 }

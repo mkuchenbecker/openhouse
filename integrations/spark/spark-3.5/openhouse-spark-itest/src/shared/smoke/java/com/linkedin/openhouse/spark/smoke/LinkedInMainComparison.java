@@ -254,6 +254,66 @@ public final class LinkedInMainComparison {
     return wrong.stream().sorted().collect(Collectors.toList());
   }
 
+  /**
+   * What is wrong with the recorded tests that this run's test class no longer declares as an
+   * enabled test: a recorded test of {@code ownedPrefix} (every recorded test when empty) that is
+   * not in {@code declaredTests} must be named in {@code absent} with the reason, or its rows and
+   * the declarations for it would leave the comparison without a failure. A name in {@code absent}
+   * that is declared, or that has no row, is wrong too. Nothing when the run records.
+   */
+  public List<String> recordedTestsNotDeclared(
+      Set<String> declaredTests, String ownedPrefix, Map<String, String> absent) {
+    List<String> wrong = new ArrayList<>();
+    if (recording == null) {
+      return wrong;
+    }
+    Set<String> recordedTests = new java.util.TreeSet<>();
+    for (String key : recording.keys()) {
+      if (testOf(key).startsWith(ownedPrefix)) {
+        recordedTests.add(testOf(key));
+      }
+    }
+    for (String test : recordedTests) {
+      if (!declaredTests.contains(test) && !absent.containsKey(test)) {
+        wrong.add(
+            "recorded on LinkedIn main, but the test is gone or disabled: "
+                + test
+                + " (re-record without it, or name it with the reason in the list of absent tests)");
+      }
+    }
+    for (Map.Entry<String, String> entry : absent.entrySet()) {
+      if (declaredTests.contains(entry.getKey()) || !recordedTests.contains(entry.getKey())) {
+        wrong.add("named as absent but declared or not recorded: " + entry.getKey());
+      }
+      if (entry.getValue() == null || entry.getValue().trim().isEmpty()) {
+        wrong.add("named as absent without a reason: " + entry.getKey());
+      }
+    }
+    return wrong;
+  }
+
+  /**
+   * The enabled test methods of {@code testClass} and its superclasses ({@code @Test} or
+   * {@code @ParameterizedTest}, not {@code @Disabled}), each as {@code name.apply(method)}.
+   */
+  public static Set<String> enabledTests(
+      Class<?> testClass, java.util.function.Function<String, String> name) {
+    Set<String> tests = new java.util.TreeSet<>();
+    for (Class<?> c = testClass; c != null && c != Object.class; c = c.getSuperclass()) {
+      for (java.lang.reflect.Method method : c.getDeclaredMethods()) {
+        boolean test =
+            method.isAnnotationPresent(org.junit.jupiter.api.Test.class)
+                || method.isAnnotationPresent(org.junit.jupiter.params.ParameterizedTest.class);
+        if (test
+            && !method.isAnnotationPresent(org.junit.jupiter.api.Disabled.class)
+            && !c.isAnnotationPresent(org.junit.jupiter.api.Disabled.class)) {
+          tests.add(name.apply(method.getName()));
+        }
+      }
+    }
+    return tests;
+  }
+
   /** The test a key belongs to: the key up to its first space. */
   private static String testOf(String key) {
     int space = key.indexOf(' ');

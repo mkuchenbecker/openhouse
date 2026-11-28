@@ -100,7 +100,8 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
           "catalog-plugin-contract",
           "the OpenHouse catalog of Spark 3.5 and the OpenHouse Java client over the native tables API",
           CatalogPluginContractTest.class,
-          LinkedInMainDifferences::catalogPluginContract);
+          LinkedInMainDifferences::catalogPluginContract,
+          LinkedInMainDifferences.absentTests());
 
   private SparkSession spark;
   private Catalog catalog;

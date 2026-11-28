@@ -3,13 +3,17 @@ package com.linkedin.openhouse.tables.e2e.h2;
 import com.linkedin.openhouse.tables.e2e.h2.LinkedInMainComparison.MainDifference;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /**
  * The comparison with LinkedIn main's recording cannot be satisfied by anything but main's answer
- * or a declaration that pins this build's: no marker in the file excuses a statement.
+ * or a declaration that pins this build's: no marker in the file excuses a statement, a test that
+ * is gone takes no rows out of view unseen.
  */
 public class LinkedInMainComparisonTest {
 
@@ -58,5 +62,45 @@ public class LinkedInMainComparisonTest {
     List<String> other = compare(recording, declared, "t1 #1 b", "rows [y]");
     Assertions.assertEquals(1, other.size(), String.valueOf(other));
     Assertions.assertTrue(other.get(0).contains("declared: rows [x]"), other.get(0));
+  }
+
+  @Test
+  void aRecordedTestThatIsGoneFailsUnlessNamedWithAReason() {
+    LinkedInMainComparison comparison =
+        new LinkedInMainComparison(
+            "suite",
+            recording("t1 #1 a\trows []", "t2 #1 a\trows []"),
+            Collections.<MainDifference>emptyList());
+    Set<String> declaredTests = new HashSet<>(Collections.singletonList("t1"));
+    List<String> wrong =
+        comparison.recordedTestsNotDeclared(declaredTests, "", Collections.emptyMap());
+    Assertions.assertEquals(1, wrong.size(), String.valueOf(wrong));
+    Assertions.assertTrue(wrong.get(0).contains("t2"), wrong.get(0));
+    Assertions.assertEquals(
+        Collections.emptyList(),
+        comparison.recordedTestsNotDeclared(
+            declaredTests, "", Collections.singletonMap("t2", "removed with its feature")));
+    Assertions.assertEquals(
+        1,
+        comparison
+            .recordedTestsNotDeclared(declaredTests, "", Collections.singletonMap("t2", " "))
+            .size());
+  }
+
+  /** A class with one enabled and one disabled test; private, so JUnit does not run it. */
+  private static class TwoTests {
+    @Test
+    void enabled() {}
+
+    @Disabled("for the test of enabledTests")
+    @Test
+    void disabled() {}
+  }
+
+  @Test
+  void aDisabledTestIsNotAnEnabledTest() {
+    Assertions.assertEquals(
+        Collections.singleton("enabled"),
+        LinkedInMainComparison.enabledTests(TwoTests.class, m -> m));
   }
 }
