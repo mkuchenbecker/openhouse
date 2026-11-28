@@ -67,8 +67,9 @@ jobs:
 
       # Everything `./gradlew build` runs: every project's tests, the Spark 3.5 itest's catalogTest
       # and statementTest, the Spark 4.2 itest's extensionsTest and smokeTest, Apache Iceberg's REST
-      # compatibility kit (restCompatKitTest, which passes when the kit tests that do not pass are
-      # exactly those listed in integrations/java/openhouse-rest-compat-kit/expected-outcomes.txt),
+      # compatibility kit at two configurations (restCompatKitTest and restCompatKitFormatV3Test,
+      # which pass when every kit test has the outcome and cause listed in
+      # integrations/java/openhouse-rest-compat-kit/expected-outcomes.txt),
       # checkstyle and spotbugs. With --continue, so that one red suite does not hide the others.
       - name: Build with Gradle
         id: suites
@@ -98,7 +99,7 @@ jobs:
       - name: Print the failed tests
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' }}
         run: >-
-          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --exclude restCompatKitFormatV3Test --lines 60
           --log "$RUNNER_TEMP/gradle-build.log"
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'

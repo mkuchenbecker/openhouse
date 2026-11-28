@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -19,8 +20,8 @@ import org.junit.platform.launcher.LauncherSessionListener;
  * discovered, and stops it when the session closes. The kit configures its {@code RESTCatalog} from
  * the system properties ({@code RCKUtils.initCatalogClient}), so this sets {@code uri} to the
  * service's IRC base path and {@code token} to the bearer token of a principal that is allowed
- * everything. The build passes the service classpath, the java executable and the parent work
- * directory as system properties.
+ * everything. The build passes the service classpath, the java executable, the parent work
+ * directory and the configuration's service properties as system properties.
  *
  * <p>The service learns that it should stop when its standard input closes, so it also stops if
  * this JVM dies without closing the session.
@@ -42,14 +43,23 @@ public final class RestCompatKitServiceListener implements LauncherSessionListen
       Files.createDirectories(parent);
       Path work = Files.createTempDirectory(parent, "service-");
       List<String> command =
-          Arrays.asList(
-              required("rck.service.java"),
-              "-Xmx768m",
-              "--add-opens=java.base/java.net=ALL-UNNAMED",
-              "-cp",
-              required("rck.service.classpath"),
-              "com.linkedin.openhouse.irc.rck.RestCompatKitService",
-              work.toString());
+          new ArrayList<>(
+              Arrays.asList(
+                  required("rck.service.java"),
+                  "-Xmx768m",
+                  "--add-opens=java.base/java.net=ALL-UNNAMED",
+                  "-cp",
+                  required("rck.service.classpath"),
+                  "com.linkedin.openhouse.irc.rck.RestCompatKitService",
+                  work.toString()));
+      // The configuration the kit runs at: service properties beyond the defaults, as
+      // name=value, one per line (none for the default configuration).
+      String properties = System.getProperty("rck.service.properties", "");
+      for (String property : properties.split("\n")) {
+        if (!property.trim().isEmpty()) {
+          command.add(property.trim());
+        }
+      }
       process =
           new ProcessBuilder(command)
               .directory(work.toFile())

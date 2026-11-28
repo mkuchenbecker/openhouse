@@ -242,7 +242,7 @@ jobs:
       - name: Print the failed tests
         if: ${{ !cancelled() && steps.suites.outcome == 'failure' && inputs.line == 'default' }}
         run: >-
-          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --lines 60
+          python3 scripts/ci/print-failed-tests.py --exclude restCompatKitTest --exclude restCompatKitFormatV3Test --lines 60
           --log "$RUNNER_TEMP/gradle-build.log"
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/service.log'
           --tail 'build/openhouse-spark-4.2-itest/tmp/*/*/tomcat/logs/*'

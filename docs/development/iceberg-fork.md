@@ -287,7 +287,7 @@ the default build's single job (`build-run-tests.yml`) runs only before a releas
   the Spark 3.5 itest (`catalogTest`, `statementTest`, `test`), the Spark 4.2 SQL extensions' tests
   and the Spark 4.2 itest (`test`, `extensionsTest`, `smokeTest`, and `testServerPlanning` and
   `smokeTestServerPlanning` with server-side scan planning), and Apache Iceberg's REST
-  compatibility kit (`restCompatKitTest`, part of `check`);
+  compatibility kit (`restCompatKitTest` and `restCompatKitFormatV3Test`, part of `check`);
 - after the tests, whatever their outcome (but not after a failed compile), the deployables
   ("Docker images" above, the composite action `.github/actions/default-build-deployables`):
   `./gradlew shadowJar dockerPrereqs`; the jobs-scheduler image, built through docker compose, in
@@ -548,31 +548,90 @@ catalog or client class, in its own JVM and service JVM:
 `:integrations:java:openhouse-rest-compat-kit` (not in the reference build) runs Apache Iceberg's REST
 compatibility kit (RCK), the fork's `iceberg-open-api` tests, against the tables service's IRC
 routes with Iceberg 1.12's own `RESTCatalog`: the kit's table suite (`CatalogTests`) and view suite
-(`ViewCatalogTests`), every test of both.
+(`ViewCatalogTests`), every test of both, at two configurations of the service:
 
 ```bash
 scripts/iceberg-fork/publish-local.sh   # also publishes iceberg-open-api's tests and test fixtures
-./gradlew :integrations:java:openhouse-rest-compat-kit:restCompatKitTest
+./gradlew :integrations:java:openhouse-rest-compat-kit:restCompatKitTest          # the default configuration
+./gradlew :integrations:java:openhouse-rest-compat-kit:restCompatKitFormatV3Test  # format v3 tables enabled
 ```
 
-The service runs in its own JVM as in the Spark 4.2 itest (`SpringH2TestApplication`, in-memory
-H2, local storage, the dummy token interceptor, an authorization handler that allows everything,
-views enabled for the namespaces the kit uses, and the cluster switch for format v3 tables,
-`cluster.iceberg.format-v3.enabled`, on, so the kit's format v3 creates are honoured). A JUnit
-session listener in the test JVM starts it and points the kit at `<service>/iceberg`
-(`rck.local=false`, `uri`, `token`). Its log and access
-log are under `build/openhouse-rest-compat-kit/tmp/restCompatKitTest/service-*`. Its warehouse is
-not: as for the Spark 4.2 test services, it is a new directory (`ohrck-*`) under the system's
-temporary directory (`ready.json` names it), removed when the service exits, so that a metadata
-location fits House Tables' 255 characters wherever the repository is checked out.
+`restCompatKitTest` runs the service at its defaults; `restCompatKitFormatV3Test` turns on the
+cluster switch for format v3 tables (`cluster.iceberg.format-v3.enabled`), so the kit's format v3
+creates are honoured and what it finds is what the routes do with v3. `check` runs both, one after
+the other (each starts its own service). The service runs in its own JVM as in the Spark 4.2 itest
+(`SpringH2TestApplication`, in-memory H2, local storage, the dummy token interceptor, an
+authorization handler that allows everything, views enabled for the namespaces the kit uses). A
+JUnit session listener in the test JVM starts it and points the kit at `<service>/iceberg`
+(`rck.local=false`, `uri`, `token`). Its log and access log are under
+`build/openhouse-rest-compat-kit/tmp/<task>/service-*`. Its warehouse is not: as for the Spark 4.2
+test services, it is a new directory (`ohrck-*`) under the system's temporary directory
+(`ready.json` names it), removed when the service exits, so that a metadata location fits House
+Tables' 255 characters wherever the repository is checked out.
 
 The kit runs through two subclasses, `OpenHouseRestCompatibilityKitCatalogTests` and
 `OpenHouseRestCompatibilityKitViewCatalogTests`, that only answer the kit's capability flags with
-what OpenHouse is (no namespace create, no namespace properties, one-level namespaces, no empty
-namespaces, server-owned locations). The tests that still do not pass are listed, each with its
-outcome, a class and a reason, in `expected-outcomes.txt` in the module: (a) a model difference the
-kit has a flag for, (b) a model difference it has none for, (c) a route or feature not served yet,
-(d) a defect, (e) an assumption that holds only for Iceberg's reference implementation.
-`restCompatKitTest` passes exactly when the tests that do not pass, and their outcomes, are the
-listed ones: a test that newly passes must be removed from the list, and one that newly fails is a
-regression until it is listed. No kit test is skipped or excluded to get there.
+what OpenHouse is (no namespace create needed, one-level namespaces, no empty namespace,
+server-owned locations). No kit test is skipped or excluded to get a green build.
+
+### Reading `expected-outcomes.txt`
+
+The list in the module names every kit test and its outcome: `PASSED`, or `FAILED` or `SKIPPED`
+with a cause. A cause is a named category (`category RTAS | b | replace needs ...`) with a class and
+a reason: (a) a model difference the kit has a flag for, (b) a model difference it has none for,
+(c) a route or feature not served yet, (d) a defect, (e) an assumption that holds only for
+Iceberg's reference implementation. Each test that does not pass is filed under the first step it
+fails at, with the throwable that ended it (for a failed assertion `java.lang.AssertionError`, or
+`org.opentest4j.AssertionFailedError` from some AssertJ assertions, whose message names what the
+client answered; for a skip the kit's assumption,
+`org.opentest4j.TestAbortedException`, or `disabled`) and the stable start of its message: no
+paths, UUIDs, ports or times; ` ... ` stands for any text. A line holds at both configurations
+unless it starts with `default: ` or `v3: `; such a test is listed once for each.
+
+Each task passes exactly when, at its configuration, the tests the kit ran are the tests listed
+(none missing, none new: the total is the list's), each has the listed outcome, and each test that
+does not pass fails or is skipped with the listed throwable type and a message that starts with the
+listed prefix. Otherwise it fails and prints, for each difference, what is listed and what
+happened. A JUnit listener in the test JVM (`RestCompatKitOutcomeListener`) records each test's
+outcome and throwable, since Gradle's own events say only that a test failed. At the end of a green
+run the task prints how many tests each cause holds.
+
+### What would move the number
+
+At the default configuration 92 tests fail. By what it would take to turn them green:
+
+| What fixes them | Causes | Tests |
+|---|---|---|
+| A view can be created in a namespace that holds no table, or has only a record (a change to the native view create, the owner's decision) | VIEWDB 24, LISTNS 2, KITNS 1 | 27 |
+| Behind that: each creates its view in a namespace that holds no table, so it cannot pass before the row above | DIALECT 12, DIALECTRES 2 (the view dialect policy) | 14 |
+| The owner's table policies | RTAS 16 (replace), SPEC 9 (partition spec evolution), SCHEMA 4 (column drop), FMT 2 (format version 1), DROPPURGE 1 (drop removes files) | 32 |
+| A native API that does not exist | LISTREC 2 (a list of namespace records), VRENAME 2 (view rename) | 4 |
+| The Iceberg REST layer alone, no native change | MSG 8 (message text), IDS 3 (404 for an id that cannot exist), MISSINGMETA 1 (a missing metadata file as not found), VIEWERRTYPE 1 (error type; also behind the first two rows) | 13 |
+| Configuration | FMTV3 2 (pass with format v3 on) | 2 |
+
+Each test is filed under the first step it fails at, so a fix can move a test to its next cause
+instead of turning it green: of the 24 VIEWDB tests, some next reach view rename, the dialect
+policy or replace. Not required of a conforming server: MSG, VIEWERRTYPE and KITNS (the reference
+implementation's text and error type, and the kit's own contradiction), and LISTNS while the view
+suite's namespace flag stays as it is.
+
+### Changing the list
+
+- **A fix makes a listed test pass.** The task fails ("it passes now: list it as PASSED") until its
+  line says `PASSED`; when the outcome differs by configuration, until both lines say what happens.
+  Remove a category no test is listed under any more: the task refuses an unused one.
+- **A listed test fails for another cause.** The task fails and shows the listed and the actual
+  throwable and message. If the new cause is a regression, fix it. If it is the next step of the
+  same test once the earlier one is gone (a fix moved it further), file it under the cause it now
+  fails for, after reading the kit's test to be sure that is the step it reached.
+- **A test that passed fails, or a test is new.** It is a regression until reviewed; list it only
+  with the cause it truly fails for.
+- **The actual outcomes in the list's format** are written to
+  `build/openhouse-rest-compat-kit/tmp/<task>/actual-outcomes.txt` by every run whose test JVM
+  finished (one that died writes no outcomes and fails on that): compare it with the
+  list, and copy a line from it only after checking that its message prefix holds nothing that
+  changes from run to run and that its category is right (a new test's category is `?`).
+- **A kit upgrade** (a new pinned Iceberg commit) can add, remove or rename tests and change the
+  reference implementation's messages: the task names every test that did not run and every test
+  not listed. Run both tasks, read each new test and each changed cause in the kit's source, and
+  update the list in the same change as the pin, with the reason for each new failure.
