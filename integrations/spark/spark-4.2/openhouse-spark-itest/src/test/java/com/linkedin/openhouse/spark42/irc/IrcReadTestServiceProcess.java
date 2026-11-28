@@ -103,6 +103,11 @@ final class IrcReadTestServiceProcess {
         new ArrayList<>(
             Arrays.asList(
                 required("irc42.java"), "-Xmx768m", "--add-opens=java.base/java.net=ALL-UNNAMED"));
+    if (ServerPlanning.selected()) {
+      // The server-planning run (testServerPlanning) turns the service's scan planning on; the
+      // default run keeps the cluster default, planning off.
+      command.add("-D" + ServerPlanning.SERVICE_PROPERTY + "=true");
+    }
     command.addAll(serviceJvmArgs);
     command.addAll(
         Arrays.asList(

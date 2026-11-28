@@ -13,11 +13,11 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Run after every other test class of this JVM ({@code @Order} with the class orderer the build
- * configures): no plan request reached a service from any test except {@link
- * SparkIrcScanPlanningTest}, whose catalogs alone are configured with {@code
- * scan-planning-mode=server}. So a default-configured Spark 4.2 catalog, across the whole suite's
+ * configures): in the default run no plan request reached a service. Its services have the cluster
+ * default, scan planning off, and the tests that ask for server planning run in {@code
+ * testServerPlanning} only. So a default-configured Spark 4.2 catalog, across the whole suite's
  * reads and writes (SELECT, CTAS, INSERT, DELETE, UPDATE, MERGE, metadata tables, views), never
- * asks the service to plan: the service lists the route but tells no client to use it.
+ * asks the service to plan.
  *
  * <p>In the {@code testServerPlanning} run of the same suite ({@link ServerPlanning}), every
  * catalog asks for server planning, and this check asserts the converse: the other tests'
@@ -81,12 +81,7 @@ public class SparkIrcNoPlanRequestTest {
               + " requests");
       return;
     }
-    Assertions.assertEquals(new ArrayList<String>(), others, "plan requests from other tests");
-    System.out.println(
-        "Plan requests in this JVM: "
-            + plans.size()
-            + " (all from SparkIrcScanPlanningTest), of "
-            + lines.size()
-            + " requests");
+    Assertions.assertEquals(new ArrayList<String>(), plans, "plan requests in the default run");
+    System.out.println("Plan requests in this JVM: none, of " + lines.size() + " requests");
   }
 }
