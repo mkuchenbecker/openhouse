@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 74 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 153, merge
-commit bc0ff1e8; the last three, 154, 151 and 153, each merged after an independent review on 2026-11-28) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 79 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 159, merge
+commit 8a5a9980; the last eight, 154, 151, 153, 152, 155, 156, 157 and 159, each merged after an independent review on 2026-11-28) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-25, updated 2026-11-28.
 
@@ -84,6 +84,11 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 154 | FF-10, FF-14, FF-15, FF-16 (partly), W13: jobs and the Spark client back to LinkedIn main's behavior (scheduler files byte for byte main's, sort stats sends main's statements, no logging configuration in the apps jar, the capabilities module published and named in the thin runtime POM); review: merge as is, no finding that had to be fixed, one decision (D65) and unlisted changes added to the ledger (`91-first-reviewed-merges-result.md`, `records/pr-review-154.md`) | 7cf347d7dcc3a58f9217d3ec08e83335204d4706 |
 | 151 | X2, X3: row-level statements on format v3 keep one deletion vector per data file and row lineage on every Spark path; tests only; review: two rounds, the first found the key assertions could not fail (`91-...`, `records/pr-review-151.md`) | afe8d3c8fa16fc0a092618f2716c014e52d53d68 |
 | 153 | The owner's namespace stack (upstream 869, 870, 871) merged as three merge commits plus tests, D54; no `/iceberg` namespace routes yet; review: two rounds, the first found an incomplete behavior-change list and defects pinned as expected behavior (`91-...`, `records/pr-review-153.md`; ledger part D) | bc0ff1e842c564cadc24221b069ecf2a99cbd3de |
+| 152 | FF-01, FF-02, FF-03: the Iceberg REST commit routes and the view load decide authorization before using what is stored; a commit that changes nothing is a read; ledger part F; review: two rounds, the first found a commit whose updates change nothing still returned metadata (`92-...`, `records/pr-review-152.md`) | 68e2557d571883be3dbc1558234d921d28a6b56a |
+| 155 | FF-47: CI build jobs stop dying on refused requests to Maven Central (dynamic versions from the restored cache, retries, the writer fetches every configuration); review: two rounds, the first corrected the author's diagnosis and found the writer's step unexercised (`92-...`, `records/pr-review-155.md`) | 4d9362ee0757ba57ec9047a5e1d3a79d72a88a44 |
+| 156 | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40: native answers are LinkedIn main's again by default (row-length checks only where configured, the format v3 switch-off rule); review: three rounds, a regression with the switch on, then a table read before authorization introduced by the fix (`92-...`, `records/pr-review-156.md`; ledger BC-056 to BC-058) | 0d54d2fd20a0aa7deb40049d483261c737b146c5 |
+| 157 | The Iceberg REST namespace writes served under `/iceberg` over the owner's namespace service; compatibility kit 42 to 54 passed of 160; review: two rounds, the first found existing read routes had come to depend on the namespace store (`92-...`, `records/pr-review-157.md`) | 518a2134ca682d0b1f8a9174d71733c6365e262a |
+| 159 | FF-47 (rest): the cache writer's fetch says why it was incomplete and tries once more; review: one round, merge as is (`92-...`, `records/pr-review-159.md`) | 8a5a9980a6d20bc65e6a7c8153f1772ddbd01e24 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

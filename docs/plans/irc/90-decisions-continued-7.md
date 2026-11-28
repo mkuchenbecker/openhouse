@@ -1,8 +1,8 @@
 # Decision log, continued a seventh time
 
-Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D68 follow (D65 to D68 added 2026-11-28).
+Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D76 follow (D65 to D68 and D69 to D76 added 2026-11-28).
 
-Bottom line: sixteen decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68 on 2026-11-28; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
+Bottom line: twenty-four decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68 and D69 to D76 on 2026-11-28; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
 (`88-review-summary.md`, `85-behavior-change-ledger.md`, `86-review-findings-and-fix-forward.md`) and the scout's report
 on the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`), under the owner's statements S57 to S61
 (`01-stated.md`). Most of them restore LinkedIn main's behavior (D53 closes an unchecked read, D56 to D61 restore or gate
@@ -202,3 +202,67 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
   could have served (`records/ci-dynamic-version-resolution.md`).
 - What would change it: the owner's answer; pull request 155 making the question moot.
 - Reference: `58-waiting-on-mike.md` (2026-11-28); `86-review-findings-and-fix-forward.md` FF-47.
+
+## D69. A commit over the Iceberg REST routes requires the read privilege as well, and answers the version it stored
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: a commit over the Iceberg REST routes requires the read privilege as well as the write privilege, and a commit answers the version it stored, not a reload.
+- Why: the specification's commit response carries the full metadata and a client cannot commit without loading the table, so a writer without the read privilege is already unable to use the route; the reload is also unchecked and can be of a later commit (RF-007).
+- What would change it: the owner wanting a writer without the read privilege to commit (the answer would then have to be a summary, as the native update gives); a reviewer showing an Iceberg client that commits without loading.
+- Reference: `records/pr-review-152.md` (the re-check's point 2); implemented in pull request 158 (not merged).
+
+## D70. A commit that changes nothing is a read
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: a commit that changes nothing is a read and gets every check a table load gets; which requests are reads is decided by what the request does, not by whether its update list is empty.
+- Why: the first fix covered only a literally empty update list and a commit whose updates change nothing (`set-properties {}`) still returned the full metadata on the write decision alone.
+- What would change it: a table load stopping to answer what a no-change commit answers (the two answers are the same stored metadata).
+- Reference: merge `68e2557d` (pull request 152); `records/pr-review-152.md` F1, F2; ledger BC-061.
+
+## D71. For an update carrying a v3-only type with the switch off, the refusal comes after the privilege check, at the cost of main's order
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: for an update, replace or PUT that creates, carrying a v3-only type with the format v3 switch off, the refusal comes after the privilege check; a caller without the privilege gets 403 where main gave 400, and other validation failures are answered first and alone. Creates keep main's order.
+- Why: keeping main's order (400 before 403) needs a read of the stored table before authorization; that read lets an unauthorized caller learn whether a table exists at format v3 and is the pattern pull request 152 removed.
+- What would change it: the owner preferring main's order over not reading before authorization; a way to know the stored version without a read.
+- Reference: merge `0d54d2fd`; `records/pr-review-156.md` (re-check sections, R1); ledger BC-057.
+
+## D72. With the switch off and a configured format version above 2 the service starts and refuses creates and replaces
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: with the switch off and the cluster's format version configured above 2, the service starts and refuses creates and replaces with a message saying what to change; it does not refuse to start.
+- Why: closer to main (reads, updates and snapshot commits keep working; main failed such creates with Iceberg's own text), and a start-up refusal makes a configuration slip an outage.
+- What would change it: the owner preferring a start failure.
+- Reference: merge `0d54d2fd`; `records/pr-review-156.md` (re-check, F11); ledger BC-058.
+
+## D73. A namespace that holds a table or view answers as before on the Iceberg REST read routes when the namespace record cannot be read
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: a namespace that exists because it holds a table or view answers as before on the `/iceberg` read routes whenever the namespace record cannot be read (store failure, authorization-service failure), with a warning in the log; only a record-only namespace fails when the store fails.
+- Why: it was a regression on existing routes: reads that never used the store came to depend on it, with no test and a false statement. The reviewer would have left this to the owner; it was decided because of the regression, and it is listed for him.
+- What would change it: the owner's view of how `/iceberg` should depend on his store.
+- Reference: merge `518a2134`; `records/pr-review-157.md` F1 and its re-check; ledger BC-071, BC-050.
+
+## D74. There is one existence rule on `/iceberg`, and create and drop use the one the read routes use
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: a namespace exists on `/iceberg` if it has a record, or holds a table, or holds a view whether or not the views gate hides it; create and drop use that rule.
+- Why: after 157 a database that holds only hidden views existed for HEAD, load and list views but not for the writes: drop answered 404 and create stored a record over an existing database.
+- What would change it: the owner's answer on what existence is for his routes (`58-waiting-on-mike.md`).
+- Reference: `records/pr-review-157.md` (re-check, F12); pull request 160 (in progress); ledger BC-070, BC-074.
+
+## D75. Scan planning is off by default; when on it is audited and bounded
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: scan planning is off by default behind `cluster.tables.irc.scan-planning.enabled` (this implements D56); when on it is audited as a table read and bounded (time bound answers `failed`, concurrency and size caps, a refused plan logged at DEBUG, a 503 with `Retry-After` when busy).
+- Why: the plan route reads manifest contents with the service's own credentials and its privilege is the owner's open question (FF-05); off by default reproduces main until he answers.
+- What would change it: his answer to FF-05.
+- Reference: pull request 158 (not merged); `records/rest-authorization-and-exposure-gaps.md`; `records/pr-review-158.md`.
+
+## D76. Notes are updated once per group of merges, not per merge
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable until release.
+- Decided: the planning notes are updated once per group of merges, not once per merge.
+- Why: the owner asked for results, not noise (S61).
+- What would change it: the owner asking for a different rhythm.
+- Reference: `01-stated.md` S61; this commit group (`92-reviewed-merges-152-to-159-result.md`).

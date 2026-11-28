@@ -27,6 +27,8 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
 10. The first pull requests merged after an independent review (2026-11-28): `91-first-reviewed-merges-result.md`; the
     reviewers' reports are `records/pr-review-*.md` and their common brief is `records/pr-review-brief-common.md`; the
     ledger's parts D and E and the status at the top of `86-...` follow from them.
+11. The next five (152, 155, 156, 157, 159, merged 2026-11-28): `92-reviewed-merges-152-to-159-result.md`; ledger parts B (BC-056 to
+    BC-058), C (BC-059, BC-060) and F (BC-061 to BC-074); decisions D69 to D76 in `90-decisions-continued-7.md`.
 
 ## 2. Where everything lives
 
@@ -72,7 +74,7 @@ except what is marked "[not checked]". Nothing is merged into either fork's main
   (irc-commit-write, irc-read-register-limits, irc-views-capabilities, client-seam-spark, format-v3, scan-planning,
   jobs, build-deployables, ci-fixtures-tests).
 - The scout of the owner's namespace line: `89-scout-namespace-and-prior-work-result.md`, its record
-  `records/scout-namespace-and-prior-work.md`; decisions D53 to D68 in `90-decisions-continued-7.md`; the first reviewed merges: `91-first-reviewed-merges-result.md`.
+  `records/scout-namespace-and-prior-work.md`; decisions D53 to D76 in `90-decisions-continued-7.md`; the reviewed merges: `91-first-reviewed-merges-result.md` (154, 151, 153) and `92-reviewed-merges-152-to-159-result.md` (152, 155, 156, 157, 159).
 
 ## 4. The code on `irc-integration`, by area
 
@@ -91,7 +93,7 @@ Paths verified with `git ls-tree` on `origin/irc-integration` at `81b4cd4d`.
 - Spark 4.2: `integrations/spark/spark-4.2/` (itest `Spark42IrcSparkSqlSmokeTest`) and `apps/spark-4.2/` (jobs, `Spark42TypeRestCatalogTest`).
 - Maintenance jobs: `apps/spark-3.5/src/shared`; evidence `FormatV3MaintenanceTest` and the other `FormatV3*JobsTest` in `apps/spark-3.5/src/test/`.
 - REST compatibility kit: `integrations/java/openhouse-rest-compat-kit/`, reviewed list `expected-outcomes.txt`
-  (42 passed, 95 failed, 23 skipped as of pull request 149).
+  (54 passed, 90 failed, 16 skipped as of pull request 157).
 - Shared Spark SQL smoke scenarios and write checks: `integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/smoke/`
   (`SparkSqlSmokeScenarios.java`, `SparkSqlWriteStatements.java`), run by `LegacyPath`, `RestShimPath`, `RestHttpPath` tests and `SparkIrcWriteStatementsTest` on 4.2.
 - Delta-harness: `integrations/spark/delta-harness/` (`BASELINE-2026-11-22.md`, `HARNESS-GUIDE.md`).

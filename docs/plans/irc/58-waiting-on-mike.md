@@ -4,7 +4,7 @@ Bottom line: nothing blocks work, but the reviews of 2026-11-27 and the scout ad
 before any release outside the forks. Moved out of `18-state.md` to keep it under 150 lines. Dated 2026-11-23, restructured 2026-11-27. Only
 `01-stated.md` carries Mike's authority.
 
-Order: what was added on 2026-11-28 (the re-run question, what the review of his namespace stack observed, and two interim choices that are stricter or narrower than his routes), then the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
+Order: what was added on 2026-11-28, later (the audit constant, the namespace layer's three differences, the view create, the list of records, his store as a dependency, scan planning, the re-run question being moot), then what was added earlier on 2026-11-28 (the re-run question, what the review of his namespace stack observed, and two interim choices that are stricter or narrower than his routes), then the foundation questions from the reviews, then the scout's questions, then the reviews' other questions, then the earlier
 questions, unchanged except where marked MOOT or partly settled. Each entry is a question for him, what happens meanwhile,
 and what each answer changes.
 
@@ -62,6 +62,65 @@ Ledger: part D of `85-behavior-change-ledger.md` (BC-044 to BC-052).
   (a House Tables list), and should his record count as a database for the native create?
 - Meanwhile: the interim as stated in D67, built on branch `irc/iceberg-rest-namespace-routes`; moving it later changes the
   mapping, not the layer.
+
+## 2026-11-28, later
+
+Bottom line: seven things for him, from the merges of 152, 155, 156, 157 and 159. Two are decisions only he can make about
+the Iceberg REST namespace layer and the native view create (b, c); one is a new API (d); one is a new audit constant (a).
+Nothing blocks work; the interim in each entry holds.
+
+### (a) The new audit operation type for an upgrade to format v3 (pull request 156, ledger BC-056)
+
+- Question: with `cluster.iceberg.format-v3.enabled` on, an upgrade of a table to v3 emits an audit event of a new
+  operation type, `UPGRADE_FORMAT_VERSION`, because an irreversible operation (it cuts off every Iceberg 1.5.2 reader) must
+  be visible. Consumers that deserialize the audit operation type strictly must know the constant before any cluster turns
+  the switch on. Is a new constant acceptable, or should the upgrade be a field on the existing update event?
+- Meanwhile: the switch is off by default, so nothing emits it. A failure to send the event cannot change the write.
+
+### (b) Three places the Iceberg REST namespace layer differs from his routes (pull request 157)
+
+- His drop removes the record and leaves the tables; `/iceberg` drop refuses a namespace that still holds a table or view,
+  as the specification requires.
+- His create accepts a database that already holds tables; `/iceberg` create answers 409 (the specification's already
+  exists).
+- His list (there is none for records); `/iceberg` lists databases derived from tables only, so a record-only namespace is
+  not listed.
+- As a result, no existing database can get properties through `/iceberg`: create answers 409 and update answers his 404 for a
+  database that holds tables (pinned as known defects). Question: which should the `/iceberg` routes follow, the
+  specification or his routes, for each of the three?
+- Meanwhile: as built (D67, `518a2134`). Moving it changes the mapping, not the layer. The three divergences are listed in the
+  pull request description.
+
+### (c) The native view create accepting a namespace record as proof that a database exists (ledger BC-074, FF-51)
+
+- 24 compatibility-kit view tests wait on it: the view suite creates no namespace first, and the native view create needs a
+  database that holds a table or a view. It is a one-line native behavior change in the native views service (a view create
+  that answered 404 would succeed in a record-only namespace), which this effort will not make without his justification.
+- Meanwhile: not done (D67).
+
+### (d) A House Tables list of namespace records (ledger BC-074, FF-52)
+
+- Two kit tests (a created namespace is stored but not listed) and the listing of record-only namespaces wait on it. It is
+  his API (a list route in House Tables).
+- Meanwhile: not added (D67).
+
+### (e) His namespace store is now a dependency of the Iceberg REST routes (pull request 157, D73, ledger BC-071, BC-050)
+
+- The `/iceberg` namespace writes need it, and a record-only namespace's reads (load, exists, listing, list tables, list
+  views) fail while it fails. A namespace that holds a table or view answers as before, with a warning, when the store
+  cannot be read (decided D73). It has not been run against his real store on MySQL; his deployment document still omits the
+  table, the DDL and the MySQL 8 requirement.
+
+### (f) The scan planning route (D75, FF-05; unchanged question)
+
+- Scan planning is off by default behind `cluster.tables.irc.scan-planning.enabled` (pull request 158, in review). Which
+  privilege the route should need when it is on is still his (the same access question as credential vending, D45).
+
+### (g) The re-run question of D68 is moot for now
+
+- The newest builds downloaded nothing beyond the restored cache and saw no refused request (pull request 159's own build,
+  all 11 jobs). The question in (a) of the first 2026-11-28 section stays open and unanswered but is not asked of him
+  again until a build fails for a refused download.
 
 ## Foundation questions from the reviews (2026-11-27)
 
@@ -161,6 +220,31 @@ The scout's report is `records/scout-namespace-and-prior-work.md`; the summary i
   `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13); the other 18 are small model
   differences (6), kit message-text assertions (9), view rename (2) and one kit contradiction (1). None is scan
   planning or credentials.
+  Update 2026-11-28 (pull request 157, merge `518a2134`): the kit is at 160 tests, 54 passed, 90 failed, 16 skipped [ran, by
+  the author]; the namespace writes are served and the 33 namespace-model failures are mostly gone. What the remaining 90
+  failures are, by the cause each line of the kit's reviewed list carries (`expected-outcomes.txt` on `irc-integration`,
+  `8a5a9980`; counted by class and by the reason group of each of its 106 non-passing lines with `awk` on the `|`-separated
+  fields: 90 FAILED plus 16 SKIPPED, which matches 160 - 54):
+  - 76 are OpenHouse model differences the kit has no flag for (class b): 24 the view suite creates no namespace first and
+    the native view create needs a database that holds a table or view (ledger BC-074, FF-51: waits on him, (c) above); 16
+    replace needs `replace.enabled=true` (policy); 15 views accept the Spark dialect only (13) and refuse reserved view
+    properties (2); 9 partition evolution and bucket specs are refused; 4 column drop or rename is refused; 3 a namespace id
+    with a hyphen is not an OpenHouse id; 2 the server owns the format version (a create asking for version 1 is refused);
+    2 listing a namespace the view suite never created answers 404; 1 the server's drop removes the table's files so the
+    kit's register finds no file.
+  - 10 are kit or client assumptions that hold only for Iceberg's reference implementation (class e): 8 the kit asserts the
+    reference implementation's message text (type and status are right); 1 the kit asserts a never-created namespace both
+    absent and present; 1 a missing metadata file answers 500 where the kit expects 404 (the one of these that is the
+    server's).
+  - 2 are a route the server does not serve (class c): view rename, which OpenHouse does not have.
+  - 2 are a defect-class difference (class d): a created namespace (a record, no table) exists but is not listed, because
+    House Tables has no list of records (ledger BC-074, FF-52: waits on him, (d) above).
+  - The 16 skipped: 15 are tests the kit skips by its own capability flag, which the kit's service sets (class a: names with
+    a dot 2, the empty namespace 5, nested namespaces 2, table creation without a namespace 1, names with a slash 2, the
+    variant type 3) and 1 is disabled by the kit itself (class e).
+  So what he decides ((c), (d), the 44 policy rules of the earlier count, and what conformance is then claimed) is 24 + 2 on
+  the namespace model, and the rest are OpenHouse rules or the kit's own assumptions. Classes are each test's first failing
+  step; a later step may fail for another reason once that one is gone (the list's own header).
 - Whether the server should turn server-side scan planning on for clients (V11d, D44). The route is served either way;
   turning it on changes every client's read path. Nothing waits on this.
 - Credential vending needs an identity service and an access contract (V12b, D45): which storages, which service

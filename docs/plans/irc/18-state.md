@@ -1,33 +1,48 @@
 # Current state
 
-Bottom line (2026-11-28): 74 pull requests are merged into `irc-integration` and its head is `bc0ff1e8`. Since the
-retroactive review of 2026-11-27 three pull requests have merged, each after an independent review (the owner's standing
-order, S58): 154 (jobs and the Spark client back to LinkedIn main's behavior, merge `7cf347d7`), 151 (X2 and X3, row-level
-statements on format v3, tests only, merge `afe8d3c8`) and 153 (the owner's namespace stack, D54, merge `bc0ff1e8`). What
-each left true, changed and left open is in `91-first-reviewed-merges-result.md`; the changes that came with his stack are
-ledger part D (BC-044 to BC-052) and those found by the review of 154 are part E (BC-053 to BC-055). Nothing is merged into
-either fork's main or into LinkedIn's or Apache's repositories.
+Bottom line (2026-11-28, second update): 79 pull requests are merged into `irc-integration` and its head is `8a5a9980`. Eight
+of them merged under the owner's standing order of an independent review (S58): 154, 151, 153 (`91-first-reviewed-merges-result.md`)
+and, since, 152, 155, 156, 157 and 159 (`92-reviewed-merges-152-to-159-result.md`). The compatibility kit is at 54 passed, 90
+failed, 16 skipped of 160 (it was 42, 95, 23) [ran, by the author of 157]. What each merge left true, changed and left open is
+in those two files; the behavior changes against LinkedIn main are in `85-behavior-change-ledger.md` (parts D and E from the
+first group; BC-056 to BC-058 in part B, BC-059 and BC-060 in part C and part F, which is not about main, from this one). The
+decisions of the day are D69 to D76 (`90-decisions-continued-7.md`). Nothing is merged into either fork's main or into
+LinkedIn's or Apache's repositories.
 
-Post-merge CI, as read by the orchestrator on 2026-11-28: for 154, passed on both lines; for 151, running with nothing
-failed when last read at 01:21 UTC; for 153, not read. The pull request build of 153 ran before 154 and 151 landed, so the
-post-merge build is the first check of the combination. Nothing is known red; the combination is unchecked until that build
-is read.
+What the Iceberg REST routes (`/iceberg`) serve now: every route except the stored-plan routes, credential vending and
+signing, and view rename; and, since pull request 157, the namespace writes: create, update properties and drop, over the
+owner's namespace service, with a namespace existing if it has a record or holds a table or view. Before anything stored is
+used, the commit, one-table transaction and view routes make the native privilege decision (pull request 152): a commit that
+changes nothing is a read, and a view load needs the read privilege. Native answers are LinkedIn main's again by default
+(pull request 156): no row-length check unless a width is configured, and with the format v3 switch off the v3 rules do not
+apply to answers below v3. Scan planning is still on by default until pull request 158 merges (D75).
+
+Post-merge CI, as read by the orchestrator on 2026-11-28 UTC: passed on both lines for the merges of 151, 152, 153, 154, 155
+and 156; for 157, running with nothing failed at 04:20 UTC; for 159, not read yet. The first pull request build after the
+cache writers completed (159's own) downloaded nothing beyond the restored cache in any of 11 jobs and saw no refused request
+(read by the reviewer of 159).
+
+An error of the orchestrator's, stated plainly: after pull request 155 merged, the orchestrator reported that the default line's
+cache warm-up had run with no failure. That was wrong: the fetch had been refused by Maven Central and printed 52 failure
+lines, and the orchestrator's check had truncated the output before them. The author of pull request 159 found it from the
+logs, and 159 is the fix.
 
 In flight now (pull requests are drafts until their independent review passes):
-- Pull request 152: authorization on the Iceberg REST commit and view routes (FF-01, FF-02, FF-03, D53), being reworked after
-  its review found a bypass through commits whose updates change nothing (`records/pr-review-152.md` F1).
-- Pull request 155: CI dependency resolution (FF-47), in review; read-only CI jobs take dynamic-version lookups from the
-  restored cache (`records/ci-dynamic-version-resolution.md`).
-- Pull request 156: restores of native service behavior (FF-09, FF-12, FF-13, FF-18, FF-19, FF-40), in review
-  (`records/restore-native-service-behavior.md`).
-- New work on branch `irc/iceberg-rest-namespace-routes`: the Iceberg REST namespace routes on the owner's service, built
-  under `/iceberg` as a thin layer (D67, with open questions to the owner).
+- Pull request 158: the authorization and exposure follow-up (FF-04, FF-06 in part, FF-07, FF-08, FF-48, and the leftovers of
+  152's review: lock checks before requirements, commits require the read privilege, a commit answers the version it stored;
+  D69, D75). Sent back after its first review (merge the current base and flip 157's outage pins; a green CI run on the merged
+  head).
+- Pull request 160: one existence rule for namespaces on `/iceberg` (D74), correcting what 157's second review found.
+- The baseline of LinkedIn main (FF-20 to FF-24) on branch `irc/baseline-of-linkedin-main`.
 
-Next in the queue: scan planning off by default (FF-04, FF-06; D56); the baseline of LinkedIn main in CI (FF-20 to FF-24);
-the stand-in's fidelity (FF-32, FF-33); private ids out of user-facing messages (FF-34, with FF-49); the 403-versus-503 fix
-on the Iceberg REST table routes (FF-48). Held and not started: W14 and N9. W13 is done by pull request 154, with no change
-on the wire. X2 and X3 are done (pull request 151). Seven ledger rows and the scout's questions wait on the owner, with the
-new items of 2026-11-28 (`58-waiting-on-mike.md`).
+Next in the queue after those: private ids out of user-facing messages (FF-34, with FF-49); the House Tables stand-in's
+fidelity (FF-32, FF-33); the kit list checking causes (FF-25); build hygiene (FF-27 to FF-31); then FF-51 to FF-53 (the
+owner's two, the minors). Held and not started: W14 and N9. W13 is done by pull request 154, with no change on the wire. X2
+and X3 are done (pull request 151). Eight ledger rows and the scout's questions wait on the owner, with the items of
+2026-11-28 (`58-waiting-on-mike.md`).
+
+Every sub-agent runs on the larger fallback model or the small one, none on the orchestrator's model (the owner's statement of
+2026-11-28, S62).
 
 Where things are: `records/` holds the authors' records and the reviewers' reports: the retroactive reviews
 (`records/review-*.md`, brief `records/review-brief-common.md`), the scout (`records/scout-namespace-and-prior-work.md`), the
@@ -43,9 +58,10 @@ dataloader checks pass in CI. View rename stopped on D47. An audit of the open w
 partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-11-24 and ten more since). This is the single
 place for current state.
 
-- Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, view
-  rename, and namespace create, alter and drop (OpenHouse has no such operations). The compatibility kit passes 42 of
-  160, almost all failures being kit assumptions OpenHouse deliberately does not meet (`39-v13-compat-kit-result.md`,
+- Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, and view
+  rename. Namespace create, update properties and drop are served since pull request 157. The compatibility kit passes 54 of
+  160 (90 failed, 16 skipped); 76 of the failures are OpenHouse model differences, 10 are kit assumptions, 2 are view rename and
+  2 are the unlisted records (`58-waiting-on-mike.md`, D32; `39-v13-compat-kit-result.md`,
   `42-v13b-spec-deviations-result.md`). What "conforming" should mean is still put to Mike (D32).
 - Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 199 of 210 smoke statements behave as on the
   Spark 3.5 baseline [CI]. The 11 differences are listed and are accepted or are Spark 4's own (D37,
