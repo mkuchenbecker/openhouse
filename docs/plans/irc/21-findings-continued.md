@@ -1,0 +1,118 @@
+# Findings, continued
+
+Continues `08-findings.md`, which is near its length limit.
+
+Bottom line: the twelfth round is the smoke suite on Spark 4.2 (one rename difference to fix, the rest accepted) and five test classes that never ran. The eleventh round is a data-loss risk when a create names the directory of a renamed-away table (V16, N5), now confirmed by running it and closed over IRC. Earlier: the testing policy of D18 (run what the change touched, merge, fix forward) let a red default build
+and two wrong claims through in the seventh round. Each was cheap to catch. Briefs now require the cheap checks
+(D26). All items are observations from delegated agents and from reading CI.
+
+## Seventh round (what selective testing missed)
+
+- The statement "every native rule holds through the IRC write routes" in the first report of pull request 94 was
+  wrong on two counts. Both were found afterwards by reading the code and then shown by failing tests (pull request
+  96, recorded in `27-v3-irc-write-result.md`): the native update validator was skipped, and the policy key was
+  stored as a stray property.
+- A change to `services/tables` main code is embedded by the Iceberg 1.2 fixture. The merge checks for pull request
+  94 covered only the Iceberg 1.5 line, so the default build was red on `irc-integration` from 14f23870 until
+  cc76d485 (pull request 98). The check that would have caught it takes about two minutes:
+  `:tables-test-fixtures:tables-test-fixtures_2.12:test`.
+- Default-build modules that no merge check had been exercising:
+  - `:tables-test-fixtures:tables-test-fixtures_2.12:test`
+  - `:libs:datalayout:test`
+  - `:apps:openhouse-spark-apps_2.12:test`
+  - the Spark 3.1 itest tasks, and the Spark 3.1 runtime
+  - on the 1.5 side: `tables-test-fixtures-iceberg-1.5_2.12:test`, Spark 3.5 `statementTest` and `test`, and the
+    1.5 Java itest
+- The service did not compile under the opt-in Iceberg 1.12 build between pull requests 88 and 92 and nobody saw
+  it, because the post-merge build covered only the default variant. Pull request 97 added a post-merge job for the
+  opt-in build (`32-optin-green-ci-result.md`).
+- The post-merge workflow first cancelled a running build when a newer merge arrived. Run 2 was cancelled that
+  way. Pull request 93 changed it so a running build finishes.
+
+## Eighth round (found while making the IRC routes follow the specification)
+
+- Finding 3, a native defect, not fixed: renaming a table onto a view's name answers 500 on the native API. The
+  house tables store refuses it with a key violation, which the native path turns into an unmapped
+  `CommitFailedException`, so the client gets a 500 instead of a 409. The rename retries the commit four times and
+  leaves five orphan metadata files (with their checksum files) in the source table's directory, and takes about
+  1.8 s. The IRC rename goes through the same path and leaves the same files, though it now answers 409. Under D9 it
+  is pinned by a test as it is, not fixed silently. Work item N4. This is the native side of defect 2 in
+  `39-v13-compat-kit-result.md`. Detail in `42-v13b-spec-deviations-result.md`.
+- The in-memory stand-ins for the house table store overwrote a view's row on a rename onto its key, which the real
+  store never does, so tests reported a success that production refuses. Both stand-ins now refuse (pull request
+  106). The same kind of gap as T5.
+
+## Ninth round (the red opt-in job, 2026-11-23)
+
+- The opt-in Iceberg 1.12 job was red on five post-merge runs in a row and notes said it was green. Two test-side
+  causes, fixed by pull requests 107 and 108 (`43-optin-ci-red-result.md`).
+- Product, both Iceberg lines, not fixed: the tables service accepts a create whose metadata location will not fit
+  House Tables' 255-character column, then answers 503 with commit status unknown (`CommitStateUnknownException`
+  at the client) and leaves the metadata file it wrote. Table names have no length check. Seen against the H2
+  stand-in; the real store's DDL has the same `VARCHAR(255)`. Work item V15.
+- Test: the Spark 4.2 itest's `test` task failed once in six post-merge runs (run 45099517406). The test is unknown
+  and path length is ruled out. The job now prints failed tests, so the next occurrence will name it. Work item T8.
+- Test: the compatibility kit's service builds its warehouse under the checkout too, and is green on the runner with
+  about 23 characters to spare. Work item T9.
+
+## Tenth round (the flip preparation, 2026-11-23)
+
+- Test, possibly the same thing as T8: `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once locally on
+  an empty access log and passed on two reruns. The cause is not known. If it recurs in CI, treat it with T8.
+- Build, no work item: two generated OpenAPI client classes in `:client:hts` (`PageJob` and `PageUserTable`) and
+  `META-INF/spring-configuration-metadata.json` of `services:tables` differ between two builds of the same sources,
+  so the build is not reproducible bit for bit. The cause was not determined (`44-v9abc-flip-prep-result.md`).
+
+## Eleventh round (V6 and V7, 2026-11-23)
+
+- Data loss, first read from code, then run (2026-11-23, pull request 116, `48-v16-directory-reuse-result.md`): a
+  create that carries the UUID of a live table that was renamed away becomes a second table in that table's
+  directory. Dropping it answers 204 and deletes the first table's files, and every read of the first answers 500.
+  Run on both APIs. IRC had three entry points, not two (a completion naming the directory, a completion whose
+  snapshot's manifest list lies there, a create carrying `openhouse.tableUUID`); all are closed. Natively there
+  are four, they need only the create privilege on the database, and they are unchanged and pinned by five tests.
+  The fix is put to Mike (D35). Register refused this case from the start.
+- Work items: V16 (done), N5 (pinned; fix put to Mike) and T13 (done: four tests, no code change).
+- Open, small: an IRC create can still set `openhouse.isTableReplicated` (note on I9); each completion naming a
+  location lists the database's house-table rows (V17).
+- A note in `46-v6-v7-metrics-register-result.md` says `openhouse.replicaTableLocationId` names a directory; the
+  pull request 116 agent read that the base checker filters it out first, so it does not in this build.
+- Test, possibly T8: `SparkIrcEndpointsTest.existenceChecksAreHeadRequests` failed once on reading the access log
+  before its last line was written. Pull request 112 made the test wait for that line. T8 stays open until a CI
+  failure names its test.
+- Environment: the shared disk filled twice during runs; reruns passed (`20-iteration-friction.md`).
+
+## Twelfth round (T10 and N3b, 2026-11-23)
+
+- Five Spark 3.5 test classes (12 tests) were never compiled from the day LinkedIn added them, because exclude
+  patterns copied from the Spark 3.1 project hid them. Seven failed at first, all for two stale expectations that
+  LinkedIn had fixed in the Spark 3.1 copies. No Spark 3.5 defect and no Iceberg 1.12 difference
+  (`49-t10-spark35-tests-result.md`).
+- Three Spark 3.1 tests have no Spark 3.5 equivalent: two on bucket partitioning, one on blocking the `policies`
+  property. They are ported first in V9e (D37).
+- Over IRC on Spark 4.2, `ALTER TABLE ... RENAME TO <catalog>.<db>.<t>` is refused where the baseline worked. It is
+  fixed in the SQL extensions (N6, D37). The other 11 differences are accepted or Spark 4's own
+  (`50-n3b-spark42-smoke-result.md`).
+- Open, being investigated by N6: tables that Spark 4.2 creates over IRC store a property `owner=root`. Whether the
+  baseline stores it is unknown, because `SHOW TBLPROPERTIES` hides it.
+- Follow-up N7: the Spark 4.2 smoke scenarios are a guarded copy of the Spark 3.5 suite's. After V9e the Spark 3.5
+  suite should extend the shared scenarios and the copy check should be deleted.
+
+## Thirteenth round (C10, C14 and X1, 2026-11-23)
+
+- Data safety, found by the X1 work (`56-decisions-continued-5.md`, D43): on the Iceberg 1.12 line, a native table
+  update with `format-version=3` upgraded a v2 table to v3 with no switch and no check. It was reachable on the
+  integration branch since the flip and under the opt-in build before it. Nothing is deployed from the branch. It is
+  closed in pull request 124, with a test that sweeps every write path. A v3 table cannot go back (D42).
+- CI, latent for as long as the workflow existed: the dataloader job's "wait for services" step never waited. Its
+  probe read a refused connection (`000` appended twice, `000000`) as ready. The tests passed only because their
+  setup took longer than the services' start. Fixed by pull request 122 (`55-c10-c14-result.md`).
+- Build: the Spark image never built in CI because Livy's build downloaded a 228 MB Spark release for tests it
+  skips. One flag, `-Ddownload.plugin.skip=true`, fixes it. The flag proposed earlier would not have worked.
+- Build: a single `curl` of the OpenAPI generator jar after every `clean` failed builds at random when Maven Central
+  answered 429. Fixed by pull request 123; a sustained limit on an empty cache still fails, now with a clear message.
+- Build, new work item C15: the OpenAPI specs the generator reads are not byte-stable between two builds of the same
+  sources (the order of the properties of Spring's `Page` type), probably the cause of the tenth round's "not
+  reproducible bit for bit".
+- Hooks: the pre-commit hook prints `[[: not found` under `sh`, so a failing `spotlessCheck` would not print its
+  hint. The exit code still propagates (see also the fifth round of `08-findings.md`).
