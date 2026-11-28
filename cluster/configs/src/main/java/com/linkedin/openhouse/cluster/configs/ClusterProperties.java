@@ -182,11 +182,12 @@ public class ClusterProperties {
   /**
    * Whether the tables service serves Iceberg REST scan planning ({@code POST
    * /iceberg/v1/namespaces/{namespace}/tables/{table}/plan}) and the credentials route that goes
-   * with it ({@code GET .../tables/{table}/credentials}, an empty list). Off by default: the two
-   * routes then answer the 406 of every route the service does not serve, and the config answer
-   * does not list them, so a client plans its scans itself, as on the native API. It takes effect
-   * only with the Iceberg REST routes on ({@link #IRC_ENABLED}); with those off, nothing is served
-   * under {@code /iceberg} whatever this says.
+   * with it ({@code GET .../tables/{table}/credentials}, an empty list). Off by default: with the
+   * Iceberg REST routes on, the two routes then answer the 406 of every route those routes do not
+   * serve, and the config answer does not list them, so a client plans its scans itself, as on the
+   * native API. It takes effect only with the Iceberg REST routes on ({@link #IRC_ENABLED}); with
+   * those off, nothing is served under {@code /iceberg} whatever this says, and the two routes
+   * answer the 400 of every path there.
    *
    * <p>Turn it on only where every principal that may load a table may also read its data. A plan
    * answers each planned data file's path, partition values and per-column lower and upper bounds

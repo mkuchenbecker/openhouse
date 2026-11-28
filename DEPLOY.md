@@ -265,9 +265,10 @@ with the routes on or off. Changing it requires restarting or redeploying the ta
 
 The tables service's Iceberg REST Catalog routes (`/iceberg`, above, which must be on) can plan a
 client's scans on the server (`POST .../namespaces/{namespace}/tables/{table}/plan`, with the credentials route `GET
-.../tables/{table}/credentials`, which answers an empty list). This is off by default: the two
-routes then answer 406, as every route the service does not serve, the config answer does not list
-them, and an Iceberg client plans its scans itself.
+.../tables/{table}/credentials`, which answers an empty list). This is off by default. With the
+Iceberg REST routes on and scan planning off, the two routes answer 406, as every route those routes
+do not serve, the config answer does not list them, and an Iceberg client plans its scans itself;
+with the Iceberg REST routes off they answer 400, as every path under `/iceberg`.
 
 Turn it on only where every principal that may load a table may also read its data. A plan answers
 each planned data file's path, partition values and per-column lower and upper bounds (values from
