@@ -25,23 +25,25 @@ public class DefaultClusterPropertiesTest {
     Assertions.assertNull(clusterProperties.getClusterIcebergWriteOrcCompressionCodec());
   }
 
-  /** The default is the production store's column, which {@link HouseTableRowLimits} states. */
+  /**
+   * By default no metadata location length is checked: writes reach House Tables as they did before
+   * the check existed, and the store decides.
+   */
   @Test
-  public void testHouseTablesMetadataLocationMaxLengthDefaultsToTheProductionColumn() {
+  public void testHouseTablesMetadataLocationMaxLengthDefaultsToNoCheck() {
+    Assertions.assertEquals(0, clusterProperties.getClusterHouseTablesMetadataLocationMaxLength());
     Assertions.assertEquals(
-        HouseTableRowLimits.DEFAULT_METADATA_LOCATION_MAX_LENGTH,
-        clusterProperties.getClusterHouseTablesMetadataLocationMaxLength());
-    Assertions.assertEquals(
-        255, new HouseTableRowLimits(clusterProperties).getMetadataLocationMaxLength());
+        HouseTableRowLimits.NO_LIMIT,
+        new HouseTableRowLimits(clusterProperties).getMetadataLocationMaxLength());
   }
 
-  /** The rename target's limit defaults to the production store's name column (work item V19). */
+  /** By default no rename target's length is checked either. */
   @Test
-  public void testHouseTablesTableIdMaxLengthDefaultsToTheProductionColumn() {
+  public void testHouseTablesTableIdMaxLengthDefaultsToNoCheck() {
+    Assertions.assertEquals(0, clusterProperties.getClusterHouseTablesTableIdMaxLength());
     Assertions.assertEquals(
-        HouseTableRowLimits.DEFAULT_TABLE_ID_MAX_LENGTH,
-        clusterProperties.getClusterHouseTablesTableIdMaxLength());
-    Assertions.assertEquals(255, new HouseTableRowLimits(clusterProperties).getTableIdMaxLength());
+        HouseTableRowLimits.NO_LIMIT,
+        new HouseTableRowLimits(clusterProperties).getTableIdMaxLength());
   }
 
   @AfterAll

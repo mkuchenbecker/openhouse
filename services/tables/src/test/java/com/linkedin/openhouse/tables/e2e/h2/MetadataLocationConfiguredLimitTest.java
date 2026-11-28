@@ -52,7 +52,8 @@ import org.springframework.test.web.servlet.MvcResult;
  * the production one: the store the House Tables service creates from its bootstrap {@code
  * schema.sql} declares {@code metadata_location VARCHAR(512)}. With the property at 512, a location
  * of 256 characters and one of 512 fit, and one of 513 is refused before anything is written, with
- * the configured limit in the message. {@link MetadataLocationLimitTest} shows the default, 255.
+ * the configured limit in the message. {@link MetadataLocationLimitTest} shows the production
+ * width, 255; {@link HouseTableRowLimitsUnsetTest} the default, no check.
  *
  * <p>The cluster of this test is such a deployment: the property is 512, and the H2 stand-in's
  * columns that hold the location are widened to 512 for the test, as that store's column is. Its

@@ -46,8 +46,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * A write whose house-table row would not fit House Tables is refused before anything is written
- * (work item V15).
+ * A write whose house-table row would not fit House Tables is refused before anything is written.
  *
  * <p>The row holds the metadata location in 255 characters and the table name in 255 ({@code
  * user_table_row.metadata_location} and {@code table_id}, both {@code VARCHAR(255)} in {@code
@@ -64,10 +63,19 @@ import org.springframework.test.web.servlet.ResultActions;
  * API's 400 and IRC's 400 {@code BadRequestException} with a message naming the limit and the
  * actual length, and that storage holds nothing it did not hold before.
  *
+ * <p>The check runs where the deployment states its store's widths, and this cluster states the
+ * production store's ({@code cluster.housetables.metadata-location-max-length=255}, {@code
+ * cluster.housetables.table-id-max-length=255}); by default nothing is checked ({@link
+ * HouseTableRowLimitsUnsetTest}).
+ *
  * <p>Lengths are of the location as stored, which for this storage has no scheme; the native GET
  * reports it with {@code file:} in front.
  */
-@SpringBootTest
+@SpringBootTest(
+    properties = {
+      "cluster.housetables.metadata-location-max-length=255",
+      "cluster.housetables.table-id-max-length=255"
+    })
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
