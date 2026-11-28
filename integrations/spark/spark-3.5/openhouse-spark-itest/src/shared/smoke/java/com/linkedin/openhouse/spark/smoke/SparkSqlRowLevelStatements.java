@@ -795,8 +795,11 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
             .map(Map.Entry::getKey)
             .collect(Collectors.toList()));
     if (before.snapshotId != after.snapshotId) {
-      // The snapshot's added-rows against the data it added: the rows of its new data files, and
-      // on the first commit after an upgrade also the old rows it gives ids to.
+      // The snapshot's added-rows against the data, as the specification defines it: the upper
+      // bound of the rows given ids, the added and existing row counts of the data manifests this
+      // commit gave a first-row-id (a rewritten manifest carries files that keep their ids), at
+      // least the rows of the data files the statement added (and, on the first commit after an
+      // upgrade, the old rows it gives ids to).
       long addedByFiles = model.upgradedRows;
       for (Map.Entry<String, DataFileState> file : after.dataFiles.entrySet()) {
         if (!before.dataFiles.containsKey(file.getKey())) {
@@ -804,8 +807,20 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
         }
       }
       check(
-          at + "the snapshot's added-rows are the rows of the data it added",
-          addedByFiles,
+          at + "the snapshot's added-rows cover the rows of the data files it added",
+          true,
+          after.addedRows >= addedByFiles);
+      long assignedByManifests = 0;
+      for (long[] manifest : after.dataManifests) {
+        if (manifest[0] >= before.nextRowId) {
+          assignedByManifests += manifest[1] + manifest[2];
+        }
+      }
+      check(
+          at
+              + "the snapshot's added-rows are the added and existing rows of the manifests it"
+              + " gave a first-row-id",
+          assignedByManifests,
           after.addedRows);
       check(
           at + "next-row-id grew by the snapshot's added-rows",
@@ -886,6 +901,8 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
 
     long positionDeleteFiles;
     long deletionVectors;
+    /** On v3, each data manifest: first-row-id, added rows, existing rows. */
+    final List<long[]> dataManifests = new ArrayList<>();
 
     List<String> rows() {
       return values(rowsById);
@@ -951,6 +968,17 @@ public abstract class SparkSqlRowLevelStatements extends BaselineChecks {
           state.deletedByDeleteFiles += delete.recordCount();
         }
         observed.dataFiles.put(task.file().path().toString(), state);
+      }
+    }
+    if (model.shape.formatVersion == 3) {
+      for (ManifestFile manifest : snapshot.dataManifests(table.io())) {
+        Object firstRowId = v3Value(manifest, "firstRowId");
+        observed.dataManifests.add(
+            new long[] {
+              firstRowId == null ? -1 : ((Number) firstRowId).longValue(),
+              manifest.addedRowsCount() == null ? 0 : manifest.addedRowsCount(),
+              manifest.existingRowsCount() == null ? 0 : manifest.existingRowsCount()
+            });
       }
     }
     // The live entries of the delete manifests.
