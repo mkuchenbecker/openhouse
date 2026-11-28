@@ -64,14 +64,16 @@ Options: `TASKS=spark` or `TASKS=tables` runs one side (the other side's files a
 Each recording's header names, in `# test doubles:`, the House Tables stand-in and the
 authorization backend main ran with. They are not the same for every suite:
 
-- The commit-path tests run on the branch's stand-in of `services/tables`' tests, copied into
-  main, so only production code differs.
+- The stored commit-path recording ran on the stand-in `services/tables`' tests had then, copied
+  into main. The branch now runs the fixtures' stand-in; the answers that changed with it are
+  declared as stand-in differences (kind "stand-in difference"), apart from the product's.
 - The Spark suites run on main's own stand-in: the Spark itest's service takes it from
   `tables-test-fixtures` (`src/main`), which the recording does not replace. The branch runs its
   rewritten stand-in there. `FIXTURES_STAND_IN=branch RUNS=1 TASKS=spark record.sh` copies the
   branch's into main as well, runs once, and prints every key whose answer is not among the stored
-  ones; it writes nothing into the repository. Checked on 2026-11-28: no key differs, and the
-  Spark recordings' header says so (`# stand-in check:`). When a change to either stand-in lands,
+  ones; it writes nothing into the repository. Checked on 2026-11-28, once with each of the
+  branch's stand-ins (before and after the move to the one held to the real store): no key
+  differs, and the Spark recordings' header says so (`# stand-in check:`). When a change to either stand-in lands,
   run the check again and update `STAND_IN_CHECK_SPARK` in the script with the result before the
   next recording.
 
@@ -81,9 +83,16 @@ These need the commit-path suite (and for the second and third, the comparison c
 everything recorded again; they wait for the stand-in work of `irc/house-tables-stand-in-fidelity`
 to merge, because that changes both stand-ins:
 
-- The commit-path recording was made with the stand-in from before the case-insensitive listing
-  change (pull request 158). No recorded route lists a database's tables, so no row is affected
-  today; record again once the stand-ins settle.
+- The commit-path recording was made with the stand-in services/tables' tests had before the
+  branch moved to the one stand-in of tables-test-fixtures, held to the real store. The answers
+  that changed with it (the soft-deleted page size, case-insensitive keys, restore of a missing
+  row or onto a live table) are declared as stand-in differences in
+  `CommitPathLinkedInMainDifferences`, and the renamed test is in its `absentTests()`. Recording
+  the commit path again with that stand-in on main needs more than copying sources: main's
+  `services/tables` tests do not depend on `tables-test-fixtures`, and the commit-path tests now
+  inject the fixtures' `HouseTablesH2Repository`, so main's test wiring would need that dependency
+  (a build-file change, which the guard refuses today) or a port of the stand-in into main's
+  `services/tables` test sources.
 - Placeholders erase identity: every UUID becomes `<uuid>` and every number of ten digits or more
   `<number>`, so whether two answers name the same table UUID or snapshot is not compared. Fix:
   number the placeholders by first appearance within one test (`<uuid#1>`, `<number#2>`) in

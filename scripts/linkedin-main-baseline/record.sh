@@ -25,9 +25,12 @@
 #
 #     The test doubles are therefore NOT the same for every suite, and each recording's header says
 #     which ran (# test doubles):
-#     - commit-path: the branch's House Tables stand-in of services/tables' tests
-#       (e2e/h2/HouseTablesH2Repository), copied into main, and the services tests' own
-#       authorization configuration: only production code differs between main and the branch.
+#     - commit-path: the stored recording ran with the stand-in services/tables' tests had then
+#       (e2e/h2/HouseTablesH2Repository at 0fe4678a), copied into main. Since then the branch has
+#       one stand-in, in tables-test-fixtures, held to the real store; the answers that changed
+#       with it are declared as stand-in differences in CommitPathLinkedInMainDifferences. A new
+#       recording runs main's own services stand-in unless FIXTURES_STAND_IN=branch also copies the
+#       fixtures one (see README.md: what a re-record of the commit path needs).
 #     - smoke-scenarios, write-statements, catalog-plugin-contract: the Spark itest's service takes
 #       its stand-in from tables-test-fixtures (src/main, tablestest/HouseTablesH2Repository). That is
 #       not a test source directory, so main runs main's own stand-in, and the branch runs its
@@ -69,9 +72,9 @@ TASKS=${TASKS:-spark tables}
 FIXTURES_STAND_IN=${FIXTURES_STAND_IN:-main}
 # What each recording's header says about the test doubles main ran with.
 DOUBLES_SPARK="House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at $COMMIT), not the branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization"
-DOUBLES_TABLES="House Tables: the branch's stand-in of services/tables' tests (e2e/h2/HouseTablesH2Repository, copied); authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)"
+DOUBLES_TABLES="House Tables: the stand-in services/tables' tests had before the one held to the real store (e2e/h2/HouseTablesH2Repository as of 0fe4678a, copied into main); the branch now runs tables-test-fixtures' stand-in, and the answers that changed with it are declared as stand-in differences; authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)"
 # The result of the last FIXTURES_STAND_IN=branch measurement, for the Spark recordings' header.
-STAND_IN_CHECK_SPARK="identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in), checked on 2026-11-28 with one run"
+STAND_IN_CHECK_SPARK="identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in: the repository and store held to the real House Tables store), checked on 2026-11-28 with one run each, before and after the branch moved to that stand-in"
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
@@ -114,19 +117,20 @@ sed -e 's/IcebergLine.current() == IcebergLine.V3/false/' \
   -e '/^import com.linkedin.openhouse.javaclient.IcebergLine;/d' \
   "$REPO/$ITEST/src/shared/test/java/com/linkedin/openhouse/spark/catalogtest/CatalogPluginContractTest.java" \
   > "$MAIN_TEST/spark/catalogtest/CatalogPluginContractTest.java"
-cp "$REPO"/$H2/CommitPath*.java "$REPO"/$H2/LinkedInMain*.java "$REPO/$H2/HouseTablesH2Repository.java" \
-  "$MAIN/$H2/"
+cp "$REPO"/$H2/CommitPath*.java "$REPO"/$H2/LinkedInMain*.java "$MAIN/$H2/"
 # The branch's declarations name classes main does not have; main declares no difference from itself.
 cp "$HERE"/recorder/tables/*.java "$MAIN/$H2/"
 
-FIXTURE=tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/java/com/linkedin/openhouse/tablestest/HouseTablesH2Repository.java
+FIXTURE_DIR=tables-test-fixtures/tables-test-fixtures-iceberg-1.2/src/main/java/com/linkedin/openhouse/tablestest
+BRANCH_FIXTURE_DIR=$REPO/tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/java/com/linkedin/openhouse/tablestest
 ALLOWED='^.. (integrations/spark/spark-3.5/openhouse-spark-itest/src/test/|services/tables/src/test/)'
+git -C "$MAIN" checkout -q -- "$FIXTURE_DIR"
+git -C "$MAIN" clean -q -f -- "$FIXTURE_DIR"
 if [ "$FIXTURES_STAND_IN" = branch ]; then
-  cp "$REPO/tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/java/com/linkedin/openhouse/tablestest/HouseTablesH2Repository.java" \
-    "$MAIN/$FIXTURE"
-  ALLOWED="$ALLOWED|^ M $FIXTURE\$"
-else
-  git -C "$MAIN" checkout -q -- "$FIXTURE"
+  # The branch's stand-in is the repository and the store behind it, held to the real store by
+  # HouseTableRepositoryContract.
+  cp "$BRANCH_FIXTURE_DIR"/HouseTablesH2*.java "$MAIN/$FIXTURE_DIR/"
+  ALLOWED="$ALLOWED|^.. $FIXTURE_DIR/HouseTablesH2[A-Za-z]*\\.java\$"
 fi
 if git -C "$MAIN" status --porcelain | grep -v -E "$ALLOWED"; then
   echo "changes outside main's test source directories: refusing to record" >&2
@@ -182,7 +186,8 @@ merge() { # suite destination-directory task test-doubles [stand-in-check]
 
 if [ "$FIXTURES_STAND_IN" = branch ]; then
   # A measurement: compare with the stored files, write nothing into the repository.
-  git -C "$MAIN" checkout -q -- "$FIXTURE"
+  git -C "$MAIN" checkout -q -- "$FIXTURE_DIR"
+  git -C "$MAIN" clean -q -f -- "$FIXTURE_DIR"
   status=0
   for suite in smoke-scenarios write-statements catalog-plugin-contract; do
     merge $suite "$WORK/merged" spark "$DOUBLES_SPARK (the branch's tables-test-fixtures stand-in copied in)"

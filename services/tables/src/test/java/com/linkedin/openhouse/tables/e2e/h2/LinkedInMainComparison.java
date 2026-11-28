@@ -283,6 +283,9 @@ public final class LinkedInMainComparison {
       }
     }
     for (Map.Entry<String, String> entry : absent.entrySet()) {
+      if (!entry.getKey().startsWith(ownedPrefix)) {
+        continue;
+      }
       if (declaredTests.contains(entry.getKey()) || !recordedTests.contains(entry.getKey())) {
         wrong.add("named as absent but declared or not recorded: " + entry.getKey());
       }

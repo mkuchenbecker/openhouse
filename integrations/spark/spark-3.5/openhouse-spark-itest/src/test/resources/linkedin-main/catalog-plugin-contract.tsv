@@ -7,7 +7,7 @@
 # path: the OpenHouse catalog of Spark 3.5 and the OpenHouse Java client over the native tables API
 # command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
 # test doubles: House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at bb8929e1), not the branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization
-# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in), checked on 2026-11-28 with one run
+# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in: the repository and store held to the real House Tables store), checked on 2026-11-28 with one run each, before and after the branch moved to that stand-in
 # runs: 6
 # key<TAB>outcome, sorted by key
 CatalogPluginContractTest.capabilityMismatch thrown #1	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 422 Unprocessable Entity , {"status":"UNPROCESSABLE_ENTITY","error":"Unprocessable Entity","message":"CLIENT_CAPABILITY_MISSING: d1_column_default.cpc_capability requires the column-defaults capability, which this client does not declare (X-Client-Name: (none), User-Agent: openhouse-java-client/unknown, X-OpenHouse-Client-Capabilities: (none)). Use a client that declares column-defaults in X-OpenHouse-Client-Capabilities.","stacktrace":null,"cause":"Not Available"} (status 422)
