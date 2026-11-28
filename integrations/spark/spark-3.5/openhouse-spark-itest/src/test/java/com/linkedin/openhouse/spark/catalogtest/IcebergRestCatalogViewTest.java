@@ -344,8 +344,8 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   /**
    * A principal who may replace a view but not read it cannot replace it through an Iceberg client
    * any more: the client loads the view first, and the load needs the read privilege. Pinned as
-   * what it is. On Iceberg 1.12 the load raises the 403; on 1.5 the client reports it as a missing
-   * view, so a create-or-replace takes the create path and meets the existing view (409).
+   * what it is. On Iceberg 1.12 the load raises the 403; on 1.5 the client wraps it in "Unable to
+   * load view" (a NoSuchViewException). A create-or-replace is refused 403 on both lines.
    */
   @Test
   void aWriterThatMayNotReadCannotReplaceThroughTheClient() throws Exception {
@@ -361,6 +361,10 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
         forbidden = forbidden.getCause();
       }
       Assertions.assertNotNull(forbidden, String.valueOf(load));
+      // Whether the view exists: 1.12 asks the exists route, which makes no decision; 1.5 loads it,
+      // and reports a view it may not read as absent.
+      Assertions.assertEquals(
+          IcebergLine.current() != IcebergLine.LEGACY, writer.viewExists(id("writable")));
       Throwable replace =
           thrown(
               () ->
@@ -370,15 +374,10 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
                       .withQuery("spark", "SELECT 2")
                       .withDefaultNamespace(NS)
                       .createOrReplace());
-      if (IcebergLine.current() == IcebergLine.LEGACY) {
-        Assertions.assertEquals(
-            org.apache.iceberg.exceptions.AlreadyExistsException.class,
-            replace.getClass(),
-            String.valueOf(replace));
-      } else {
-        Assertions.assertEquals(
-            ForbiddenException.class, replace.getClass(), String.valueOf(replace));
-      }
+      // Run on both lines: the create-or-replace is refused 403 on 1.12 and on 1.5 alike.
+      Assertions.assertEquals(
+          ForbiddenException.class, replace.getClass(), String.valueOf(replace));
+      assertThrown(ForbiddenException.class, "irc_writer", replace);
     }
     assertSameView("writable");
     rest.dropView(id("writable"));
