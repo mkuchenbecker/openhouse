@@ -129,34 +129,6 @@ jobs:
         if: inputs.line == 'default'
         uses: ./.github/actions/iceberg-fork
 
-      # TEMPORARY, evidence for the pull request only, removed by the next commit: the dynamic
-      # versions' lookups of four projects with --info, first with the init script, then without
-      # it (in that order, because the second refreshes the lookups it makes).
-      - name: TEMPORARY dynamic-version lookups with and without the init script
-        if: ${{ !(inputs.gradle-cache-write && matrix.group == 'rest') }}
-        continue-on-error: true
-        env:
-          LINE_FLAG: ${{ inputs.line == 'reference' && '-PicebergLinkedIn' || '' }}
-        run: |
-          probe() {
-            ./gradlew $LINE_FLAG --info \
-              :scripts:java:tools:dummytokens:dependencies --configuration runtimeClasspath \
-              :iceberg:openhouse:htscatalog:dependencies --configuration compileClasspath \
-              :services:optimizer:dependencies --configuration compileClasspath \
-              :services:housetables:dependencies --configuration runtimeClasspath \
-              :iceberg:openhouse:internalcatalog:dependencies --configuration runtimeClasspath 2>&1 \
-              | grep -E 'maven-metadata|repo\.maven\.apache\.org|json-smart:\[|mysql-connector-java:8\.\+|log4j-core:\{|logback-core:\{|FAILED|BUILD ' \
-              | sed -E 's/^ *[|+\\ -]*//' | sort | uniq -c || true
-          }
-          echo "::group::With scripts/ci/dependency-cache.gradle in init.d"
-          probe
-          echo "::endgroup::"
-          mv "$GRADLE_USER_HOME/init.d/dependency-cache.gradle" "$RUNNER_TEMP/"
-          echo "::group::Without it (Gradle's 24 hours)"
-          probe
-          echo "::endgroup::"
-          mv "$RUNNER_TEMP/dependency-cache.gradle" "$GRADLE_USER_HOME/init.d/"
-
       # The line's whole build, cut to this job's share by the init script (it prints what it
       # runs). With --continue, so that one red suite does not hide the others.
       - name: Run the group's Gradle tasks
