@@ -1,0 +1,52 @@
+# LinkedIn main's outcomes of the catalog-plugin-contract statements
+# commit: bb8929e1004afe1a46172799c2b640e92356e9a2
+# recorded: 2026-11-28
+# jdk: Ubuntu 17.0.21.1+2-1-24.04.1-Ubuntu
+# spark: 3.5.2
+# iceberg: Apache Iceberg 1.2.0.6 (commit 1cf3a9a0c06df06ea39ef9729158cceee3ee8c9b)
+# path: the OpenHouse catalog of Spark 3.5 and the OpenHouse Java client over the native tables API
+# command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
+# runs: 6
+# key<TAB>outcome, sorted by key
+CatalogPluginContractTest.capabilityMismatch thrown #1	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 422 Unprocessable Entity , {"status":"UNPROCESSABLE_ENTITY","error":"Unprocessable Entity","message":"CLIENT_CAPABILITY_MISSING: d1_column_default.cpc_capability requires the column-defaults capability, which this client does not declare (X-Client-Name: (none), User-Agent: openhouse-java-client/unknown, X-OpenHouse-Client-Capabilities: (none)). Use a client that declares column-defaults in X-OpenHouse-Client-Capabilities.","stacktrace":null,"cause":"Not Available"} (status 422)
+CatalogPluginContractTest.capabilityMismatch thrown #2	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 422 Unprocessable Entity , {"status":"UNPROCESSABLE_ENTITY","error":"Unprocessable Entity","message":"CLIENT_CAPABILITY_MISSING: d1_column_default.cpc_capability_plain requires the column-defaults capability, which this client does not declare (X-Client-Name: (none), User-Agent: openhouse-java-client/unknown, X-OpenHouse-Client-Capabilities: (none)). Use a client that declares column-defaults in X-OpenHouse-Client-Capabilities.","stacktrace":null,"cause":"Not Available"} (status 422)
+CatalogPluginContractTest.capabilityMismatch verdict	passes
+CatalogPluginContractTest.createTableTwiceFails thrown #1	org.apache.iceberg.exceptions.AlreadyExistsException: Table already exists: cpc_create_twice.t1
+CatalogPluginContractTest.createTableTwiceFails thrown #2	org.apache.iceberg.exceptions.AlreadyExistsException: Table already exists: cpc_create_twice.t1
+CatalogPluginContractTest.createTableTwiceFails verdict	passes
+CatalogPluginContractTest.dropTableOfMissingTable verdict	passes
+CatalogPluginContractTest.dropTableWithAndWithoutPurge verdict	passes
+CatalogPluginContractTest.enforcingAuthorization thrown #1	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 403 Forbidden , {"status":"FORBIDDEN","error":"Forbidden","message":"Operation on table cpc_auth_db.t1 failed as user cpc_stranger is unauthorized","stacktrace":null,"cause":"Not Available"} (status 403)
+CatalogPluginContractTest.enforcingAuthorization thrown #2	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 403 Forbidden , {"status":"FORBIDDEN","error":"Forbidden","message":"Operation on table cpc_auth_db.t1 failed as user cpc_reader is unauthorized","stacktrace":null,"cause":"Not Available"} (status 403)
+CatalogPluginContractTest.enforcingAuthorization verdict	passes
+CatalogPluginContractTest.grantsRoundTrip thrown #1	java.lang.IllegalArgumentException: 400 , {"status":"BAD_REQUEST","error":"Bad Request","message":"cpc_grants.t1 is not a shared table","stacktrace":null,"cause":"Not Available"}
+CatalogPluginContractTest.grantsRoundTrip verdict	passes
+CatalogPluginContractTest.listNamespacesContainsDatabasesOfCreatedTables verdict	passes
+CatalogPluginContractTest.loadTableOfNeverCreatedTable thrown #1	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_load_missing.never_created
+CatalogPluginContractTest.loadTableOfNeverCreatedTable verdict	passes
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #1	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.bad name!
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #2	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.a;b
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #3	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.a%b
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #4	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.a$b
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #5	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.a?b
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #6	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: cpc_invalid.a#b
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable thrown #7	org.apache.iceberg.exceptions.NoSuchTableException: Table does not exist: bad db!.t
+CatalogPluginContractTest.loadTableWithInvalidIdentifierReportsNoSuchTable verdict	passes
+CatalogPluginContractTest.loadedTableNameAndFileIO verdict	passes
+CatalogPluginContractTest.namespaceOperationsUseTheNamespaceRecord thrown #1	java.lang.UnsupportedOperationException: Checking if database exists is not supported
+CatalogPluginContractTest.namespaceOperationsUseTheNamespaceRecord verdict	fails: org.opentest4j.AssertionFailedError: Unexpected exception type thrown, expected: <org.apache.iceberg.exceptions.NoSuchNamespaceException> but was: <java.lang.UnsupportedOperationException>
+CatalogPluginContractTest.overwriteCommitReplacesDataFiles verdict	passes
+CatalogPluginContractTest.rawCommitWithStaleBaseFails thrown #1	org.apache.iceberg.exceptions.CommitFailedException: Cannot commit: stale table metadata
+CatalogPluginContractTest.rawCommitWithStaleBaseFails verdict	passes
+CatalogPluginContractTest.renameOntoExistingTableFails thrown #1	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 409 Conflict , {"status":"CONFLICT","error":"Conflict","message":"Table local-cluster.cpc_rename.t_to already exists","stacktrace":null,"cause":"Not Available"} (status 409)
+CatalogPluginContractTest.renameOntoExistingTableFails verdict	passes
+CatalogPluginContractTest.reservedPropertyOnCreate verdict	passes
+CatalogPluginContractTest.reservedPropertyViaUpdateProperties thrown #1	org.apache.iceberg.exceptions.BadRequestException: 400 , {"status":"BAD_REQUEST","error":"Bad Request","message":"Bad tblproperties provided: Can't add, alter or drop table properties due to the restriction: [table properties starting with `openhouse.` and the `policies` key cannot be modified], diff in existing & provided table properties: {\\n  \\"onlyOnLeft\\": {},\\n  \\"onlyOnRight\\": {},\\n  \\"onBoth\\": {\\n    \\"openhouse.clusterId\\": \\"local-cluster\\",\\n    \\"openhouse.lastModifiedTime\\": \\"<number>\\",\\n    \\"openhouse.tableVersion\\": \\"INITIAL_VERSION\\",\\n    \\"openhouse.creationTime\\": \\"<number>\\",\\n    \\"openhouse.tableUri\\": \\"local-cluster.cpc_reserved_update.t1\\",\\n    \\"openhouse.databaseId\\": \\"cpc_reserved_update\\",\\n    \\"policies\\": \\"\\",\\n    \\"openhouse.tableType\\": \\"PRIMARY_TABLE\\",\\n    \\"openhouse.tableLocation\\": \\"/tmp/cpc_reserved_update/t1-<uuid>/00000-<uuid>.metadata.json\\",\\n    \\"openhouse.tableUUID\\": \\"<uuid>\\",\\n    \\"openhouse.isTableReplicated\\": \\"false\\",\\n    \\"openhouse.tableCreator\\": \\"undefined\\"\\n  },\\n  \\"differences\\": {\\n    \\"openhouse.tableId\\": {}\\n  }\\n}","stacktrace":null,"cause":"Not Available"}
+CatalogPluginContractTest.reservedPropertyViaUpdateProperties verdict	passes
+CatalogPluginContractTest.sqlCreateAndDropNamespace verdict	fails: java.lang.UnsupportedOperationException: Drop database is not supported
+CatalogPluginContractTest.staleHandleAppendRetriesAndSucceeds verdict	passes
+CatalogPluginContractTest.tableExistsOnTableLockedAgainstReads thrown #1	com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException: 423 Locked , {"status":"LOCKED","error":"Locked","message":"Table cpc_locked.t1 has a SYSTEM_ONLY lock: Default. Use the reason-targeted OpenHouse unlock endpoint (Spark SQL: ALTER TABLE ... UNLOCK REASON SYSTEM_ONLY) as an authorized lock administrator.","stacktrace":null,"cause":"Not Available"} (status 423)
+CatalogPluginContractTest.tableExistsOnTableLockedAgainstReads verdict	passes
+CatalogPluginContractTest.updateSpecOnExistingTableIsRejected thrown #1	org.apache.iceberg.exceptions.BadRequestException: 400 , {"status":"BAD_REQUEST","error":"Bad Request","message":"Evolution of table partitioning and clustering columns are not supported, recreate the table with new partition spec.","stacktrace":null,"cause":"Not Available"}
+CatalogPluginContractTest.updateSpecOnExistingTableIsRejected verdict	passes
+CatalogPluginContractTest.userPropertyCanBeSetAndRemoved verdict	passes

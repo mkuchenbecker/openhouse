@@ -19,7 +19,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 public class LinkedInMainRecordingFilesTest {
 
   @ParameterizedTest
-  @ValueSource(strings = {"smoke-scenarios", "write-statements"})
+  @ValueSource(strings = {"smoke-scenarios", "write-statements", "catalog-plugin-contract"})
   void isARecordingOfLinkedInMain(String suite) throws Exception {
     List<String> lines = lines(suite);
     LinkedInMainRecording recording = LinkedInMainRecording.parse(suite, lines);

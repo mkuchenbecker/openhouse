@@ -7,6 +7,7 @@ import com.linkedin.openhouse.gen.tables.client.model.CreateUpdateLockRequestBod
 import com.linkedin.openhouse.javaclient.IcebergLine;
 import com.linkedin.openhouse.javaclient.api.SupportsGrantRevoke;
 import com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException;
+import com.linkedin.openhouse.spark.smoke.LinkedInMainAnswers;
 import com.linkedin.openhouse.tables.authorization.AuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.OpaAuthorizationHandler;
 import com.linkedin.openhouse.tables.authorization.Privileges;
@@ -49,6 +50,7 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.junit.jupiter.api.function.Executable;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.web.context.WebServerApplicationContext;
@@ -87,6 +89,18 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
 
   /** Iceberg's RESTCatalog over the in-process REST-shaped client (Iceberg 1.5 line only). */
   protected static final String REST_SHIM = "rest-shim";
+
+  /**
+   * Compares this class's tests (the legacy path) with what they observed on LinkedIn main ({@code
+   * linkedin-main/catalog-plugin-contract.tsv}).
+   */
+  @RegisterExtension
+  static final LinkedInMainAnswers LINKEDIN_MAIN =
+      new LinkedInMainAnswers(
+          "catalog-plugin-contract",
+          "the OpenHouse catalog of Spark 3.5 and the OpenHouse Java client over the native tables API",
+          CatalogPluginContractTest.class,
+          LinkedInMainDifferences::catalogPluginContract);
 
   private SparkSession spark;
   private Catalog catalog;
@@ -212,6 +226,12 @@ public class CatalogPluginContractTest extends OpenHouseSparkITest {
     try {
       executable.execute();
     } catch (Throwable t) {
+      LinkedInMainAnswers.answerInOrder(
+          "thrown",
+          LinkedInMainAnswers.failure(t)
+              + (t instanceof WebClientResponseWithMessageException
+                  ? " (status " + ((WebClientResponseWithMessageException) t).getStatusCode() + ")"
+                  : ""));
       return t;
     }
     throw new AssertionError("expected an exception but none was thrown");
