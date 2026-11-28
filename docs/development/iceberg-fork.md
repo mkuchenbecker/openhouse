@@ -358,6 +358,77 @@ script, so the fork is built (about 6 minutes on a runner) only when either chan
 The Gradle cache is written only by the `rest` jobs of a post-merge run: on `irc-integration`, or
 in a branch's own scope when the workflow is run there by hand. A pull request reads it.
 
+**Maven Central and the restored cache.** Every request a job makes to Central can be refused (a
+429). Gradle (8.14) tries a refused request three times, 1 s and 2 s apart, and then disables
+Central for the rest of that Gradle command: plugins, dependencies and files all come from that one
+repository, so everything else the command still needs from it fails too, and the job dies before
+its tests. Three things keep the jobs off Central (`scripts/ci/prepare-gradle-home.sh` sets them up
+after the restore, for every Gradle command of the job; none is saved with the cache, none reaches
+a developer's build):
+
+- A job that only reads the cache (every split-build job but the writer, and the Dataloader
+  integration job off the default branch) installs `scripts/ci/dependency-cache.gradle` in the
+  Gradle user home's `init.d`. Gradle asks Central again for two kinds of cached answers once they
+  are older than 24 hours, and the restored entry is often older (any pull request when nothing
+  merged for a day). The script keeps both from the cache:
+  - the version lists of the build's dynamic versions (the `json-smart` range in `nimbus-jose-jwt`'s
+    POM, `mysql-connector-java:8.+`, the `log4j-core` and `logback-core` ranges of
+    `spotbugs-annotations`), kept 20 days instead of 24 hours;
+  - the Spring Boot plugin (`id 'org.springframework.boot' version '2.7.8'`), resolved straight to
+    `spring-boot-gradle-plugin` of that version, the one dependency of its marker module, whose
+    missing jar Gradle otherwise asks Central about with a HEAD every 24 hours.
+
+  The writer keeps Gradle's periods, so a merge refreshes a list older than a day; a dynamic
+  version the cache has never seen is looked up as before. The trade: readers resolve a range from
+  the list as the writer last saw it, so where the list decides, a release made since reaches pull
+  request jobs only after the next merge's `rest` refreshes it, while developers, the writer and a
+  release build get it at once; until then CI tests the previous one. Today no selection can move
+  that way: the lists decide only for `json-smart` (closed at 2.3, long published) and
+  `mysql-connector-java:8.+` (relocated after 8.0.33), and the open ranges are settled by a fixed
+  version in the same graph (`log4j-core` 2.25.3, 2.25.4 in the Spark 4.2 apps; `logback-core`
+  1.2.11 from Spring Boot), although alone they resolve to newer releases (2.26.1 and 1.6.8 on
+  2026-11-28). A configuration where such a range stands alone would lag. After 20 days without a
+  merge the lists are stale again and the
+  readers ask Central, as before the script; the download list then warns (below).
+- Every job gives Gradle seven tries for a refused request, 2 s apart and doubling (Gradle's
+  internal `org.gradle.internal.repository.max.tentatives` and `.initial.backoff`, as system
+  properties in the Gradle user home's `gradle.properties`): at most about two minutes before
+  Central is disabled.
+- The writer, after its build, fetches the files of every resolvable configuration of every project
+  (`ciResolveDependencies` from `scripts/ci/resolve-all-dependencies.gradle`, at most 10 minutes,
+  not part of the verdict; each project prints `<project>: <files> files, <failures> failures` and
+  each failure on its own line): what only another job uses (the Spark 4.2 apps' Jackson JAX-RS
+  jars, the Spark 3.5 itest's JUnit Platform suite, the Docker job's OpenTelemetry agent) is then in
+  the cache the next jobs restore.
+
+Each job prints the restored cache's age at the start and ends by listing the dependency files it
+downloaded beyond the restored cache (`scripts/ci/list-downloaded-dependencies.sh`), with a warning
+when the cache is 19 days old or more. A reader whose restored cache holds what it needs makes no
+request to Central. A reader that must still download something (a dependency a pull request adds
+or changes, which is in the cache after its merge) makes those requests, and a refusal of one that
+outlasts the retries still fails that Gradle command.
+
+To check the writer after a merge: the `Fetch` step runs with `continue-on-error`, so its conclusion
+is always `success`; read its timing and its own output instead (the task's `BUILD` line, one
+`<project>: <files> files, <failures> failures` line a project, any `could not resolve:` line), then
+the download lists of the jobs of a pull request run that started after the writer saved
+(`<id>`: the job's or the run's id):
+
+```
+gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id> \
+  --jq '.steps[] | select(.name | startswith("Fetch")) | [.conclusion, .started_at, .completed_at] | @tsv'
+gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id>/logs \
+  | sed -n '/Run .\/gradlew .*ciResolveDependencies/,/BUILD /p' \
+  | grep -E ' [0-9]+ files, [0-9]+ failures$|could not resolve:|BUILD ' | grep -vE ' 0 failures$'
+for j in $(gh api "repos/mkuchenbecker/openhouse/actions/runs/<run id>/jobs?per_page=100" --jq '.jobs[].id'); do
+  gh api repos/mkuchenbecker/openhouse/actions/jobs/$j/logs \
+    | grep -hE 'beyond the restored Gradle cache|Restored Gradle cache: [0-9]+ days|status code 429|Failed to get resource'
+done
+```
+
+The second command prints only the `BUILD` line when nothing failed; any project line with failures
+or `could not resolve:` line, or `BUILD FAILED`, is a fetch that did not complete.
+
 ## Spark 4.2 over the IRC read routes
 
 `:integrations:spark:spark-4.2:openhouse-spark-4.2-itest` is not in the reference build
