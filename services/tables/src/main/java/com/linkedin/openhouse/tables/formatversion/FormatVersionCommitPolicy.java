@@ -159,9 +159,9 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
               "%s: table %s is, or would become, format version 3 and sets %s=true. Column defaults"
                   + " on a format v3 table are Iceberg's native initial-default and write-default,"
                   + " stored in the table's metadata; the read bridge that property turns on is for"
-                  + " format v2 tables only. A table that uses it stays at format version 2, since"
-                  + " OpenHouse does not translate its stored defaults to native ones; a new format"
-                  + " v3 table does not set it.",
+                  + " format v2 tables only, and OpenHouse does not translate a table's stored"
+                  + " defaults to native ones. Keep a table that sets it at format version 2, or"
+                  + " create the format v3 table without the property.",
               OPT_IN_ON_V3, table, ReadBridgeConfigResolver.COLUMN_DEFAULTS_CAPABILITY_PROP));
     }
     if (TableType.REPLICA_TABLE.name().equals(properties.get(TABLE_TYPE_KEY))

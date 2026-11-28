@@ -815,8 +815,9 @@ public class FormatV3NativeApiTest {
     String message = refused(create, "COLUMN_DEFAULTS_OPT_IN_ON_V3");
     assertTrue(
         message.contains(
-            "A table that uses it stays at format version 2, since OpenHouse does not translate"
-                + " its stored defaults to native ones; a new format v3 table does not set it."),
+            "OpenHouse does not translate a table's stored defaults to native ones. Keep a table"
+                + " that sets it at format version 2, or create the format v3 table without the"
+                + " property."),
         message);
     assertEquals(404, status(get(mvc, db, "t")));
     // On an update of a v3 table.
