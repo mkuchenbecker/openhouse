@@ -2,10 +2,12 @@ package com.linkedin.openhouse.tablestest;
 
 import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
+import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableNotFoundException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +17,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * Point, list, and typed accessors over the H2-backed House Table stand-in, where a view, a table,
@@ -40,10 +43,14 @@ public class HouseTablesH2ViewAccessorTest {
     repository = context.getBean(HouseTablesH2Repository.class);
     repository.deleteAll();
 
-    repository.save(row("view_a", "VIEW"));
-    repository.save(row("view_b", "VIEW"));
+    // Each type through its own route, as House Tables stamps the type from the route; a legacy
+    // row (no type, from before the discriminator) only by writing the database directly.
+    repository.saveView(row("view_a", "VIEW"));
+    repository.saveView(row("view_b", "VIEW"));
     repository.save(row("table_a", "TABLE"));
     repository.save(row("legacy_a", null));
+    new JdbcTemplate(context.getBean(DataSource.class))
+        .update("UPDATE house_table SET entity_type = NULL WHERE table_id = 'legacy_a'");
   }
 
   @AfterEach
@@ -115,9 +122,10 @@ public class HouseTablesH2ViewAccessorTest {
         "TABLE",
         repository.findById(key("legacy_a")).get().getEntityType(),
         "a legacy row is a table on the table path too");
-    Assertions.assertFalse(
-        repository.findById(key("view_a")).isPresent(),
-        "a view at a shared key must be absent from every table read");
+    Assertions.assertThrows(
+        HouseTableNotFoundException.class,
+        () -> repository.findById(key("view_a")),
+        "a view at a shared key is not found on the table read, as House Tables answers 404");
   }
 
   @Test
@@ -159,11 +167,15 @@ public class HouseTablesH2ViewAccessorTest {
         "no view may appear on a table page, and every row reports its resolved type");
   }
 
-  /** The sort was applied in SQL; dropping it makes page two an arbitrary set of rows. */
+  /**
+   * The sort is applied in the store, so page two follows page one. The real repository sends House
+   * Tables the sort's property names only, so a descending request is answered ascending, and the
+   * page it answers carries no sort.
+   */
   @Test
-  public void tableAndViewListsHonourTheRequestedSortAcrossPages() {
+  public void tableAndViewListsSortInTheStoreAcrossPagesByPropertyOnly() {
     repository.save(row("table_b", "TABLE"));
-    repository.save(row("view_c", "VIEW"));
+    repository.saveView(row("view_c", "VIEW"));
 
     Page<HouseTable> descendingFirst =
         repository.findAllByDatabaseId(DB, PageRequest.of(0, 2, Sort.by("tableId").descending()));
@@ -171,26 +183,26 @@ public class HouseTablesH2ViewAccessorTest {
         repository.findAllByDatabaseId(DB, PageRequest.of(1, 2, Sort.by("tableId").descending()));
     Assertions.assertEquals(3L, descendingFirst.getTotalElements());
     Assertions.assertEquals(
-        Arrays.asList("table_b", "table_a"),
+        Arrays.asList("legacy_a", "table_a"),
         descendingFirst.getContent().stream()
             .map(HouseTable::getTableId)
             .collect(Collectors.toList()));
     Assertions.assertEquals(
-        Collections.singletonList("legacy_a"),
+        Collections.singletonList("table_b"),
         descendingSecond.getContent().stream()
             .map(HouseTable::getTableId)
             .collect(Collectors.toList()));
     Assertions.assertEquals(
-        Sort.by("tableId").descending(),
+        Sort.unsorted(),
         descendingFirst.getSort(),
-        "the returned page must report the sort it was asked for");
+        "the page House Tables answers carries its number and size, not the sort");
 
     Page<HouseTable> viewsDescending =
         repository.findAllViewsByDatabaseId(
             DB, PageRequest.of(0, 2, Sort.by("tableId").descending()));
     Assertions.assertEquals(3L, viewsDescending.getTotalElements());
     Assertions.assertEquals(
-        Arrays.asList("view_c", "view_b"),
+        Arrays.asList("view_a", "view_b"),
         viewsDescending.getContent().stream()
             .map(HouseTable::getTableId)
             .collect(Collectors.toList()));
@@ -253,9 +265,10 @@ public class HouseTablesH2ViewAccessorTest {
 
     Assertions.assertEquals("VIEW", saved.getEntityType());
     Assertions.assertEquals("VIEW", repository.findViewById(key("view_c")).get().getEntityType());
-    Assertions.assertFalse(
-        repository.findById(key("view_c")).isPresent(),
-        "a freshly stamped view is still invisible to the table path");
+    Assertions.assertThrows(
+        HouseTableNotFoundException.class,
+        () -> repository.findById(key("view_c")),
+        "a freshly stamped view is not found on the table path");
   }
 
   @Test

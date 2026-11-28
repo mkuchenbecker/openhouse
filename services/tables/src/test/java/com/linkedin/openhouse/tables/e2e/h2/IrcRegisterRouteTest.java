@@ -17,6 +17,7 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.spec.v0.request.CreateUpdateTableRequestBody;
 import com.linkedin.openhouse.tables.model.TableModelConstants;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -67,6 +68,8 @@ import org.springframework.test.web.servlet.MvcResult;
 @ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
 public class IrcRegisterRouteTest {
 
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
+
   private static final Schema SCHEMA =
       IcebergSchemaHelper.getSchemaFromSchemaJson(TableModelConstants.HEALTH_SCHEMA_LITERAL);
 
@@ -81,7 +84,7 @@ public class IrcRegisterRouteTest {
       delete(mvc, key[0], key[1]);
     }
     created.clear();
-    HouseTablesH2Repository.softDeletedTables.clear();
+    houseTablesH2Store.softDeletedTables().clear();
   }
 
   // ---------------------------------------------------------------- fixtures

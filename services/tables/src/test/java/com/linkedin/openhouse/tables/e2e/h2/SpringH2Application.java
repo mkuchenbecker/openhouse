@@ -6,6 +6,8 @@ import com.linkedin.openhouse.common.audit.model.ServiceAuditEvent;
 import com.linkedin.openhouse.tables.audit.DummyTableAuditHandler;
 import com.linkedin.openhouse.tables.audit.model.TableAuditEvent;
 import com.linkedin.openhouse.tablestest.HouseNamespacesInMemoryRepository;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Configuration;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import org.mockito.Mockito;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration;
@@ -16,7 +18,7 @@ import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfi
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.PropertySource;
+import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 
 @SpringBootApplication
 @ComponentScan(
@@ -46,10 +48,12 @@ import org.springframework.context.annotation.PropertySource;
     })
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
-@PropertySource("classpath:tables-service-test-h2.properties")
-// The namespace-record store of the embedded service, which runs without a House Tables service:
-// the IRC namespace routes read and write records through it.
+// The House Tables stand-ins of the test fixtures, the ones every other embedded service uses: the
+// table-row repository with its database, the toggle repository, and the namespace-record store
+// the IRC namespace routes read and write records through.
+@EnableJpaRepositories(basePackageClasses = HouseTablesH2Repository.class)
 @Import({
+  HouseTablesH2Configuration.class,
   HouseNamespacesInMemoryRepository.class,
   com.linkedin.openhouse.tables.ReleaseMeterRegistriesOnClose.class
 })
