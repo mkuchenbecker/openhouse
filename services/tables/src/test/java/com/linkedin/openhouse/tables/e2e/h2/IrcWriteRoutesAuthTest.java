@@ -652,6 +652,31 @@ public class IrcWriteRoutesAuthTest {
     }
   }
 
+  /**
+   * That answer needs only that the table exists: the table's metadata file is not read for it. So
+   * the answer is the same when the file cannot be read (here it is moved away).
+   */
+  @Test
+  void aCompletionOnAnExistingTableReadsNoMetadataFile() throws Exception {
+    create("c2");
+    TableMetadata stored = IrcWrite.load(mvc, DB, "c2");
+    java.nio.file.Path current = file(stored.metadataFileLocation());
+    java.nio.file.Path aside = current.resolveSibling(current.getFileName() + ".aside");
+    UpdateTableRequest completion =
+        request(
+            Collections.singletonList(new UpdateRequirement.AssertTableDoesNotExist()),
+            setUserProperty());
+    java.nio.file.Files.move(current, aside);
+    try {
+      org.springframework.test.web.servlet.MvcResult result =
+          IrcWrite.commit(mvc, DB, "c2", completion);
+      String message = assertIrcError(result, 409, "CommitFailedException").message();
+      assertTrue(message.contains("table already exists"), message);
+    } finally {
+      java.nio.file.Files.move(aside, current);
+    }
+  }
+
   // ------------------------------------------------- a commit that changes nothing is a load
 
   /**
