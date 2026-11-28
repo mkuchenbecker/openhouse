@@ -159,8 +159,9 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
               "%s: table %s is, or would become, format version 3 and sets %s=true. Column defaults"
                   + " on a format v3 table are Iceberg's native initial-default and write-default,"
                   + " stored in the table's metadata; the read bridge that property turns on is for"
-                  + " format v2 tables only. A table that uses it moves to v3 only through the"
-                  + " migration that translates its defaults (work item W8).",
+                  + " format v2 tables only. A table that uses it stays at format version 2, since"
+                  + " OpenHouse does not translate its stored defaults to native ones; a new format"
+                  + " v3 table does not set it.",
               OPT_IN_ON_V3, table, ReadBridgeConfigResolver.COLUMN_DEFAULTS_CAPABILITY_PROP));
     }
     if (TableType.REPLICA_TABLE.name().equals(properties.get(TABLE_TYPE_KEY))
@@ -168,9 +169,8 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
       throw new CommitRejectedException(
           String.format(
               "%s: table %s is, or would become, format version 3 and is a replica or replicated"
-                  + " table. Replication of format v3 tables is not supported yet (work item X7):"
-                  + " a replica is rebuilt from the snapshots it is sent, which cannot keep the"
-                  + " source's next-row-id.",
+                  + " table. Replication of format v3 tables is not supported: a replica is rebuilt"
+                  + " from the snapshots it is sent, which cannot keep the source's next-row-id.",
               V3_REPLICATION, table));
     }
     for (String key : ENCRYPTION_PROPERTIES) {

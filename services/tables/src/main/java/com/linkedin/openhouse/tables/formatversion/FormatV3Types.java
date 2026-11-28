@@ -117,7 +117,7 @@ public final class FormatV3Types {
       throw new CommitRejectedException(
           String.format(
               "%s: column %s (%s) of table %s: OpenHouse does not take the type %s on format v3"
-                  + " tables (work item X5): %s.",
+                  + " tables: %s.",
               REFUSED,
               schema.findColumnName(field.fieldId()),
               field.type(),
