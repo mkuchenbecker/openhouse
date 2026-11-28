@@ -19,6 +19,7 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.DatabasesService;
 import com.linkedin.openhouse.tables.services.NamespacesService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import com.linkedin.openhouse.tables.utils.AllocatedDirectory;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Arrays;
@@ -27,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -352,11 +354,20 @@ public class IcebergRestApiHandler {
   public void reportMetrics(
       String databaseId, String tableId, ReportMetricsRequest request, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
-    TableDto table =
+    TableDto row =
         openHouseInternalRepository
             .findTableRefById(
                 TableDtoPrimaryKey.builder().databaseId(databaseId).tableId(tableId).build())
             .orElseThrow(() -> new NoSuchUserTableException(databaseId, tableId));
+    // The row has no UUID (House Tables keeps none): the table's is in its directory's name. With
+    // no UUID there, the resource names none, as before.
+    TableDto table =
+        row.toBuilder()
+            .tableUUID(
+                AllocatedDirectory.uuidOf(row.getTableLocation())
+                    .map(UUID::toString)
+                    .orElse(row.getTableUUID()))
+            .build();
     authorizationUtils.checkTablePrivilege(table, actingPrincipal, Privileges.GET_TABLE_METADATA);
     String type = String.valueOf(request.reportType()).toLowerCase(Locale.ROOT);
     meterRegistry.counter(METRICS_REPORT_COUNTER, REPORT_TYPE_TAG, type).increment();

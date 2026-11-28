@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * What the tables service relies on from a {@link HouseTableRepository}, run against the embedded
@@ -380,6 +381,8 @@ public abstract class HouseTableRepositoryContract {
     repository().rename(db.toLowerCase(), "T", db, "u", location(db, "u", 1));
     assertFalse(repository().findEntityById(key(db, "t")).isPresent());
     HouseTable renamed = repository().findById(key(db, "u")).get();
+    // The row keeps the source's database as the caller spelled it.
+    assertEquals(db.toLowerCase(), renamed.getDatabaseId());
     assertEquals("u", renamed.getTableId());
     assertEquals(location(db, "u", 1), renamed.getTableLocation());
     assertEquals(location(db, "u", 1), renamed.getTableVersion());
@@ -634,6 +637,95 @@ public abstract class HouseTableRepositoryContract {
     Page<HouseTable> first = repository().findAllViewsByDatabaseId(db, PageRequest.of(0, 1));
     assertEquals(Collections.singletonList("v"), tableIds(first.getContent()));
     assertEquals(2, first.getTotalPages());
+  }
+
+  @Test
+  public void theDatabasePagesNameEachDatabaseOnceInNameOrder() {
+    String first = db("pages_a");
+    String second = db("pages_b");
+    createTable(first, "t1");
+    createTable(first.toUpperCase(), "t2");
+    createView(second, "v");
+    List<String> ours = new java.util.ArrayList<>();
+    long total = -1;
+    int seen = 0;
+    for (int page = 0; ; page++) {
+      Page<HouseTable> databases = repository().findAll(PageRequest.of(page, 1));
+      assertEquals(1, databases.getSize());
+      assertEquals(page, databases.getNumber());
+      if (total < 0) {
+        total = databases.getTotalElements();
+      }
+      assertEquals(total, databases.getTotalElements(), "the total holds across pages");
+      if (databases.getContent().isEmpty()) {
+        break;
+      }
+      assertEquals(1, databases.getContent().size());
+      HouseTable database = databases.getContent().get(0);
+      assertNull(database.getTableId(), "a database row names no table");
+      if (database.getDatabaseId().toLowerCase().endsWith(suffix)) {
+        ours.add(database.getDatabaseId().toLowerCase());
+      }
+      seen++;
+    }
+    assertEquals(total, seen, "every database on exactly one page");
+    // One page per database, case variants included, in the order of their names.
+    assertEquals(Arrays.asList(first, second), ours);
+  }
+
+  @Test
+  public void anInvalidNameIsTheCallersErrorOnEveryRead() {
+    String db = db("db");
+    String invalid = "a-b";
+    assertThrows(HouseTableCallerException.class, () -> repository().findById(key(db, invalid)));
+    assertThrows(
+        HouseTableCallerException.class, () -> repository().findEntityById(key(db, invalid)));
+    assertThrows(
+        HouseTableCallerException.class, () -> repository().findViewById(key(invalid, "v")));
+    assertThrows(
+        HouseTableCallerException.class, () -> repository().deleteById(key(db, invalid), true));
+    assertThrows(
+        HouseTableCallerException.class, () -> repository().deleteViewById(key(invalid, "v")));
+    // The table listings and the soft-deleted listing do not translate the store's 400.
+    assertThrows(
+        WebClientResponseException.BadRequest.class,
+        () -> repository().findAllByDatabaseId(invalid));
+    assertThrows(
+        WebClientResponseException.BadRequest.class,
+        () -> repository().findAllByDatabaseId(invalid, PageRequest.of(0, 10)));
+    assertThrows(
+        HouseTableCallerException.class,
+        () -> repository().findAllViewsByDatabaseId(invalid, PageRequest.of(0, 10)));
+    assertThrows(
+        WebClientResponseException.BadRequest.class,
+        () -> repository().searchSoftDeletedTables(invalid, null, PageRequest.of(0, 10)));
+    assertThrows(
+        WebClientResponseException.BadRequest.class,
+        () -> repository().searchSoftDeletedTables(db, invalid, PageRequest.of(0, 10)));
+  }
+
+  /** What the real repository refuses; the product calls none of these. */
+  @Test
+  public void theMethodsTheRepositoryDoesNotServeAreRefused() {
+    String db = db("db");
+    HouseTable row = row(db, "t", INITIAL_TABLE_VERSION, location(db, "t", 0));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> repository().saveAll(Collections.singletonList(row)));
+    assertThrows(UnsupportedOperationException.class, () -> repository().count());
+    assertThrows(
+        UnsupportedOperationException.class, () -> repository().findAll(Sort.by("tableId")));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> repository().findAllById(Collections.singletonList(key(db, "t"))));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> repository().deleteAllById(Collections.singletonList(key(db, "t"))));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> repository().deleteAll(Collections.singletonList(row)));
+    assertThrows(UnsupportedOperationException.class, () -> repository().delete(row));
+    assertFalse(repository().findEntityById(key(db, "t")).isPresent());
   }
 
   @Test

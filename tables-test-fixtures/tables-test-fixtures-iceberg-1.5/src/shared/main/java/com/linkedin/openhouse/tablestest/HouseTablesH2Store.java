@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 
 /**
  * The operations {@link HouseTablesH2StoreImpl} implements for {@link HouseTablesH2Repository}:
@@ -67,6 +68,24 @@ public interface HouseTablesH2Store {
   void purgeSoftDeletedTables(String databaseId, String tableId, long purgeAfterMs);
 
   void restoreTable(String databaseId, String tableId, long deletedAtMs);
+
+  /** Refused, as by the real repository. */
+  <S extends HouseTable> Iterable<S> saveAll(Iterable<S> entities);
+
+  /** Refused, as by the real repository. */
+  long count();
+
+  /** Refused, as by the real repository. */
+  Iterable<HouseTable> findAll(Sort sort);
+
+  /** Refused, as by the real repository. */
+  Iterable<HouseTable> findAllById(Iterable<HouseTablePrimaryKey> keys);
+
+  /** Refused, as by the real repository. */
+  void deleteAllById(Iterable<? extends HouseTablePrimaryKey> keys);
+
+  /** Refused, as by the real repository. */
+  void deleteAll(Iterable<? extends HouseTable> entities);
 
   /**
    * This store's soft-deleted rows, live, for tests that seed or inspect them. One store per
