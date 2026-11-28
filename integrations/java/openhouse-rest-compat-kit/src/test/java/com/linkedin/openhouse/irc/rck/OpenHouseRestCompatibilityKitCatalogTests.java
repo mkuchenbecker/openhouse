@@ -13,9 +13,10 @@ public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibility
 
   /**
    * {@code rck.requires-namespace-create=false}. A namespace is a database, which comes into being
-   * with its first table (or view) and is gone when its last one is dropped; a namespace record
+   * with its first table and is gone when its last table or view is dropped; a namespace record
    * (create namespace) is optional and a table create never needs one. Creating a table in a
-   * namespace never created must therefore work.
+   * namespace never created must therefore work. A view does not bring its database into being: the
+   * view create needs a database that already holds a table or a view.
    */
   @Override
   protected boolean requiresNamespaceCreate() {
@@ -71,9 +72,9 @@ public class OpenHouseRestCompatibilityKitCatalogTests extends RESTCompatibility
   }
 
   /**
-   * {@code rck.supports-variant=false}; the kit's default. The kit's service creates format v3
-   * tables when asked (its cluster switch is on), but refuses a variant column on them: variant
-   * columns are off by default ({@code cluster.iceberg.format-v3.variant.enabled}).
+   * {@code rck.supports-variant=false}; the kit's default. The service refuses a variant column:
+   * variant columns are off by default ({@code cluster.iceberg.format-v3.variant.enabled}), at both
+   * configurations the kit runs at, and at the default one format v3 tables are off too.
    */
   @Override
   protected boolean supportsVariant() {
