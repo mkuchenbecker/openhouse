@@ -559,6 +559,51 @@ public class IrcReadRoutesTest {
     assertEquals(204, IrcHttp.head(mvc, path).getResponse().getStatus());
   }
 
+  /**
+   * A commit that changes nothing answers the stored table, so it is gated as the load is: without
+   * the capability the table requires, the native 422 and message, and no metadata; with it, the
+   * stored table.
+   */
+  @Test
+  void aCommitThatChangesNothingIsGatedAsTheLoad() throws Exception {
+    created.add(new String[] {DEFAULTS_DB, "t2"});
+    mvc.perform(
+            MockMvcRequestBuilders.post("/v1/databases/" + DEFAULTS_DB + "/tables/")
+                .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content(
+                    newTable(DEFAULTS_DB, "t2")
+                        .toBuilder()
+                        .tableProperties(
+                            withCapability(newTable(DEFAULTS_DB, "t2").getTableProperties()))
+                        .build()
+                        .toJson()))
+        .andExpect(status().isCreated());
+    String nativeMessage = message(get(mvc, DEFAULTS_DB, "t2").andExpect(status().is(422)));
+    String path = "/v1/namespaces/" + DEFAULTS_DB + "/tables/t2";
+    for (org.apache.iceberg.rest.requests.UpdateTableRequest commit :
+        java.util.Arrays.asList(
+            new org.apache.iceberg.rest.requests.UpdateTableRequest(
+                Collections.emptyList(), Collections.emptyList()),
+            new org.apache.iceberg.rest.requests.UpdateTableRequest(
+                Collections.emptyList(),
+                Collections.singletonList(
+                    new org.apache.iceberg.MetadataUpdate.SetProperties(
+                        Collections.emptyMap()))))) {
+      MvcResult undeclared = IrcWrite.commit(mvc, DEFAULTS_DB, "t2", commit);
+      assertEquals(
+          nativeMessage,
+          assertIrcError(undeclared, 422, "ClientCapabilityMissingException").message());
+      assertTrue(!body(undeclared).contains("table-uuid"), body(undeclared));
+      MvcResult declared =
+          IrcHttp.perform(
+              mvc,
+              IrcWrite.post(path, commit)
+                  .header(CAPABILITIES, ClientCapabilityGate.COLUMN_DEFAULTS));
+      assertEquals(200, declared.getResponse().getStatus(), body(declared));
+    }
+  }
+
   private static Map<String, String> withCapability(Map<String, String> properties) {
     Map<String, String> copy = new java.util.HashMap<>(properties);
     copy.put(ReadBridgeConfigResolver.COLUMN_DEFAULTS_CAPABILITY_PROP, "true");

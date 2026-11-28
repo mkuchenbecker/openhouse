@@ -25,6 +25,18 @@ final class IcebergRestRequirements {
   }
 
   /**
+   * Checks the commit's {@code assert-create} requirements against {@code base}, an existing table,
+   * where they fail with the requirement's own message, which names no stored value.
+   */
+  static void validateCreate(UpdateTableRequest request, TableMetadata base) {
+    for (UpdateRequirement requirement : request.requirements()) {
+      if (requirement instanceof UpdateRequirement.AssertTableDoesNotExist) {
+        requirement.validate(base);
+      }
+    }
+  }
+
+  /**
    * A commit that completes a staged create: it requires that the table does not exist ({@code
    * assert-create}), which only a create transaction asserts.
    */
