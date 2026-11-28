@@ -294,6 +294,34 @@ public class FormatVersionSwitchOffTest {
     assertEquals(2, version(db));
   }
 
+  /**
+   * The same for a {@code format-version} property below the table's: a table's format version is
+   * never lowered, and the refusal is a 400 before anything is written, not the server failure
+   * (read by a client as "commit state unknown") of Iceberg's own downgrade refusal.
+   */
+  @Test
+  void anIcebergRestCommitLoweringTheFormatVersionPropertyIsRefusedWith400() throws Exception {
+    String db = "fvoff_irc_lower";
+    make(plain(db));
+    TableMetadata base = IrcWrite.load(mvc, db, "t");
+    UpdateTableRequest commit =
+        IrcWrite.simple(
+            base,
+            Collections.singletonList(
+                new MetadataUpdate.SetProperties(Collections.singletonMap(FORMAT_VERSION, "1"))));
+    for (org.springframework.test.web.servlet.MvcResult answer :
+        Arrays.asList(
+            IrcWrite.commit(mvc, db, "t", commit),
+            IrcWrite.transaction(mvc, IrcWrite.change(db, "t", commit)))) {
+      String refusal = assertIrcError(answer, 400, "BadRequestException").message();
+      assertTrue(refusal.startsWith("FORMAT_VERSION_REFUSED: "), refusal);
+      assertTrue(refusal.contains("asks for format version 1"), refusal);
+      assertTrue(refusal.contains("never lowered"), refusal);
+    }
+    assertEquals(2, version(db));
+    assertEquals(base.metadataFileLocation(), IrcWrite.load(mvc, db, "t").metadataFileLocation());
+  }
+
   // ---------------------------------------------------------------- unchanged answers
 
   /** A create that asks for the cluster's version, a lower one or no number: as before. */
