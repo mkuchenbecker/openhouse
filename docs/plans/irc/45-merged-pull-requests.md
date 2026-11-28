@@ -1,7 +1,7 @@
 # Merged pull requests
 
-Bottom line: 79 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 159, merge
-commit 8a5a9980; the last eight, 154, 151, 153, 152, 155, 156, 157 and 159, each merged after an independent review on 2026-11-28) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
+Bottom line: 81 pull requests are merged into `irc-integration` in mkuchenbecker/openhouse (the last is 158, merge
+commit 4b9d152d; the last ten, 154, 151, 153, 152, 155, 156, 157, 159, 160 and 158, each merged after an independent review on 2026-11-28, which is every number from 151 to 160) and 10 into `openhouse-1.12.0` in mkuchenbecker/iceberg (the last is 12, commit a88f556c). Nothing is
 merged into either fork's main or into LinkedIn's repositories. Moved out of `18-state.md` to keep it under 150
 lines; the current state is there. Dated 2026-11-25, updated 2026-11-28.
 
@@ -89,6 +89,8 @@ merge commit whose message states why the change exists, the evidence, and the k
 | 156 | FF-09, FF-12, FF-13, FF-18, FF-19, FF-40: native answers are LinkedIn main's again by default (row-length checks only where configured, the format v3 switch-off rule); review: three rounds, a regression with the switch on, then a table read before authorization introduced by the fix (`92-...`, `records/pr-review-156.md`; ledger BC-056 to BC-058) | 0d54d2fd20a0aa7deb40049d483261c737b146c5 |
 | 157 | The Iceberg REST namespace writes served under `/iceberg` over the owner's namespace service; compatibility kit 42 to 54 passed of 160; review: two rounds, the first found existing read routes had come to depend on the namespace store (`92-...`, `records/pr-review-157.md`) | 518a2134ca682d0b1f8a9174d71733c6365e262a |
 | 159 | FF-47 (rest): the cache writer's fetch says why it was incomplete and tries once more; review: one round, merge as is (`92-...`, `records/pr-review-159.md`) | 8a5a9980a6d20bc65e6a7c8153f1772ddbd01e24 |
+| 160 | The namespace existence rule: one rule on every `/iceberg` namespace route, ignoring letter case (a namespace exists if it has a record, or holds a table, or holds a view whether or not the views gate hides it; create answers 409 and drop never not-found wherever exists finds it); review: two rounds, the first found the database list compared by exact spelling (`93-...`, `records/pr-review-160.md`; ledger BC-075 to BC-077; D74) | 96acfca3bf58635be1ffddd34ad6bdbe135a8cae |
+| 158 | FF-04, FF-07, FF-08, FF-48, FF-06 (the bounding part): `/iceberg` routes decide authorization (the core's lock checks, the write and the read privilege) before using anything stored, a commit answers the version it stored, an authorization outage is 503, scan planning and credentials are off by default behind `cluster.tables.irc.scan-planning.enabled`, metrics bodies capped, a rename onto a view writes nothing; test heap 640 MB; review: two rounds, the first found a branch in conflict with the base, no CI on the head, a commit answering 500 after it landed, an unexplained heap raise, view commits answering a later version and default Spark runs with planning on (`93-...`, `records/pr-review-158.md`, `records/pr-review-158-recheck.md`; ledger BC-078 to BC-088; D75, D69, D77, D78) | 4b9d152de1c1c78d057d41d5098d78281a1d44f4 |
 
 `openhouse-1.12.0` in mkuchenbecker/iceberg is Apache 1.12.0 (212aa894e) plus these pull requests.
 

@@ -124,8 +124,11 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `pr-review-155.md` | review of pull request 155 (FF-47) | pull request 155 (merge `4d9362ee`) | `../92-reviewed-merges-152-to-159-result.md` |
 | `pr-review-156.md` | review of pull request 156 (restore native service behavior) | pull request 156 (merge `0d54d2fd`) | `../92-reviewed-merges-152-to-159-result.md`, `../85-behavior-change-ledger.md` |
 | `pr-review-157.md` | review of pull request 157 (namespace routes) | pull request 157 (merge `518a2134`) | `../92-reviewed-merges-152-to-159-result.md` |
-| `pr-review-158.md` | review of pull request 158 (authorization and exposure follow-up), first review, sent back | pull request 158, not merged | `../86-review-findings-and-fix-forward.md` (status) |
+| `pr-review-158.md` | review of pull request 158 (authorization and exposure follow-up), first review, sent back | pull request 158 (merge `4b9d152d`) | `../93-reviewed-merges-158-and-160-result.md` |
+| `pr-review-158-recheck.md` | re-check of pull request 158 at `e79cee5e`: merge, findings C1 to C3 left | pull request 158 (merge `4b9d152d`) | `../93-reviewed-merges-158-and-160-result.md`, `../86-review-findings-and-fix-forward.md` (FF-53) |
+| `pr-review-160.md` | review of pull request 160 (one namespace existence rule), two rounds | pull request 160 (merge `96acfca3`) | `../93-reviewed-merges-158-and-160-result.md` |
 | `pr-review-159.md` | review of pull request 159 (cache writer fetch) | pull request 159 (merge `8a5a9980`) | `../92-reviewed-merges-152-to-159-result.md` |
-| `iceberg-rest-namespace-routes.md` | the Iceberg REST namespace write routes | pull request 157 (merge `518a2134`) | `../92-reviewed-merges-152-to-159-result.md` |
-| `rest-authorization-and-exposure-gaps.md` | FF-04, FF-06 (part), FF-07, FF-08, FF-48 and review leftovers | pull request 158, in review, not merged | `../86-review-findings-and-fix-forward.md` (status) |
-| `baseline-of-linkedin-main.md` | FF-20 to FF-24 (baseline of LinkedIn main) | branch `irc/baseline-of-linkedin-main`, in progress | `../86-review-findings-and-fix-forward.md` (status) |
+| `iceberg-rest-namespace-routes.md` | the Iceberg REST namespace routes (157; copied again 2026-11-28, it is newer: the author's work on 160) | pull requests 157 (merge `518a2134`) and 160 (merge `96acfca3`) | `../92-reviewed-merges-152-to-159-result.md` |
+| `rest-authorization-and-exposure-gaps.md` | FF-04, FF-06 (part), FF-07, FF-08, FF-48 and review leftovers | pull request 158 (merge `4b9d152d`) | `../93-reviewed-merges-158-and-160-result.md` |
+| `baseline-of-linkedin-main.md` | FF-20 to FF-24 (baseline of LinkedIn main) | branch `irc/baseline-of-linkedin-main`, draft pull request 161, in progress (copied again 2026-11-28, newer) | `../86-review-findings-and-fix-forward.md` (status) |
+| `house-tables-stand-in-fidelity.md` | FF-32, FF-33 (House Tables stand-in fidelity) | branch `irc/house-tables-stand-in-fidelity`, no pull request yet, in progress | `../86-review-findings-and-fix-forward.md` (status) |

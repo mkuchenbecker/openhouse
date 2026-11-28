@@ -1,8 +1,8 @@
 # Decision log, continued a seventh time
 
-Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D76 follow (D65 to D68 and D69 to D76 added 2026-11-28).
+Continues `67-decisions-continued-6.md` (D48 to D52; D52 is its last). D53 to D78 follow (D65 to D68, D69 to D76 and D77 to D78 added 2026-11-28).
 
-Bottom line: twenty-four decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68 and D69 to D76 on 2026-11-28; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
+Bottom line: twenty-six decisions, all made by the orchestrator (D53 to D64 on 2026-11-27, D65 to D68, D69 to D76 and D77 to D78 on 2026-11-28; D69, D74 and D75 are now implemented by merged pull requests 158 and 160, and D69 and D75 were extended, not duplicated, for the two decisions the merge of 158 asked for; D67 is dated 2026-11-27 and interim), after the nine retroactive reviews
 (`88-review-summary.md`, `85-behavior-change-ledger.md`, `86-review-findings-and-fix-forward.md`) and the scout's report
 on the owner's namespace line (`89-scout-namespace-and-prior-work-result.md`), under the owner's statements S57 to S61
 (`01-stated.md`). Most of them restore LinkedIn main's behavior (D53 closes an unchecked read, D56 to D61 restore or gate
@@ -209,7 +209,8 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - Decided: a commit over the Iceberg REST routes requires the read privilege as well as the write privilege, and a commit answers the version it stored, not a reload.
 - Why: the specification's commit response carries the full metadata and a client cannot commit without loading the table, so a writer without the read privilege is already unable to use the route; the reload is also unchecked and can be of a later commit (RF-007).
 - What would change it: the owner wanting a writer without the read privilege to commit (the answer would then have to be a summary, as the native update gives); a reviewer showing an Iceberg client that commits without loading.
-- Reference: `records/pr-review-152.md` (the re-check's point 2); implemented in pull request 158 (not merged).
+- Reference: `records/pr-review-152.md` (the re-check's point 2); implemented in pull request 158, merge `4b9d152d` (2026-11-28).
+- Extension, 2026-11-28 (after the merge of 158): on `/iceberg` a commit requires the read privilege as well as the write privilege because the answer carries table metadata. This is a deliberate difference from the native update route, which answers a summary and needs the write privilege only; it is written in the javadoc of the early decision in `api/irc/`. Effect: a writer without the read privilege is refused a commit with 403 where it got 200 (ledger BC-080). The answer is the version the commit stored (BC-084). Rests on: the merge message of `4b9d152d`; `records/pr-review-158.md`. To undo: make the commit answer a summary as the native update does, then drop the read requirement from the early decision (a change in the same class, and the ledger row BC-080 reverts to 200).
 
 ## D70. A commit that changes nothing is a read
 
@@ -249,7 +250,7 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - Decided: a namespace exists on `/iceberg` if it has a record, or holds a table, or holds a view whether or not the views gate hides it; create and drop use that rule.
 - Why: after 157 a database that holds only hidden views existed for HEAD, load and list views but not for the writes: drop answered 404 and create stored a record over an existing database.
 - What would change it: the owner's answer on what existence is for his routes (`58-waiting-on-mike.md`).
-- Reference: `records/pr-review-157.md` (re-check, F12); pull request 160 (in progress); ledger BC-070, BC-074.
+- Reference: `records/pr-review-157.md` (re-check, F12); pull request 160, merge `96acfca3` (2026-11-28; the rule ignores letter case, `records/pr-review-160.md` G1); ledger BC-070, BC-074, BC-075 to BC-077.
 
 ## D75. Scan planning is off by default; when on it is audited and bounded
 
@@ -257,7 +258,8 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - Decided: scan planning is off by default behind `cluster.tables.irc.scan-planning.enabled` (this implements D56); when on it is audited as a table read and bounded (time bound answers `failed`, concurrency and size caps, a refused plan logged at DEBUG, a 503 with `Retry-After` when busy).
 - Why: the plan route reads manifest contents with the service's own credentials and its privilege is the owner's open question (FF-05); off by default reproduces main until he answers.
 - What would change it: his answer to FF-05.
-- Reference: pull request 158 (not merged); `records/rest-authorization-and-exposure-gaps.md`; `records/pr-review-158.md`.
+- Reference: pull request 158, merge `4b9d152d` (2026-11-28); `records/rest-authorization-and-exposure-gaps.md`; `records/pr-review-158.md`.
+- Extension, 2026-11-28 (after the merge of 158): scan planning and credentials are off by default until the owner decides which privilege the plan route requires, because the plan answer exposes data values, partition values and file paths to a caller holding only the metadata privilege (ledger BC-078). Rests on: `records/review-scan-planning.md` findings 1 to 3 (the retroactive review), `records/pr-review-158.md`, and the merge message of `4b9d152d`. To undo: set `cluster.tables.irc.scan-planning.enabled` to true (a property, no code change), or change its default once FF-05 is decided; the Spark 4.2 server-planning tasks already run with it on. When it is off the routes answer 406 and are not listed in the config answer.
 
 ## D76. Notes are updated once per group of merges, not per merge
 
@@ -266,3 +268,21 @@ owner is asked to confirm. Each is reversible on the branch, and each that touch
 - Why: the owner asked for results, not noise (S61).
 - What would change it: the owner asking for a different rhythm.
 - Reference: `01-stated.md` S61; this commit group (`92-reviewed-merges-152-to-159-result.md`).
+
+## D77. The tables service test heap is 640 MB, on the author's measurement, until the residual retention is found
+
+- Date: 2026-11-28. The orchestrator's decision; a two-way door.
+- Decided: `:services:tables:test` keeps a 640 MB maximum heap (it was the Gradle default of 512 MB) as pull request 158 sets it, and returns to 512 MB when the retainer of about nine closed Spring contexts is found.
+- Why: the author measured full runs. Before the registry fix the closed contexts' meter registries grew from 21 to 95 over a run; after it 9 to 20, with a peak of 544 MB in use after a full collection at 640 MB, and a peak of about 496 MB at 512 MB, which leaves no margin and would invite out-of-memory failures (the first head's `Default build, rest` died that way). The reviewer's re-check agreed that this justifies 640 over 512. A production service runs one context and has one registry.
+- What it rests on: `records/rest-authorization-and-exposure-gaps.md` (Heap), `records/pr-review-158.md` S2, `records/pr-review-158-recheck.md` (S2, C2), the comment above `maxHeapSize` in `services/tables/build.gradle`; ledger BC-087.
+- What would change it: finding what retains the closed contexts (a heap dump would name it; FF-53, C2).
+- To undo: set the heap back to 512 MB in `services/tables/build.gradle` and run the full suite; the registry-release listener in the test sources stays.
+
+## D78. Pull request 158 merged with three can-follow findings open
+
+- Date: 2026-11-28. The orchestrator's decision; revisitable.
+- Decided: pull request 158 was merged with the re-check's three findings C1 to C3 open, and they go to the minors pull request (FF-53): C1 an authorization outage answers 404 instead of 503 for a namespace that has only a record, on five paths; C2 about nine closed test contexts are still retained; C3 a view commit with a null metadata location answers the view as stored now.
+- Why: each fails closed or is test-only: C1 tells a client "does not exist" during an outage and leaks nothing; C2 is test heap only; C3 cannot happen with today's native handler. The reviewer's re-check verdict was MERGE with no finding that must be fixed. The four findings left on purpose (lock-flip rule position, client-capability gate after a no-change 409, planning that only partly stops, the rename conflict type) were agreed with the reviewer.
+- What it rests on: `records/pr-review-158-recheck.md` section 4 and section 2 (the minors); the merge message of `4b9d152d` (Known gaps).
+- What would change it: C1 or C3 being seen to leak or mislead in a deployment; the owner asking for them before the minors pull request.
+- To undo: nothing to undo; the fix of C1 is a rethrow of `AuthorizationServiceException` in `IcebergRestApiHandler.storedNamespace` (only when the namespace also holds nothing), of C3 a null check in `IcebergRestViewHandler.answered`.

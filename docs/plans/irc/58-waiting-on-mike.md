@@ -113,8 +113,9 @@ Nothing blocks work; the interim in each entry holds.
 
 ### (f) The scan planning route (D75, FF-05; unchanged question)
 
-- Scan planning is off by default behind `cluster.tables.irc.scan-planning.enabled` (pull request 158, in review). Which
+- Scan planning is off by default behind `cluster.tables.irc.scan-planning.enabled` (pull request 158, merged 2026-11-28, merge `4b9d152d`). Which
   privilege the route should need when it is on is still his (the same access question as credential vending, D45).
+  Update 2026-11-28: the route is now off by default, so the question no longer exposes anything while it is open.
 
 ### (g) The re-run question of D68 is moot for now
 
@@ -246,7 +247,7 @@ The scout's report is `records/scout-namespace-and-prior-work.md`; the summary i
   the namespace model, and the rest are OpenHouse rules or the kit's own assumptions. Classes are each test's first failing
   step; a later step may fail for another reason once that one is gone (the list's own header).
 - Whether the server should turn server-side scan planning on for clients (V11d, D44). The route is served either way;
-  turning it on changes every client's read path. Nothing waits on this.
+  turning it on changes every client's read path. Nothing waits on this. (Since pull request 158 the route is off by default; the sentence above predates it.)
 - Credential vending needs an identity service and an access contract (V12b, D45): which storages, which service
   (an AWS STS role, an Azure identity), which privilege grants read or write, and the lifetimes. HDFS cannot be vended
   to Iceberg 1.12 clients at all. Nothing waits on this.

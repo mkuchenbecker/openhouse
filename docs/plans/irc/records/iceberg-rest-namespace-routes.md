@@ -42,3 +42,12 @@ Draft pull request #157, head 362de10de3e31b80686450fb34226d8dd3305406: /iceberg
 - [ran] fd3216ec tests first: on base 4 of 36 fail (views-off view-only: create 200 expected 409; create/drop reads; load of a missing name reads the record twice). 87140d87 fix: holdsSomething (table probe, then database list) is the one rule; requireNamespace is it with the record between; create/drop use it; view probe and gate removed from the read handler; load reads the record once.
 - [ran] Default: services/tables touched classes 187 passed. Pushed 87140d87.
 - [ran] Kit 160/54/90/16 unchanged; Spark 3.5 rest-http 34/34, IcebergRestSparkSqlTest 5/5, 4.2 endpoints 10/10, 4.2 smoke 34/34; fixtures 47; reference 230 passed. Draft pull request #160 at 87140d87. Waiting CI.
+- [ran] CI on 87140d87: 13 success, 1 skipped (reference Docker, as on base). HtsRepositoryTest premise test PASSED in Default rest; kit 160/54/90/16 exactly listed. Done.
+
+## Review of pull request 160 (G1-G3)
+- [ran] Merged 8a5a9980 at e2a191d9 (commit-tree, two parents).
+- [read] Stand-ins: both HouseTablesH2Repository copies listed a database's tables case-sensitively (findByDatabaseId); real House Tables compares upper(databaseId)=upper(:databaseId). The database list (findAll) returns stored spellings in both. Made the stand-in table listing case-insensitive (+ own tests).
+- [ran] bc75c01a tests first (before fix: theOneExistenceRuleIgnoresLetterCase drop IRC_NS_MIX_VR 204 instead of 409; G2 two probes; both stand-in tests fail). 39cbf161 fix: listedAs ignores case (one place), heldAs once per load, stored spelling for list-only names; stand-ins case-insensitive. Default touched classes 199 passed. Pushed 39cbf161.
+- Running: services e2e.h2 full + kit + Spark selection (default).
+- [ran] Default broad: 1120 passed (services e2e.h2 full, kit 160/54/90/16, Spark selection); reference 238 passed; check-test-groups holds. PR #160 description updated. Head 39cbf161940c50934cb0bb9cb4e2c0953e6b435f. Waiting CI.
+- [ran] CI on 39cbf161: 13 test jobs success; reference Docker skipped as on base; two bare runs skipped (description edit). Kit 160/54/90/16 exactly listed. Done.

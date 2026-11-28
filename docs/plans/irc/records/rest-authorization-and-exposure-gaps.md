@@ -1,13 +1,8 @@
 # rest-authorization-and-exposure-gaps
 
-Bottom line: all seven items done in draft pull request 158 (head e84034c93cf6d8553035b64102e2bf7ca483859c); CI pending on that head. The pull request body below is the full record of what changed, behavior changes, changed pins and verification.
+Bottom line: review round done; pull request 158 head e79cee5e941b33d6b87538407b9a71e07fc0936b, every CI job green (13 success, 3 skipped by design).
 
-Worktree /home/user/oh-irc-sec2, branch irc/rest-authorization-and-exposure-gaps. Commits: 7d3bc845 (3), 5bbde718 (1), 700ab000 (2), fcb06c64 (6), b69c71ec (5), bafc9032 (7), 8fef2ee8 (4), merge 0df81df6 (#155, CI only).
-
-Attribution: the session's system notice gave Co-Authored-By: Claude Opus 5.5 (used instead of the brief's line).
-
-## CI
-Head 0df81df6: every job green except `Default build, rest`: 901 tests, 2 failed, both ViewsCorruptPointerH2Test, from `OutOfMemoryError: Java heap space` while loading a Spring context. The suite's last contexts no longer fit the test worker's default heap. Likely cause: the two new planning-on contexts (IrcPlanCredentialsRoutesTest, IrcPlanCredentialsAuthTest). I reproduced it locally: the full suite also fails at 512 MB. Fix 99ef2efa: maxHeapSize 768m for :services:tables:test, and the two planning-on contexts are closed after their class (@DirtiesContext AFTER_CLASS). At 768 MB the full suite passes locally. Then merge e84034c9 (#156; one conflict in TableCommitService.core(), resolved). New head e84034c93cf6d8553035b64102e2bf7ca483859c, CI pending.
+Heap measurements: sec2/m-before, sec2/m-after (512 MB), sec2/m-640.
 
 ## Summary
 
@@ -24,6 +19,35 @@ Fix-forward on the Iceberg REST routes of the tables service (`/iceberg`, packag
 | 5 | `b69c71ec` | FF-07 (RF-011; read-register-limits D8) | The metrics report body is read with a 1 MiB bound. The service audit records the report's identity and size, not its content |
 | 7 | `bafc9032` | commit-write defects 6 and 10; RF-027 (part of FF-06) | A view update sent to the table commit route answers 400, not 500. A lock state in a policy patch, on a table that has none, gets the lock rule's refusal instead of the NullPointerException. A refused plan is logged at DEBUG, not WARN |
 | 4 | `8fef2ee8` | FF-04, the bounding part of FF-06 (RF-022 interim gate, RF-023, RF-024) | Scan planning is off unless `cluster.tables.irc.scan-planning.enabled` turns it on. A plan call is audited as a table READ. The number of concurrent plans and the time one plan may take are bounded, and a non-positive bound is refused at startup |
+
+## Review round (independent review of this pull request)
+
+| Finding | Commit | Closed by |
+|---|---|---|
+| M1 merge the base (#157); flip its outage pin | `2a482f60` | Conflicts resolved. The fixture endpoint count is now `22 + (planning ? 2 : 0) + (registerView ? 1 : 0)`, where `planning` = planning classes present AND the embedded server's environment turns planning on (asserted off), so it holds for both settings. `IrcNamespaceRoutesFailureTest` pins **503** `ServiceUnavailableException` with the backend's message for a namespace outage (was 403). The namespace layer's fallback (`readRecord`) rethrows an outage and reads a denial as no record, which agrees with the error mapping. Also merged #160 (`e79cee5e`, no conflict) |
+| S1 a landed commit answered 500 | `53ab4af0` | The race fallback catches a failed read of the committed file. If the same table (same UUID): answer the table as stored now. Otherwise: `CommitStateUnknownException`, the spec's 500 for an unknown commit state. Tests: `aCommitWhoseStoredVersionIsGoneIsAnsweredWithTheSameTableAsStoredNow`, `aCommitWhoseTableWasReplacedIsAnsweredCommitStateUnknown` (both 500 `ServiceFailureException` before) |
+| S2 heap | `4a68f782` | Measured. Fixed on the test side (`ReleaseMeterRegistriesOnClose`; one shared context for the credentials tests). Test heap 640 MB instead of 768 MB. See "Heap" below |
+| S3 view commit answer | `53ab4af0` | The view commit answers the version it stored, with the same rule as S1 (`ViewsServiceImpl.readViewVersion`, IRC only). Test: `aViewCommitAnswersTheVersionItStoredNotALaterOne` (before: the later write's property was answered) |
+| S4 Spark default configuration | `08405765` | The default `test` and `smokeTest` runs keep planning off; only `testServerPlanning` and `smokeTestServerPlanning` turn it on. The four planning-comparison classes run only in `testServerPlanning`. New `SparkIrcServerPlanningOffTest` pins Spark 4.2's answer: `IllegalStateException` "Server requires server-side scan planning for table irc42.flat but does not support endpoint POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan" |
+| N3 two unaudited refusals | `53ab4af0` | The lock rule's refusal and the view-update 400 are each audited as one FAILED UPDATE (asserted) |
+| N5.5 private ids | `0479a119` | Removed from the comments this branch touched |
+
+**Heap.** Measured locally on full `:services:tables:test` runs: a full collection every 30 s, then the heap in use and instance counts.
+- Before the fix (768 MB): meter registries grew with every context created, 21 after four minutes and 95 at the end. Heap in use after collection: 560 to 680 MB in the last third.
+- After: 9 to 20 registries, with no growth over the run. Heap in use after collection: 300 to 545 MB, peaking at 544 MB.
+- At 512 MB the suite passes, but its peak is about 496 MB, which leaves no margin. **At 640 MB it passes with about 96 MB to spare.**
+- What still retains memory: up to about nine closed contexts beyond the cache's eight (8 to 17 reachable). Their retainer is not identified, because no heap dump was analysed. It is no longer the global registry.
+- A production service runs one context, so it has one registry and no growth.
+
+**Left, with the reviewer's reasoning:**
+- **Lock-flip rule position.** For TABLE_UPDATE the core runs `checkIfLockPoliciesUpdated` before the lock checks. The IRC early decision runs it after, so a lock flip on a legacy-locked table gets "locked state" instead of "Lock state cannot be updated". The status is the same, and the IRC order is the stricter one.
+- **Client-capability gate.** It is the one load check not decided before a no-change commit's requirement 409. It concerns compatibility, not privilege.
+- **Planning interruption.** On a single-manifest scan whose filter matches nothing, the plan is not interrupted: the manifest is read to its end on the plan thread. The concurrency bound still holds and the answer is the timeout's.
+- **Rename conflict type.** A non-key House Tables conflict during a rename answers 409 `CommitFailedException`. The spec lists 409 for rename only as "already exists", and both clients read any 409 there as `AlreadyExistsException`.
+
+Earlier fixes on the branch:
+- `99ef2efa`, the first test-heap fix (since revised by `4a68f782`). CI's `Default build, rest` on the first head failed with `OutOfMemoryError: Java heap space`: the last contexts of the suite would not load in the default 512 MB test worker, and item 4's two planning-on test contexts pushed it over. I reproduced the failure locally. The fix sets `maxHeapSize '768m'` for `:services:tables:test` and closes the two planning-on contexts after their class. At 768 MB the full suite passes locally, and the heap in use in the second half of the suite stays between about 450 and 660 MB.
+- `e84034c9`, a merge of `irc-integration` (#156). It had one conflict, in `TableCommitService.core()`: #156 added a `ClusterProperties` argument to `TableCommitCore`, and `core()` now passes it.
 
 ## Orchestrator's decisions (recorded as given)
 
@@ -94,6 +118,19 @@ With planning on, every answer to an allowed caller is byte-identical to the bas
 | Plan or credentials call (planning on): now emits a table READ audit event | everyone | Route is new since main |
 | Plan beyond the concurrency bound: 503 with Retry-After. Plan slower than the bound: `failed`. Non-positive bound: startup refused | planning on | Route is new since main |
 
+The test worker heap of `:services:tables:test` goes from 512 MB (the default) to 640 MB. This changes the build only, not any route.
+
+Changes from the review round:
+- **An authorization outage on the `/iceberg` namespace routes (#157)** (load, create, update, drop): 403 `ForbiddenException` becomes 503 `ServiceUnavailableException` with the backend's message. This moves toward native.
+- **A commit or view commit whose stored version can no longer be read when it is answered:**
+  - same table: answered with the table or view as stored now;
+  - another table or view under the name: 500 `CommitStateUnknownException`.
+
+  These answer races only, after a commit that landed. Written in `answered`'s javadoc in both handlers.
+- **View commit in a race:** answers the version it stored, not a later one.
+- **Audit:** the lock rule's refusal and the view-update 400 on the table commit route now emit a FAILED UPDATE table audit event.
+- **Spark 4.2 itests:** the default runs run with planning off (test configuration only).
+
 ## Existing tests whose pinned expectation changed
 
 - `IrcWriteRoutesAuthTest.knownDefectAnAuthorizationBackendFailureIs403OnTheIrcTableRoutes` is renamed `anAuthorizationBackendFailureIs503OnTheIrcTableRoutesAsNatively`. Old: 403 `ForbiddenException` on the load and two commits. New: 503 `ServiceUnavailableException` with the native message, on the load, the empty commit, a commit with updates and the transaction.
@@ -118,6 +155,10 @@ All runs below are local.
 - **Reference line (`-PicebergLinkedIn`, 1.5.2):** the touched `:services:tables` classes (IrcWriteRoutesAuthTest, IrcViewRoutesAuthTest, IrcViewRoutesTest, IrcServiceAuditTest, IrcWriteRoutesTest, IrcPolicyPatchTest, IrcConfigEndpointsTest, IrcReadRoutesTest, IrcPlanCredentials*, IrcMetricsRouteTest, TableCommitServiceTest, CommitPath*RulesTest) ran **277 tests, 0 failed**. The 7 skipped are the planning tests' `assumeTrue(served())`. `IcebergRestRoutesBoundaryTest`: 5 of 5.
 - **REST compatibility kit (`restCompatKitTest`), before item 4 and on the final head:** both runs gave **160 tests, 42 passed, 95 failed, 23 skipped**, exactly the outcomes listed in `expected-outcomes.txt`. No kit test calls the plan or credentials routes, so their outcomes are unchanged (none).
 - `python3 scripts/ci/check-test-groups.py`: the partition holds.
+- **After the merge of #156 (local):**
+  - default line: `*Irc*`, `*View*`, `*Audit*`, `*CommitPath*`, `TableCommitServiceTest`, `*FormatV3*`, `ExtensionPointDefaultsTest`, `DefaultClusterPropertiesTest`: 110 classes, 1085 tests, 0 failed;
+  - reference line: IrcWriteRoutes*, IrcViewRoutesAuthTest, IrcConfigEndpointsTest, TableCommitServiceTest, CommitPath*: 170 tests, 0 failed;
+  - the full default-line `:services:tables:test` at 768 MB (before the merge): passed, 0 failed.
 - **Left to CI:** the full `:services:tables` suites (`Default build, rest`, `Reference build, rest`), and the Spark 4.2 itest including `testServerPlanning` and `smokeTestServerPlanning` with the property on (`... spark-4.2-openhouse-spark-itest`). Spark 3.5 runs in `... spark-3.5-openhouse-spark-itest`.
 
 ## Deliberately left
