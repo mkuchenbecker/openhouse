@@ -37,6 +37,15 @@ public interface TablesService {
   TableDtoWithMetadata loadTable(String databaseId, String tableId, String actingPrincipal);
 
   /**
+   * The checks {@link #loadTable} makes on a table it found, in its order, for a caller that holds
+   * the stored table already and answers it as a load would (the IRC commit that changes nothing).
+   * The default runs {@link #getTable}, which makes the same checks after its own lookup.
+   */
+  default void checkLoad(TableDto tableDto, String actingPrincipal) {
+    getTable(tableDto.getDatabaseId(), tableDto.getTableId(), actingPrincipal);
+  }
+
+  /**
    * Check whether a table identified by databaseId and tableId exists.
    *
    * @param databaseId

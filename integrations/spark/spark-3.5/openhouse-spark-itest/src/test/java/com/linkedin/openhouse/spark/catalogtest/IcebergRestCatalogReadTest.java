@@ -70,6 +70,19 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
   private static final String AUTH_DB = "irc_read_auth";
   private static final String OWNER = "irc_owner";
   private static final String STRANGER = "irc_stranger";
+
+  /** May read (GET_TABLE_METADATA) and nothing else. */
+  static final String READER = "irc_reader";
+
+  /** May do everything but read (GET_TABLE_METADATA). */
+  static final String WRITER = "irc_writer";
+
+  private static boolean allows(String principal, Privileges privilege) {
+    return OWNER.equals(principal)
+        || (READER.equals(principal) && privilege == Privileges.GET_TABLE_METADATA)
+        || (WRITER.equals(principal) && privilege != Privileges.GET_TABLE_METADATA);
+  }
+
   private static final String CAPABILITY_PROP = "required-capability.column-defaults";
   private static final String CAPABILITIES_HEADER = "X-OpenHouse-Client-Capabilities";
   private static final String READ_BRIDGE_PREFIX = "openhouse.read-bridge.column-default.";
@@ -564,13 +577,13 @@ public class IcebergRestCatalogReadTest extends OpenHouseSparkITest {
       return new OpaAuthorizationHandler() {
         @Override
         public boolean checkAccessDecision(String principal, TableDto table, Privileges privilege) {
-          return OWNER.equals(principal);
+          return allows(principal, privilege);
         }
 
         @Override
         public boolean checkAccessDecision(
             String principal, DatabaseDto database, Privileges privilege) {
-          return OWNER.equals(principal);
+          return allows(principal, privilege);
         }
       };
     }
