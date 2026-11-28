@@ -229,7 +229,13 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
 
       UpdateProperties updateProperties = transaction.updateProperties();
       boolean schemaUpdated =
-          doUpdateSchemaIfNeeded(writeSchema, table.schema(), tableDto, updateProperties);
+          doUpdateSchemaIfNeeded(
+              writeSchema,
+              table.schema(),
+              tableDto,
+              updateProperties,
+              formatVersionRule().switchOn()
+                  || InternalRepositoryUtils.formatVersion(table) >= IcebergV3.VERSION);
       boolean propsUpdated = doUpdateUserPropsIfNeeded(updateProperties, tableDto, table);
       boolean snapshotsUpdated = doUpdateSnapshotsIfNeeded(updateProperties, tableDto);
       boolean policiesUpdated =
@@ -358,12 +364,15 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
       return;
     }
     int stored = InternalRepositoryUtils.formatVersion(catalog.loadTable(tableIdentifier));
-    tableProps.put(
-        TableProperties.FORMAT_VERSION,
-        Integer.toString(
-            formatVersionRule()
-                .versionOfReplace(
-                    tableIdentifier.toString(), stored, tableDto.getTableProperties())));
+    FormatVersionRule rule = formatVersionRule();
+    // With the switch off a replace is computed as a create was, except that a table at v3 or
+    // above, which only a cluster that had the switch on can hold, is never lowered.
+    int version =
+        rule.switchOn()
+            ? rule.versionOfReplace(
+                tableIdentifier.toString(), stored, tableDto.getTableProperties())
+            : stored >= IcebergV3.VERSION ? stored : rule.clusterVersion();
+    tableProps.put(TableProperties.FORMAT_VERSION, Integer.toString(version));
   }
 
   protected Table createTable(
@@ -913,12 +922,17 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     }
   }
 
-  /** @return Whether there are any schema-updates actually materialized. */
+  /**
+   * @param keepDefaults whether a re-cased field keeps its column defaults: where they are the
+   *     table's native ones (a format v3 table, or a cluster that has them)
+   * @return Whether there are any schema-updates actually materialized.
+   */
   private boolean doUpdateSchemaIfNeeded(
       Schema writeSchema,
       Schema tableSchema,
       TableDto tableDto,
-      UpdateProperties updateProperties) {
+      UpdateProperties updateProperties,
+      boolean keepDefaults) {
     // Normalize top-level column names in writeSchema to use the casing already present in
     // tableSchema (matched by Iceberg field ID). This enables case-insensitive writes: a writer
     // that submits "id" for a table column named "ID" will have its schema normalized to "ID"
@@ -926,7 +940,8 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
     // Tables where two columns share a case-folded name are excluded (ambiguous target column).
     if (!SchemaValidationUtil.hasDuplicateCaseInsensitiveColumnNames(tableSchema)) {
       writeSchema =
-          BaseIcebergSchemaValidator.normalizeSchemaCasingToTable(writeSchema, tableSchema);
+          BaseIcebergSchemaValidator.normalizeSchemaCasingToTable(
+              writeSchema, tableSchema, keepDefaults);
     }
     if (!writeSchema.sameSchema(tableSchema)) {
       try {

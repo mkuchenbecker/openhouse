@@ -119,7 +119,8 @@ public class TableCommitService {
             openHouseInternalRepository,
             authorizationUtils,
             clientCapabilityGate,
-            readBridgeStripProtection)
+            readBridgeStripProtection,
+            clusterProperties)
         .commit(commit);
   }
 }

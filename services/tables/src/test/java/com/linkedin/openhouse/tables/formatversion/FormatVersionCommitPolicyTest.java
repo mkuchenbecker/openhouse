@@ -2,17 +2,21 @@ package com.linkedin.openhouse.tables.formatversion;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.google.common.collect.ImmutableMap;
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.exception.CommitRejectedException;
+import com.linkedin.openhouse.internal.catalog.PendingCommit;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.SchemaParser;
 import org.apache.iceberg.TableMetadata;
@@ -21,10 +25,12 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.junit.jupiter.api.Test;
 
 /**
- * Below format v3 a commit is refused with {@code COLUMN_DEFAULT_REQUIRES_V3} only when it
- * introduces or changes a non-null {@code write-default} (work item W6). A v2 table whose field
- * already carries one, which the Iceberg 1.12 line allowed before this rule, is not blocked from
- * commits that leave that default as it is.
+ * Below format v3, on a cluster with the format v3 switch on, a commit is refused with {@code
+ * COLUMN_DEFAULT_REQUIRES_V3} only when it introduces or changes a non-null {@code write-default}.
+ * A v2 table whose field already carries one, which the Iceberg 1.12 line allowed before this rule,
+ * is not blocked from commits that leave that default as it is. With the switch off the check does
+ * not apply to a commit that finds and leaves a table below v3, so such a commit is stored as it
+ * always was.
  */
 class FormatVersionCommitPolicyTest {
 
@@ -46,9 +52,13 @@ class FormatVersionCommitPolicyTest {
   }
 
   private static FormatVersionCommitPolicy policy() {
+    return policy(true);
+  }
+
+  private static FormatVersionCommitPolicy policy(boolean switchOn) {
     ClusterProperties cluster = mock(ClusterProperties.class);
     when(cluster.getClusterIcebergFormatVersion()).thenReturn(2);
-    when(cluster.isClusterIcebergFormatV3Enabled()).thenReturn(false);
+    when(cluster.isClusterIcebergFormatV3Enabled()).thenReturn(switchOn);
     return new FormatVersionCommitPolicy(new FormatVersionRule(cluster));
   }
 
@@ -120,5 +130,31 @@ class FormatVersionCommitPolicyTest {
     assertThrows(
         CommitRejectedException.class,
         () -> policy.check(TABLE, plain, introduced, introduced.properties()));
+  }
+
+  private static PendingCommit commit(TableMetadata base, TableMetadata committed) {
+    return new PendingCommit(
+        TABLE,
+        Optional.ofNullable(base),
+        committed,
+        ImmutableMap.copyOf(committed.properties()),
+        false);
+  }
+
+  @Test
+  void withTheSwitchOffAV2CommitIsNotJudgedAndAWriteDefaultIsStored() {
+    FormatVersionCommitPolicy policy = policy(false);
+    TableMetadata plain =
+        TableMetadata.newTableMetadata(
+            SchemaParser.fromJson(WITHOUT_DEFAULT),
+            PartitionSpec.unpartitioned(),
+            "file:/tmp/format-version-commit-policy-test",
+            Collections.singletonMap(TableProperties.FORMAT_VERSION, "2"));
+    TableMetadata introduced = evolve(plain, withWriteDefault("US", false), 2);
+    PendingCommit commit = commit(plain, introduced);
+    assertFalse(policy.appliesTo(commit));
+    assertFalse(policy.appliesTo(commit(null, plain)));
+    assertDoesNotThrow(() -> policy.check(TABLE, plain, introduced, introduced.properties()));
+    assertTrue(policy(true).appliesTo(commit));
   }
 }

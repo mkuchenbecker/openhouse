@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.services;
 
 import static com.linkedin.openhouse.common.utils.PageableUtil.createPageable;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.exception.AlreadyExistsException;
 import com.linkedin.openhouse.common.exception.LockConflictException;
@@ -64,6 +65,9 @@ public class TablesServiceImpl implements TablesService {
   @Autowired ReadBridgeStripProtection readBridgeStripProtection;
 
   @Autowired ClientCapabilityGate clientCapabilityGate;
+
+  @Autowired(required = false)
+  ClusterProperties clusterProperties;
 
   /**
    * Lookup a table by databaseId and tableId in OpenHouse's Internal Catalog.
@@ -236,7 +240,8 @@ public class TablesServiceImpl implements TablesService {
     tableDtoToSave = LockPolicyValidator.prepare(tableDto.orElse(null), tableDtoToSave);
     try {
       // A format v3 table stores its column defaults as committed (see TableCommitCore).
-      if (!FormatVersionRule.writesFormatV3(tableDto.orElse(null), tableDtoToSave)) {
+      if (!FormatVersionRule.writesFormatV3(
+          clusterProperties, tableDto.orElse(null), tableDtoToSave)) {
         tableDtoToSave = readBridgeStripProtection.prepare(tableDtoToSave);
       }
     } catch (ColumnDefaultException e) {
@@ -275,7 +280,7 @@ public class TablesServiceImpl implements TablesService {
             createUpdateTableRequestBody);
     tableDto = LockPolicyValidator.prepare(null, tableDto);
     try {
-      if (!FormatVersionRule.writesFormatV3(null, tableDto)) {
+      if (!FormatVersionRule.writesFormatV3(clusterProperties, null, tableDto)) {
         tableDto = readBridgeStripProtection.prepare(tableDto);
       }
     } catch (ColumnDefaultException e) {
@@ -298,7 +303,8 @@ public class TablesServiceImpl implements TablesService {
         openHouseInternalRepository,
         authorizationUtils,
         clientCapabilityGate,
-        readBridgeStripProtection);
+        readBridgeStripProtection,
+        clusterProperties);
   }
 
   /** {@code supplier}, computed once on first call. */

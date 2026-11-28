@@ -107,6 +107,16 @@ public class FormatV3SparkTest extends OpenHouseSparkITest {
     throw new AssertionError("expected a failure");
   }
 
+  /** The failure of {@code executable}; {@code null} when it succeeds. */
+  private static Throwable failureOf(Executable executable) {
+    try {
+      executable.execute();
+      return null;
+    } catch (Throwable t) {
+      return t;
+    }
+  }
+
   private static String chain(Throwable thrown) {
     StringBuilder all = new StringBuilder();
     for (Throwable t = thrown; t != null; t = t.getCause()) {
@@ -203,18 +213,19 @@ public class FormatV3SparkTest extends OpenHouseSparkITest {
   }
 
   /**
-   * On a cluster with the switch off both statements fail and leave no v3 table. On the Iceberg
-   * 1.12 line the service refuses them (400). On LinkedIn's Iceberg 1.5.2 line the client's own
-   * Iceberg refuses them before any request, because it cannot build format v3 metadata.
+   * On a cluster with the switch off neither statement leaves a v3 table. On the Iceberg 1.12 line
+   * the service answers as LinkedIn main did: the create is stored at the cluster's version, 2, and
+   * the upgrade gets Iceberg 1.5.2's refusal. On LinkedIn's Iceberg 1.5.2 line the client's own
+   * Iceberg refuses both before any request, because it cannot build format v3 metadata.
    */
   @Test
-  void withTheSwitchOffBothStatementsFail() {
+  void withTheSwitchOffNeitherStatementMakesAV3Table() {
     String created = "openhouse." + DB + ".off_create";
     String altered = "openhouse." + DB + ".off_alter";
     spark.sql("DROP TABLE IF EXISTS " + created);
     spark.sql("DROP TABLE IF EXISTS " + altered);
     Throwable create =
-        thrown(
+        failureOf(
             () ->
                 spark.sql(
                     "CREATE TABLE "
@@ -225,21 +236,17 @@ public class FormatV3SparkTest extends OpenHouseSparkITest {
         thrown(
             () ->
                 spark.sql("ALTER TABLE " + altered + " SET TBLPROPERTIES ('format-version'='3')"));
+    Assertions.assertTrue(
+        chain(alter).contains("Cannot upgrade table to unsupported format version: v3"),
+        chain(alter));
     if (IcebergLine.current() == IcebergLine.V3) {
-      for (Throwable refused : Arrays.asList(create, alter)) {
-        Assertions.assertTrue(chain(refused).contains("FORMAT_VERSION_REFUSED"), chain(refused));
-        Assertions.assertTrue(
-            chain(refused).contains("format version 3 is not enabled on this cluster"),
-            chain(refused));
-      }
+      Assertions.assertNull(create, () -> chain(create));
+      Assertions.assertEquals(2, metadata(onDefaultServer, "off_create").formatVersion());
     } else {
       Assertions.assertTrue(
           chain(create).contains("Unsupported format version: v3"), chain(create));
-      Assertions.assertTrue(
-          chain(alter).contains("Cannot upgrade table to unsupported format version: v3"),
-          chain(alter));
+      Assertions.assertFalse(onDefaultServer.tableExists(TableIdentifier.of(DB, "off_create")));
     }
-    Assertions.assertFalse(onDefaultServer.tableExists(TableIdentifier.of(DB, "off_create")));
     Assertions.assertEquals(2, metadata(onDefaultServer, "off_alter").formatVersion());
   }
 

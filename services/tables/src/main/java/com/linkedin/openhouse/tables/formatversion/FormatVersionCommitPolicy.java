@@ -39,6 +39,10 @@ import org.apache.iceberg.types.Types;
  *
  * <p>The column-default policy bypass does not skip these: they keep metadata valid, they are not a
  * policy on who may write.
+ *
+ * <p>With the format v3 switch off, the check judges only a commit that finds or leaves a table at
+ * format version 3 or above ({@link #appliesTo}): every other commit is judged by what judged it
+ * before this service knew format v3, and the check is neither run nor counted for it.
  */
 public class FormatVersionCommitPolicy implements PreCommitCheck {
 
@@ -68,6 +72,17 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
   @Override
   public String getName() {
     return "format-version";
+  }
+
+  @Override
+  public boolean appliesTo(PendingCommit commit) {
+    return applies(commit.getBase().orElse(null), commit.getMetadata());
+  }
+
+  private boolean applies(TableMetadata base, TableMetadata committed) {
+    return rule.switchOn()
+        || committed.formatVersion() >= IcebergV3.VERSION
+        || (base != null && base.formatVersion() >= IcebergV3.VERSION);
   }
 
   @Override
@@ -106,6 +121,9 @@ public class FormatVersionCommitPolicy implements PreCommitCheck {
       TableMetadata committed,
       Map<String, String> properties,
       FileIO io) {
+    if (!applies(base, committed)) {
+      return;
+    }
     rule.checkCommitted(
         table.toString(), base == null ? null : base.formatVersion(), committed.formatVersion());
     List<Schema> added = addedSchemas(base, committed);

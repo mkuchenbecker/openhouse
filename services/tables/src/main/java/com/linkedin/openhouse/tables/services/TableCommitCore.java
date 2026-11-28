@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.services;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.exception.EntityConcurrentModificationException;
 import com.linkedin.openhouse.common.exception.OpenHouseCommitStateUnknownException;
@@ -39,16 +40,20 @@ final class TableCommitCore {
   private final AuthorizationUtils authorizationUtils;
   private final ClientCapabilityGate clientCapabilityGate;
   private final ReadBridgeStripProtection readBridgeStripProtection;
+  private final ClusterProperties clusterProperties;
 
+  /** @param clusterProperties the cluster's configuration; {@code null} reads as v3 switched off */
   TableCommitCore(
       OpenHouseInternalRepository repository,
       AuthorizationUtils authorizationUtils,
       ClientCapabilityGate clientCapabilityGate,
-      ReadBridgeStripProtection readBridgeStripProtection) {
+      ReadBridgeStripProtection readBridgeStripProtection,
+      ClusterProperties clusterProperties) {
     this.repository = repository;
     this.authorizationUtils = authorizationUtils;
     this.clientCapabilityGate = clientCapabilityGate;
     this.readBridgeStripProtection = readBridgeStripProtection;
+    this.clusterProperties = clusterProperties;
   }
 
   /**
@@ -93,7 +98,7 @@ final class TableCommitCore {
     try {
       // On a format v3 table column defaults are Iceberg's own and are stored as committed (work
       // item W6); below v3 every initial-default is a read-bridge overlay and is dropped.
-      if (!FormatVersionRule.writesFormatV3(base, candidate)) {
+      if (!FormatVersionRule.writesFormatV3(clusterProperties, base, candidate)) {
         candidate = readBridgeStripProtection.prepare(candidate);
       }
     } catch (ColumnDefaultException e) {

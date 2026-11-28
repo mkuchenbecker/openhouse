@@ -432,10 +432,12 @@ public class FormatV3NativeApiTest {
       assertEquals(3, kept.formatVersion());
       assertEquals(3, kept.snapshots().size());
       assertEquals(3L, IcebergV3.nextRowId(kept));
-      // No new v3 table, by create or by upgrade.
+      // No new v3 table, by create or by upgrade: with the switch off a create is stored at the
+      // cluster's version and an upgrade gets Iceberg 1.5.2's refusal, as before format v3.
       created.add("fv3_switched_off_new");
-      refused(post(mvc, asking(plain("fv3_switched_off_new"), "3")), FormatVersionRule.REFUSED);
-      refused(put(mvc, asking(bodyFromGet(v2), "3")), FormatVersionRule.REFUSED);
+      assertEquals(201, status(post(mvc, asking(plain("fv3_switched_off_new"), "3"))));
+      assertEquals(2, metadata("fv3_switched_off_new").formatVersion());
+      FormatVersionSwitchOffTest.expectIcebergRefusal(put(mvc, asking(bodyFromGet(v2), "3")), 3);
       assertEquals(2, metadata("fv3_switched_off_v2").formatVersion());
     } finally {
       ReflectionTestUtils.setField(clusterProperties, "clusterIcebergFormatV3Enabled", true);

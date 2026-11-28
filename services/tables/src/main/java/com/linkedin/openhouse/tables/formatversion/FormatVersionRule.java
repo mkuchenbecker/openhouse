@@ -22,6 +22,19 @@ import org.apache.iceberg.TableProperties;
  * upgrade-format-version} update into it). The upgrade itself is Iceberg's: the property reaches
  * {@code TableMetadata.replaceProperties}, which upgrades.
  *
+ * <p>With the switch off, which is the default, every write answers as it did before this service
+ * knew format v3, when LinkedIn's Iceberg 1.5.2 could build nothing above v2:
+ *
+ * <ul>
+ *   <li>A create (and a replace) is stored at the cluster's version whatever it asks for: the
+ *       property is overwritten.
+ *   <li>An update is left to Iceberg, which upgrades a table to v2 and refuses a version it cannot
+ *       build. The Iceberg 1.12 line can build v3 and v4, so there an update that asks for a
+ *       version above 2 is given the refusal Iceberg 1.5.2 gave it ({@link #checkUpdate}).
+ * </ul>
+ *
+ * <p>With the switch on:
+ *
  * <ul>
  *   <li>A write that asks for a version above the one the table has, or on create above the
  *       cluster's, is refused unless it asks for 3 and v3 is enabled.
@@ -29,9 +42,11 @@ import org.apache.iceberg.TableProperties;
  *   <li>A write that asks for nothing, for the version the table has, or for a version at or below
  *       the cluster's on a table that is not v3, is not touched by this rule and behaves as it
  *       always has (a create overwrites the property with the cluster's version).
- *   <li>{@link #checkCommitted} states the result as an invariant, which the catalog checks on
- *       every commit path before anything is written.
  * </ul>
+ *
+ * <p>{@link #checkCommitted} states the result as an invariant, which the catalog checks before
+ * anything is written on every commit that leaves or finds a table at v3 or above, and with the
+ * switch on on every commit.
  */
 public class FormatVersionRule {
 
@@ -50,9 +65,20 @@ public class FormatVersionRule {
     this.clusterProperties = clusterProperties;
   }
 
+  /**
+   * The highest format version LinkedIn's Iceberg 1.5.2 builds, and so the highest a table reaches
+   * with the switch off.
+   */
+  static final int HIGHEST_WITHOUT_V3 = 2;
+
   /** Whether v3 tables may be created or upgraded to: the switch is on and Iceberg builds v3. */
   public boolean v3Enabled() {
-    return clusterProperties.isClusterIcebergFormatV3Enabled() && IcebergV3.supported();
+    return switchOn() && IcebergV3.supported();
+  }
+
+  /** Whether the cluster switch {@value #SWITCH} is on, whatever this Iceberg can build. */
+  public boolean switchOn() {
+    return clusterProperties.isClusterIcebergFormatV3Enabled();
   }
 
   /** The cluster property that allows variant columns on v3 tables. */
@@ -83,16 +109,16 @@ public class FormatVersionRule {
 
   /**
    * The format version a create stores: 3 when the create asks for it and v3 is enabled, the
-   * cluster's otherwise.
+   * cluster's otherwise. With the switch off, the cluster's whatever the create asks for.
    *
    * @param operation how a refusal names the write: {@code Create}, or {@code Replace} for a
    *     replace, whose properties are computed as a create's before {@link #versionOfReplace}
-   * @throws RequestValidationFailureException if the create asks for a version above the cluster's
-   *     that it cannot have
+   * @throws RequestValidationFailureException if the switch is on and the create asks for a version
+   *     above the cluster's that it cannot have
    */
   public int versionOfCreate(String operation, String table, Map<String, String> properties) {
     OptionalInt asked = requested(properties);
-    if (!asked.isPresent() || asked.getAsInt() <= clusterVersion()) {
+    if (!switchOn() || !asked.isPresent() || asked.getAsInt() <= clusterVersion()) {
       return clusterVersion();
     }
     requireV3(operation, table, asked.getAsInt());
@@ -101,13 +127,21 @@ public class FormatVersionRule {
 
   /**
    * Whether a write of {@code incoming} on the stored table {@code stored} ({@code null} for a
-   * create) is a write to a format v3 table: the table is v3, or the write asks for v3. Read before
-   * the write is checked, by callers that treat column defaults differently on v3; a write that
-   * asks for v3 and may not have it is refused later, whatever they did.
+   * create) is a write to a format v3 table: the table is v3, or the write asks for v3 while the
+   * switch is on. Read before the write is checked, by callers that treat column defaults
+   * differently on v3; a write that asks for v3 and may not have it is refused later, whatever they
+   * did. With the switch off a write that asks for v3 is not one: a create is stored at the
+   * cluster's version and an update is refused, so it is treated as every write was before.
+   *
+   * @param clusterProperties the cluster's configuration; {@code null} reads as the switch off
    */
-  public static boolean writesFormatV3(TableDto stored, TableDto incoming) {
+  public static boolean writesFormatV3(
+      ClusterProperties clusterProperties, TableDto stored, TableDto incoming) {
     if (stored != null && stored.getFormatVersion() >= IcebergV3.VERSION) {
       return true;
+    }
+    if (clusterProperties == null || !clusterProperties.isClusterIcebergFormatV3Enabled()) {
+      return false;
     }
     OptionalInt asked = requested(incoming == null ? null : incoming.getTableProperties());
     return asked.isPresent() && asked.getAsInt() >= IcebergV3.VERSION;
@@ -130,10 +164,31 @@ public class FormatVersionRule {
    * Refuses an update of a table at format version {@code stored} that asks for another version,
    * unless it is the upgrade to 3 and v3 is enabled.
    *
-   * @throws RequestValidationFailureException if it asks for a version above the table's that it
-   *     cannot have, or below a v3 table's
+   * <p>With the switch off the update is left to Iceberg, as it was before this service knew format
+   * v3: Iceberg upgrades a table to v2, and refuses a version it cannot build or a downgrade with
+   * its own failure. Iceberg 1.5.2 builds nothing above v2; the Iceberg 1.12 line builds v3 and v4,
+   * so there an update that asks for a version above 2 is refused here with the failure Iceberg
+   * 1.5.2 throws for it, before anything is changed.
+   *
+   * @throws RequestValidationFailureException if the switch is on and it asks for a version above
+   *     the table's that it cannot have, or below a v3 table's
+   * @throws IllegalArgumentException if the switch is off, Iceberg builds v3, and it asks for a
+   *     version above the table's and above 2
    */
   public void checkUpdate(String table, int stored, Map<String, String> properties) {
+    OptionalInt asked = requested(properties);
+    if (!switchOn()) {
+      if (IcebergV3.supported()
+          && asked.isPresent()
+          && asked.getAsInt() > stored
+          && asked.getAsInt() > HIGHEST_WITHOUT_V3) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Cannot upgrade table to unsupported format version: v%s (supported: v%s)",
+                asked.getAsInt(), HIGHEST_WITHOUT_V3));
+      }
+      return;
+    }
     checkUpdate("Update", table, stored, properties);
   }
 
