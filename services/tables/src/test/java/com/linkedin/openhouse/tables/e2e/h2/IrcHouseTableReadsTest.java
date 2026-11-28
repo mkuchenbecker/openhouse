@@ -84,6 +84,9 @@ public class IrcHouseTableReadsTest {
   private static final Schema SCHEMA =
       IcebergSchemaHelper.getSchemaFromSchemaJson(TableModelConstants.HEALTH_SCHEMA_LITERAL);
 
+  /** Whether the namespace store's record read fails, as a House Tables 5xx. */
+  static volatile boolean failRecordReads;
+
   /** Every House Tables read since the last {@link #reads()}, in order. */
   static final List<String> READS = new CopyOnWriteArrayList<>();
 
@@ -137,6 +140,11 @@ public class IrcHouseTableReadsTest {
         (proxy, method, args) -> {
           String name = method.getName();
           boolean isRead = name.equals("getByName");
+          if (isRead && failRecordReads) {
+            READS.add("getByName[failed]");
+            throw org.springframework.web.reactive.function.client.WebClientResponseException
+                .create(500, "Internal Server Error", null, new byte[0], null);
+          }
           boolean isWrite = name.equals("create") || name.equals("update") || name.equals("delete");
           try {
             Object result = method.invoke(target, args);
@@ -257,6 +265,36 @@ public class IrcHouseTableReadsTest {
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + DB), 200));
   }
 
+  /**
+   * A load of a name with no record and nothing in it reads the record once, then the table probe
+   * and the database list.
+   */
+  @Test
+  void loadNamespaceMissing() throws Exception {
+    reads();
+    assertEquals(
+        list("getByName[key]=0", "findAllByDatabaseId[page0x1]=0", "findAll[all databases]"),
+        readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + NONE), 404));
+  }
+
+  /**
+   * While the record store fails, a load of a namespace that holds tables answers from what it
+   * holds, asked once: the failed record read, then the table probe.
+   */
+  @Test
+  void loadNamespaceWhileTheRecordStoreFails() throws Exception {
+    threeTables();
+    reads();
+    failRecordReads = true;
+    try {
+      assertEquals(
+          list("getByName[failed]", "findAllByDatabaseId[page0x1]=1"),
+          readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + DB), 200));
+    } finally {
+      failRecordReads = false;
+    }
+  }
+
   /** A namespace with a record: the record alone, for load and exists. */
   @Test
   void loadAndExistsOfANamespaceWithARecordOnly() throws Exception {
@@ -271,15 +309,16 @@ public class IrcHouseTableReadsTest {
   }
 
   /**
-   * A create probes for a table (one row), and for a view (one row) only where the database's views
-   * are enabled (not here), then writes the record.
+   * A create asks whether the namespace holds something, as the existence check does: the one-row
+   * table probe, then the database list (which shows a database that holds only views), then writes
+   * the record.
    */
   @Test
   void createNamespace() throws Exception {
     reads();
     try {
       assertEquals(
-          list("findAllByDatabaseId[page0x1]=0", "create[write]"),
+          list("findAllByDatabaseId[page0x1]=0", "findAll[all databases]", "create[write]"),
           readsOf(IrcNamespaceRoutesTest.createNamespace(mvc, REC, Collections.emptyMap()), 200));
     } finally {
       IrcNamespaceRoutesTest.dropNamespace(mvc, REC);
@@ -314,12 +353,12 @@ public class IrcHouseTableReadsTest {
     }
   }
 
-  /** A drop probes for a table, and for a view only where views are enabled, then deletes. */
+  /** A drop asks the same (table probe, then the database list), then deletes the record. */
   @Test
   void dropNamespace() throws Exception {
     createRecord();
     assertEquals(
-        list("findAllByDatabaseId[page0x1]=0", "delete[write]"),
+        list("findAllByDatabaseId[page0x1]=0", "findAll[all databases]", "delete[write]"),
         readsOf(IrcNamespaceRoutesTest.dropNamespace(mvc, REC), 204));
   }
 

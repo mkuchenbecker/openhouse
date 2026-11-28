@@ -46,6 +46,11 @@ import org.springframework.stereotype.Component;
  *       #refuseDropWhileItHoldsATableOrView}).
  * </ul>
  *
+ * Both ask {@link IcebergRestApiHandler#holdsSomething}, the existence rule the read routes use
+ * without the record, so a create is refused, and a drop is never "missing", exactly where the
+ * exists route finds the namespace. A view counts whether or not the database's views are enabled:
+ * the caller may not list it, but the namespace is not empty.
+ *
  * <p>Order on every route: the namespace's name (in the body for create, in the path otherwise) and
  * its one level, then the authorization decision, before anything else is checked, read or
  * answered; so a principal refused the write is refused (403) whether or not the namespace exists,
@@ -77,7 +82,7 @@ public class IcebergRestNamespaceHandler {
             .properties(request.properties())
             .build(),
         databaseId);
-    if (readHandler.holdsATableOrView(databaseId)) {
+    if (readHandler.holdsSomething(databaseId)) {
       throw alreadyExists(databaseId);
     }
     NamespaceMetadata created;
@@ -141,12 +146,12 @@ public class IcebergRestNamespaceHandler {
    * The spec refuses the drop of a namespace that is not empty. The namespace service's drop
    * deletes the record alone and leaves the tables and views, so this route is stricter than the
    * service's own: a namespace that holds a table or a view is not dropped, record or not (one
-   * holding tables and no record has nothing to drop and is not empty either). Checked with the
-   * one-row table and view probes, before the record is touched; a table created after the probe is
-   * not seen.
+   * holding tables and no record has nothing to drop and is not empty either). Checked with {@link
+   * IcebergRestApiHandler#holdsSomething} (the one-row table probe, then the database list), before
+   * the record is touched; a table created after the check is not seen.
    */
   private void refuseDropWhileItHoldsATableOrView(String databaseId) {
-    if (readHandler.holdsATableOrView(databaseId)) {
+    if (readHandler.holdsSomething(databaseId)) {
       throw new NamespaceNotEmptyException("Namespace %s is not empty", databaseId);
     }
   }

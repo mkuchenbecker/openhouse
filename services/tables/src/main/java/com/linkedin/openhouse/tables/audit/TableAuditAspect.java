@@ -145,6 +145,37 @@ public class TableAuditAspect {
   }
 
   /**
+   * Install the Around advice for the table load of the IRC routes that act on a table a caller
+   * could load (scan planning, credentials): each is a read of the table, audited as the IRC load
+   * is, with the metadata location it read.
+   */
+  @Around(
+      "execution("
+          + "com.linkedin.openhouse.tables.model.TableDtoWithMetadata "
+          + "com.linkedin.openhouse.tables.api.irc.IcebergRestApiHandler.loadIcebergTable(..)) "
+          + "&& args(databaseId, tableId, actingPrincipal)")
+  protected TableDtoWithMetadata auditIcebergRestTableRead(
+      ProceedingJoinPoint point, String databaseId, String tableId, String actingPrincipal)
+      throws Throwable {
+    TableAuditEvent event =
+        TableAuditEvent.builder()
+            .eventTimestamp(Instant.now())
+            .databaseName(databaseId)
+            .tableName(tableId)
+            .operationType(OperationType.READ)
+            .build();
+    TableDtoWithMetadata result;
+    try {
+      result = (TableDtoWithMetadata) point.proceed();
+      buildAndSendEvent(event, OperationStatus.SUCCESS, result.getTableDto().getTableLocation());
+    } catch (Throwable t) {
+      buildAndSendEvent(event, OperationStatus.FAILED, null);
+      throw t;
+    }
+    return result;
+  }
+
+  /**
    * Install the Around advice for the candidate commit entry of {@code TableCommitService}, which
    * only the IRC commit route calls: the commit is audited as the native write of the same kind (a
    * replace as REPLACE_COMMIT, a snapshots commit as COMMIT, any other as UPDATE).

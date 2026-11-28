@@ -352,4 +352,71 @@ public class IrcServiceAuditTest {
     assertEquals(error.message(), events.getValue().getResponseErrorMessage());
     assertTrue(events.getValue().getStacktrace().contains("\tat "));
   }
+
+  // ---------------------------------------------------------------- metrics reports
+
+  private static MockHttpServletRequestBuilder metricsPost(String table, String body) {
+    return IrcHttp.request(HttpMethod.POST, IrcMetricsRouteTest.metrics(DB, table))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(body);
+  }
+
+  /**
+   * A metrics report is audited by what identifies it and its size, not its content (its metrics,
+   * projected field names and metadata map are the client's telemetry): a scan report and a commit
+   * report alike.
+   */
+  @Test
+  void aMetricsReportIsAuditedByItsIdentityAndSizeNotItsContent() throws Exception {
+    created.add("m1");
+    post(mvc, nativeCreate("m1"));
+    String[][] reports = {
+      {IrcMetricsRouteTest.SCAN_REPORT, "scan-report"},
+      {IrcMetricsRouteTest.COMMIT_REPORT, "commit-report"}
+    };
+    for (String[] report : reports) {
+      ServiceAuditEvent event = theAuditOf(metricsPost("m1", report[0]), 204);
+      com.google.gson.JsonObject expected = new com.google.gson.JsonObject();
+      expected.addProperty("report-type", report[1]);
+      expected.addProperty("table-name", "openhouse.irc_metrics.t");
+      expected.addProperty("snapshot-id", 23);
+      expected.addProperty(
+          "bytes", report[0].getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
+      assertEquals(expected, event.getRequestPayload(), report[1]);
+      assertEquals("/iceberg" + IrcMetricsRouteTest.metrics(DB, "m1"), event.getUri(), report[1]);
+    }
+  }
+
+  /**
+   * A report body larger than the route accepts (1 MiB) is refused with the spec's 400 before more
+   * of it is read, counted as no report, and audited by its size alone.
+   */
+  @Test
+  void anOversizedMetricsReportIs400AndAuditedByItsSizeAlone() throws Exception {
+    created.add("m2");
+    post(mvc, nativeCreate("m2"));
+    StringBuilder padded = new StringBuilder(IrcMetricsRouteTest.SCAN_REPORT);
+    padded.insert(padded.length() - 1, ",\"padding\":\"");
+    while (padded.length() < 1024 * 1024 + 16) {
+      padded.insert(padded.length() - 1, "xxxxxxxxxxxxxxxx");
+    }
+    padded.insert(padded.length() - 1, "\"");
+    String body = padded.toString();
+    int bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+    clearInvocations(serviceAuditHandler);
+    org.apache.iceberg.rest.responses.ErrorResponse error =
+        IrcHttp.assertIrcError(
+            IrcHttp.perform(mvc, metricsPost("m2", body)), 400, "BadRequestException");
+    assertEquals(
+        "Invalid ReportMetricsRequest: the report is "
+            + bytes
+            + " bytes, larger than the 1048576 bytes this server accepts",
+        error.message());
+    ArgumentCaptor<ServiceAuditEvent> events = ArgumentCaptor.forClass(ServiceAuditEvent.class);
+    verify(serviceAuditHandler).audit(events.capture());
+    com.google.gson.JsonObject expected = new com.google.gson.JsonObject();
+    expected.addProperty("bytes", bytes);
+    assertEquals(expected, events.getValue().getRequestPayload());
+    assertEquals(400, events.getValue().getStatusCode());
+  }
 }

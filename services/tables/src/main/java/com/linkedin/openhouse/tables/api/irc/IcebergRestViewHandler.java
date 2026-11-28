@@ -157,30 +157,60 @@ public class IcebergRestViewHandler {
   public LoadViewResponse commitView(
       String namespace, String viewId, UpdateTableRequest request, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
-    authorizeCommit(databaseId, viewId, request, actingPrincipal);
-    ViewsServiceImpl.LoadedView base = onView(() -> load(databaseId, viewId, actingPrincipal));
+    authorizeCommit(databaseId, viewId, actingPrincipal);
+    // The view the request is checked against and built on is read with the read decision made on
+    // the row read (the decision above was made on an earlier read of it), and so is the view the
+    // commit answers: a view replaced by another of its name in between is not answered to a
+    // caller that may not read it.
+    ViewsServiceImpl.LoadedView base =
+        onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
     ViewMetadata candidate =
         IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request);
-    if (!request.updates().isEmpty() && candidate.changes().isEmpty()) {
-      // Updates that change nothing: the commit answers the definition and changes nothing, so it
-      // needs the read privilege, as one with no updates does (authorizeCommit).
-      onView(
-          () -> {
-            viewAudit.auditRefusal(
-                databaseId,
-                viewId,
-                ViewOperationType.REPLACE,
-                () ->
-                    viewsService.authorizeRead(
-                        viewsService.viewReference(databaseId, viewId), actingPrincipal));
-            return null;
-          });
-    }
     CreateUpdateViewRequestBody body =
         IcebergRestViewSpelling.replaceBody(
             databaseId, viewId, base.getView().getMetadataLocation(), candidate);
-    onView(() -> viewsApiHandler.updateView(body, actingPrincipal));
-    return onView(() -> response(load(databaseId, viewId, actingPrincipal)));
+    String committed =
+        onView(() -> viewsApiHandler.updateView(body, actingPrincipal))
+            .getResponseBody()
+            .getMetadataLocation();
+    return answered(databaseId, viewId, committed, base.getMetadata().uuid(), actingPrincipal);
+  }
+
+  /**
+   * The answer to a view commit that stored the view at {@code committed}: that version, never a
+   * later one, as a table commit is answered. The view is read back, with the read decision, and
+   * answered when its pointer is still {@code committed}; when another write moved it on, the
+   * version this commit stored is read from its own metadata file. When that file is gone, the
+   * commit landed all the same: the view as stored now is answered if it is the same view (the same
+   * view UUID), and otherwise the commit's state is unknown ({@link CommitStateUnknownException},
+   * the spec's 500), not a failure.
+   */
+  private LoadViewResponse answered(
+      String databaseId,
+      String viewId,
+      String committed,
+      String committedUuid,
+      String actingPrincipal) {
+    ViewsServiceImpl.LoadedView now =
+        onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
+    if (committed == null || committed.equals(now.getView().getMetadataLocation())) {
+      return response(now);
+    }
+    ViewMetadata stored;
+    try {
+      stored = viewsService.readViewVersion(databaseId, viewId, committed);
+    } catch (RuntimeException unreadable) {
+      if (committedUuid.equals(now.getMetadata().uuid())) {
+        return response(now);
+      }
+      throw new CommitStateUnknownException(
+          String.format(
+              "The write to view %s.%s landed, but the version it stored (%s) can no longer be"
+                  + " read, and the view of that name is now another view",
+              databaseId, viewId, committed),
+          unreadable);
+    }
+    return ImmutableLoadViewResponse.builder().metadataLocation(committed).metadata(stored).build();
   }
 
   /**
@@ -189,13 +219,14 @@ public class IcebergRestViewHandler {
    * values (the view UUID) and its updates fail on what the view holds. Only what the native routes
    * tell anyone comes first: the ids (400), the views gate and whether the view exists (404).
    *
-   * <p>The decision is the native replace's, on the same reference ({@link
-   * ViewsServiceImpl#authorizeReplace}); the native PUT that follows makes it again. A commit with
-   * no updates changes nothing and answers the definition, so it also needs the read privilege the
-   * load needs. A refusal is audited exactly as the native replace audits its refusal.
+   * <p>A commit answers the view's whole definition, as the IRC view load does, so it needs the
+   * read privilege the load needs ({@link ViewsServiceImpl#authorizeRead}), whatever its updates:
+   * an Iceberg client loads a view before it commits to it, so a caller that may not read the view
+   * could not commit through one either. Then the native replace's decision, on the same reference
+   * ({@link ViewsServiceImpl#authorizeReplace}); the native PUT that follows makes it again. A
+   * refusal is audited exactly as the native replace audits its refusal.
    */
-  private void authorizeCommit(
-      String databaseId, String viewId, UpdateTableRequest request, String principal) {
+  private void authorizeCommit(String databaseId, String viewId, String principal) {
     onView(
         () -> {
           viewsApiValidator.validateGetView(databaseId, viewId);
@@ -205,9 +236,7 @@ public class IcebergRestViewHandler {
               viewId,
               ViewOperationType.REPLACE,
               () -> {
-                if (request.updates().isEmpty()) {
-                  viewsService.authorizeRead(reference, principal);
-                }
+                viewsService.authorizeRead(reference, principal);
                 viewsService.authorizeReplace(reference, principal);
               });
           return null;
@@ -235,6 +264,13 @@ public class IcebergRestViewHandler {
       String databaseId, String viewId, String actingPrincipal) {
     viewsApiValidator.validateGetView(databaseId, viewId);
     return viewsService.loadView(databaseId, viewId, actingPrincipal);
+  }
+
+  /** {@link #load}, with the read decision made on the row it reads. */
+  private ViewsServiceImpl.LoadedView loadReadable(
+      String databaseId, String viewId, String actingPrincipal) {
+    viewsApiValidator.validateGetView(databaseId, viewId);
+    return viewsService.loadReadableView(databaseId, viewId, actingPrincipal);
   }
 
   private static LoadViewResponse response(ViewsServiceImpl.LoadedView loaded) {

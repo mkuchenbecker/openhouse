@@ -49,7 +49,10 @@ import org.springframework.context.annotation.PropertySource;
 @PropertySource("classpath:tables-service-test-h2.properties")
 // The namespace-record store of the embedded service, which runs without a House Tables service:
 // the IRC namespace routes read and write records through it.
-@Import(HouseNamespacesInMemoryRepository.class)
+@Import({
+  HouseNamespacesInMemoryRepository.class,
+  com.linkedin.openhouse.tables.ReleaseMeterRegistriesOnClose.class
+})
 public class SpringH2Application {
 
   public static void main(String[] args) {

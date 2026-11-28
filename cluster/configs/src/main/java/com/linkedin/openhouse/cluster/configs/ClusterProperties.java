@@ -156,6 +156,49 @@ public class ClusterProperties {
   @Value("${cluster.tables.max-tables-per-database:0}")
   private long maxTablesPerDatabase;
 
+  /** The property that turns on the tables service's Iceberg REST scan planning routes. */
+  public static final String IRC_SCAN_PLANNING_ENABLED = "cluster.tables.irc.scan-planning.enabled";
+
+  /**
+   * Whether the tables service serves Iceberg REST scan planning ({@code POST
+   * /iceberg/v1/namespaces/{namespace}/tables/{table}/plan}) and the credentials route that goes
+   * with it ({@code GET .../tables/{table}/credentials}, an empty list). Off by default: the two
+   * routes then answer the 406 of every route the service does not serve, and the config answer
+   * does not list them, so a client plans its scans itself, as on the native API.
+   *
+   * <p>Turn it on only where every principal that may load a table may also read its data. A plan
+   * answers each planned data file's path, partition values and per-column lower and upper bounds
+   * (values from the data), read from the table's manifests with the service's own storage access,
+   * and the route asks only for the privilege a table load asks for ({@code GET_TABLE_METADATA}).
+   * Whether it should ask for a data-read privilege instead is an open question for the owner.
+   */
+  @Value("${" + IRC_SCAN_PLANNING_ENABLED + ":false}")
+  private boolean clusterTablesIrcScanPlanningEnabled;
+
+  /**
+   * The most file scan tasks one plan may hold, when scan planning is on. A scan that plans more is
+   * answered {@code failed} and holds no more than that. Must be positive: with scan planning on,
+   * the service does not start otherwise.
+   */
+  @Value("${cluster.tables.irc.scan-planning.max-file-scan-tasks:10000}")
+  private int clusterTablesIrcScanPlanningMaxFileScanTasks;
+
+  /**
+   * The most scans the service plans at once, when scan planning is on; a plan asked for while that
+   * many run is answered 503 with a {@code Retry-After} header. Must be positive: with scan
+   * planning on, the service does not start otherwise.
+   */
+  @Value("${cluster.tables.irc.scan-planning.max-concurrent-plans:4}")
+  private int clusterTablesIrcScanPlanningMaxConcurrentPlans;
+
+  /**
+   * The longest one plan may take, in milliseconds, when scan planning is on; a plan that takes
+   * longer is answered {@code failed}, and its planning is interrupted. Must be positive: with scan
+   * planning on, the service does not start otherwise.
+   */
+  @Value("${cluster.tables.irc.scan-planning.timeout-ms:60000}")
+  private long clusterTablesIrcScanPlanningTimeoutMs;
+
   /**
    * View SQL dialects this deployment accepts on the /v1 views API. A representation, and the
    * source dialect naming one, is rejected unless its dialect is listed here. Defaults to Spark

@@ -8,7 +8,6 @@ import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.checked.NotFoundException;
 import com.linkedin.openhouse.internal.catalog.model.NamespaceMetadata;
-import com.linkedin.openhouse.internal.catalog.repository.HouseTableRepository;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
 import com.linkedin.openhouse.tables.authorization.Privileges;
 import com.linkedin.openhouse.tables.model.DatabaseDto;
@@ -20,7 +19,6 @@ import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.DatabasesService;
 import com.linkedin.openhouse.tables.services.NamespacesService;
 import com.linkedin.openhouse.tables.services.TablesService;
-import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Arrays;
@@ -50,7 +48,6 @@ import org.apache.iceberg.rest.responses.GetNamespaceResponse;
 import org.apache.iceberg.rest.responses.ListNamespacesResponse;
 import org.apache.iceberg.rest.responses.ListTablesResponse;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.AuthorizationServiceException;
 import org.springframework.stereotype.Component;
@@ -106,10 +103,6 @@ public class IcebergRestApiHandler {
   @Autowired private IcebergRestTableFileIo tableFileIo;
 
   @Autowired private NamespacesService namespacesService;
-
-  @Autowired private HouseTableRepository houseTableRepository;
-
-  @Autowired private ViewsFeatureGate viewsFeatureGate;
 
   /** Values of the {@code snapshots} query parameter of a table load. */
   static final String SNAPSHOTS_ALL = "all";
@@ -228,15 +221,21 @@ public class IcebergRestApiHandler {
    * fails), a namespace that holds a table or a view is answered as before records existed, with no
    * properties, and the failure is logged; one that holds none has no answer but the failure. The
    * holdings are probed only then, so a load still makes one keyed read when the store works.
+   *
+   * <p>The record is read once: when there is none, existence is what the namespace holds ({@link
+   * #holdsSomething}), the rest of the one existence rule.
    */
   public GetNamespaceResponse loadNamespace(String namespace) {
     String databaseId = databaseId(namespace);
     tablesApiValidator.validateSearchTables(databaseId);
     Optional<NamespaceMetadata> record;
+    // What the namespace holds, under which spelling: asked at most once per load.
+    Optional<String> held = null;
     try {
       record = readRecord(databaseId);
     } catch (RuntimeException failure) {
-      if (!holdsATableOrIsListed(databaseId)) {
+      held = heldAs(databaseId);
+      if (!held.isPresent()) {
         throw failure;
       }
       log.warn(
@@ -254,9 +253,14 @@ public class IcebergRestApiHandler {
           .setProperties(new HashMap<>(record.get().getProperties()))
           .build();
     }
-    requireNamespace(databaseId);
+    if (held == null) {
+      held = heldAs(databaseId);
+    }
+    if (!held.isPresent()) {
+      throw missing(databaseId);
+    }
     return GetNamespaceResponse.builder()
-        .withNamespace(Namespace.of(databaseId))
+        .withNamespace(Namespace.of(held.get()))
         .setProperties(Collections.emptyMap())
         .build();
   }
@@ -269,10 +273,10 @@ public class IcebergRestApiHandler {
     String databaseId = databaseId(namespace);
     tablesApiValidator.validateSearchTables(databaseId);
     List<TableDto> tables = tablesService.searchTables(databaseId);
-    if (tables.isEmpty() && !storedNamespace(databaseId).isPresent()) {
+    if (tables.isEmpty() && !storedNamespace(databaseId).isPresent() && !isListed(databaseId)) {
       // The listing just read is the table probe: no table and no record, so only the database
       // list is left.
-      requireListedDatabase(databaseId);
+      throw missing(databaseId);
     }
     return ListTablesResponse.builder()
         .addAll(
@@ -310,14 +314,16 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * The Iceberg table {@code databaseId.tableId} as {@link #loadTable} loads it for {@code
+   * The table {@code databaseId.tableId} as {@link #loadTable} loads it for {@code
    * actingPrincipal}: the same validation and the same {@link TablesService#loadTable} call, so the
-   * same checks in the same order with the same failures (and the same read audit event). For the
-   * routes that act on a table a caller could load, such as scan planning and credentials.
+   * same checks in the same order with the same failures, and the same read audit event ({@code
+   * TableAuditAspect}). For the routes that act on a table a caller could load, such as scan
+   * planning and credentials, which use its Iceberg {@link Table}.
    */
-  public Table loadIcebergTable(String databaseId, String tableId, String actingPrincipal) {
+  public TableDtoWithMetadata loadIcebergTable(
+      String databaseId, String tableId, String actingPrincipal) {
     tablesApiValidator.validateGetTable(databaseId, tableId);
-    return tablesService.loadTable(databaseId, tableId, actingPrincipal).getTable();
+    return tablesService.loadTable(databaseId, tableId, actingPrincipal);
   }
 
   /** The counter of metrics reports received, tagged {@value #REPORT_TYPE_TAG}. */
@@ -432,9 +438,12 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * Fails unless {@code databaseId} exists as a namespace: it holds a table, it has a stored record
-   * the caller may read ({@link #storedNamespace}), or the database list shows it (which also
-   * counts databases holding only views).
+   * Fails unless {@code databaseId} exists as a namespace, by the one existence rule of these
+   * routes: it holds a table, it has a stored record the caller may read ({@link
+   * #storedNamespace}), or the database list shows it (it holds a view, whether or not its views
+   * are enabled: the list is every House Tables row's database, of any type). Every part ignores
+   * letter case, as House Tables' lookups do. {@link #holdsSomething} is the same rule without the
+   * record, in the same order.
    *
    * <p>Whether it holds a table is one row of the native paged table search, which reads the same
    * house-table rows as the unpaged search (live tables of the database, by the same filter), not a
@@ -444,8 +453,10 @@ public class IcebergRestApiHandler {
    */
   void requireNamespace(String databaseId) {
     tablesApiValidator.validateSearchTables(databaseId);
-    if (!holdsATable(databaseId) && !storedNamespace(databaseId).isPresent()) {
-      requireListedDatabase(databaseId);
+    if (!holdsATable(databaseId)
+        && !storedNamespace(databaseId).isPresent()
+        && !isListed(databaseId)) {
+      throw missing(databaseId);
     }
   }
 
@@ -454,26 +465,43 @@ public class IcebergRestApiHandler {
   }
 
   /**
-   * Whether {@code databaseId} exists as it did before namespace records: as {@link
-   * #requireNamespace} without the record.
+   * Whether {@code databaseId} holds something, a table or a view (whether or not its views are
+   * enabled): the one-row table probe, then the database list, as {@link #requireNamespace} asks
+   * them. A namespace exists exactly when it holds something or has a record; the namespace writes
+   * decide "exists" (create) and "not empty" (drop) with this.
    */
-  private boolean holdsATableOrIsListed(String databaseId) {
-    return holdsATable(databaseId) || databaseIds().contains(databaseId);
+  boolean holdsSomething(String databaseId) {
+    return heldAs(databaseId).isPresent();
   }
 
   /**
-   * Whether {@code databaseId} holds a table or a view: the one-row table probe of {@link
-   * #requireNamespace}, then, on a miss and where the database's views are enabled, the one-row
-   * view probe the native view create makes. A database whose views are disabled holds no views for
-   * these routes, as for the view list ({@code IcebergRestViewHandler#listViews}), which answers it
-   * an empty list.
+   * The spelling under which {@code databaseId} holds something, if it does: the requested one when
+   * it holds a table (the table probe ignores letter case and keeps the request's spelling, as
+   * before), otherwise the database list's stored spelling of it, compared ignoring letter case.
    */
-  boolean holdsATableOrView(String databaseId) {
-    return holdsATable(databaseId)
-        || (viewsFeatureGate.isEnabled(databaseId)
-            && houseTableRepository
-                .findAllViewsByDatabaseId(databaseId, PageRequest.of(0, 1))
-                .hasContent());
+  private Optional<String> heldAs(String databaseId) {
+    if (holdsATable(databaseId)) {
+      return Optional.of(databaseId);
+    }
+    return listedAs(databaseId);
+  }
+
+  /**
+   * The native database list's spelling of {@code databaseId}, compared ignoring letter case, as
+   * House Tables' own lookups of a database (its table listing, the namespace records) compare
+   * names: a database is one namespace under any spelling of its name.
+   */
+  private Optional<String> listedAs(String databaseId) {
+    return databaseIds().stream().filter(id -> id.equalsIgnoreCase(databaseId)).findFirst();
+  }
+
+  /** Whether the native database list shows {@code databaseId}, ignoring letter case. */
+  private boolean isListed(String databaseId) {
+    return listedAs(databaseId).isPresent();
+  }
+
+  private static NoSuchNamespaceException missing(String databaseId) {
+    return new NoSuchNamespaceException("Namespace does not exist: %s", databaseId);
   }
 
   /**
@@ -512,13 +540,6 @@ public class IcebergRestApiHandler {
       throw e;
     } catch (AccessDeniedException e) {
       return Optional.empty();
-    }
-  }
-
-  /** Fails unless the native database list shows {@code databaseId}, spelled exactly so. */
-  private void requireListedDatabase(String databaseId) {
-    if (!databaseIds().contains(databaseId)) {
-      throw new NoSuchNamespaceException("Namespace does not exist: %s", databaseId);
     }
   }
 }

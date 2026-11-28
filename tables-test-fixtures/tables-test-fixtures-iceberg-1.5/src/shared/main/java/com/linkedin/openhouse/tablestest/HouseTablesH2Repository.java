@@ -92,6 +92,14 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
    */
   List<HouseTable> findByDatabaseId(String databaseId, Sort sort);
 
+  /**
+   * The rows of a database by any spelling of its name, as House Tables' table listing compares the
+   * upper-cased names.
+   */
+  List<HouseTable> findByDatabaseIdIgnoreCase(String databaseId);
+
+  List<HouseTable> findByDatabaseIdIgnoreCase(String databaseId, Sort sort);
+
   /** Mirrors the column converter: a pre-discriminator row is a table. */
   static HouseTable hydrateEntityType(HouseTable houseTable) {
     return houseTable.getEntityType() == null
@@ -179,7 +187,7 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
   /** Filtered before the page is cut, so a view never consumes a slot or inflates a total. */
   @Override
   default List<HouseTable> findAllByDatabaseId(String databaseId) {
-    return this.findByDatabaseId(databaseId).stream()
+    return this.findByDatabaseIdIgnoreCase(databaseId).stream()
         .filter(HouseTablesH2Repository::isTableOrLegacy)
         .map(HouseTablesH2Repository::hydrateEntityType)
         .collect(Collectors.toList());
@@ -188,7 +196,7 @@ public interface HouseTablesH2Repository extends HouseTableRepository {
   @Override
   default Page<HouseTable> findAllByDatabaseId(String databaseId, Pageable pageable) {
     return pageOf(
-        this.findByDatabaseId(databaseId, pageable.getSort()).stream()
+        this.findByDatabaseIdIgnoreCase(databaseId, pageable.getSort()).stream()
             .filter(HouseTablesH2Repository::isTableOrLegacy)
             .map(HouseTablesH2Repository::hydrateEntityType)
             .collect(Collectors.toList()),

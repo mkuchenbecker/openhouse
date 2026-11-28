@@ -46,16 +46,28 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
 /**
  * The IRC scan planning route ({@code POST .../tables/{table}/plan}) and the credentials route
- * ({@code GET .../tables/{table}/credentials}) at the HTTP boundary, and the access-delegation
- * header ({@code X-Iceberg-Access-Delegation}) on the load and create routes, which vends nothing.
+ * ({@code GET .../tables/{table}/credentials}) at the HTTP boundary, on a cluster that turns scan
+ * planning on ({@code cluster.tables.irc.scan-planning.enabled}; off, the routes are not served:
+ * IrcConfigEndpointsTest), and the access-delegation header ({@code X-Iceberg-Access-Delegation})
+ * on the load and create routes, which vends nothing.
  */
-@SpringBootTest
+@SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
+// One context configuration, shared with IrcPlanCredentialsAuthTest: scan planning on, with
+// authorization and a mocked authorization handler.
 @AutoConfigureMockMvc
 @Import(IrcReadRoutesTest.StubDefaults.class)
-@ContextConfiguration(initializers = {PropertyOverrideContextInitializer.class})
+@ContextConfiguration(
+    initializers = {
+      PropertyOverrideContextInitializer.class,
+      com.linkedin.openhouse.tables.mock.properties.AuthorizationPropertiesInitializer.class
+    })
 public class IrcPlanCredentialsRoutesTest {
 
   static final String DB = "irc_plan_routes";
+
+  /** The cluster property that serves the two routes, which are off by default. */
+  static final String PLANNING_ON =
+      com.linkedin.openhouse.cluster.configs.ClusterProperties.IRC_SCAN_PLANNING_ENABLED + "=true";
 
   /** The header a client sends to ask for vended credentials or remote signing. */
   static final String ACCESS_DELEGATION = "X-Iceberg-Access-Delegation";
@@ -67,6 +79,42 @@ public class IrcPlanCredentialsRoutesTest {
 
   @Autowired MockMvc mvc;
   @Autowired Catalog catalog;
+
+  /** Allows every decision: this class tests the routes, IrcPlanCredentialsAuthTest the checks. */
+  @org.springframework.boot.test.mock.mockito.MockBean
+  com.linkedin.openhouse.tables.authorization.AuthorizationHandler authorizationHandler;
+
+  @org.junit.jupiter.api.BeforeEach
+  void allowEverything() {
+    org.mockito.Mockito.reset(authorizationHandler);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.model.TableDto.class),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.authorization.Privileges.class)))
+        .thenReturn(true);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkAccessDecision(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.model.DatabaseDto.class),
+                org.mockito.ArgumentMatchers.any(
+                    com.linkedin.openhouse.tables.authorization.Privileges.class)))
+        .thenReturn(true);
+    org.mockito.Mockito.when(
+            authorizationHandler.checkSystemOnlyLockAccess(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+        .thenCallRealMethod();
+  }
+
+  @Autowired
+  com.linkedin.openhouse.common.audit.AuditHandler<
+          com.linkedin.openhouse.tables.audit.model.TableAuditEvent>
+      tableAuditHandler;
 
   private final List<String> created = new ArrayList<>();
 
@@ -131,9 +179,9 @@ public class IrcPlanCredentialsRoutesTest {
       "GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials";
 
   /**
-   * Whether this server's Iceberg line serves the two routes: the Iceberg 1.12 line (the default
-   * build) does; LinkedIn's Iceberg 1.5.2 reference line has no scan planning classes, and there
-   * they answer 406 as before.
+   * Whether this server's Iceberg line serves the two routes when the cluster turns scan planning
+   * on: the Iceberg 1.12 line (the default build) does; LinkedIn's Iceberg 1.5.2 reference line has
+   * no scan planning classes, and there they answer 406 as before.
    */
   static boolean served() {
     try {
@@ -172,6 +220,45 @@ public class IrcPlanCredentialsRoutesTest {
         response.get("plan-id"),
         JsonPath.read(body(postPlan(plan(DB, "t1"), "{}")), "$.plan-id"),
         "a fresh plan id");
+  }
+
+  /** The table audit events of {@code table} sent since the last clear, without timestamps. */
+  private List<String> tableEvents(String table) {
+    org.mockito.ArgumentCaptor<com.linkedin.openhouse.tables.audit.model.TableAuditEvent> events =
+        org.mockito.ArgumentCaptor.forClass(
+            com.linkedin.openhouse.tables.audit.model.TableAuditEvent.class);
+    org.mockito.Mockito.verify(tableAuditHandler, org.mockito.Mockito.atLeast(0))
+        .audit(events.capture());
+    List<String> json = new ArrayList<>();
+    for (com.linkedin.openhouse.tables.audit.model.TableAuditEvent event : events.getAllValues()) {
+      if (DB.equals(event.getDatabaseName()) && table.equals(event.getTableName())) {
+        json.add(event.toBuilder().eventTimestamp(null).build().toJson());
+      }
+    }
+    return json;
+  }
+
+  /**
+   * A plan and a credentials call read the table, and each is audited as the IRC load of it is: one
+   * READ event, the load's, a SUCCESS with the metadata location read, or a FAILED for a table the
+   * caller cannot load.
+   */
+  @Test
+  void aPlanAndACredentialsCallAreAuditedAsTheLoadIs() throws Exception {
+    assumeTrue(served());
+    createNative("t1");
+    for (String table : new String[] {"t1", "no_such_table"}) {
+      org.mockito.Mockito.clearInvocations(tableAuditHandler);
+      IrcHttp.get(mvc, "/v1/namespaces/" + DB + "/tables/" + table);
+      List<String> load = tableEvents(table);
+      assertEquals(1, load.size(), String.valueOf(load));
+      org.mockito.Mockito.clearInvocations(tableAuditHandler);
+      postPlan(plan(DB, table), "{}");
+      assertEquals(load, tableEvents(table), "plan of " + table);
+      org.mockito.Mockito.clearInvocations(tableAuditHandler);
+      IrcHttp.get(mvc, credentials(DB, table));
+      assertEquals(load, tableEvents(table), "credentials of " + table);
+    }
   }
 
   /** On Iceberg 1.12: an empty list, whatever plan id is named. On the reference line: 406. */
