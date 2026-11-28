@@ -1,5 +1,6 @@
 # Matches of scripts/ci/check-private-ids.py that are not private planning ids, each reviewed.
-# Format: <path> | <id> | <the line, trimmed>, or `*` for the line: that id on any line of the file.
+# Format: <path> | <id> | <the line, trimmed>, or `*` for the line: that id on any line of the file
+# (only where the id cannot also be a planning id in that file).
 # A comment line above each group says why the group is allowed.
 
 # LinkedIn main's own lines (present at bb8929e1).
@@ -8,13 +9,50 @@ integrations/python/dataloader/tests/test_scan_optimizer.py | F401 | *
 # Names of the test's two data files.
 integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F1 | *
 integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/e2e/BranchJavaTest.java | F2 | *
-# The test's own numbering of its cases, defined in the class.
+# LinkedIn main's section labels in this test.
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F4 | *
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F5 | *
+# Upstream issues and pull requests (linkedin/openhouse, linkedin/iceberg, pyiceberg, shadow).
+docs/development/intellij-setup.md | #264 | *
+iceberg/openhouse/internalcatalog/src/test/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperationsTest.java | PR #612 | * PR #612) is applied.
+iceberg/openhouse/internalcatalog/src/test/java/com/linkedin/openhouse/internal/catalog/OpenHouseInternalTableOperationsTest.java | #612 | * PR #612) is applied.
+integrations/python/dataloader/tests/test_arrival_order.py | PR #3046 | """Tests verifying the ArrivalOrder API from pyiceberg PR #3046 is available and functional.
+integrations/python/dataloader/tests/test_scan_optimizer.py | PR #569 | (see PR #569 + follow-up). The scan optimizer treats them as ordinary string
+integrations/python/dataloader/tests/test_scan_optimizer.py | #569 | (see PR #569 + follow-up). The scan optimizer treats them as ordinary string
+integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/DeleteFileReplicationTestSpark.java | #229 | * com.linkedin.iceberg 1.5.2.17 (linkedin/iceberg#219, #229, #254).
+integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/DeleteFileReplicationTestSpark.java | #254 | * com.linkedin.iceberg 1.5.2.17 (linkedin/iceberg#219, #229, #254).
+libs/optimizer/analyzer/src/main/java/com/linkedin/openhouse/optimizer/analyzer/CadencePolicy.java | PR #812 | * PR #812 review discussion.
+libs/optimizer/analyzer/src/main/java/com/linkedin/openhouse/optimizer/analyzer/CadencePolicy.java | #812 | * PR #812 review discussion.
+# The x86_64 platform name (LinkedIn main).
+integrations/python/dataloader/Makefile | x86 | *
+# LinkedIn main's line, in its Spark 3.1 itest and in the file this branch moved from there (linkedin/iceberg
+# pull requests 267 to 269).
+integrations/spark/spark-3.5/openhouse-spark-itest/src/shared/test/java/com/linkedin/openhouse/spark/catalogtest/ColumnDefaultSparkITest.java | #267 | /** Enable once Spark Parquet readers fill {@code initial-default}; #267–269 added ORC only. */
+integrations/spark/spark-3.1/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark/catalogtest/ColumnDefaultSparkITest.java | #267 | /** Enable once Spark Parquet readers fill {@code initial-default}; #267–269 added ORC only. */
 
 # This branch's own lines.
-# Row values of the test's data (upper-case names of the rows a statement changed).
-integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N1 | *
-integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N4 | *
-integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N6 | *
-integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N8 | *
+# Row values of the test's data (upper-cased names of the rows a statement changed).
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N1 | Arrays.asList(row(1L, "N1"), row(4L, "N4"), row(6L, "N6"), row(8L, "N8")), ids(rows));
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N4 | Arrays.asList(row(1L, "N1"), row(4L, "N4"), row(6L, "N6"), row(8L, "N8")), ids(rows));
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N6 | Arrays.asList(row(1L, "N1"), row(4L, "N4"), row(6L, "N6"), row(8L, "N8")), ids(rows));
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N8 | Arrays.asList(row(1L, "N1"), row(4L, "N4"), row(6L, "N6"), row(8L, "N8")), ids(rows));
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N8 | row(8L, "N8"),
+
+# Test data name, rename pending: database, table, job and file names derived from work-item
+# ids. Other open branches touch these tests; renaming them is left to a later change.
+apps/spark-3.5/src/shared/test/java/com/linkedin/openhouse/jobs/spark/OperationsCatalogTest.java | n16 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3BranchesJobsTest.java | x10 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3ConcurrencyTest.java | x10 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3EqualityDeletesJobsTest.java | x10 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3MaintenanceTest.java | x6 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3MaintenanceTest.java | x9 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3ShapeJobsTestBase.java | x10 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3SpecEvolutionJobsTest.java | x10 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3TypesJobsTest.java | x5 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/FormatV3VariantJobsTest.java | x5 | *
+apps/spark-3.5/src/test/java/com/linkedin/openhouse/jobs/spark/SortStatsParserTest.java | x11 | *
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcFormatV3TypesTest.java | x5 | *
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcConcurrencyTest.java | x10 | *
+services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/FormatV3TypesSwitchOffTest.java | x5 | *
+services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/FormatV3TypesTest.java | x5 | *
+services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/FormatV3VariantOffTest.java | x5 | *
