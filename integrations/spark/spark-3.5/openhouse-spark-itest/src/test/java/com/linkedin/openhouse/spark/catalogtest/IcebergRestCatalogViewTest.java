@@ -271,22 +271,32 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
         rest.listTables(Namespace.of(OFF_DB)));
   }
 
+  /**
+   * A principal the service denies cannot load the view: the load hands out the definition the
+   * service reads, so it needs the read privilege, as a table load does. Nor can it drop or create
+   * one. (A client replaces a view through its load, so a denied replace is not reachable from the
+   * client here; the service's route tests cover it.) The list of names makes no decision, as
+   * natively. (Whether the client then says the view exists is the client's: Iceberg 1.5 answers it
+   * with a load, so for this principal it says no; the service's exists route makes no decision.)
+   */
   @Test
-  void aDeniedPrincipalIsForbiddenToWriteAndMayRead() throws Exception {
+  void aDeniedPrincipalIsForbiddenToReadAndWrite() throws Exception {
     rest.buildView(id("guarded"))
         .withSchema(SCHEMA)
         .withQuery("spark", "SELECT id FROM base")
         .withDefaultNamespace(NS)
         .create();
     try (RESTCatalog stranger = server.rest(IrcViewsServer.STRANGER, conf)) {
-      // Reads make no authorization decision natively.
-      Assertions.assertEquals(
-          metadata(rest.loadView(id("guarded"))).metadataFileLocation(),
-          metadata(stranger.loadView(id("guarded"))).metadataFileLocation());
-      assertThrown(
-          ForbiddenException.class,
-          "irc_stranger",
-          thrown(() -> stranger.loadView(id("guarded")).updateProperties().set("k", "v").commit()));
+      // The client raises the 403 as it is, or (Iceberg 1.5) wrapped in "Unable to load view".
+      Throwable denied = thrown(() -> stranger.loadView(id("guarded")));
+      Throwable forbidden = denied;
+      while (forbidden != null && !(forbidden instanceof ForbiddenException)) {
+        forbidden = forbidden.getCause();
+      }
+      Assertions.assertNotNull(forbidden, String.valueOf(denied));
+      assertThrown(ForbiddenException.class, "irc_stranger", forbidden);
+      Assertions.assertFalse(String.valueOf(denied.getMessage()).contains("SELECT"));
+      Assertions.assertTrue(stranger.listViews(NS).contains(id("guarded")));
       assertThrown(
           ForbiddenException.class, "irc_stranger", thrown(() -> stranger.dropView(id("guarded"))));
       assertThrown(
@@ -305,6 +315,72 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
     Assertions.assertNull(rest.loadView(id("guarded")).properties().get("k"));
     assertSameView("guarded");
     rest.dropView(id("guarded"));
+  }
+
+  /**
+   * A principal who may read the view but not write it loads it, and its replace through the client
+   * is the native PUT's 403.
+   */
+  @Test
+  void aReaderMayLoadAndIsForbiddenToReplace() throws Exception {
+    rest.buildView(id("readable"))
+        .withSchema(SCHEMA)
+        .withQuery("spark", "SELECT id FROM base")
+        .withDefaultNamespace(NS)
+        .create();
+    try (RESTCatalog reader = server.rest(IcebergRestCatalogReadTest.READER, conf)) {
+      Assertions.assertEquals(
+          metadata(rest.loadView(id("readable"))).metadataFileLocation(),
+          metadata(reader.loadView(id("readable"))).metadataFileLocation());
+      assertThrown(
+          ForbiddenException.class,
+          "irc_reader",
+          thrown(() -> reader.loadView(id("readable")).updateProperties().set("k", "v").commit()));
+    }
+    Assertions.assertNull(rest.loadView(id("readable")).properties().get("k"));
+    rest.dropView(id("readable"));
+  }
+
+  /**
+   * A principal who may replace a view but not read it cannot replace it through an Iceberg client
+   * any more: the client loads the view first, and the load needs the read privilege. Pinned as
+   * what it is. On Iceberg 1.12 the load raises the 403; on 1.5 the client wraps it in "Unable to
+   * load view" (a NoSuchViewException). A create-or-replace is refused 403 on both lines.
+   */
+  @Test
+  void aWriterThatMayNotReadCannotReplaceThroughTheClient() throws Exception {
+    rest.buildView(id("writable"))
+        .withSchema(SCHEMA)
+        .withQuery("spark", "SELECT id FROM base")
+        .withDefaultNamespace(NS)
+        .create();
+    try (RESTCatalog writer = server.rest(IcebergRestCatalogReadTest.WRITER, conf)) {
+      Throwable load = thrown(() -> writer.loadView(id("writable")));
+      Throwable forbidden = load;
+      while (forbidden != null && !(forbidden instanceof ForbiddenException)) {
+        forbidden = forbidden.getCause();
+      }
+      Assertions.assertNotNull(forbidden, String.valueOf(load));
+      // Whether the view exists: 1.12 asks the exists route, which makes no decision; 1.5 loads it,
+      // and reports a view it may not read as absent.
+      Assertions.assertEquals(
+          IcebergLine.current() != IcebergLine.LEGACY, writer.viewExists(id("writable")));
+      Throwable replace =
+          thrown(
+              () ->
+                  writer
+                      .buildView(id("writable"))
+                      .withSchema(SCHEMA)
+                      .withQuery("spark", "SELECT 2")
+                      .withDefaultNamespace(NS)
+                      .createOrReplace());
+      // Run on both lines: the create-or-replace is refused 403 on 1.12 and on 1.5 alike.
+      Assertions.assertEquals(
+          ForbiddenException.class, replace.getClass(), String.valueOf(replace));
+      assertThrown(ForbiddenException.class, "irc_writer", replace);
+    }
+    assertSameView("writable");
+    rest.dropView(id("writable"));
   }
 
   /**
