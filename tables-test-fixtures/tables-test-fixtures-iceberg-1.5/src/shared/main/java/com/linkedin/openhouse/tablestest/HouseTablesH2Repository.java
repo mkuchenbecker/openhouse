@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Repository;
 
 /**
@@ -50,4 +51,22 @@ public interface HouseTablesH2Repository extends HouseTableRepository, HouseTabl
 
   @Override
   void deleteAll();
+
+  @Override
+  <S extends HouseTable> Iterable<S> saveAll(Iterable<S> entities);
+
+  @Override
+  long count();
+
+  @Override
+  Iterable<HouseTable> findAll(Sort sort);
+
+  @Override
+  Iterable<HouseTable> findAllById(Iterable<HouseTablePrimaryKey> keys);
+
+  @Override
+  void deleteAllById(Iterable<? extends HouseTablePrimaryKey> keys);
+
+  @Override
+  void deleteAll(Iterable<? extends HouseTable> entities);
 }

@@ -66,6 +66,14 @@ final class StoredViewMetadata {
     return stored;
   }
 
+  /** The view's own UUID, as its metadata file at {@code metadataLocation} records it. */
+  static String viewUuid(String metadataLocation) throws IOException {
+    return StoredMetadata.MAPPER
+        .readTree(new String(Files.readAllBytes(path(metadataLocation)), StandardCharsets.UTF_8))
+        .get("view-uuid")
+        .asText();
+  }
+
   static JsonNode normalize(ObjectNode stored) {
     ArrayNode wrapper = StoredMetadata.MAPPER.createArrayNode();
     wrapper.add(stored);

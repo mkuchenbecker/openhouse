@@ -31,6 +31,14 @@ public class HouseTablesH2DatabaseTest {
 
   private static final String DB = "storedb";
 
+  /**
+   * How long a write on another thread may take before the test gives up. It decides no outcome of
+   * a passing run: a write that shares this thread's lock would wait until this thread's
+   * transaction ends, which is only after the bound, so the bound ends a failing run and is set far
+   * above any time a free write takes on a loaded machine.
+   */
+  private static final long FAILURE_BOUND_SECONDS = 120;
+
   private final List<ConfigurableApplicationContext> contexts = new ArrayList<>();
 
   @AfterEach
@@ -88,7 +96,7 @@ public class HouseTablesH2DatabaseTest {
               try {
                 CompletableFuture.runAsync(
                         () -> repository.save(row("t", "/t/0.metadata.json", "/t/1.metadata.json")))
-                    .get(30, TimeUnit.SECONDS);
+                    .get(FAILURE_BOUND_SECONDS, TimeUnit.SECONDS);
               } catch (Exception e) {
                 throw new IllegalStateException(e);
               }
@@ -140,7 +148,7 @@ public class HouseTablesH2DatabaseTest {
           try {
             CompletableFuture.runAsync(
                     () -> second.save(row("free", INITIAL_TABLE_VERSION, "/second/free/0.json")))
-                .get(10, TimeUnit.SECONDS);
+                .get(FAILURE_BOUND_SECONDS, TimeUnit.SECONDS);
           } catch (Exception e) {
             throw new AssertionError("the other context's write waited for this one", e);
           }
