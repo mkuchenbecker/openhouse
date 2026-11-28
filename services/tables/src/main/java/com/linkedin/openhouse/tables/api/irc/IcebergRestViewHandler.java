@@ -184,6 +184,12 @@ public class IcebergRestViewHandler {
    * commit landed all the same: the view as stored now is answered if it is the same view (the same
    * view UUID), and otherwise the commit's state is unknown ({@link CommitStateUnknownException},
    * the spec's 500), not a failure.
+   *
+   * <p>The native replace always answers the location it stored: the location House Tables answers
+   * for the row it saved, or, for a replace that changes nothing, the stored row's, which the
+   * commit engine requires to be set. An answer without one breaks that contract; which version the
+   * commit stored cannot then be told, so the commit's state is unknown, and no version is answered
+   * as a guess.
    */
   private LoadViewResponse answered(
       String databaseId,
@@ -191,9 +197,17 @@ public class IcebergRestViewHandler {
       String committed,
       String committedUuid,
       String actingPrincipal) {
+    if (committed == null) {
+      throw new CommitStateUnknownException(
+          String.format(
+              "The write to view %s.%s landed, but the view service answered no metadata"
+                  + " location, so the version it stored cannot be told",
+              databaseId, viewId),
+          new IllegalStateException("The native view replace answered no metadata location"));
+    }
     ViewsServiceImpl.LoadedView now =
         onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
-    if (committed == null || committed.equals(now.getView().getMetadataLocation())) {
+    if (committed.equals(now.getView().getMetadataLocation())) {
       return response(now);
     }
     ViewMetadata stored;
