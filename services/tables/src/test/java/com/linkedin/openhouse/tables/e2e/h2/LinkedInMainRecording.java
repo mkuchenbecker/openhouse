@@ -179,7 +179,20 @@ public final class LinkedInMainRecording {
     for (int i = 0; i < PATTERNS.length; i++) {
       text = PATTERNS[i].matcher(text).replaceAll(REPLACEMENTS[i]);
     }
-    return text;
+    return OS_USER == null ? text : OS_USER.matcher(text).replaceAll("<os user>");
+  }
+
+  /**
+   * The operating system user the JVM runs as, which Spark reports as a table's owner: root on one
+   * machine, runner on a CI runner.
+   */
+  private static final Pattern OS_USER = osUser();
+
+  private static Pattern osUser() {
+    String user = System.getProperty("user.name");
+    return user == null || user.length() < 3
+        ? null
+        : Pattern.compile("(?<![A-Za-z0-9_])" + Pattern.quote(user) + "(?![A-Za-z0-9_])");
   }
 
   /**
