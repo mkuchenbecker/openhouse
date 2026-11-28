@@ -6,6 +6,7 @@ import com.linkedin.openhouse.capabilities.CapabilityNames;
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.cluster.storage.StorageType;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
+import com.linkedin.openhouse.common.exception.RequestValidationFailureException;
 import com.linkedin.openhouse.common.exception.checked.NotFoundException;
 import com.linkedin.openhouse.internal.catalog.model.NamespaceMetadata;
 import com.linkedin.openhouse.tables.api.validator.TablesApiValidator;
@@ -78,6 +79,14 @@ import org.springframework.stereotype.Component;
  *       API reports, and the per-table config the native API gives the same client.
  *   <li>A metrics report is counted and logged ({@link #reportMetrics}); the native API has no
  *       route for one.
+ *   <li>An id the native rules refuse (they allow letters, digits and underscores) names nothing
+ *       that can exist. The routes here that ask whether a namespace or table exists, load it, or
+ *       list a namespace answer what they answer for one that does not exist ({@link
+ *       #requireValidNamespaceId}, {@link #requireValidTableIds}), where the native routes refuse
+ *       the id (400): a client's existence check ({@code tableExists}, {@code namespaceExists})
+ *       then answers false rather than failing, and a load answers "no such table", as the
+ *       OpenHouse catalog answers an engine for a load of such an id. The writes still refuse it,
+ *       as natively.
  * </ul>
  */
 @Slf4j
@@ -230,7 +239,7 @@ public class IcebergRestApiHandler {
    */
   public GetNamespaceResponse loadNamespace(String namespace) {
     String databaseId = databaseId(namespace);
-    tablesApiValidator.validateSearchTables(databaseId);
+    requireValidNamespaceId(databaseId);
     Optional<NamespaceMetadata> record;
     // What the namespace holds, under which spelling: asked at most once per load.
     Optional<String> held = null;
@@ -274,7 +283,7 @@ public class IcebergRestApiHandler {
 
   public ListTablesResponse listTables(String namespace) {
     String databaseId = databaseId(namespace);
-    tablesApiValidator.validateSearchTables(databaseId);
+    requireValidNamespaceId(databaseId);
     List<TableDto> tables = tablesService.searchTables(databaseId);
     if (tables.isEmpty() && !hasRecordOrIsListed(databaseId)) {
       // The listing just read is the table probe: no table and no record, so only the database
@@ -291,7 +300,7 @@ public class IcebergRestApiHandler {
 
   public void tableExists(String namespace, String tableId) {
     String databaseId = tableDatabaseId(namespace, tableId);
-    tablesApiValidator.validateGetTable(databaseId, tableId);
+    requireValidTableIds(databaseId, tableId);
     if (!tablesService.tableExists(databaseId, tableId)) {
       throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, tableId);
     }
@@ -306,7 +315,7 @@ public class IcebergRestApiHandler {
   public IcebergRestLoadedTable loadTable(
       String databaseId, String tableId, String snapshots, String actingPrincipal) {
     boolean refsOnly = refsOnly(snapshots);
-    tablesApiValidator.validateGetTable(databaseId, tableId);
+    requireValidTableIds(databaseId, tableId);
     TableDtoWithMetadata loaded = tablesService.loadTable(databaseId, tableId, actingPrincipal);
     TableDto tableDto = loaded.getTableDto();
     return new IcebergRestLoadedTable(
@@ -325,7 +334,7 @@ public class IcebergRestApiHandler {
    */
   public TableDtoWithMetadata loadIcebergTable(
       String databaseId, String tableId, String actingPrincipal) {
-    tablesApiValidator.validateGetTable(databaseId, tableId);
+    requireValidTableIds(databaseId, tableId);
     return tablesService.loadTable(databaseId, tableId, actingPrincipal);
   }
 
@@ -464,7 +473,7 @@ public class IcebergRestApiHandler {
    * miss still reads it.
    */
   void requireNamespace(String databaseId) {
-    tablesApiValidator.validateSearchTables(databaseId);
+    requireValidNamespaceId(databaseId);
     if (!holdsATable(databaseId) && !hasRecordOrIsListed(databaseId)) {
       throw missing(databaseId);
     }
@@ -508,6 +517,30 @@ public class IcebergRestApiHandler {
   /** Whether the native database list shows {@code databaseId}, ignoring letter case. */
   private boolean isListed(String databaseId) {
     return listedAs(databaseId).isPresent();
+  }
+
+  /**
+   * Fails as for a missing namespace unless the native rules accept {@code databaseId} as a
+   * database id: no namespace can have an id they refuse.
+   */
+  void requireValidNamespaceId(String databaseId) {
+    try {
+      tablesApiValidator.validateSearchTables(databaseId);
+    } catch (RequestValidationFailureException refused) {
+      throw missing(databaseId);
+    }
+  }
+
+  /**
+   * Fails as for a missing table unless the native rules accept both ids: no table can have an id
+   * they refuse.
+   */
+  private void requireValidTableIds(String databaseId, String tableId) {
+    try {
+      tablesApiValidator.validateGetTable(databaseId, tableId);
+    } catch (RequestValidationFailureException refused) {
+      throw new NoSuchTableException("Table does not exist: %s.%s", databaseId, tableId);
+    }
   }
 
   private static NoSuchNamespaceException missing(String databaseId) {

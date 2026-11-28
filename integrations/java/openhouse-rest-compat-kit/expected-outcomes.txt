@@ -105,29 +105,12 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecServerSideRetry() |
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSpecThenRevert() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Evolution of table partitioning and clustering columns are not supported
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | SPEC | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Commit on table newdb.newtable changes what an OpenHouse table commit does not store: partition spec (not expressible as time partitioning and clustering)
 
-# MSG
-category MSG | e | error type and status are right; the kit asserts the reference implementation's message text
-OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Table ns.tbl already exists" to start with: "Table already exists: ns.tbl"
-OpenHouseRestCompatibilityKitCatalogTests.testLoadMissingTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "User table ns.tbl cannot be found" to start with: "Table does not exist: ns.tbl"
-OpenHouseRestCompatibilityKitCatalogTests.testRenameTableDestinationTableAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting throwable message: "Table local-cluster.newdb.table_renamed already exists" to contain: "Table already exists"
-OpenHouseRestCompatibilityKitCatalogTests.testRenameTableMissingSourceTable() | FAILED | MSG | java.lang.AssertionError | Expecting throwable message: "User table newdb.newtable cannot be found" to contain: "Table does not exist"
-OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransactionRequiresTableExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "User table newdb.newtable cannot be found" to start with: "Table does not exist: newdb.newtable"
-OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
-OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
-OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "No such view: ns.table" to start with: "View does not exist"
-
 # SCHEMA
 category SCHEMA | b | a column drop is refused 400 (OpenHouse schema evolution rules: every column of the current schema stays)
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSchemas(boolean)[1] | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col_to_delete] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveUnusedSchemas(boolean)[2] | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col_to_delete] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaConflict() | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[data] not found in newSchema
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaThenRevert() | FAILED | SCHEMA | org.apache.iceberg.exceptions.BadRequestException | Malformed request: local-cluster.newdb.newtable with ... contains invalid schema evolution on top of current table schema: ... nested exception : Column[col1] not found in newSchema
-
-# IDS
-category IDS | b | a namespace id with a hyphen is not an OpenHouse id: 400 BadRequest (to a HEAD, which has no body, the client says only "Bad Request"); the kit expects 404
-OpenHouseRestCompatibilityKitCatalogTests.testListNonExistingNamespace() | FAILED | IDS | java.lang.AssertionError | Expecting actual throwable to be an instance of: org.apache.iceberg.exceptions.NoSuchNamespaceException but was: org.apache.iceberg.exceptions.BadRequestException: Malformed request: databaseId : provided non-existing, Only alphanumerics and underscore supported
-OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithNonExistingNamespace() | FAILED | IDS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Bad Request
-OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace() | FAILED | IDS | org.apache.iceberg.exceptions.BadRequestException | Malformed request: Bad Request
 
 # DIALECTRES
 category DIALECTRES | b | views accept the spark dialect only and refuse reserved view properties: the kit's trino dialect and its replace.drop-dialect.allowed are refused 400. Behind VIEWDB, as DIALECT is
@@ -221,6 +204,7 @@ OpenHouseRestCompatibilityKitCatalogTests.renameTableNamespaceMissing() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.replaceTableTransaction(int)[2] | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testAppend() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCatalogWithCustomMetricsReporter() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateOrReplaceTransactionCreate() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testCompleteCreateTable() | PASSED
@@ -244,10 +228,13 @@ OpenHouseRestCompatibilityKitCatalogTests.testDropNonexistentNamespace() | PASSE
 OpenHouseRestCompatibilityKitCatalogTests.testDropTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testDropTableWithPurge() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testDropTableWithoutPurge() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testListNonExistingNamespace() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testListTables() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadMetadataTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testLoadMissingTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadNamespaceMetadata() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testLoadTableWithNonExistingNamespace() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testMetadataFileLocationsRemovalAfterCommit() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testOverrideTableProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testOverrideTablePropertiesCreateTransaction() | PASSED
@@ -255,6 +242,9 @@ OpenHouseRestCompatibilityKitCatalogTests.testRegisterExistingTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespaceProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespacePropertiesNamespaceDoesNotExist() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRenameTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testRenameTableDestinationTableAlreadyExists() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testRenameTableMissingSourceTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransactionRequiresTableExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testSetNamespaceProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testSetNamespacePropertiesNamespaceDoesNotExist() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUUIDValidation() | PASSED
@@ -265,5 +255,9 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchema() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSchemaAssignmentConflict() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSortOrder() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUpdateTableSortOrderServerSideRetry() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | PASSED
+OpenHouseRestCompatibilityKitViewCatalogTests.loadViewWithNonExistingNamespace() | PASSED
 OpenHouseRestCompatibilityKitViewCatalogTests.renameTableTargetAlreadyExistsAsView() | PASSED
 OpenHouseRestCompatibilityKitViewCatalogTests.replaceViewThatAlreadyExistsAsTable() | PASSED

@@ -598,7 +598,7 @@ run the task prints how many tests each cause holds.
 
 ### What would move the number
 
-At the default configuration 92 tests fail. By what it would take to turn them green:
+At the default configuration 81 tests fail. By what it would take to turn them green:
 
 | What fixes them | Causes | Tests |
 |---|---|---|
@@ -606,14 +606,23 @@ At the default configuration 92 tests fail. By what it would take to turn them g
 | Behind that: each creates its view in a namespace that holds no table, so it cannot pass before the row above | DIALECT 12, DIALECTRES 2 (the view dialect policy) | 14 |
 | The owner's table policies | RTAS 16 (replace), SPEC 9 (partition spec evolution), SCHEMA 4 (column drop), FMT 2 (format version 1), DROPPURGE 1 (drop removes files) | 32 |
 | A native API that does not exist | LISTREC 2 (a list of namespace records), VRENAME 2 (view rename) | 4 |
-| The Iceberg REST layer alone, no native change | MSG 8 (message text), IDS 3 (404 for an id that cannot exist), MISSINGMETA 1 (a missing metadata file as not found), VIEWERRTYPE 1 (error type; also behind the first two rows) | 13 |
+| The Iceberg REST layer alone, no native change | MISSINGMETA 1 (a missing metadata file as not found), VIEWERRTYPE 1 (error type; also behind the first two rows) | 2 |
 | Configuration | FMTV3 2 (pass with format v3 on) | 2 |
 
 Each test is filed under the first step it fails at, so a fix can move a test to its next cause
 instead of turning it green: of the 24 VIEWDB tests, some next reach view rename, the dialect
-policy or replace. Not required of a conforming server: MSG, VIEWERRTYPE and KITNS (the reference
-implementation's text and error type, and the kit's own contradiction), and LISTNS while the view
-suite's namespace flag stays as it is.
+policy or replace. Not required of a conforming server: VIEWERRTYPE and KITNS (the reference
+implementation's error type, and the kit's own contradiction), and LISTNS while the view suite's
+namespace flag stays as it is. Where the kit asserted only the reference implementation's message
+text, the Iceberg REST routes now answer in its words (a missing table or view, a name a table
+holds), which are also what the OpenHouse catalog tells an engine; the native routes keep theirs.
+An id the native rules refuse (a hyphen, for one) names nothing that can exist, so the Iceberg REST
+existence checks, loads and namespace lists answer it as missing; the writes and the native routes
+still refuse it (400). MISSINGMETA and VIEWERRTYPE are left on purpose: the specification allows a
+5XX for a server-side fault such as a table whose metadata file is gone, and documents 404 on a load
+as "the table does not exist", which it does; and answering one validation failure of a view create
+with the type IllegalArgumentException would make it the only 400 not typed BadRequestException,
+the type the same rule answers on the view replace.
 
 ### Changing the list
 

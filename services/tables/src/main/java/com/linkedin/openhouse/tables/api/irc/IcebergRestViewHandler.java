@@ -7,6 +7,7 @@ import com.linkedin.openhouse.tables.api.validator.ViewsApiValidator;
 import com.linkedin.openhouse.tables.audit.ViewAuditAspect;
 import com.linkedin.openhouse.tables.audit.model.ViewOperationType;
 import com.linkedin.openhouse.tables.exception.ViewApiException;
+import com.linkedin.openhouse.tables.exception.ViewRequestValidationFailureException;
 import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
 import com.linkedin.openhouse.tables.services.ViewsServiceImpl;
@@ -63,9 +64,12 @@ import org.springframework.stereotype.Component;
  * </ul>
  *
  * <p>Failures keep the native status and message; the type is the Iceberg exception {@code
- * RESTCatalog} should raise. With views disabled the native API answers 404 on every route; here
- * that is {@code NoSuchViewException} on a view's own routes and {@code NoSuchNamespaceException}
- * on the namespace's routes (list, create), which is what a catalog without views answers.
+ * RESTCatalog} should raise. Two failures of a named view are worded as Iceberg's catalogs word
+ * them instead: a missing view ("View does not exist: db.v") and a name a table holds ("Table with
+ * same name already exists: db.v"). With views disabled the native API answers 404 on every route;
+ * here that is {@code NoSuchViewException} on a view's own routes and {@code
+ * NoSuchNamespaceException} on the namespace's routes (list, create), which is what a catalog
+ * without views answers.
  */
 @ConditionalOnIcebergRest
 @Component
@@ -97,6 +101,7 @@ public class IcebergRestViewHandler {
    */
   public ListTablesResponse listViews(String namespace, String actingPrincipal) {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
+    readHandler.requireValidNamespaceId(databaseId);
     if (!viewsFeatureGate.isEnabled(databaseId)) {
       readHandler.requireNamespace(databaseId);
       return ListTablesResponse.builder().build();
@@ -134,16 +139,31 @@ public class IcebergRestViewHandler {
    */
   public LoadViewResponse loadView(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
+    requireValidViewIds(databaseId, viewId);
     return onView(
-        () -> {
-          viewsApiValidator.validateGetView(databaseId, viewId);
-          return response(viewsService.loadReadableView(databaseId, viewId, actingPrincipal));
-        });
+        databaseId,
+        viewId,
+        () -> response(viewsService.loadReadableView(databaseId, viewId, actingPrincipal)));
   }
 
   public void viewExists(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
-    onView(() -> viewsApiHandler.getView(databaseId, viewId, actingPrincipal));
+    requireValidViewIds(databaseId, viewId);
+    onView(databaseId, viewId, () -> viewsApiHandler.getView(databaseId, viewId, actingPrincipal));
+  }
+
+  /**
+   * Fails as for a missing view unless the native rules accept both ids: no view can have an id
+   * they refuse, so the existence check and the load answer it as a missing view, where the native
+   * routes refuse it (400), as the table routes do ({@code IcebergRestApiHandler}). The writes
+   * still refuse it.
+   */
+  private void requireValidViewIds(String databaseId, String viewId) {
+    try {
+      viewsApiValidator.validateGetView(databaseId, viewId);
+    } catch (ViewRequestValidationFailureException refused) {
+      throw new NoSuchViewException("View does not exist: %s.%s", databaseId, viewId);
+    }
   }
 
   public LoadViewResponse createView(
@@ -152,8 +172,12 @@ public class IcebergRestViewHandler {
     // request.location() is not read: the server owns the location, and the native create
     // allocates it as for a request that names none.
     CreateUpdateViewRequestBody body = IcebergRestViewSpelling.createBody(databaseId, request);
-    onNamespace(() -> viewsApiHandler.createView(body, actingPrincipal));
-    return onView(() -> response(load(databaseId, request.name(), actingPrincipal)));
+    TableIdentifier view = TableIdentifier.of(databaseId, request.name());
+    onNamespace(view, () -> viewsApiHandler.createView(body, actingPrincipal));
+    return onView(
+        databaseId,
+        request.name(),
+        () -> response(load(databaseId, request.name(), actingPrincipal)));
   }
 
   public LoadViewResponse commitView(
@@ -165,14 +189,14 @@ public class IcebergRestViewHandler {
     // commit answers: a view replaced by another of its name in between is not answered to a
     // caller that may not read it.
     ViewsServiceImpl.LoadedView base =
-        onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
+        onView(databaseId, viewId, () -> loadReadable(databaseId, viewId, actingPrincipal));
     ViewMetadata candidate =
         IcebergRestViewSpelling.apply(databaseId, viewId, base.getMetadata(), request);
     CreateUpdateViewRequestBody body =
         IcebergRestViewSpelling.replaceBody(
             databaseId, viewId, base.getView().getMetadataLocation(), candidate);
     String committed =
-        onView(() -> viewsApiHandler.updateView(body, actingPrincipal))
+        onView(databaseId, viewId, () -> viewsApiHandler.updateView(body, actingPrincipal))
             .getResponseBody()
             .getMetadataLocation();
     return answered(databaseId, viewId, committed, base.getMetadata().uuid(), actingPrincipal);
@@ -208,7 +232,7 @@ public class IcebergRestViewHandler {
           new IllegalStateException("The native view replace answered no metadata location"));
     }
     ViewsServiceImpl.LoadedView now =
-        onView(() -> loadReadable(databaseId, viewId, actingPrincipal));
+        onView(databaseId, viewId, () -> loadReadable(databaseId, viewId, actingPrincipal));
     if (committed.equals(now.getView().getMetadataLocation())) {
       return response(now);
     }
@@ -244,6 +268,8 @@ public class IcebergRestViewHandler {
    */
   private void authorizeCommit(String databaseId, String viewId, String principal) {
     onView(
+        databaseId,
+        viewId,
         () -> {
           viewsApiValidator.validateGetView(databaseId, viewId);
           TableDto reference = viewsService.viewReference(databaseId, viewId);
@@ -261,7 +287,8 @@ public class IcebergRestViewHandler {
 
   public void dropView(String namespace, String viewId, String actingPrincipal) {
     String databaseId = viewDatabaseId(namespace, viewId);
-    onView(() -> viewsApiHandler.deleteView(databaseId, viewId, actingPrincipal));
+    onView(
+        databaseId, viewId, () -> viewsApiHandler.deleteView(databaseId, viewId, actingPrincipal));
   }
 
   /** The native view API has no rename; the native client refuses one with the same words. */
@@ -312,44 +339,65 @@ public class IcebergRestViewHandler {
     return IcebergRestApiHandler.databaseId(namespace);
   }
 
-  private static <T> T onView(Supplier<T> call) {
-    return translate(call, false);
+  /** A native call on the view {@code databaseId.viewId}, on one of the view's own routes. */
+  private static <T> T onView(String databaseId, String viewId, Supplier<T> call) {
+    return translate(call, false, TableIdentifier.of(databaseId, viewId));
   }
 
-  /** Also the register route's ({@code IcebergRestViewRegistration}, on the Iceberg 1.12 line). */
-  static <T> T onNamespace(Supplier<T> call) {
-    return translate(call, true);
+  /** A native call on a namespace's route that names no view (the list). */
+  private static <T> T onNamespace(Supplier<T> call) {
+    return translate(call, true, null);
+  }
+
+  /**
+   * A native call on a namespace's route that names {@code view} (the create, and the register
+   * route's, {@code IcebergRestViewRegistration}, on the Iceberg 1.12 line).
+   */
+  static <T> T onNamespace(TableIdentifier view, Supplier<T> call) {
+    return translate(call, true, view);
   }
 
   /**
    * Runs a native view call and rethrows its failure as the Iceberg exception for the native
-   * status, with the native message. {@code namespaceRoute} picks the type of the views-disabled
-   * 404.
+   * status, with the native message, except for {@code view} ({@link #translated}). {@code
+   * namespaceRoute} picks the type of the views-disabled 404.
    */
-  private static <T> T translate(Supplier<T> call, boolean namespaceRoute) {
+  private static <T> T translate(Supplier<T> call, boolean namespaceRoute, TableIdentifier view) {
     try {
       return call.get();
     } catch (ViewApiException e) {
-      throw translated(e, namespaceRoute);
+      throw translated(e, namespaceRoute, view);
     } catch (AuthorizationServiceException e) {
       // The native view routes answer this 503 with a fixed message.
       throw new ServiceUnavailableException("Authorization service unavailable");
     }
   }
 
-  private static RuntimeException translated(ViewApiException e, boolean namespaceRoute) {
+  /**
+   * The Iceberg exception for a native view failure. A missing view and a name a table holds, on a
+   * route that names the view, are worded as Iceberg's catalogs word them ({@code
+   * BaseMetastoreViewCatalog}, {@code CatalogHandlers}), the words the reference implementation
+   * answers; every other failure keeps the native message.
+   */
+  private static RuntimeException translated(
+      ViewApiException e, boolean namespaceRoute, TableIdentifier view) {
     String message = e.getMessage();
     switch (e.getErrorCode()) {
       case NO_SUCH_VIEW:
-        return new NoSuchViewException("%s", message);
+        return view != null
+            ? new NoSuchViewException("View does not exist: %s", view)
+            : new NoSuchViewException("%s", message);
       case DATABASE_NOT_FOUND:
         return new NoSuchNamespaceException("%s", message);
       case VIEWS_DISABLED:
         return namespaceRoute
             ? new NoSuchNamespaceException("%s", message)
             : new NoSuchViewException("%s", message);
-      case VIEW_ALREADY_EXISTS:
       case NAME_ALREADY_EXISTS_AS_TABLE:
+        return view != null
+            ? new AlreadyExistsException("Table with same name already exists: %s", view)
+            : new AlreadyExistsException("%s", message);
+      case VIEW_ALREADY_EXISTS:
         return new AlreadyExistsException("%s", message);
       case CONCURRENT_VIEW_MODIFICATION:
         return new CommitFailedException("%s", message);

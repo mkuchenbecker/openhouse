@@ -179,12 +179,13 @@ public class IrcMetricsRouteTest {
     assertEquals(commits, received("commit_report"));
   }
 
+  /**
+   * As on the table routes that post or delete (the reads answer such an id as a missing table).
+   */
   @Test
   void anInvalidTableIdIs400AsOnTheOtherTableRoutes() throws Exception {
     assertEquals(
-        IrcHttp.get(mvc, "/v1/namespaces/" + DB + "/tables/not-a-valid-id")
-            .getResponse()
-            .getStatus(),
+        IrcWrite.drop(mvc, DB, "not-a-valid-id").getResponse().getStatus(),
         report(DB, "not-a-valid-id", SCAN_REPORT).getResponse().getStatus());
     assertIrcError(report(DB, "not-a-valid-id", SCAN_REPORT), 400, "BadRequestException");
   }

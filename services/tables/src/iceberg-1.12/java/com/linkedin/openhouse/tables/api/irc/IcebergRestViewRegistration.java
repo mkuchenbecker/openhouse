@@ -123,6 +123,7 @@ public class IcebergRestViewRegistration {
     String databaseId = IcebergRestApiHandler.databaseId(namespace);
     // Audited as a native create is: a CREATE by the caller, success or failure.
     return IcebergRestViewHandler.onNamespace(
+        TableIdentifier.of(databaseId, viewId),
         () ->
             viewAudit.auditCreate(
                 databaseId,

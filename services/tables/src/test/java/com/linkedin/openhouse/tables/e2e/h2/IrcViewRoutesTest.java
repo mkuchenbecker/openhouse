@@ -231,12 +231,17 @@ public class IrcViewRoutesTest {
         404, IrcHttp.head(mvc, IrcViewWrite.view("irc_v_head", "t")).getResponse().getStatus());
   }
 
+  /**
+   * The native 404, worded as Iceberg's catalogs word a missing view; the native route keeps its
+   * own wording.
+   */
   @Test
   void aMissingViewIs404NoSuchView() throws Exception {
     database("irc_v_missing");
-    String nativeMsg = nativeMessage(get(mvc, "irc_v_missing", "nope"));
     assertEquals(
-        nativeMsg,
+        "No such view: irc_v_missing.nope", nativeMessage(get(mvc, "irc_v_missing", "nope")));
+    assertEquals(
+        "View does not exist: irc_v_missing.nope",
         assertIrcError(
                 IrcHttp.get(mvc, IrcViewWrite.view("irc_v_missing", "nope")),
                 404,
@@ -321,6 +326,10 @@ public class IrcViewRoutesTest {
     expectAudited("irc_v_exists", ViewOperationType.CREATE, OperationStatus.FAILED);
   }
 
+  /**
+   * The native 409, worded as Iceberg's catalogs word a view create onto a table's name; the native
+   * route keeps its own wording.
+   */
   @Test
   void createOverATableIs409AlreadyExists() throws Exception {
     database("irc_v_overt");
@@ -334,8 +343,9 @@ public class IrcViewRoutesTest {
                     SCHEMA_ID_NAME,
                     sql("irc_v_overt"),
                     Collections.emptyMap())));
+    assertEquals("Name already exists as a table: irc_v_overt.t", nativeMsg);
     assertEquals(
-        nativeMsg,
+        "Table with same name already exists: irc_v_overt.t",
         assertIrcError(
                 IrcViewWrite.create(mvc, "irc_v_overt", ircCreate("irc_v_overt", "t")),
                 409,
@@ -495,6 +505,46 @@ public class IrcViewRoutesTest {
         assertIrcError(IrcViewWrite.create(mvc, "irc_v_cdia", presto), 400, "BadRequestException")
             .message());
     assertEquals(404, code(get(mvc, "irc_v_cdia", "v")));
+  }
+
+  /**
+   * No view can have an id the native rules refuse (here a hyphen): its existence check and its
+   * load answer a missing view, and the list of a namespace whose id is refused a missing
+   * namespace, as for any name that does not exist. A create still refuses the id (400), as
+   * natively, and so does the native API.
+   */
+  @Test
+  void anIdTheNativeRulesRefuseNamesNoView() throws Exception {
+    database("irc_v_ids");
+    assertEquals(
+        404,
+        IrcHttp.head(mvc, IrcViewWrite.view("non-existing", "view")).getResponse().getStatus());
+    assertEquals(
+        404, IrcHttp.head(mvc, IrcViewWrite.view("irc_v_ids", "v-1")).getResponse().getStatus());
+    assertEquals(
+        "View does not exist: non-existing.view",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("non-existing", "view")),
+                404,
+                "NoSuchViewException")
+            .message());
+    assertEquals(
+        "View does not exist: irc_v_ids.v-1",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("irc_v_ids", "v-1")), 404, "NoSuchViewException")
+            .message());
+    assertEquals(
+        "Namespace does not exist: non-existing",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.views("non-existing")),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertIrcError(
+        IrcViewWrite.create(mvc, "irc_v_ids", ircCreate("irc_v_ids", "v-1")),
+        400,
+        "BadRequestException");
+    assertEquals(400, code(get(mvc, "irc_v_ids", "v-1")));
   }
 
   @Test
@@ -844,9 +894,10 @@ public class IrcViewRoutesTest {
     assertEquals(204, IrcViewWrite.drop(mvc, "irc_v_drop", "v").getResponse().getStatus());
     assertEquals(404, code(get(mvc, "irc_v_drop", "v")));
     expectAudited("irc_v_drop", ViewOperationType.DROP, OperationStatus.SUCCESS);
-    String nativeMsg = nativeMessage(NativeViewHttp.delete(mvc, "irc_v_drop", "v"));
     assertEquals(
-        nativeMsg,
+        "No such view: irc_v_drop.v", nativeMessage(NativeViewHttp.delete(mvc, "irc_v_drop", "v")));
+    assertEquals(
+        "View does not exist: irc_v_drop.v",
         assertIrcError(IrcViewWrite.drop(mvc, "irc_v_drop", "v"), 404, "NoSuchViewException")
             .message());
     // A drop addressed to a table name drops nothing.
@@ -950,26 +1001,40 @@ public class IrcViewRoutesTest {
   void aTableRouteAskedForAViewAndAViewRouteAskedForATable() throws Exception {
     database("irc_v_kinds");
     createNative("irc_v_kinds", "v");
-    assertIrcError(
-        IrcHttp.get(mvc, IrcViewWrite.view("irc_v_kinds", "t")), 404, "NoSuchViewException");
+    assertEquals(
+        "View does not exist: irc_v_kinds.t",
+        assertIrcError(
+                IrcHttp.get(mvc, IrcViewWrite.view("irc_v_kinds", "t")), 404, "NoSuchViewException")
+            .message());
     assertIrcError(
         IrcHttp.get(mvc, IrcWrite.table("irc_v_kinds", "v")), 404, "NoSuchTableException");
     assertEquals(
         404, IrcHttp.head(mvc, IrcWrite.table("irc_v_kinds", "v")).getResponse().getStatus());
     assertIrcError(IrcWrite.drop(mvc, "irc_v_kinds", "v"), 404, "NoSuchTableException");
     assertEquals(200, code(get(mvc, "irc_v_kinds", "v")));
-    // A table cannot be created onto a view's name.
+    // A table cannot be created onto a view's name: the native refusal, as the native create
+    // words it (only a table holding the name is worded as Iceberg's catalogs word it).
     String before = stored("irc_v_kinds", "v");
-    assertIrcError(
-        IrcWrite.create(
-            mvc,
-            "irc_v_kinds",
-            org.apache.iceberg.rest.requests.CreateTableRequest.builder()
-                .withName("v")
-                .withSchema(SCHEMA)
-                .build()),
-        409,
-        "AlreadyExistsException");
+    String nativeMsg =
+        CommitPathHttp.message(
+            CommitPathHttp.post(
+                    mvc,
+                    CommitPathHttp.newTable("irc_v_kinds", "v").toBuilder().policies(null).build())
+                .andExpect(status().is(409)));
+    assertEquals(
+        nativeMsg,
+        assertIrcError(
+                IrcWrite.create(
+                    mvc,
+                    "irc_v_kinds",
+                    org.apache.iceberg.rest.requests.CreateTableRequest.builder()
+                        .withName("v")
+                        .withSchema(SCHEMA)
+                        .build()),
+                409,
+                "AlreadyExistsException")
+            .message());
+    assertFalse(nativeMsg.startsWith("Table already exists"), nativeMsg);
     // A table renamed onto a view's name: renameOfATableOntoAViewsNameIsRefused.
     assertEquals(before, stored("irc_v_kinds", "v"));
     assertEquals(200, CommitPathHttp.status(CommitPathHttp.get(mvc, "irc_v_kinds", "t")));

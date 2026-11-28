@@ -10,6 +10,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.HandlerMethod;
 
 /**
  * Renders every failure on the IRC routes as the spec's {@code ErrorResponse}, ahead of the global
@@ -28,9 +29,17 @@ public class IcebergRestExceptionHandler {
 
   @Autowired private ServiceAuditAspect serviceAudit;
 
+  /**
+   * @param handler the route that failed: the OpenHouse routes under the base path ({@link
+   *     IcebergRestOpenHouseController}) keep the native wording of their failures
+   */
   @ExceptionHandler(Exception.class)
-  public ResponseEntity<byte[]> handle(Exception failure) {
-    ErrorResponse error = IcebergRestErrors.toError(failure);
+  public ResponseEntity<byte[]> handle(Exception failure, HandlerMethod handler) {
+    ErrorResponse error =
+        IcebergRestErrors.toError(
+            failure,
+            handler != null
+                && IcebergRestOpenHouseController.class.isAssignableFrom(handler.getBeanType()));
     if (error.code() >= 500) {
       log.error("IRC request failed with {}", error.code(), failure);
     } else {

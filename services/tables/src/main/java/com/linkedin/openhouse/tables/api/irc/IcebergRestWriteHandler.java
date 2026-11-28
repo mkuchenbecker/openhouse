@@ -195,10 +195,15 @@ public class IcebergRestWriteHandler {
       String databaseId, CreateTableRequest request, String actingPrincipal) {
     TableIdentifier identifier = TableIdentifier.of(databaseId, request.name());
     CreateUpdateTableRequestBody body = createBody(identifier, request);
-    GetTableResponseBody created =
-        tablesApiHandler
-            .createTable(databaseId, withPatchApplied(identifier, body, null), actingPrincipal)
-            .getResponseBody();
+    GetTableResponseBody created;
+    try {
+      created =
+          tablesApiHandler
+              .createTable(databaseId, withPatchApplied(identifier, body, null), actingPrincipal)
+              .getResponseBody();
+    } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+      throw nameTaken(identifier, e);
+    }
     return answered(identifier, created.getTableLocation(), created.getTableUUID(), null);
   }
 
@@ -215,7 +220,38 @@ public class IcebergRestWriteHandler {
     // carries it and applies it.
     tablesApiValidator.validateCreateTable(
         clusterProperties.getClusterName(), databaseId, withPatchApplied(identifier, body, null));
-    return tablesService.stageCreateTable(body, actingPrincipal);
+    try {
+      return tablesService.stageCreateTable(body, actingPrincipal);
+    } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+      throw nameTaken(identifier, e);
+    }
+  }
+
+  /**
+   * A create, or a staged create, refused by the native create because {@code identifier} is taken:
+   * the native 409. When a table holds the name it is worded as Iceberg's catalogs word it ("Table
+   * already exists: db.t", {@code BaseMetastoreCatalog}), which is also what the OpenHouse catalog
+   * tells an engine; otherwise (a view holds it, or what holds it cannot be read) the native
+   * refusal is answered as it is.
+   */
+  private RuntimeException nameTaken(
+      TableIdentifier identifier,
+      com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+    boolean table;
+    try {
+      table =
+          !houseTableRepository
+              .findViewById(
+                  HouseTablePrimaryKey.builder()
+                      .databaseId(identifier.namespace().level(0))
+                      .tableId(identifier.name())
+                      .build())
+              .isPresent();
+    } catch (RuntimeException lookup) {
+      table = false;
+    }
+    // No cause: the refusal is audited as the native one is, whose cause is none.
+    return table ? new AlreadyExistsException("Table already exists: %s", identifier) : e;
   }
 
   /**
@@ -1261,6 +1297,12 @@ public class IcebergRestWriteHandler {
           toDatabaseId,
           request.destination().name(),
           actingPrincipal);
+    } catch (com.linkedin.openhouse.common.exception.AlreadyExistsException e) {
+      // The native rename found a table of the target's name (a view there was refused above):
+      // its 409, worded as Iceberg's catalogs word it, as the refusals here are. No cause, as the
+      // native refusal has none (the audit records it).
+      throw new AlreadyExistsException(
+          "Cannot rename %s to %s. Table already exists", request.source(), request.destination());
     } catch (CommitFailedException e) {
       if (!(e.getCause() instanceof HouseTableConcurrentUpdateException)) {
         throw e;

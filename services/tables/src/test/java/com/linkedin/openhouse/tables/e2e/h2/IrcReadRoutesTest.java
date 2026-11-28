@@ -465,23 +465,117 @@ public class IrcReadRoutesTest {
         "BadRequestException");
   }
 
+  /**
+   * A missing table is worded as Iceberg's catalogs word it (as the OpenHouse catalog words it to
+   * an engine, too); the native route keeps its own wording.
+   */
   @Test
   void loadMissingTableIs404NoSuchTable() throws Exception {
     create("irc_load_missing", "t1");
-    assertIrcError(
-        IrcHttp.get(mvc, "/v1/namespaces/irc_load_missing/tables/never"),
-        404,
-        "NoSuchTableException");
-    assertIrcError(
-        IrcHttp.get(mvc, "/v1/namespaces/irc_never_db/tables/t1"), 404, "NoSuchTableException");
-    get(mvc, "irc_load_missing", "never").andExpect(status().isNotFound());
+    assertEquals(
+        "Table does not exist: irc_load_missing.never",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_load_missing/tables/never"),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "Table does not exist: irc_never_db.t1",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_never_db/tables/t1"),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "User table irc_load_missing.never cannot be found",
+        JsonPath.read(
+            json(get(mvc, "irc_load_missing", "never").andExpect(status().isNotFound())),
+            "$.message"));
   }
 
+  /**
+   * An id the native rules refuse names no table, so a load of it is a missing table (404), as the
+   * OpenHouse catalog answers an engine for it; the native route still refuses it (400).
+   */
   @Test
-  void loadTableWithAnInvalidIdentifierIsABadRequestAsOnTheNativeApi() throws Exception {
-    assertIrcError(
-        IrcHttp.get(mvc, "/v1/namespaces/irc_bad/tables/a%3Bb"), 400, "BadRequestException");
+  void loadTableWithAnInvalidIdentifierIsAMissingTableWhileTheNativeApiRefusesIt()
+      throws Exception {
+    assertEquals(
+        "Table does not exist: irc_bad.a%3Bb",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_bad/tables/a%3Bb"),
+                404,
+                "NoSuchTableException")
+            .message());
     mvc.perform(MockMvcRequestBuilders.get(java.net.URI.create(tableUrl("irc_bad", "a%3Bb"))))
+        .andExpect(status().isBadRequest());
+  }
+
+  /**
+   * No namespace or table can have an id the native rules refuse (here a hyphen: ids are letters,
+   * digits and underscores). The routes that ask whether one exists, read it, or list a namespace
+   * answer what they answer for one that does not exist, so a client's existence check answers
+   * false rather than failing. A write still refuses the id (400), as natively, and so does the
+   * native API.
+   */
+  @Test
+  void anIdTheNativeRulesRefuseNamesNothingOnTheReadRoutes() throws Exception {
+    create("irc_ids", "t1");
+    assertEquals(404, IrcHttp.head(mvc, "/v1/namespaces/non-existing").getResponse().getStatus());
+    assertEquals(
+        "Namespace does not exist: non-existing",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/non-existing"), 404, "NoSuchNamespaceException")
+            .message());
+    assertEquals(
+        "Namespace does not exist: non-existing",
+        assertIrcError(
+                IrcHttp.perform(
+                    mvc,
+                    IrcHttp.request(HttpMethod.GET, "/v1/namespaces")
+                        .param("parent", "non-existing")),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertEquals(
+        "Namespace does not exist: non-existing",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/non-existing/tables"),
+                404,
+                "NoSuchNamespaceException")
+            .message());
+    assertEquals(
+        404, IrcHttp.head(mvc, "/v1/namespaces/non-existing/tables/t1").getResponse().getStatus());
+    assertEquals(
+        404, IrcHttp.head(mvc, "/v1/namespaces/irc_ids/tables/t-1").getResponse().getStatus());
+    assertEquals(
+        "Table does not exist: non-existing.t1",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/non-existing/tables/t1"),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "Table does not exist: irc_ids.t-1",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_ids/tables/t-1"), 404, "NoSuchTableException")
+            .message());
+    // A write refuses the id, as natively; the native API refuses it on a read too.
+    assertIrcError(
+        IrcWrite.create(
+            mvc,
+            "non-existing",
+            org.apache.iceberg.rest.requests.CreateTableRequest.builder()
+                .withName("t1")
+                .withSchema(
+                    new org.apache.iceberg.Schema(
+                        org.apache.iceberg.types.Types.NestedField.required(
+                            1, "id", org.apache.iceberg.types.Types.LongType.get())))
+                .build()),
+        400,
+        "BadRequestException");
+    get(mvc, "non-existing", "t1").andExpect(status().isBadRequest());
+    mvc.perform(MockMvcRequestBuilders.get(tableUrl("irc_ids", "t-1") + "/exists"))
         .andExpect(status().isBadRequest());
   }
 

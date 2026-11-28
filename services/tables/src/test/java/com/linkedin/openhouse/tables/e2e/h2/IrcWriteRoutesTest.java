@@ -266,16 +266,39 @@ public class IrcWriteRoutesTest {
         stored.sortOrder().fields());
   }
 
+  /**
+   * The create and the staged create of an existing table are refused with the native status,
+   * worded as Iceberg's catalogs word it (as the OpenHouse catalog words it to an engine, too); the
+   * native route keeps its own wording.
+   */
   @Test
   void createOfAnExistingTableIs409AlreadyExists() throws Exception {
     createNative(nativeBody("irc_w_exists"));
     String before = stored("irc_w_exists");
-    String nativeMessage =
-        message(post(mvc, nativeBody("irc_w_exists")).andExpect(status().is(409)));
     assertEquals(
-        nativeMessage,
+        "Table irc_w_exists.t already exists",
+        message(post(mvc, nativeBody("irc_w_exists")).andExpect(status().is(409))));
+    assertEquals(
+        "Table already exists: irc_w_exists.t",
         assertIrcError(
                 IrcWrite.create(mvc, "irc_w_exists", ircCreate("t")), 409, "AlreadyExistsException")
+            .message());
+    CreateTableRequest plain = ircCreate("t");
+    assertEquals(
+        "Table already exists: irc_w_exists.t",
+        assertIrcError(
+                IrcWrite.create(
+                    mvc,
+                    "irc_w_exists",
+                    CreateTableRequest.builder()
+                        .withName("t")
+                        .withSchema(plain.schema())
+                        .withPartitionSpec(plain.spec())
+                        .setProperties(plain.properties())
+                        .stageCreate()
+                        .build()),
+                409,
+                "AlreadyExistsException")
             .message());
     assertEquals(before, stored("irc_w_exists"));
   }
@@ -884,21 +907,31 @@ public class IrcWriteRoutesTest {
     unlock(mvc, "irc_w_lock", "t").andExpect(status().isNoContent());
   }
 
+  /** A missing table is worded as Iceberg's catalogs word it; the native route keeps its own. */
   @Test
   void aMissingTableIs404() throws Exception {
     TableMetadata base = IrcWrite.load(mvc, createNativeAndReturnDb("irc_w_missing"), "t");
-    assertIrcError(
-        IrcWrite.commit(
-            mvc,
-            "irc_w_missing",
-            "nope",
-            IrcWrite.simple(
-                base,
-                Collections.singletonList(
-                    new MetadataUpdate.SetProperties(Collections.singletonMap("k", "v"))))),
-        404,
-        "NoSuchTableException");
-    assertIrcError(IrcWrite.drop(mvc, "irc_w_missing", "nope"), 404, "NoSuchTableException");
+    assertEquals(
+        "Table does not exist: irc_w_missing.nope",
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_missing",
+                    "nope",
+                    IrcWrite.simple(
+                        base,
+                        Collections.singletonList(
+                            new MetadataUpdate.SetProperties(Collections.singletonMap("k", "v"))))),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "Table does not exist: irc_w_missing.nope",
+        assertIrcError(IrcWrite.drop(mvc, "irc_w_missing", "nope"), 404, "NoSuchTableException")
+            .message());
+    assertEquals(
+        "User table irc_w_missing.nope cannot be found",
+        message(delete(mvc, "irc_w_missing", "nope").andExpect(status().isNotFound())));
   }
 
   private String createNativeAndReturnDb(String db) throws Exception {
@@ -1218,11 +1251,12 @@ public class IrcWriteRoutesTest {
   void renameRefusalsAreTheNativeOnes() throws Exception {
     createNative(nativeBody("irc_w_ren2"));
     createNative(newTable("irc_w_ren2", "u").toBuilder().policies(null).build());
-    // Target exists: 409.
-    String nativeExists =
-        message(rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "u").andExpect(status().is(409)));
+    // Target exists: the native 409, worded as Iceberg's catalogs word it.
     assertEquals(
-        nativeExists,
+        "Table local-cluster.irc_w_ren2.u already exists",
+        message(rename(mvc, "irc_w_ren2", "t", "irc_w_ren2", "u").andExpect(status().is(409))));
+    assertEquals(
+        "Cannot rename irc_w_ren2.t to irc_w_ren2.u. Table already exists",
         assertIrcError(
                 IrcWrite.rename(
                     mvc,
@@ -1245,12 +1279,17 @@ public class IrcWriteRoutesTest {
                 400,
                 "BadRequestException")
             .message());
-    // Missing source: 404.
-    assertIrcError(
-        IrcWrite.rename(
-            mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
-        404,
-        "NoSuchTableException");
+    // Missing source: 404, worded as Iceberg's catalogs word it.
+    assertEquals(
+        "Table does not exist: irc_w_ren2.nope",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_ren2", "nope"),
+                    TableIdentifier.of("irc_w_ren2", "v")),
+                404,
+                "NoSuchTableException")
+            .message());
   }
 
   /**
