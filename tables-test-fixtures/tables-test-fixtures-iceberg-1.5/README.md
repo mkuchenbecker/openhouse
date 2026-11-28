@@ -6,6 +6,12 @@ and in-memory stand-ins for the House Tables store (`HouseTablesH2Repository`) a
 
 ## Notes for consumers
 
+### The embedded service serves the Iceberg REST routes
+
+The embedded service serves the Iceberg REST Catalog routes under `/iceberg`, which a deployment has off by
+default (`openhouse-tables-test-fixtures.properties`); a consumer that wants LinkedIn main's surface sets
+`cluster.tables.irc.enabled=false`, for example as a command-line argument or system property.
+
 ### The House Tables stand-in answers as the real store does
 
 `HouseTablesH2Repository` is held to `HouseTableRepositoryContract`. The same contract runs against the real
