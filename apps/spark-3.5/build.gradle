@@ -70,11 +70,6 @@ sourceSets {
         java {
             srcDirs += 'src/shared/main/java'
         }
-        // log4j2.properties: without it the scheduler (JobsScheduler, started from the uber jar in
-        // the jobs-scheduler image) logs errors only.
-        resources {
-            srcDirs += 'src/shared/main/resources'
-        }
     }
     test {
         java {

@@ -393,14 +393,22 @@ class OpenHouseCapabilitiesTest {
     Assertions.assertFalse(OpenHouseCapabilities.resolve(other).isOpenHouseRest());
   }
 
+  /**
+   * A catalog that is not Iceberg's SparkCatalog or SparkSessionCatalog: no grants or unlock, as
+   * those statements have always refused it, and policies are not refused here, as they never were
+   * for such a catalog. The statements themselves fail at planning on it
+   * (StatementsOnAWrapperCatalogTest).
+   */
   @Test
-  void aNonIcebergCatalogOffersNothing() {
+  void aNonIcebergCatalogDoesNotRefusePolicies() {
     TableCatalog catalog = Mockito.mock(TableCatalog.class);
     Mockito.when(catalog.name()).thenReturn("spark_catalog");
     Assertions.assertNull(OpenHouseCapabilities.icebergCatalog(catalog));
     CatalogCapabilities capabilities = OpenHouseCapabilities.resolve(catalog);
     Assertions.assertEquals(Path.NOT_ICEBERG, capabilities.path());
-    Assertions.assertTrue(capabilities.offered().isEmpty());
+    Assertions.assertEquals(Collections.singleton("policies"), capabilities.offered());
+    Assertions.assertTrue(capabilities.advertised().isEmpty());
+    OpenHouseCapabilities.requirePolicies(catalog);
     assertUnsupportedGrantsAndUnlock(catalog);
   }
 }

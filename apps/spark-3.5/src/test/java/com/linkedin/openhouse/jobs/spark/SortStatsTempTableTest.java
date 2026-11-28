@@ -5,6 +5,7 @@ import com.linkedin.openhouse.common.metrics.OtelEmitter;
 import com.linkedin.openhouse.jobs.util.AppsOtelEmitter;
 import com.linkedin.openhouse.tablestest.OpenHouseSparkITest;
 import java.util.Collections;
+import org.apache.iceberg.BaseTable;
 import org.apache.iceberg.Table;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
@@ -108,14 +109,24 @@ public class SortStatsTempTableTest extends OpenHouseSparkITest {
       Operations ops = Operations.withCatalog(session, otelEmitter);
       Table table = ops.getTable(source);
       Assertions.assertEquals(formatVersion, FormatV3Tables.formatVersion(table));
+      // The app reads the version and write format from the plan of its data_files query.
+      BaseTable read =
+          SortStatsCollectionSparkApp.sourceTableOf(
+              session.sql(
+                  "select sum(file_size_in_bytes) from openhouse." + source + ".data_files"));
+      Assertions.assertNotNull(read, "the query's plan names the source table");
+      Assertions.assertEquals(table.uuid(), read.uuid());
+      Assertions.assertEquals(formatVersion, read.operations().current().formatVersion());
+      Assertions.assertEquals("parquet", read.properties().get("write.format.default"));
+      Assertions.assertNull(SortStatsCollectionSparkApp.sourceTableOf(session.sql("select 1")));
       session.sql(
           SortStatsCollectionSparkApp.createTempTableStatement(
               copy,
               source,
               "p",
               10,
-              FormatV3Tables.formatVersion(table),
-              table.properties().get("write.format.default")));
+              read.operations().current().formatVersion(),
+              read.properties().get("write.format.default")));
       Table created = ops.getTable(copy);
       Assertions.assertEquals(formatVersion, FormatV3Tables.formatVersion(created), "copy version");
       Assertions.assertEquals(

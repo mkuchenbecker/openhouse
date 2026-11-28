@@ -55,9 +55,10 @@ dependencies {
   antlr "org.antlr:antlr4:4.7.1"
 
   compileOnly(project(path: ':integrations:java:iceberg-1.5:openhouse-java-iceberg-1.5-runtime', configuration: 'shadow'))
-  // The capability names, interfaces and value types (D23). Like the Java client it is packed into
-  // the uber jar only, so the thin jar's consumers and the published POM do not change.
+  // The capability names, interfaces and value types. Packed into the uber jar; the thin jar's
+  // classes need it at run time, so its POM names it (runtime scope), and the module is published.
   compileOnly(project(':integrations:java:openhouse-catalog-capabilities'))
+  runtimeOnly(project(':integrations:java:openhouse-catalog-capabilities'))
   compileOnly("org.apache.spark:spark-hive_2.12:${sparkVersion}") {
     exclude group: 'org.apache.avro', module: 'avro'
     exclude group: 'org.apache.arrow'

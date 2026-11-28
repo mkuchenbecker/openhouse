@@ -1329,6 +1329,12 @@ public final class TableStatsCollectorUtil {
    * fields in order, so the labels are the same either way. A row without a schema falls back to
    * {@code columnNames} by position.
    *
+   * <p>Why not by position, as before: the callers pass the current spec's field names, and
+   * labelling the {@code partition} struct's values with them by position gave a value of an
+   * earlier spec's field the name of whichever current field sat at that index, and dropped the
+   * values past the current spec's field count, so on a table whose spec evolved the published
+   * partition stats named the wrong columns.
+   *
    * @param partitionRow Spark Row containing partition column values
    * @param columnNames List of partition column names (in spec order), used when the row has no
    *     schema

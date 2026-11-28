@@ -1194,11 +1194,27 @@ public class FormatV3MaintenanceTest extends OpenHouseSparkITest {
 
     SortStatsCollectionSparkApp app =
         new SortStatsCollectionSparkApp("x6-sort-stats", null, fqtn, otelEmitter);
-    // On both Iceberg lines (X11): on 1.5.2 the app parses its sort order with Iceberg's parser
-    // below OpenHouse's, where rewrite_data_files would look at the outermost parser only and fail.
-    app.runInner(ops);
-    app.runValidations(ops);
-    Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
+    // The app reaches the table through Spark SQL only, as it always did: it builds no catalog of
+    // its own and so loads no table beyond what its statements load.
+    Operations appOps = tables.newOps(spark, otelEmitter);
+    if (icebergCanWriteV3()) {
+      app.runInner(appOps);
+      Assertions.assertEquals(0, appOps.catalogsBuilt(), "the app built a catalog of its own");
+      app.runValidations(ops);
+      Assertions.assertNotNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
+    } else {
+      // On LinkedIn's Iceberg 1.5.2, rewrite_data_files parses its sort_order with the session's
+      // outermost parser only, and that must be Iceberg's. The OpenHouse SQL extensions wrap
+      // Iceberg's parser when they are listed after Iceberg's (as jobs.yaml lists them), so the
+      // job fails before it rewrites anything, as it always has on that line. Pinned, not
+      // changed: the job makes the call it always made; the table must be untouched.
+      Throwable failure = Assertions.assertThrows(Exception.class, () -> app.runInner(appOps));
+      Assertions.assertEquals(0, appOps.catalogsBuilt(), "the app built a catalog of its own");
+      Assertions.assertTrue(
+          String.valueOf(failure.getMessage()).contains("parser is not an Iceberg ExtendedParser"),
+          String.valueOf(failure));
+      Assertions.assertNull(ops.getTable(fqtn).properties().get("sort-compression-rate"));
+    }
     Reading after = readingIn(spark, formatVersion, fqtn);
     Assertions.assertEquals(before.live, after.live, "live rows, full contents");
     Assertions.assertEquals(before.lineage, after.lineage, "_row_id and sequence numbers");

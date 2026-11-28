@@ -22,7 +22,7 @@ public final class AppConstants {
   public static final String REWRITTEN_DATA_FILE_GROUP_COUNT = "rewritten_data_file_group_count";
   public static final String RETENTION_POLICY_MISCONFIGURED_TABLE_COUNT =
       "retention_policy_misconfigured_table_count";
-  // Delete files in the expired partitions a retention backup covers (work item X9, decision D46)
+  // Delete files in the expired partitions a retention backup covers, which the backup omits
   public static final String RETENTION_BACKUP_DELETE_FILE_COUNT =
       "retention_backup_delete_file_count";
   public static final String DELETE_KIND = "delete_kind";
