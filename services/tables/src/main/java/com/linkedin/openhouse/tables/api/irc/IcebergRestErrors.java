@@ -42,7 +42,9 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
  * Iceberg exception {@code RESTCatalog} raises for that status (its error handlers use the type to
  * tell a missing namespace from a missing table). Where Iceberg has no exception for a native
  * status (422 capability missing, 423 locked), the type is the OpenHouse exception's name and the
- * client raises its generic {@code RESTException} with the native message.
+ * client raises its generic {@code RESTException} with the native message. The message is the
+ * native one, except a missing table on the routes of the specification ({@link #toError(Throwable,
+ * boolean)}).
  */
 public final class IcebergRestErrors {
 
@@ -54,11 +56,36 @@ public final class IcebergRestErrors {
   private static final String COMMIT_STATE_UNKNOWN_TMPL =
       "Table with key[%s] isn't ack'ed by server about the commit status, nested exception: %s";
 
+  /** Iceberg's catalogs' wording of a missing table ({@code BaseMetastoreCatalog}). */
+  static final String NO_SUCH_TABLE_TMPL = "Table does not exist: %s";
+
   private IcebergRestErrors() {}
 
+  /** The error for {@code failure} on a route of the IRC specification. */
   public static ErrorResponse toError(Throwable failure) {
+    return toError(failure, false);
+  }
+
+  /**
+   * The error for {@code failure}. On a route of the IRC specification ({@code nativeWording}
+   * false), a missing table is worded as Iceberg's catalogs word it ({@value #NO_SUCH_TABLE_TMPL}),
+   * which is also what the OpenHouse catalog tells an engine for one. The OpenHouse routes under
+   * the base path, adapters over the native handlers, keep the native wording ({@code
+   * nativeWording} true).
+   */
+  public static ErrorResponse toError(Throwable failure, boolean nativeWording) {
     String message = failure.getMessage() != null ? failure.getMessage() : failure.toString();
-    if (failure instanceof NoSuchUserTableException || failure instanceof NoSuchTableException) {
+    if (failure instanceof NoSuchUserTableException) {
+      NoSuchUserTableException missing = (NoSuchUserTableException) failure;
+      return error(
+          HttpStatus.NOT_FOUND,
+          NoSuchTableException.class,
+          nativeWording || missing.getDatabaseId() == null || missing.getTableId() == null
+              ? message
+              : String.format(
+                  NO_SUCH_TABLE_TMPL, missing.getDatabaseId() + "." + missing.getTableId()));
+    }
+    if (failure instanceof NoSuchTableException) {
       return error(HttpStatus.NOT_FOUND, NoSuchTableException.class, message);
     }
     if (failure instanceof NoSuchViewException) {

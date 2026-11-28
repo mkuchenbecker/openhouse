@@ -465,16 +465,32 @@ public class IrcReadRoutesTest {
         "BadRequestException");
   }
 
+  /**
+   * A missing table is worded as Iceberg's catalogs word it (as the OpenHouse catalog words it to
+   * an engine, too); the native route keeps its own wording.
+   */
   @Test
   void loadMissingTableIs404NoSuchTable() throws Exception {
     create("irc_load_missing", "t1");
-    assertIrcError(
-        IrcHttp.get(mvc, "/v1/namespaces/irc_load_missing/tables/never"),
-        404,
-        "NoSuchTableException");
-    assertIrcError(
-        IrcHttp.get(mvc, "/v1/namespaces/irc_never_db/tables/t1"), 404, "NoSuchTableException");
-    get(mvc, "irc_load_missing", "never").andExpect(status().isNotFound());
+    assertEquals(
+        "Table does not exist: irc_load_missing.never",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_load_missing/tables/never"),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "Table does not exist: irc_never_db.t1",
+        assertIrcError(
+                IrcHttp.get(mvc, "/v1/namespaces/irc_never_db/tables/t1"),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "User table irc_load_missing.never cannot be found",
+        JsonPath.read(
+            json(get(mvc, "irc_load_missing", "never").andExpect(status().isNotFound())),
+            "$.message"));
   }
 
   @Test

@@ -884,21 +884,31 @@ public class IrcWriteRoutesTest {
     unlock(mvc, "irc_w_lock", "t").andExpect(status().isNoContent());
   }
 
+  /** A missing table is worded as Iceberg's catalogs word it; the native route keeps its own. */
   @Test
   void aMissingTableIs404() throws Exception {
     TableMetadata base = IrcWrite.load(mvc, createNativeAndReturnDb("irc_w_missing"), "t");
-    assertIrcError(
-        IrcWrite.commit(
-            mvc,
-            "irc_w_missing",
-            "nope",
-            IrcWrite.simple(
-                base,
-                Collections.singletonList(
-                    new MetadataUpdate.SetProperties(Collections.singletonMap("k", "v"))))),
-        404,
-        "NoSuchTableException");
-    assertIrcError(IrcWrite.drop(mvc, "irc_w_missing", "nope"), 404, "NoSuchTableException");
+    assertEquals(
+        "Table does not exist: irc_w_missing.nope",
+        assertIrcError(
+                IrcWrite.commit(
+                    mvc,
+                    "irc_w_missing",
+                    "nope",
+                    IrcWrite.simple(
+                        base,
+                        Collections.singletonList(
+                            new MetadataUpdate.SetProperties(Collections.singletonMap("k", "v"))))),
+                404,
+                "NoSuchTableException")
+            .message());
+    assertEquals(
+        "Table does not exist: irc_w_missing.nope",
+        assertIrcError(IrcWrite.drop(mvc, "irc_w_missing", "nope"), 404, "NoSuchTableException")
+            .message());
+    assertEquals(
+        "User table irc_w_missing.nope cannot be found",
+        message(delete(mvc, "irc_w_missing", "nope").andExpect(status().isNotFound())));
   }
 
   private String createNativeAndReturnDb(String db) throws Exception {
@@ -1245,12 +1255,17 @@ public class IrcWriteRoutesTest {
                 400,
                 "BadRequestException")
             .message());
-    // Missing source: 404.
-    assertIrcError(
-        IrcWrite.rename(
-            mvc, TableIdentifier.of("irc_w_ren2", "nope"), TableIdentifier.of("irc_w_ren2", "v")),
-        404,
-        "NoSuchTableException");
+    // Missing source: 404, worded as Iceberg's catalogs word it.
+    assertEquals(
+        "Table does not exist: irc_w_ren2.nope",
+        assertIrcError(
+                IrcWrite.rename(
+                    mvc,
+                    TableIdentifier.of("irc_w_ren2", "nope"),
+                    TableIdentifier.of("irc_w_ren2", "v")),
+                404,
+                "NoSuchTableException")
+            .message());
   }
 
   /**

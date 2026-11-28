@@ -108,10 +108,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testUpdateTransaction() | FAILED | SPE
 # MSG
 category MSG | e | error type and status are right; the kit asserts the reference implementation's message text
 OpenHouseRestCompatibilityKitCatalogTests.testBasicCreateTableThatAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Table ns.tbl already exists" to start with: "Table already exists: ns.tbl"
-OpenHouseRestCompatibilityKitCatalogTests.testLoadMissingTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "User table ns.tbl cannot be found" to start with: "Table does not exist: ns.tbl"
 OpenHouseRestCompatibilityKitCatalogTests.testRenameTableDestinationTableAlreadyExists() | FAILED | MSG | java.lang.AssertionError | Expecting throwable message: "Table local-cluster.newdb.table_renamed already exists" to contain: "Table already exists"
-OpenHouseRestCompatibilityKitCatalogTests.testRenameTableMissingSourceTable() | FAILED | MSG | java.lang.AssertionError | Expecting throwable message: "User table newdb.newtable cannot be found" to contain: "Table does not exist"
-OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransactionRequiresTableExists() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "User table newdb.newtable cannot be found" to start with: "Table does not exist: newdb.newtable"
 OpenHouseRestCompatibilityKitViewCatalogTests.createOrReplaceViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
 OpenHouseRestCompatibilityKitViewCatalogTests.createViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "Name already exists as a table: ns.table" to start with: "Table with same name already exists: ns.table"
 OpenHouseRestCompatibilityKitViewCatalogTests.loadViewThatAlreadyExistsAsTable() | FAILED | MSG | java.lang.AssertionError | Expecting actual: "No such view: ns.table" to start with: "View does not exist"
@@ -246,6 +243,7 @@ OpenHouseRestCompatibilityKitCatalogTests.testDropTableWithPurge() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testDropTableWithoutPurge() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testListTables() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadMetadataTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testLoadMissingTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadNamespaceMetadata() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testLoadTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testMetadataFileLocationsRemovalAfterCommit() | PASSED
@@ -255,6 +253,8 @@ OpenHouseRestCompatibilityKitCatalogTests.testRegisterExistingTable() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespaceProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRemoveNamespacePropertiesNamespaceDoesNotExist() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testRenameTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testRenameTableMissingSourceTable() | PASSED
+OpenHouseRestCompatibilityKitCatalogTests.testReplaceTransactionRequiresTableExists() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testSetNamespaceProperties() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testSetNamespacePropertiesNamespaceDoesNotExist() | PASSED
 OpenHouseRestCompatibilityKitCatalogTests.testUUIDValidation() | PASSED
