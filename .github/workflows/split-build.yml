@@ -44,9 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      # The line's Gradle cache entry, as the test jobs below restore it.
-      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
     outputs:
       groups: ${{ steps.groups.outputs.groups }}
     steps:
@@ -73,9 +70,6 @@ jobs:
       - name: Self-test the failed-tests printer
         run: python3 scripts/ci/test-print-failed-tests.py
 
-      - name: Self-test the verdict of Build and Run Tests
-        run: python3 scripts/ci/check-needed-jobs.py --self-test
-
       # Messages, test names and comments say what they mean in words, not by the id of a private
       # planning list (scripts/ci/check-private-ids.py). The tree is the same on both lines.
       - name: Check for private planning ids
@@ -84,9 +78,26 @@ jobs:
           python3 scripts/ci/check-private-ids.py --self-test
           python3 scripts/ci/check-private-ids.py
 
-      # The groups above together must run exactly the line's `build`, each test task in one job
-      # (scripts/ci/check-test-groups.py, by Gradle dry runs: a few minutes before the groups start).
-      # So a project or task that the cut would drop, or run twice, fails here, not silently.
+  # The test groups together must run exactly the line's `build`, each test task in one job
+  # (scripts/ci/check-test-groups.py, by Gradle dry runs), so that a project or task the cut would
+  # drop, or run twice, fails the line, not silently. Beside the groups, not before them: only the
+  # line's verdict below waits for it. A dry run configures the build and resolves nothing, so it
+  # needs no published fork (gradle/iceberg-fork.gradle).
+  partition:
+    name: ${{ inputs.line == 'default' && 'Default build' || 'Reference build' }}, test-group partition
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # The line's Gradle cache entry, as the test jobs restore it.
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: ${{ inputs.line == 'default' && 'build-and-run-tests' || 'iceberg-linkedin-build' }}
+    steps:
+      - name: Checkout project sources
+        uses: actions/checkout@v6
+
+      - name: Self-test the verdict of Build and Run Tests
+        run: python3 scripts/ci/check-needed-jobs.py --self-test
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -101,10 +112,6 @@ jobs:
       # As in the test jobs; this job only reads the cache.
       - name: Prepare the restored Gradle cache
         run: scripts/ci/prepare-gradle-home.sh reader
-
-      - name: Restore or publish the Iceberg fork
-        if: inputs.line == 'default'
-        uses: ./.github/actions/iceberg-fork
 
       - name: Check that the test groups add up to the build
         env:
@@ -307,7 +314,7 @@ jobs:
   build-and-run-tests:
     name: Build and Run Tests
     if: always()
-    needs: [plan, tests, docker]
+    needs: [plan, partition, tests, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: read

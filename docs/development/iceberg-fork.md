@@ -320,8 +320,9 @@ gets a job of its own, and any other new project runs in `rest`, without a chang
 workflow. On the reference line a matched project that is not in that build (Spark 4.2) is a job
 that says so and runs nothing. `scripts/ci/check-test-groups.py` checks, by Gradle dry runs, that
 the jobs' tasks add up to `build` with each test task in one job. A first job, the test groups,
-reads the list, runs that check (and on the default line checks the merged optimizer migrations);
-another of the default line runs the Docker steps above, after `./gradlew clean assemble`. The
+reads the list (and on the default line checks the merged optimizer migrations); a job beside the
+groups, the test-group partition, runs that check (it needs no published fork); another of the
+default line runs the Docker steps above, after `./gradlew clean assemble`. The
 last job of each line, `Build and Run Tests`, needs all the others and is green only when each of
 them succeeded (the reference line's skipped Docker job aside). On a pull request the default
 line's is the check the single job reported, `build-run-tests / Build and Run Tests`, which branch
