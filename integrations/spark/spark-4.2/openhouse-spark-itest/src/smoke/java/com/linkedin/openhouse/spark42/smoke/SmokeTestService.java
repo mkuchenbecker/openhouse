@@ -83,6 +83,11 @@ final class SmokeTestService {
                 required("irc42.service.classpath"),
                 "com.linkedin.openhouse.spark42.irc.IrcSmokeTestService",
                 work.toString()));
+    if (ServerPlanning.selected()) {
+      // The server-planning run (smokeTestServerPlanning) turns the service's scan planning on;
+      // the default run keeps the cluster default, planning off.
+      command.add("--cluster.tables.irc.scan-planning.enabled=true");
+    }
     command.addAll(springArguments);
     Process process =
         new ProcessBuilder(command)

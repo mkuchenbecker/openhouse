@@ -329,11 +329,18 @@ public class IrcPolicyPatchTest {
       assertSameStored(nativeDb, ircDb);
     } else {
       String nativeMessage = message(nativeResult).replace(nativeDb, "DB");
+      int ircStatus = nativeStatus;
+      if (nativeStatus == 500 && nativeMessage.contains("getLockState()")) {
+        // The one declared difference: a lock state in the request of a table whose stored
+        // policies have none fails the native PUT's lock rule with a NullPointerException (500,
+        // unchanged); the IRC commit reads the absent lock state as unlocked and gives the rule's
+        // own refusal (400).
+        ircStatus = 400;
+        nativeMessage = "Lock state cannot be updated for Table DB.t";
+      }
       String ircMessage =
-          assertIrcError(irc, nativeStatus, IRC_TYPES.get(nativeStatus))
-              .message()
-              .replace(ircDb, "DB");
-      if (nativeStatus == 500) {
+          assertIrcError(irc, ircStatus, IRC_TYPES.get(ircStatus)).message().replace(ircDb, "DB");
+      if (ircStatus == 500) {
         // An unexpected failure: the native 500 body puts the exception's class name before its
         // message, the IRC error carries the message alone (the routes' general mapping).
         assertTrue(nativeMessage.endsWith(": " + ircMessage), nativeMessage + " / " + ircMessage);

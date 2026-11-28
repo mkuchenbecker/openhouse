@@ -19,8 +19,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 /**
  * What the IRC routes registered in this server serve, read from Spring's handler mappings, so that
  * what the config response advertises cannot drift from what is registered: the scan planning and
- * credentials routes register only where their Iceberg API exists (the 1.12 line), so the list
- * differs between Iceberg lines.
+ * credentials routes register only where their Iceberg API exists (the 1.12 line) and the cluster
+ * turns scan planning on, so the list differs between Iceberg lines and clusters.
  *
  * <ul>
  *   <li>{@link #endpoints()}: the spec routes served, in the spec's format ({@code "<METHOD>

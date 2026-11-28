@@ -22,6 +22,12 @@ final class ServerPlanning {
 
   static final String PROPERTY = "irc42.scan-planning-mode";
 
+  /**
+   * The service's cluster property that serves scan planning, off by default: the services of the
+   * server-planning run turn it on, those of the default run leave it off.
+   */
+  static final String SERVICE_PROPERTY = "cluster.tables.irc.scan-planning.enabled";
+
   private ServerPlanning() {}
 
   /** True when this JVM runs the whole suite with server-side planning. */

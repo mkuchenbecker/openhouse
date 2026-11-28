@@ -163,7 +163,8 @@ public class IcebergRestCatalogController {
    * Takes the metrics report a client posts after a scan or a commit. Secured like the load route;
    * the parameter names are the ones the authorization interceptor reads. Mapped here, with the
    * reads, and not with the writes: its request class exists on every Iceberg line this server runs
-   * on.
+   * on. The body is read with a bound, and audited by what identifies the report and its size, not
+   * its content ({@link IcebergRestMetricsReports}).
    */
   @ApiResponses(@ApiResponse(responseCode = "204", description = "IRC report metrics: NO_CONTENT"))
   @PostMapping(V1 + "/namespaces/{namespace}/tables/{table}/metrics")
@@ -171,13 +172,12 @@ public class IcebergRestCatalogController {
   public ResponseEntity<byte[]> reportMetrics(
       @PathVariable("namespace") String databaseId,
       @PathVariable("table") String tableId,
-      @RequestBody(required = false) byte[] body) {
+      HttpServletRequest httpRequest) {
     String database = IcebergRestApiHandler.tableDatabaseId(databaseId, tableId);
-    handler.reportMetrics(
-        database,
-        tableId,
-        IcebergRestJson.read(body, ReportMetricsRequest.class),
-        extractAuthenticatedUserPrincipal());
+    byte[] body = IcebergRestMetricsReports.read(httpRequest);
+    ReportMetricsRequest request = IcebergRestJson.read(body, ReportMetricsRequest.class);
+    IcebergRestMetricsReports.audit(httpRequest, request, body.length);
+    handler.reportMetrics(database, tableId, request, extractAuthenticatedUserPrincipal());
     return IcebergRestJson.noContent();
   }
 
@@ -188,7 +188,8 @@ public class IcebergRestCatalogController {
           new String[] {"POST", "/v1/namespaces/*/tables/*/unregister"},
           // View register, scan planning and credentials: served by
           // IcebergRestRegisterViewController and IcebergRestScanController on the Iceberg 1.12
-          // line; on LinkedIn's 1.5.2 reference line, which lacks their classes, answered here.
+          // line (scan planning and credentials only where the cluster turns scan planning on);
+          // otherwise, and on LinkedIn's 1.5.2 reference line, which lacks their classes, here.
           new String[] {"POST", "/v1/namespaces/*/register-view"},
           new String[] {"POST", "/v1/namespaces/*/tables/*/plan"},
           new String[] {"GET", "/v1/namespaces/*/tables/*/plan/*"},

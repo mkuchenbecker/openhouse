@@ -32,6 +32,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
@@ -44,8 +45,11 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
  * fixture of {@link IrcReadRoutesAuthTest}: each answer is compared with the IRC load's answer to
  * the same principal for the same table, byte for byte, since both routes run the load's checks.
  */
-@SpringBootTest
+@SpringBootTest(properties = IrcPlanCredentialsRoutesTest.PLANNING_ON)
+// One context configuration, shared with IrcPlanCredentialsRoutesTest: scan planning on, with
+// authorization and a mocked authorization handler.
 @AutoConfigureMockMvc
+@Import(IrcReadRoutesTest.StubDefaults.class)
 @ContextConfiguration(
     initializers = {
       PropertyOverrideContextInitializer.class,

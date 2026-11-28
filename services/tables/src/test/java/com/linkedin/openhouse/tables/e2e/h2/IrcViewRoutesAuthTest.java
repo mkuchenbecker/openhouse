@@ -64,6 +64,7 @@ public class IrcViewRoutesAuthTest {
   @Autowired ToggleStatusesRepository toggles;
   @MockBean AuthorizationHandler authorizationHandler;
   @Autowired AuditHandler<ViewAuditEvent> viewAuditHandler;
+  @Autowired javax.persistence.EntityManager entityManager;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -328,6 +329,50 @@ public class IrcViewRoutesAuthTest {
   }
 
   /**
+   * A view commit answers the whole definition, as the IRC view load does, so a principal who may
+   * replace the view but not read it (every privilege but GET_TABLE_METADATA) is refused a commit
+   * that changes it, with the load's refusal, audited as the native replace's refusal, before
+   * anything is checked against the stored view, and nothing is written. Allowed, the commit's
+   * answer is byte for byte the IRC view load's answer after it, as before.
+   */
+  @Test
+  void aViewWriterThatMayNotReadIsRefusedACommitAndNothingIsWritten() throws Exception {
+    ViewMetadata base = IrcViewWrite.load(mvc, DB, "v");
+    String before = StoredViewMetadata.normalized(houseTables, DB, "v");
+    java.util.List<MetadataUpdate> setK =
+        IrcViewWrite.properties(base, Collections.singletonMap("k", "v")).changes();
+    org.apache.iceberg.rest.requests.UpdateTableRequest change =
+        IrcViewWrite.commitRequest(Collections.emptyList(), setK);
+    org.apache.iceberg.rest.requests.UpdateTableRequest failing =
+        IrcViewWrite.commitRequest(
+            Collections.singletonList(
+                new UpdateRequirement.AssertViewUUID(java.util.UUID.randomUUID().toString())),
+            setK);
+    denyOnly(Privileges.GET_TABLE_METADATA);
+    String loadMessage =
+        assertIrcError(IrcHttp.get(mvc, IrcViewWrite.view(DB, "v")), 403, "ForbiddenException")
+            .message();
+    for (org.apache.iceberg.rest.requests.UpdateTableRequest commit :
+        java.util.Arrays.asList(change, failing)) {
+      Mockito.clearInvocations(viewAuditHandler);
+      MvcResult result = IrcViewWrite.commit(mvc, DB, "v", commit);
+      assertEquals(loadMessage, assertIrcError(result, 403, "ForbiddenException").message());
+      assertNothingStoredIn(IrcHttp.body(result), base);
+      List<ViewAuditEvent> events = auditEvents("v");
+      assertEquals(1, events.size(), String.valueOf(events));
+      assertEquals(ViewOperationType.REPLACE, events.get(0).getOperationType());
+      assertEquals(OperationStatus.FAILED, events.get(0).getOperationStatus());
+    }
+    assertEquals(before, StoredViewMetadata.normalized(houseTables, DB, "v"));
+
+    stubDecision(true);
+    MvcResult allowed = IrcViewWrite.commit(mvc, DB, "v", change);
+    assertEquals(200, allowed.getResponse().getStatus());
+    assertEquals(IrcHttp.body(IrcHttp.get(mvc, IrcViewWrite.view(DB, "v"))), IrcHttp.body(allowed));
+    assertEquals("v", IrcViewWrite.parsed(allowed).metadata().properties().get("k"));
+  }
+
+  /**
    * A replace with no updates answers the definition and changes nothing, so it is a load too: a
    * principal who may replace the view but not read it is refused.
    */
@@ -372,5 +417,85 @@ public class IrcViewRoutesAuthTest {
       assertIrcError(result, 403, "ForbiddenException");
       assertNothingStoredIn(IrcHttp.body(result), base);
     }
+  }
+
+  /**
+   * A write that lands on the view after a commit, and before the commit's answer is written, is
+   * not answered as the commit's result: the answer is the version the commit stored, read from its
+   * own metadata file, as a table commit is answered.
+   */
+  @Test
+  void aViewCommitAnswersTheVersionItStoredNotALaterOne() throws Exception {
+    ViewMetadata base = IrcViewWrite.load(mvc, DB, "v");
+    java.util.concurrent.atomic.AtomicBoolean raced =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    Mockito.doAnswer(
+            call -> {
+              ViewAuditEvent event = call.getArgument(0);
+              if ("v".equals(event.getViewName())
+                  && event.getOperationType() == ViewOperationType.REPLACE
+                  && event.getOperationStatus() == OperationStatus.SUCCESS
+                  && raced.compareAndSet(false, true)) {
+                java.util.concurrent.atomic.AtomicReference<Exception> failed =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                // Another writer's commit, on a thread of its own as another request would be.
+                Thread writer =
+                    new Thread(
+                        () -> {
+                          try {
+                            ViewMetadata now = IrcViewWrite.load(mvc, DB, "v");
+                            assertEquals(
+                                200,
+                                IrcViewWrite.commit(
+                                        mvc,
+                                        DB,
+                                        "v",
+                                        IrcViewWrite.commitRequest(
+                                            Collections.emptyList(),
+                                            IrcViewWrite.properties(
+                                                    now, Collections.singletonMap("later", "1"))
+                                                .changes()))
+                                    .getResponse()
+                                    .getStatus());
+                          } catch (Exception e) {
+                            failed.set(e);
+                          }
+                        });
+                writer.start();
+                writer.join();
+                if (failed.get() != null) {
+                  throw failed.get();
+                }
+                // The House Tables stand-in serves this request's reads from the request's own
+                // persistence context; the real House Tables service is read afresh each time.
+                entityManager.clear();
+              }
+              return null;
+            })
+        .when(viewAuditHandler)
+        .audit(any(ViewAuditEvent.class));
+    MvcResult result;
+    try {
+      result =
+          IrcViewWrite.commit(
+              mvc,
+              DB,
+              "v",
+              IrcViewWrite.commitRequest(
+                  Collections.emptyList(),
+                  IrcViewWrite.properties(base, Collections.singletonMap("k", "v")).changes()));
+    } finally {
+      Mockito.doNothing().when(viewAuditHandler).audit(any(ViewAuditEvent.class));
+    }
+    org.junit.jupiter.api.Assertions.assertTrue(raced.get());
+    assertEquals(200, result.getResponse().getStatus(), IrcHttp.body(result));
+    ViewMetadata answered = IrcViewWrite.parsed(result).metadata();
+    ViewMetadata now = IrcViewWrite.load(mvc, DB, "v");
+    assertEquals("1", now.properties().get("later"));
+    assertEquals("v", answered.properties().get("k"));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        answered.properties().containsKey("later"), String.valueOf(answered.properties()));
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        now.metadataFileLocation(), IrcViewWrite.parsed(result).metadataLocation());
   }
 }

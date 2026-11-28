@@ -130,6 +130,12 @@ tasks.named('test') {
   // The SQL-extensions tests need a session built with the extensions: their own JVM, below.
   filter {
     excludeTestsMatching 'com.linkedin.openhouse.spark42.extensions.*'
+    // The service of this run has the cluster default, scan planning off: the tests that compare
+    // server planning with client planning run in testServerPlanning, whose service serves it.
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.irc.SparkIrcScanPlanningTest'
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.irc.SparkIrcServerPlanningReadsTest'
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.irc.SparkIrcServerPlanningWritesTest'
+    excludeTestsMatching 'com.linkedin.openhouse.spark42.irc.SparkIrcPlanBoundTest'
   }
 }
 

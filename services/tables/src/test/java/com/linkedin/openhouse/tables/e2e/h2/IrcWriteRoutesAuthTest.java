@@ -64,6 +64,9 @@ public class IrcWriteRoutesAuthTest {
   @Autowired MockMvc mvc;
   @MockBean AuthorizationHandler authorizationHandler;
   @Autowired AuditHandler<TableAuditEvent> tableAuditHandler;
+  @Autowired com.linkedin.openhouse.tables.services.TableCommitService tableCommitService;
+  @Autowired com.linkedin.openhouse.tables.api.irc.IcebergRestTableFileIo tableFileIo;
+  @Autowired javax.persistence.EntityManager entityManager;
 
   private final List<String> created = new ArrayList<>();
 
@@ -754,7 +757,12 @@ public class IrcWriteRoutesAuthTest {
           commit.getKey());
       assertNoStoredIdIn(IrcHttp.body(result), stored);
       TableAuditEvent event = onlyAuditEvent("n1");
-      assertEquals(OperationType.READ, event.getOperationType(), commit.getKey());
+      // With no updates the request is a load; with updates it is decided, read privilege
+      // included, before its updates are applied, as the commit it asks for.
+      assertEquals(
+          commit.getValue().updates().isEmpty() ? OperationType.READ : OperationType.UPDATE,
+          event.getOperationType(),
+          commit.getKey());
       assertEquals(OperationStatus.FAILED, event.getOperationStatus(), commit.getKey());
 
       // On the one-table transaction the same commit is a load too.
@@ -768,10 +776,11 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * On a table with a legacy lock, a commit that changes nothing needs what the load needs there,
+   * On a table with a legacy lock, a commit with no updates needs what the load needs there,
    * LOCK_ADMIN: denied that one privilege, the caller gets the native load's refusal and no
-   * metadata. A commit that changes the table is refused as the native PUT refuses a locked table,
-   * for an allowed caller, and is the write refusal for one who may not write.
+   * metadata. A commit with updates, whether they change the table or not, is refused as the native
+   * PUT refuses a locked table, before anything else and for every caller, also one who may not
+   * write.
    */
   @Test
   void onALegacyLockedTableACommitThatChangesNothingNeedsLockAdmin() throws Exception {
@@ -785,10 +794,15 @@ public class IrcWriteRoutesAuthTest {
           noChangeCommits(stored).entrySet()) {
         org.springframework.test.web.servlet.MvcResult result =
             IrcWrite.commit(mvc, DB, "l1", commit.getValue());
-        assertEquals(
-            nativeMessage,
-            assertIrcError(result, 403, "ForbiddenException").message(),
-            commit.getKey());
+        if (commit.getValue().updates().isEmpty()) {
+          assertEquals(
+              nativeMessage,
+              assertIrcError(result, 403, "ForbiddenException").message(),
+              commit.getKey());
+        } else {
+          String locked = assertIrcError(result, 400, "BadRequestException").message();
+          assertTrue(locked.contains("locked state"), commit.getKey() + ": " + locked);
+        }
         assertNoStoredIdIn(IrcHttp.body(result), stored);
       }
       UpdateTableRequest change = request(Collections.emptyList(), setUserProperty());
@@ -797,7 +811,10 @@ public class IrcWriteRoutesAuthTest {
               .message();
       assertTrue(locked.contains("locked state"), locked);
       denyOnly(Privileges.UPDATE_TABLE_METADATA);
-      assertIrcError(IrcWrite.commit(mvc, DB, "l1", change), 403, "ForbiddenException");
+      assertEquals(
+          locked,
+          assertIrcError(IrcWrite.commit(mvc, DB, "l1", change), 400, "BadRequestException")
+              .message());
     } finally {
       unlockTable("l1");
     }
@@ -839,8 +856,8 @@ public class IrcWriteRoutesAuthTest {
    * Updates Iceberg's builder records as a change though the stored values would not change (a
    * property set to its current value, a property removed that is not there) are writes: they go
    * through the commit core. So a legacy-locked table refuses them as the native PUT does, and a
-   * principal who may write but not read is answered as every commit is answered, with the table
-   * after the commit (a gap this route has for every commit, listed with the route's answers).
+   * principal who may write but not read is refused, as for every commit (the commit answers the
+   * table's whole metadata).
    */
   @Test
   void updatesIcebergRecordsAsAChangeAreWrites() throws Exception {
@@ -854,9 +871,12 @@ public class IrcWriteRoutesAuthTest {
                 Collections.emptyList(),
                 Collections.singletonList(
                     new MetadataUpdate.RemoveProperties(Collections.singleton("user.absent")))));
-    denyOnly(Privileges.GET_TABLE_METADATA);
     for (UpdateTableRequest write : writes) {
       assertEquals(200, IrcWrite.commit(mvc, DB, "w1", write).getResponse().getStatus());
+    }
+    denyOnly(Privileges.GET_TABLE_METADATA);
+    for (UpdateTableRequest write : writes) {
+      assertIrcError(IrcWrite.commit(mvc, DB, "w1", write), 403, "ForbiddenException");
     }
     stubDecision(true);
     lockTable("w1", null);
@@ -870,6 +890,332 @@ public class IrcWriteRoutesAuthTest {
     } finally {
       unlockTable("w1");
     }
+  }
+
+  /**
+   * On a locked table, a commit with updates is refused as the native PUT refuses it before any of
+   * its requirements is checked against the stored table, whether its updates change the table or
+   * not: a legacy lock is refused for every caller (here one denied only LOCK_ADMIN, and one denied
+   * only the write privilege), a SYSTEM_ONLY lock for a caller the system-only decision denies. The
+   * answer is the native refusal, with none of the stored ids a failing requirement would name.
+   */
+  @Test
+  void onALockedTableAFailingRequirementIsTheNativeRefusalAndTellsNothingStored() throws Exception {
+    java.util.Map<String, UpdateTableRequest> commits = new java.util.LinkedHashMap<>();
+    commits.put("a change", request(Collections.singletonList(wrongUuid()), setUserProperty()));
+    commits.put(
+        "no change",
+        request(
+            Collections.singletonList(wrongUuid()),
+            Collections.singletonList(new MetadataUpdate.SetProperties(Collections.emptyMap()))));
+
+    create("lk1");
+    TableMetadata legacy = IrcWrite.load(mvc, DB, "lk1");
+    lockTable("lk1", null);
+    try {
+      String getJson = json(get(mvc, DB, "lk1"));
+      for (Privileges denied :
+          new Privileges[] {Privileges.LOCK_ADMIN, Privileges.UPDATE_TABLE_METADATA}) {
+        denyOnly(denied);
+        String nativeMessage =
+            message(put(mvc, bodyFromGet(getJson)).andExpect(status().isBadRequest()));
+        assertTrue(nativeMessage.contains("locked state and cannot be updated"), nativeMessage);
+        for (java.util.Map.Entry<String, UpdateTableRequest> commit : commits.entrySet()) {
+          org.springframework.test.web.servlet.MvcResult result =
+              IrcWrite.commit(mvc, DB, "lk1", commit.getValue());
+          assertEquals(
+              nativeMessage,
+              assertIrcError(result, 400, "BadRequestException").message(),
+              denied + ", " + commit.getKey());
+          assertNoStoredIdIn(IrcHttp.body(result), legacy);
+        }
+      }
+    } finally {
+      unlockTable("lk1");
+    }
+
+    create("lk2");
+    TableMetadata systemOnly = IrcWrite.load(mvc, DB, "lk2");
+    String getJson = json(get(mvc, DB, "lk2"));
+    lockTable("lk2", "SYSTEM_ONLY");
+    try {
+      // Every privilege allowed; the system-only decision is the default handler's, which denies a
+      // request that does not declare itself a system one.
+      String nativeMessage = message(put(mvc, bodyFromGet(getJson)).andExpect(status().isLocked()));
+      for (java.util.Map.Entry<String, UpdateTableRequest> commit : commits.entrySet()) {
+        org.springframework.test.web.servlet.MvcResult result =
+            IrcWrite.commit(mvc, DB, "lk2", commit.getValue());
+        assertEquals(
+            nativeMessage,
+            assertIrcError(result, 423, "SystemOnlyLockAccessDeniedException").message(),
+            commit.getKey());
+        assertNoStoredIdIn(IrcHttp.body(result), systemOnly);
+      }
+    } finally {
+      unlockTable("lk2");
+    }
+  }
+
+  // ------------------------------------------------- what a commit answers
+
+  /**
+   * A commit answers the table's whole Iceberg metadata, so a principal who may write the table but
+   * not read it (every privilege but GET_TABLE_METADATA) is refused a commit that changes the
+   * table, on the commit route and on the one-table transaction, with the native load's refusal,
+   * audited as the commit's refusal, before anything is checked against the stored table, and
+   * nothing is written. Allowed to read too, the same commit succeeds.
+   */
+  @Test
+  void aWriterThatMayNotReadIsRefusedACommitAndNothingIsWritten() throws Exception {
+    create("rw1");
+    TableMetadata stored = IrcWrite.load(mvc, DB, "rw1");
+    UpdateTableRequest change = request(Collections.emptyList(), setUserProperty());
+    UpdateTableRequest failing = request(Collections.singletonList(wrongUuid()), setUserProperty());
+    denyOnly(Privileges.GET_TABLE_METADATA);
+    String nativeMessage = message(get(mvc, DB, "rw1").andExpect(status().isForbidden()));
+    for (UpdateTableRequest commit : java.util.Arrays.asList(change, failing)) {
+      Mockito.clearInvocations(tableAuditHandler);
+      org.springframework.test.web.servlet.MvcResult result =
+          IrcWrite.commit(mvc, DB, "rw1", commit);
+      assertEquals(nativeMessage, assertIrcError(result, 403, "ForbiddenException").message());
+      assertNoStoredIdIn(IrcHttp.body(result), stored);
+      TableAuditEvent event = onlyAuditEvent("rw1");
+      assertEquals(OperationType.UPDATE, event.getOperationType());
+      assertEquals(OperationStatus.FAILED, event.getOperationStatus());
+      result = IrcWrite.transaction(mvc, IrcWrite.change(DB, "rw1", commit));
+      assertEquals(nativeMessage, assertIrcError(result, 403, "ForbiddenException").message());
+      assertNoStoredIdIn(IrcHttp.body(result), stored);
+    }
+    stubDecision(true);
+    TableMetadata after = IrcWrite.load(mvc, DB, "rw1");
+    assertEquals(stored.metadataFileLocation(), after.metadataFileLocation());
+    assertTrue(!after.properties().containsKey("user.k"), String.valueOf(after.properties()));
+    denyOnly(Privileges.UPDATE_TABLE_METADATA);
+    assertIrcError(IrcWrite.commit(mvc, DB, "rw1", change), 403, "ForbiddenException");
+    stubDecision(true);
+    assertEquals(
+        "v", IrcWrite.parsed(IrcWrite.commit(mvc, DB, "rw1", change)).properties().get("user.k"));
+  }
+
+  /** The answer the commit routes gave before: the table as stored when the answer is written. */
+  private byte[] storedAnswer(String table) {
+    com.linkedin.openhouse.tables.model.TableDtoWithMetadata stored =
+        tableCommitService.loadBase(TableIdentifier.of(DB, table));
+    return com.linkedin.openhouse.tables.api.irc.IcebergRestJson.loadTable(
+            new com.linkedin.openhouse.tables.api.irc.IcebergRestLoadedTable(
+                stored.getTableDto().getTableLocation(),
+                stored.getMetadata(),
+                tableFileIo.config(stored.getTable()),
+                false))
+        .getBody();
+  }
+
+  /**
+   * An allowed write answers exactly what it answered before, the table as stored after it, byte
+   * for byte: a commit that changes a property, a snapshot commit, a create and the commit that
+   * completes a staged create.
+   */
+  @Test
+  void anAllowedWritesAnswerIsTheStoredTableByteForByte() throws Exception {
+    create("b1");
+    TableMetadata base = IrcWrite.load(mvc, DB, "b1");
+    org.springframework.test.web.servlet.MvcResult result =
+        IrcWrite.commit(mvc, DB, "b1", request(Collections.emptyList(), setUserProperty()));
+    assertEquals(200, result.getResponse().getStatus());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        storedAnswer("b1"), result.getResponse().getContentAsByteArray());
+    base = IrcWrite.load(mvc, DB, "b1");
+    result =
+        IrcWrite.commit(
+            mvc,
+            DB,
+            "b1",
+            IrcWrite.simple(
+                base,
+                IrcWrite.withMain(base, IrcWrite.append(base, "/tmp/" + DB + "_b1_a.orc"))
+                    .changes()));
+    assertEquals(200, result.getResponse().getStatus());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        storedAnswer("b1"), result.getResponse().getContentAsByteArray());
+
+    created.add("b2");
+    result =
+        IrcWrite.create(
+            mvc,
+            DB,
+            CreateTableRequest.builder()
+                .withName("b2")
+                .withSchema(IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL))
+                .build());
+    assertEquals(200, result.getResponse().getStatus());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        storedAnswer("b2"), result.getResponse().getContentAsByteArray());
+
+    created.add("b3");
+    TableMetadata staged =
+        IrcWrite.parsed(
+            IrcWrite.create(
+                mvc,
+                DB,
+                CreateTableRequest.builder()
+                    .withName("b3")
+                    .withSchema(IcebergSchemaHelper.getSchemaFromSchemaJson(HEALTH_SCHEMA_LITERAL))
+                    .stageCreate()
+                    .build()));
+    result = IrcWrite.commit(mvc, DB, "b3", IrcWrite.createCommit(staged, Collections.emptyList()));
+    assertEquals(200, result.getResponse().getStatus());
+    org.junit.jupiter.api.Assertions.assertArrayEquals(
+        storedAnswer("b3"), result.getResponse().getContentAsByteArray());
+  }
+
+  /** What another writer does to the table between a commit and the commit's answer. */
+  private interface Race {
+    void run() throws Exception;
+  }
+
+  /**
+   * Commits {@code user.k=v} on {@code table}; between that commit and its answer, {@code race}
+   * runs on a thread of its own, as another request would.
+   */
+  private org.springframework.test.web.servlet.MvcResult commitWithARace(String table, Race race)
+      throws Exception {
+    java.util.concurrent.atomic.AtomicBoolean raced =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    Mockito.doAnswer(
+            call -> {
+              TableAuditEvent event = call.getArgument(0);
+              if (table.equals(event.getTableName())
+                  && event.getOperationStatus() == OperationStatus.SUCCESS
+                  && event.getOperationType() == OperationType.UPDATE
+                  && raced.compareAndSet(false, true)) {
+                java.util.concurrent.atomic.AtomicReference<Exception> failed =
+                    new java.util.concurrent.atomic.AtomicReference<>();
+                Thread writer =
+                    new Thread(
+                        () -> {
+                          try {
+                            race.run();
+                          } catch (Exception e) {
+                            failed.set(e);
+                          }
+                        });
+                writer.start();
+                writer.join();
+                if (failed.get() != null) {
+                  throw failed.get();
+                }
+                // The House Tables stand-in serves this request's reads from the request's own
+                // persistence context; the real House Tables service is read afresh each time.
+                entityManager.clear();
+              }
+              return null;
+            })
+        .when(tableAuditHandler)
+        .audit(any(TableAuditEvent.class));
+    try {
+      org.springframework.test.web.servlet.MvcResult result =
+          IrcWrite.commit(mvc, DB, table, request(Collections.emptyList(), setUserProperty()));
+      assertTrue(raced.get());
+      return result;
+    } finally {
+      Mockito.doNothing().when(tableAuditHandler).audit(any(TableAuditEvent.class));
+    }
+  }
+
+  /** Another writer's commit of {@code user.later=1} on {@code table}. */
+  private void commitLater(String table) throws Exception {
+    TableMetadata now = IrcWrite.load(mvc, DB, table);
+    assertEquals(
+        200,
+        IrcWrite.commit(
+                mvc,
+                DB,
+                table,
+                IrcWrite.simple(
+                    now,
+                    Collections.singletonList(
+                        new MetadataUpdate.SetProperties(
+                            Collections.singletonMap("user.later", "1")))))
+            .getResponse()
+            .getStatus());
+  }
+
+  /** The local file at {@code location}, spelled with or without the storage's scheme. */
+  private static java.nio.file.Path file(String location) {
+    return java.nio.file.Paths.get(java.net.URI.create(location).getPath());
+  }
+
+  /**
+   * A write that lands on the table after a commit, and before the commit's answer is written, is
+   * not answered as the commit's result: the answer is the version the commit stored, read from its
+   * own metadata file, where it was the table as stored at the time of the answer.
+   */
+  @Test
+  void aCommitAnswersTheVersionItStoredNotALaterOne() throws Exception {
+    create("race1");
+    TableMetadata base = IrcWrite.load(mvc, DB, "race1");
+    TableMetadata answered = IrcWrite.parsed(commitWithARace("race1", () -> commitLater("race1")));
+    TableMetadata now = IrcWrite.load(mvc, DB, "race1");
+    assertEquals("1", now.properties().get("user.later"));
+    assertEquals("v", answered.properties().get("user.k"));
+    assertTrue(
+        !answered.properties().containsKey("user.later"), String.valueOf(answered.properties()));
+    // The version answered is the one right after the commit's base (the metadata log names the
+    // base file, spelled with or without the storage's scheme).
+    assertEquals(
+        file(base.metadataFileLocation()),
+        file(answered.previousFiles().get(answered.previousFiles().size() - 1).file()));
+  }
+
+  /**
+   * When the version the commit stored can no longer be read (a later commit's metadata cleanup
+   * deleted it) but the table is still the same table, the commit that landed is answered with the
+   * table as stored now, which holds it, not as a failure.
+   */
+  @Test
+  void aCommitWhoseStoredVersionIsGoneIsAnsweredWithTheSameTableAsStoredNow() throws Exception {
+    create("race2");
+    org.springframework.test.web.servlet.MvcResult result =
+        commitWithARace(
+            "race2",
+            () -> {
+              commitLater("race2");
+              // The commit's own file, the later version's predecessor, deleted as a metadata
+              // cleanup deletes it.
+              TableMetadata later = IrcWrite.load(mvc, DB, "race2");
+              java.nio.file.Files.delete(
+                  file(later.previousFiles().get(later.previousFiles().size() - 1).file()));
+            });
+    assertEquals(200, result.getResponse().getStatus(), IrcHttp.body(result));
+    TableMetadata answered = IrcWrite.parsed(result);
+    TableMetadata now = IrcWrite.load(mvc, DB, "race2");
+    assertEquals(now.metadataFileLocation(), answered.metadataFileLocation());
+    assertEquals("v", answered.properties().get("user.k"));
+    assertEquals("1", answered.properties().get("user.later"));
+  }
+
+  /**
+   * When the table was dropped and another created under its name between the commit and its
+   * answer, nothing the commit was decided on can be answered: the answer is the spec's 500 for an
+   * unknown commit state, which a client reads as "the commit may have landed", not a 200 with the
+   * other table and not an unexplained server failure.
+   */
+  @Test
+  void aCommitWhoseTableWasReplacedIsAnsweredCommitStateUnknown() throws Exception {
+    create("race3");
+    TableMetadata first = IrcWrite.load(mvc, DB, "race3");
+    org.springframework.test.web.servlet.MvcResult result =
+        commitWithARace(
+            "race3",
+            () -> {
+              delete(mvc, DB, "race3");
+              post(mvc, newTable(DB, "race3").toBuilder().policies(null).build())
+                  .andExpect(status().isCreated());
+            });
+    String message = assertIrcError(result, 500, "CommitStateUnknownException").message();
+    assertTrue(message.startsWith("The write to " + DB + ".race3 landed"), message);
+    assertNoStoredIdIn(IrcHttp.body(result), IrcWrite.load(mvc, DB, "race3"));
+    assertTrue(!IrcWrite.load(mvc, DB, "race3").uuid().equals(first.uuid()));
   }
 
   /** A replica table's write decision is SYSTEM_ADMIN, as the native PUT's, decided first. */
@@ -918,13 +1264,13 @@ public class IrcWriteRoutesAuthTest {
   }
 
   /**
-   * KNOWN DEFECT, pinned so that its fix shows as a flipped assertion: when the authorization
-   * backend fails, the IRC table routes answer 403 ForbiddenException, where the native route
-   * answers 503 (the IRC error mapping tests for the access-denied type before its subclass that
-   * means the backend failed). It fails closed: nothing is answered.
+   * When the authorization backend itself fails, the IRC table routes answer what the native route
+   * answers, 503 with the backend's message (a client may retry it), not the 403 of a refusal, on
+   * the load, the empty commit, a commit with updates and the one-table transaction. It fails
+   * closed: nothing is answered and nothing is written.
    */
   @Test
-  void knownDefectAnAuthorizationBackendFailureIs403OnTheIrcTableRoutes() throws Exception {
+  void anAuthorizationBackendFailureIs503OnTheIrcTableRoutesAsNatively() throws Exception {
     create("f1");
     TableMetadata stored = IrcWrite.load(mvc, DB, "f1");
     when(authorizationHandler.checkAccessDecision(
@@ -932,16 +1278,26 @@ public class IrcWriteRoutesAuthTest {
         .thenThrow(
             new org.springframework.security.access.AuthorizationServiceException(
                 "Cannot perform Opa access check"));
-    assertEquals(503, CommitPathHttp.status(get(mvc, DB, "f1")));
-    assertIrcError(IrcHttp.get(mvc, IrcWrite.table(DB, "f1")), 403, "ForbiddenException");
-    org.springframework.test.web.servlet.MvcResult result = IrcWrite.commit(mvc, DB, "f1", EMPTY);
-    assertIrcError(result, 403, "ForbiddenException");
-    assertNoStoredIdIn(IrcHttp.body(result), stored);
-    assertIrcError(
-        IrcWrite.commit(mvc, DB, "f1", request(Collections.emptyList(), setUserProperty())),
-        403,
-        "ForbiddenException");
+    String nativeMessage = message(get(mvc, DB, "f1").andExpect(status().isServiceUnavailable()));
+    assertEquals("Cannot perform Opa access check", nativeMessage);
+    List<org.springframework.test.web.servlet.MvcResult> results = new ArrayList<>();
+    results.add(IrcHttp.get(mvc, IrcWrite.table(DB, "f1")));
+    results.add(IrcWrite.commit(mvc, DB, "f1", EMPTY));
+    results.add(
+        IrcWrite.commit(mvc, DB, "f1", request(Collections.emptyList(), setUserProperty())));
+    results.add(
+        IrcWrite.transaction(
+            mvc, IrcWrite.change(DB, "f1", request(Collections.emptyList(), setUserProperty()))));
+    for (org.springframework.test.web.servlet.MvcResult result : results) {
+      assertEquals(
+          nativeMessage,
+          assertIrcError(result, 503, "ServiceUnavailableException").message(),
+          result.getRequest().getRequestURI());
+      assertNoStoredIdIn(IrcHttp.body(result), stored);
+    }
     reset(authorizationHandler);
     stubDecision(true);
+    assertEquals(
+        stored.metadataFileLocation(), IrcWrite.load(mvc, DB, "f1").metadataFileLocation());
   }
 }
