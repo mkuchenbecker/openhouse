@@ -341,4 +341,36 @@ public class IrcViewRoutesAuthTest {
     assertIrcError(result, 403, "ForbiddenException");
     assertNothingStoredIn(IrcHttp.body(result), base);
   }
+
+  /**
+   * A view commit whose updates change nothing (Iceberg's view builder records no change) answers
+   * the definition and writes nothing new, so it is a load as an empty one is: a principal who may
+   * replace the view but not read it is refused, with no definition. Allowed, it is answered as
+   * before.
+   */
+  @Test
+  void aViewCommitThatChangesNothingNeedsTheReadPrivilege() throws Exception {
+    ViewMetadata base = IrcViewWrite.load(mvc, DB, "v");
+    java.util.List<org.apache.iceberg.rest.requests.UpdateTableRequest> noChange =
+        java.util.Arrays.asList(
+            IrcViewWrite.commitRequest(
+                Collections.emptyList(),
+                Collections.singletonList(
+                    new MetadataUpdate.SetProperties(Collections.emptyMap()))),
+            IrcViewWrite.commitRequest(
+                Collections.emptyList(),
+                Collections.singletonList(new MetadataUpdate.AssignUUID(base.uuid()))),
+            IrcViewWrite.commitRequest(
+                Collections.emptyList(),
+                Collections.singletonList(
+                    new MetadataUpdate.SetCurrentViewVersion(base.currentVersionId()))));
+    for (org.apache.iceberg.rest.requests.UpdateTableRequest commit : noChange) {
+      stubDecision(true);
+      assertEquals(200, IrcViewWrite.commit(mvc, DB, "v", commit).getResponse().getStatus());
+      denyOnly(Privileges.GET_TABLE_METADATA);
+      MvcResult result = IrcViewWrite.commit(mvc, DB, "v", commit);
+      assertIrcError(result, 403, "ForbiddenException");
+      assertNothingStoredIn(IrcHttp.body(result), base);
+    }
+  }
 }

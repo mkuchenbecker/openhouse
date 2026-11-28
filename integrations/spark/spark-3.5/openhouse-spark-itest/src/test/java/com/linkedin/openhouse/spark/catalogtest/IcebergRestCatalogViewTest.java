@@ -318,6 +318,73 @@ public class IcebergRestCatalogViewTest extends OpenHouseSparkITest {
   }
 
   /**
+   * A principal who may read the view but not write it loads it, and its replace through the client
+   * is the native PUT's 403.
+   */
+  @Test
+  void aReaderMayLoadAndIsForbiddenToReplace() throws Exception {
+    rest.buildView(id("readable"))
+        .withSchema(SCHEMA)
+        .withQuery("spark", "SELECT id FROM base")
+        .withDefaultNamespace(NS)
+        .create();
+    try (RESTCatalog reader = server.rest(IcebergRestCatalogReadTest.READER, conf)) {
+      Assertions.assertEquals(
+          metadata(rest.loadView(id("readable"))).metadataFileLocation(),
+          metadata(reader.loadView(id("readable"))).metadataFileLocation());
+      assertThrown(
+          ForbiddenException.class,
+          "irc_reader",
+          thrown(() -> reader.loadView(id("readable")).updateProperties().set("k", "v").commit()));
+    }
+    Assertions.assertNull(rest.loadView(id("readable")).properties().get("k"));
+    rest.dropView(id("readable"));
+  }
+
+  /**
+   * A principal who may replace a view but not read it cannot replace it through an Iceberg client
+   * any more: the client loads the view first, and the load needs the read privilege. Pinned as
+   * what it is. On Iceberg 1.12 the load raises the 403; on 1.5 the client reports it as a missing
+   * view, so a create-or-replace takes the create path and meets the existing view (409).
+   */
+  @Test
+  void aWriterThatMayNotReadCannotReplaceThroughTheClient() throws Exception {
+    rest.buildView(id("writable"))
+        .withSchema(SCHEMA)
+        .withQuery("spark", "SELECT id FROM base")
+        .withDefaultNamespace(NS)
+        .create();
+    try (RESTCatalog writer = server.rest(IcebergRestCatalogReadTest.WRITER, conf)) {
+      Throwable load = thrown(() -> writer.loadView(id("writable")));
+      Throwable forbidden = load;
+      while (forbidden != null && !(forbidden instanceof ForbiddenException)) {
+        forbidden = forbidden.getCause();
+      }
+      Assertions.assertNotNull(forbidden, String.valueOf(load));
+      Throwable replace =
+          thrown(
+              () ->
+                  writer
+                      .buildView(id("writable"))
+                      .withSchema(SCHEMA)
+                      .withQuery("spark", "SELECT 2")
+                      .withDefaultNamespace(NS)
+                      .createOrReplace());
+      if (IcebergLine.current() == IcebergLine.LEGACY) {
+        Assertions.assertEquals(
+            org.apache.iceberg.exceptions.AlreadyExistsException.class,
+            replace.getClass(),
+            String.valueOf(replace));
+      } else {
+        Assertions.assertEquals(
+            ForbiddenException.class, replace.getClass(), String.valueOf(replace));
+      }
+    }
+    assertSameView("writable");
+    rest.dropView(id("writable"));
+  }
+
+  /**
    * Two writers on one view: each loads, then both change properties. A view commit asserts only
    * the view's UUID, and the server applies each commit to the stored view, so neither change is
    * lost; both clients then see the same view.
