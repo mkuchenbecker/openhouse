@@ -6,6 +6,7 @@
 # iceberg: core from iceberg-api-1.5.2.24.jar, Spark catalog from (none)
 # path: the native tables API over MockMvc
 # command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
+# test doubles: House Tables: the branch's stand-in of services/tables' tests (e2e/h2/HouseTablesH2Repository, copied); authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)
 # runs: 6
 # key<TAB>outcome, sorted by key
 CommitPathAuthorizationTest.deniedCreateIs403AndNothingIsCreated GET /v1/databases/auth_create/tables/t	404 User table auth_create.t cannot be found

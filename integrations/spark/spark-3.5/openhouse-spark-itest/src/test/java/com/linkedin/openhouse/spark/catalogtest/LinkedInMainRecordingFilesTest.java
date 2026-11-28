@@ -30,10 +30,25 @@ public class LinkedInMainRecordingFilesTest {
             + ": "
             + recording.header());
     for (String name :
-        new String[] {"recorded", "jdk", "spark", "iceberg", "path", "command", "runs"}) {
+        new String[] {
+          "recorded", "jdk", "spark", "iceberg", "path", "command", "runs", "test doubles"
+        }) {
       Assertions.assertTrue(
           recording.header().containsKey(name), "the header does not say " + name);
     }
+    Assertions.assertTrue(
+        recording.header().get("test doubles").contains("House Tables:")
+            && recording.header().get("test doubles").contains("authorization:"),
+        "the header must name the House Tables stand-in and the authorization backend main ran"
+            + " with: "
+            + recording.header().get("test doubles"));
+    // The Spark itest's service takes its House Tables stand-in from tables-test-fixtures, which
+    // the recording cannot replace on main: the header says whether the branch's stand-in changes
+    // any answer.
+    Assertions.assertTrue(
+        recording.header().getOrDefault("stand-in check", "").startsWith("identical"),
+        "the header must say how the answers compare with the branch's fixtures stand-in: "
+            + recording.header().get("stand-in check"));
     Assertions.assertFalse(recording.keys().isEmpty(), "nothing recorded");
     List<String> body = new ArrayList<>();
     for (String line : lines) {

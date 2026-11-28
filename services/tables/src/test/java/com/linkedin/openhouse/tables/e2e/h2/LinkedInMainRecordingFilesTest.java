@@ -28,10 +28,17 @@ public class LinkedInMainRecordingFilesTest {
             + LinkedInMainRecording.COMMIT
             + ": "
             + recording.header());
-    for (String name : new String[] {"recorded", "jdk", "iceberg", "path", "command", "runs"}) {
+    for (String name :
+        new String[] {"recorded", "jdk", "iceberg", "path", "command", "runs", "test doubles"}) {
       Assertions.assertTrue(
           recording.header().containsKey(name), "the header does not say " + name);
     }
+    Assertions.assertTrue(
+        recording.header().get("test doubles").contains("House Tables:")
+            && recording.header().get("test doubles").contains("authorization:"),
+        "the header must name the House Tables stand-in and the authorization backend main ran"
+            + " with: "
+            + recording.header().get("test doubles"));
     Assertions.assertFalse(recording.keys().isEmpty(), "nothing recorded");
     List<String> body = new ArrayList<>();
     for (String line : lines) {

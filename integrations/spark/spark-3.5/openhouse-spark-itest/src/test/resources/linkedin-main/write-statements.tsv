@@ -6,6 +6,8 @@
 # iceberg: core from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar, Spark catalog from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar
 # path: the OpenHouse catalog of Spark 3.5 over the native tables API
 # command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
+# test doubles: House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at bb8929e1), not the branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization
+# stand-in check: identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in), checked on 2026-11-28 with one run
 # runs: 6
 # key<TAB>outcome, sorted by key
 aTableSparkCreatesStoresTheUserSparkRunsAsAsItsOwner / SHOW TBLPROPERTIES ('owner')	[owner,Table openhouse.smoke_writes.owner does not have property: owner]
