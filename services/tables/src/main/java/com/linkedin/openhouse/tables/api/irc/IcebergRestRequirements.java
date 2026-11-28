@@ -1,7 +1,11 @@
 package com.linkedin.openhouse.tables.api.irc;
 
+import java.util.Collections;
 import java.util.List;
 import org.apache.iceberg.MetadataUpdate;
+import org.apache.iceberg.PartitionSpec;
+import org.apache.iceberg.Schema;
+import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.UpdateRequirement;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
@@ -25,13 +29,22 @@ final class IcebergRestRequirements {
   }
 
   /**
-   * Checks the commit's {@code assert-create} requirements against {@code base}, an existing table,
-   * where they fail with the requirement's own message, which names no stored value.
+   * Checks the commit's {@code assert-create} requirements on a table that exists, where they fail
+   * with the requirement's own message, which names no stored value. The requirement asks only
+   * whether there is a table, so it is checked against a placeholder: nothing of the stored table
+   * is read for it.
    */
-  static void validateCreate(UpdateTableRequest request, TableMetadata base) {
+  static void refuseCreateOfExisting(UpdateTableRequest request) {
+    TableMetadata exists =
+        TableMetadata.newTableMetadata(
+            new Schema(),
+            PartitionSpec.unpartitioned(),
+            SortOrder.unsorted(),
+            "placeholder:/",
+            Collections.emptyMap());
     for (UpdateRequirement requirement : request.requirements()) {
       if (requirement instanceof UpdateRequirement.AssertTableDoesNotExist) {
-        requirement.validate(base);
+        requirement.validate(exists);
       }
     }
   }
