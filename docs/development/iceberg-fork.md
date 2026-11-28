@@ -335,7 +335,8 @@ script, so the fork is built (about 6 minutes on a runner) only when either chan
 The Gradle cache is written only by the `rest` jobs of a post-merge run: on `irc-integration`, or
 in a branch's own scope when the workflow is run there by hand. A pull request reads it.
 
-Every split-build job that only reads that cache resolves the build's dynamic versions (the
+Every split-build job that only reads that cache, and the Dataloader integration job off the default
+branch, resolves the build's dynamic versions (the
 `json-smart` range in `nimbus-jose-jwt`'s POM, `mysql-connector-java:8.+`, the `log4j-core` and
 `logback-core` ranges of `spotbugs-annotations`) as the writer last did: the job copies
 `scripts/ci/dependency-cache.gradle` into the Gradle user home's `init.d`, which keeps Gradle's
