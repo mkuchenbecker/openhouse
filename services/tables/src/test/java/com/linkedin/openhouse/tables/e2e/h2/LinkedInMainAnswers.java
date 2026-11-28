@@ -38,10 +38,20 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
 
   private LinkedInMainComparison comparison;
 
-  /** What a test observed: several answers to one {@code what} are kept as a sorted list. */
+  /** Set on the thread that runs the test method; requests from other threads are concurrent. */
+  private static final ThreadLocal<Boolean> TEST_THREAD = new ThreadLocal<>();
+
+  /**
+   * What a test observed: several answers to one {@code what} are kept as a sorted list. An answer
+   * to a request a test sends from another thread (a race it starts) keeps only its status: which
+   * of two refusals a losing request gets depends on the threads' timing, on main as here.
+   */
   static void answer(String what, String outcome) {
     Map<String, List<String>> answers = CURRENT.get();
     if (answers != null) {
+      if (TEST_THREAD.get() == null) {
+        outcome = outcome.split(" ", 2)[0] + " (sent from another thread: status only)";
+      }
       synchronized (answers) {
         answers
             .computeIfAbsent(LinkedInMainRecording.normalizeValues(what), k -> new ArrayList<>())
@@ -79,6 +89,7 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
             + invocationContext.getExecutable().getName();
     Map<String, List<String>> answers = new LinkedHashMap<>();
     CURRENT.set(answers);
+    TEST_THREAD.set(Boolean.TRUE);
     Throwable failed = null;
     try {
       invocation.proceed();
@@ -86,6 +97,7 @@ public final class LinkedInMainAnswers implements InvocationInterceptor, AfterAl
       failed = t;
     } finally {
       CURRENT.remove();
+      TEST_THREAD.remove();
     }
     LinkedInMainComparison main = comparison();
     synchronized (answers) {

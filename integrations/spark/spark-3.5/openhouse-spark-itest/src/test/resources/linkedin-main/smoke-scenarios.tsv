@@ -3,7 +3,7 @@
 # recorded: 2026-11-28
 # jdk: Ubuntu 17.0.21.1+2-1-24.04.1-Ubuntu
 # spark: 3.5.2
-# iceberg: Apache Iceberg 1.2.0.6 (commit 1cf3a9a0c06df06ea39ef9729158cceee3ee8c9b)
+# iceberg: core from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar, Spark catalog from iceberg-spark-runtime-3.5_2.12-1.5.2.24.jar
 # path: the OpenHouse catalog of Spark 3.5 over the native tables API
 # command: RUNS=6 scripts/linkedin-main-baseline/record.sh (each run in a fresh JVM; a statement main answered differently in different runs has one line per answer)
 # runs: 6

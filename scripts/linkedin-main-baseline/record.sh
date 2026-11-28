@@ -17,8 +17,8 @@
 #     given as the first argument.
 #  2. Copies into main's test source directories only: the suites (the shared smoke sources, the
 #     grant-storing authorization backend, the commit hook catalog, CatalogPluginContractTest, the
-#     CommitPath*Test classes, the House Tables stand-in they rely on) and the main-only runners in
-#     scripts/linkedin-main-baseline/recorder. CatalogPluginContractTest is ported with three
+#     CommitPath*Test classes, the House Tables stand-in they rely on) and the main-only runners and
+#     the empty difference lists in scripts/linkedin-main-baseline/recorder. CatalogPluginContractTest is ported with three
 #     substitutions (main has neither IcebergLine nor SparkItestColumnDefaults; main is the 1.5.2
 #     line). It then checks that `git status` of the worktree shows changes under test source
 #     directories only: main's production code and build files are untouched.
@@ -86,6 +86,8 @@ sed -e 's/IcebergLine.current() == IcebergLine.V3/false/' \
   > "$MAIN_TEST/spark/catalogtest/CatalogPluginContractTest.java"
 cp "$REPO"/$H2/CommitPath*.java "$REPO"/$H2/LinkedInMain*.java "$REPO/$H2/HouseTablesH2Repository.java" \
   "$MAIN/$H2/"
+# The branch's declarations name classes main does not have; main declares no difference from itself.
+cp "$HERE"/recorder/tables/*.java "$MAIN/$H2/"
 
 if git -C "$MAIN" status --porcelain | grep -v -E '^.. (integrations/spark/spark-3.5/openhouse-spark-itest/src/test/|services/tables/src/test/)'; then
   echo "changes outside main's test source directories: refusing to record" >&2
