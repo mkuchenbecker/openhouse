@@ -1,6 +1,39 @@
 # Current state
 
-Bottom line (2026-11-28, sixth update): 89 pull requests are merged into `irc-integration` and its head is `66a3c75a` (pull
+Bottom line (2026-11-28, seventh update, PAUSED): the owner paused execution at about 15:00 UTC on 2026-11-28 ("please pause
+execution after the current tasks complete"). Nothing is in flight. 90 pull requests are merged into `irc-integration` and its head
+is `00d78552a35f02194d0b319f78d6008b0fff08f4` (pull request 169, merged about 15:30 UTC: the Iceberg REST layer answers 11 more
+compatibility-kit tests as the specification asks, no native answer changes; `97-reviewed-merge-169-and-pause.md`). The
+compatibility kit now stands at, default configuration: 160 tests, 63 passed, 81 failed, 16 skipped; with format v3 on 65, 79, 16
+(read from the CI log of `Default build, rest` on `ce78afdf`, the branch head that was merged). The 81 default failures by what
+fixes them: 27 need views creatable in a namespace that holds no table (a native change, the owner's: FF-51, FF-60); 14 more sit
+behind those (view dialect rules); 32 are the owner's table policies (replace 16, partition spec 9, schema 4, format version 2,
+drop with purge 1); 4 need native House Tables APIs that do not exist; 2 remain in the Iceberg REST layer and are right by the
+specification as they are (a missing metadata file answers 500; a view error type the specification does not fix); 2 are the
+format v3 switch. 27 + 14 + 32 + 4 + 2 + 2 = 81 (checked; it matches the kit documentation's "What would move the number" rows
+as the reviewer of 169 summed them).
+
+Post-merge CI as read by the orchestrator: 168 (`66a3c75a`) not read; 169 (`00d78552`) not read. Earlier readings stand (below).
+
+What would be next when work resumes, in order of value, as these notes already rank it:
+1. The owner's answers on the native view-create question (FF-51, FF-60; `58-waiting-on-mike.md`): the biggest conformance lever
+   (the reviewer's estimate is that it alone turns about 15 to 18 kit tests green, not 27; not run).
+2. FF-61: the fork publish's exposure to the Maven Central rate limit in CI (the failed post-merge run of 166).
+3. FF-31: documentation and false comments.
+4. FF-50: the namespace stack's follow-up in this repository.
+5. FF-55: the full re-record of the LinkedIn main recording.
+6. FF-56: the table-row repository's contract against MySQL.
+7. FF-57: renames of identifiers and test data that encode private ids.
+8. FF-58: the delta harness decision (needs a decision).
+9. FF-59: the store-failure asymmetry on namespace existence (needs a decision).
+10. The minors collected in FF-53 (now with the three of 169's review).
+Ten ledger rows and the scout's questions wait on the owner (`58-waiting-on-mike.md`); none blocks work. A new reader starts from
+`97-reviewed-merge-169-and-pause.md`, section "State at the pause".
+
+The text below is the sixth update (written before 169 merged); where it says 169 is in flight, 89 are merged, or the kit's
+default is 52 passed, 92 failed, 16 skipped, this section above supersedes it.
+
+Sixth update (superseded above): 89 pull requests are merged into `irc-integration` and its head is `66a3c75a` (pull
 request 168). Eighteen of them merged under the owner's standing order of an independent review (S58), which is every number from
 151 to 168: 154, 151, 153 (`91-first-reviewed-merges-result.md`), 152, 155, 156, 157, 159
 (`92-reviewed-merges-152-to-159-result.md`), 160 and 158 (`93-reviewed-merges-158-and-160-result.md`), 163 and 164
@@ -59,7 +92,7 @@ publishes the fork to the rate limit at once. Earlier merges (151 to 156) passed
 `92-reviewed-merges-152-to-159-result.md`. The orchestrator's error after 155 (a cache warm-up reported clean from truncated output)
 stays recorded there.
 
-In flight now (no results to record as merged):
+In flight when the sixth update was written (merged since as 169, see the top; the plan below was carried out for 11 of the 13, and the author's report held):
 - Pull request 169 (draft, `irc/kit-failures-in-the-rest-layer`): the 13 compatibility-kit failures that sit in the Iceberg REST
   layer alone (message text 8, identifiers 3, missing metadata file 1, view error type 1), each changed only if right by the Iceberg
   REST specification, no native change. The author's record (`records/kit-failures-in-the-rest-layer.md`, in progress, not a result)
@@ -97,8 +130,8 @@ partly done (`74-work-table-audit.md`; 14 of the open items had closed by 2026-1
 place for current state.
 
 - Conforming IRC server: every route is served except the stored-plan routes, credential vending and signing, and view
-  rename. Namespace create, update properties and drop are served since pull request 157. The compatibility kit passes 52 of
-  160 at the default configuration (92 failed, 16 skipped; 54 and 90 with format v3 on; corrected 2026-11-28, see the top) and its failures by cause are at the top of this file; the older grouping that follows is of 2026-11-28 morning, with the old number: 76 of the failures are OpenHouse model differences, 10 are kit assumptions, 2 are view rename and
+  rename. Namespace create, update properties and drop are served since pull request 157. The compatibility kit passes 63 of
+  160 at the default configuration (81 failed, 16 skipped; 65 and 79 with format v3 on; since pull request 169, see the top; it was 52 and 92, and 54 and 90 with format v3 on, before) and its failures by cause are at the top of this file; the older grouping that follows is of 2026-11-28 morning, with the old number: 76 of the failures are OpenHouse model differences, 10 are kit assumptions, 2 are view rename and
   2 are the unlisted records (`58-waiting-on-mike.md`, D32; `39-v13-compat-kit-result.md`,
   `42-v13b-spec-deviations-result.md`). What "conforming" should mean is still put to Mike (D32).
 - Spark SQL: on the target platform (Spark 4.2, Iceberg 1.12, IRC only) 199 of 210 smoke statements behave as on the
@@ -156,7 +189,7 @@ place for current state.
 
 ## Merged pull requests
 
-89 pull requests are merged into `irc-integration` (the last is 168, merge commit 66a3c75a; older text below stops at 149) and 10 into the Iceberg
+90 pull requests are merged into `irc-integration` (the last is 169, merge commit 00d78552; older text below stops at 149) and 10 into the Iceberg
 fork's `openhouse-1.12.0` (the last is 12, commit a88f556c). The full tables are in `45-merged-pull-requests.md`.
 The latest: 150 and 149 in `82-v10-x18-result.md`; 147 and 148 in `81-v17-x16-result.md`; 146 in `80-c3-c4-result.md`; 145 and 144 in `79-c20-x11-x12-x13-result.md`.
 

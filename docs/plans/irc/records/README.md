@@ -1,6 +1,6 @@
 # Records: the agents' raw working records
 
-Bottom line: these files (126 on 2026-11-28, not counting this README; the earlier counts of 119 and 101 are out of date) are the raw, unedited records written by the
+Bottom line: these files (133 on 2026-11-28, not counting this README; counted with `ls`; the earlier counts of 119 and 101 are out of date) are the raw, unedited records written by the
 agents that did each piece of work, plus the ten files of the retroactive review of 2026-11-27 (the common brief and
 the nine reviewers' reports, `review-*.md`), and the scout's report and the fix-forward work's brief and records of the same day. Added 2026-11-28: the records of the first pull requests that were reviewed by an independent sub-agent before merge (`pr-review-*.md`, one report per pull request, with the common brief `pr-review-brief-common.md` every such reviewer works under), and the authors' records of those pull requests. They were copied byte for byte from the orchestrator's session directory
 `/tmp/claude-0/-home-user/eca9c5c3-f1f6-52c6-b03c-ae0dfb4c364a/scratchpad/reports/`, which does not outlive the
@@ -152,4 +152,5 @@ shorthand. Where they and a note disagree, the record and the merge commit messa
 | `pr-review-168.md` | review of pull request 168, round 1: MERGE AFTER FIXES (F1: the off test's tokenless requests carried a token) | pull request 168 (merge `66a3c75a`) | `../96-reviewed-merges-166-167-168-result.md`, `../90-decisions-continued-7.md` (D87, D88) |
 | `pr-review-168-recheck.md` | re-check of pull request 168 at `7e7a607d`: MERGE, one residual gap (F8) can follow | pull request 168 (merge `66a3c75a`) | `../96-reviewed-merges-166-167-168-result.md`, `../86-review-findings-and-fix-forward.md` (FF-53) |
 | `one-switch-for-the-iceberg-rest-base.md` | FF-11: the one switch for the Iceberg REST base | branch `irc/one-switch-for-the-iceberg-rest-base`, pull request 168 (merge `66a3c75a`) | `../96-reviewed-merges-166-167-168-result.md`, `../85-behavior-change-ledger.md` (BC-004, BC-109 to BC-112) |
-| `kit-failures-in-the-rest-layer.md` | the 13 kit failures in the Iceberg REST layer alone (in progress; not a result) | branch `irc/kit-failures-in-the-rest-layer`, draft pull request 169, in flight, not merged | `../18-state.md`, `../96-reviewed-merges-166-167-168-result.md` |
+| `kit-failures-in-the-rest-layer.md` | the 13 kit failures in the Iceberg REST layer alone: plan and progress up to head `49d9a8a5` (copied 2026-11-28 while the author was still writing; stops before the merge) | branch `irc/kit-failures-in-the-rest-layer`, pull request 169 (merge `00d78552`) | `../97-reviewed-merge-169-and-pause.md`, `../18-state.md` |
+| `pr-review-169.md` | review of pull request 169 at `ce78afdf`: MERGE AS IS once CI is green, four minors (M1 to M4) | pull request 169 (merge `00d78552`) | `../97-reviewed-merge-169-and-pause.md`, `../85-behavior-change-ledger.md`, `../86-review-findings-and-fix-forward.md` |

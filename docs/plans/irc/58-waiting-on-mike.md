@@ -99,6 +99,7 @@ Nothing blocks work; the interim in each entry holds.
   database that holds a table or a view. It is a one-line native behavior change in the native views service (a view create
   that answered 404 would succeed in a record-only namespace), which this effort will not make without his justification.
 - Measured weight (2026-11-28, pull request 167, FF-60, D89): 27 kit tests share that one root cause (the 24 view tests, 2 listing tests and 1 more that are artifacts of the same rule), and 14 more sit behind it (the view dialect rules, which the tests reach only in a namespace with no table). It is the biggest single lever on conformance. Why it is a contradiction and not a model difference: on `/iceberg`, HEAD says a namespace with only a record exists, while creating a view in it answers 404 "Database not found", because the native view create checks only for tables and views. It needs a native change, which is yours; the reviewer's estimate is that it alone turns about 15 to 18 tests green, because the others move to their next cause (not run).
+  Update 2026-11-28 (pull request 169, merge `00d78552`): the kit is now at 63 passed, 81 failed, 16 skipped at the default configuration (65, 79, 16 with format v3 on); the 27 and the 14 behind them are unchanged and are now 41 of the 81 (the rest: 32 owner's table policies, 4 native House Tables APIs that do not exist, 2 left in the Iceberg REST layer, 2 the format v3 switch). Execution is paused; this question is the first thing on the list when work resumes.
 - Meanwhile: not done (D67).
 
 ### (d) A House Tables list of namespace records (ledger BC-074, FF-52)
@@ -238,6 +239,7 @@ The scout's report is `records/scout-namespace-and-prior-work.md`; the summary i
   `replace.enabled` 16, view dialect policy 15, schema and partition evolution rules 13); the other 18 are small model
   differences (6), kit message-text assertions (9), view rename (2) and one kit contradiction (1). None is scan
   planning or credentials.
+  (Later: 63 passed, 81 failed, 16 skipped at the default configuration since pull request 169; the grouping that follows is of 157's time.)
   Update 2026-11-28 (pull request 157, merge `518a2134`): the kit is at 160 tests, 54 passed, 90 failed, 16 skipped (CORRECTION 2026-11-28, from pull request 167: the kit then ran with format v3 hard-coded on, so this is the format v3 run; the default configuration is 52 passed, 92 failed, 16 skipped) [ran, by
   the author]; the namespace writes are served and the 33 namespace-model failures are mostly gone. What the remaining 90
   failures are, by the cause each line of the kit's reviewed list carries (`expected-outcomes.txt` on `irc-integration`,
