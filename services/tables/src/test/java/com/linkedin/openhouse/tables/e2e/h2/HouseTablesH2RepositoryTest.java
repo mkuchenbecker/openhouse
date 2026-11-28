@@ -65,6 +65,24 @@ public class HouseTablesH2RepositoryTest {
         .build();
   }
 
+  /**
+   * The tables of a database are found by any spelling of its name, as House Tables' table listing
+   * finds them (it compares the upper-cased names).
+   */
+  @Test
+  void theTablesOfADatabaseAreFoundByAnySpellingOfItsName() {
+    key("cased");
+    store.save(row("cased", INITIAL_TABLE_VERSION, "/m/00000.json"));
+    String upper = DB.toUpperCase(java.util.Locale.ROOT);
+    assertEquals(1, store.findAllByDatabaseId(upper).size());
+    assertEquals(
+        1,
+        store
+            .findAllByDatabaseId(upper, org.springframework.data.domain.PageRequest.of(0, 1))
+            .getContent()
+            .size());
+  }
+
   @Test
   void firstSaveNeedsTheInitialVersionAndLaterSavesNeedTheStoredLocation() {
     key("chain");

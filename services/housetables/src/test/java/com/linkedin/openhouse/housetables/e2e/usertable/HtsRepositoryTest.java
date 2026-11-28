@@ -192,6 +192,18 @@ public class HtsRepositoryTest extends HtsDatabaseTestBase {
     assertThat(result).containsExactlyInAnyOrder("test_db0", "test_db1");
   }
 
+  /**
+   * The distinct database list, which the tables service's database list reads, has no entity-type
+   * predicate: a database that holds only views is listed.
+   */
+  @Test
+  public void testFindDistinctDatabasesListsADatabaseThatHoldsOnlyViews() {
+    seedTypedRow("distinct_view_only_db", "v1", EntityType.VIEW);
+    seedTypedRow("distinct_table_db", "t1", EntityType.TABLE);
+    List<String> result = Lists.newArrayList(htsRepository.findAllDistinctDatabaseIds());
+    assertThat(result).containsExactlyInAnyOrder("distinct_view_only_db", "distinct_table_db");
+  }
+
   @Test
   public void testFindAllByDatabaseId() {
     userTableRawSeeder.seedLegacyRow(TEST_TUPLE_1_0.get_userTableRow());

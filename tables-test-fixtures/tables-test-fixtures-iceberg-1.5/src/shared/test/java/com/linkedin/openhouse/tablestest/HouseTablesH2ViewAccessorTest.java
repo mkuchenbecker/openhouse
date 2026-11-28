@@ -68,6 +68,21 @@ public class HouseTablesH2ViewAccessorTest {
     return HouseTablePrimaryKey.builder().databaseId(DB).tableId(id).build();
   }
 
+  /**
+   * The tables of a database are found by any spelling of its name, as House Tables' table listing
+   * finds them (it compares the upper-cased names); views stay out.
+   */
+  @Test
+  public void theTablesOfADatabaseAreFoundByAnySpellingOfItsName() {
+    Assertions.assertEquals(2, repository.findAllByDatabaseId("VIEWDB").size());
+    Assertions.assertEquals(
+        2,
+        repository
+            .findAllByDatabaseId("VIEWDB", org.springframework.data.domain.PageRequest.of(0, 10))
+            .getContent()
+            .size());
+  }
+
   @Test
   public void neutralLookupResolvesEitherKindOfEntity() {
     Assertions.assertEquals("VIEW", repository.findEntityById(key("view_a")).get().getEntityType());

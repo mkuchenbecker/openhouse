@@ -71,6 +71,7 @@ public class IrcNamespaceRoutesFailureTest {
   @Autowired MockMvc mvc;
   @MockBean HouseNamespaceRepository records;
   @MockBean AuthorizationHandler authorizationHandler;
+  @Autowired com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository toggles;
 
   private final List<String[]> tables = new ArrayList<>();
 
@@ -211,6 +212,39 @@ public class IrcNamespaceRoutesFailureTest {
       assertEquals(
           "authorization service unavailable",
           assertIrcError(result, 403, "ForbiddenException").message());
+    }
+  }
+
+  /**
+   * The load fallback for a database that only the database list shows (it holds a view and no
+   * table): while the record store fails, it loads with no properties, as before namespace records.
+   */
+  @Test
+  void whenTheRecordStoreFailsADatabaseThatHoldsOnlyAViewLoadsAsBefore() throws Exception {
+    String db = "irc_nsf_viewed";
+    NativeViewHttp.enableViews(toggles, db);
+    CommitPathHttp.post(mvc, CommitPathHttp.newTable(db, "t")).andExpect(status().isCreated());
+    MvcResult view =
+        NativeViewHttp.post(
+            mvc,
+            NativeViewHttp.createBody(
+                db,
+                "v",
+                NativeViewHttp.SCHEMA_ID_NAME,
+                "SELECT id, name FROM " + db + ".t",
+                Collections.emptyMap()));
+    assertEquals(201, NativeViewHttp.code(view), NativeViewHttp.body(view));
+    CommitPathHttp.delete(mvc, db, "t").andExpect(status().isNoContent());
+    try {
+      storeFails();
+      MvcResult load = IrcHttp.get(mvc, "/v1/namespaces/" + db);
+      assertEquals(200, load.getResponse().getStatus(), body(load));
+      assertEquals(
+          Collections.emptyMap(),
+          IrcClientParsers.parse(body(load), GetNamespaceResponse.class).properties());
+      assertEquals(204, IrcHttp.head(mvc, "/v1/namespaces/" + db).getResponse().getStatus());
+    } finally {
+      NativeViewHttp.delete(mvc, db, "v");
     }
   }
 
