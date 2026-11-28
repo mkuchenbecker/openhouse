@@ -73,6 +73,8 @@ public final class RestCompatKitService {
                 "--cluster.storages.default-type=local",
                 "--cluster.storages.types.local.endpoint=file://",
                 "--cluster.storages.types.local.rootpath=" + warehouse,
+                // The Iceberg REST routes the kit tests (off by default), in every run.
+                "--cluster.tables.irc.enabled=true",
                 // Every request and its status, unbuffered, to read what the kit sent.
                 "--server.tomcat.accesslog.enabled=true",
                 "--server.tomcat.accesslog.directory=" + work.resolve("access"),

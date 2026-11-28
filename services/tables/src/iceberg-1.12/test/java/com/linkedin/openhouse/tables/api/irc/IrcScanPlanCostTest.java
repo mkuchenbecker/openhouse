@@ -46,7 +46,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -93,8 +92,11 @@ class IrcScanPlanCostTest {
   /** Per plan request on the server: {nanoseconds, bytes the serving thread allocated}. */
   static final List<long[]> MEASURED = new CopyOnWriteArrayList<>();
 
-  /** Measures every plan request on the thread that serves it. */
-  @TestConfiguration
+  /**
+   * Measures every plan request on the thread that serves it. Imported by this test only: not a
+   * {@code @TestConfiguration}, which component scanning of this package would add to every other
+   * context of the suite.
+   */
   static class MeasureRequests {
     @Bean
     Filter planCostMeter() {

@@ -42,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
  * not an IRC route.
  */
 @Hidden
+@ConditionalOnIcebergRest
 @RestController
 public class IcebergRestCatalogController {
 

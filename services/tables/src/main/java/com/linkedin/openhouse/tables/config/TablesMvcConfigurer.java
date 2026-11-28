@@ -2,6 +2,7 @@ package com.linkedin.openhouse.tables.config;
 
 import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.cluster.configs.ClusterPropertiesUtil;
+import com.linkedin.openhouse.tables.api.irc.ConditionalOnIcebergRest;
 import com.linkedin.openhouse.tables.api.irc.IcebergRestAuthenticationInterceptor;
 import com.linkedin.openhouse.tables.api.irc.IcebergRestCatalogController;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.models.info.License;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Optional;
+import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,6 +28,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class TablesMvcConfigurer implements WebMvcConfigurer {
   @Autowired private ClusterProperties clusterProperties;
+  @Autowired private ListableBeanFactory beanFactory;
   OpenAPI openAPI =
       new OpenAPI()
           .info(
@@ -41,23 +44,46 @@ public class TablesMvcConfigurer implements WebMvcConfigurer {
         ClusterPropertiesUtil.getClusterSecurityTokenInterceptor(clusterProperties);
     handlerInterceptor.ifPresent(
         interceptor -> {
-          registry
-              .addInterceptor(interceptor)
-              .addPathPatterns("/**")
-              .excludePathPatterns(
-                  "/actuator/**",
-                  "/**/api-docs/**",
-                  "/**/swagger-ui/**",
-                  "/favicon.ico",
-                  "/error",
-                  IcebergRestCatalogController.BASE_PATH + "/**");
-          // The IRC routes run the same token interceptor, answering a refusal in the IRC spec's
-          // error shape.
-          registry
-              .addInterceptor(new IcebergRestAuthenticationInterceptor(interceptor))
-              .addPathPatterns(IcebergRestCatalogController.BASE_PATH + "/**");
+          if (!icebergRestRoutesMapped()) {
+            registry
+                .addInterceptor(interceptor)
+                .addPathPatterns("/**")
+                .excludePathPatterns(
+                    "/actuator/**",
+                    "/**/api-docs/**",
+                    "/**/swagger-ui/**",
+                    "/favicon.ico",
+                    "/error");
+          } else {
+            registry
+                .addInterceptor(interceptor)
+                .addPathPatterns("/**")
+                .excludePathPatterns(
+                    "/actuator/**",
+                    "/**/api-docs/**",
+                    "/**/swagger-ui/**",
+                    "/favicon.ico",
+                    "/error",
+                    IcebergRestCatalogController.BASE_PATH + "/**");
+            // The IRC routes run the same token interceptor, answering a refusal in the IRC spec's
+            // error shape.
+            registry
+                .addInterceptor(new IcebergRestAuthenticationInterceptor(interceptor))
+                .addPathPatterns(IcebergRestCatalogController.BASE_PATH + "/**");
+          }
           addOpenAPISecurityScheme();
         });
+  }
+
+  /**
+   * Whether this service maps the Iceberg REST Catalog routes ({@link ConditionalOnIcebergRest}):
+   * read from the bean definitions, so that the interceptors follow the routes exactly and nothing
+   * is created to find out. Without them the token interceptor is registered on every path as it
+   * always was, and no interceptor of those routes is made.
+   */
+  private boolean icebergRestRoutesMapped() {
+    return beanFactory.getBeanNamesForType(IcebergRestCatalogController.class, false, false).length
+        > 0;
   }
 
   @Bean

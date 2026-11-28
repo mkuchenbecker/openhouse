@@ -77,6 +77,22 @@ runs:
         echo "The services did not answer within 300 s"
         exit 1
 
+    # The recipe's shipped configuration leaves the Iceberg REST routes off (cluster.tables.irc.enabled
+    # unset), as LinkedIn main: /iceberg answers the 400 of a path nothing maps, token or not. The
+    # integration tests below send nothing there.
+    - name: Check that /iceberg answers as a path nothing maps
+      id: oh-only-iceberg-off
+      if: ${{ !cancelled() && steps.oh-only-wait.outcome == 'success' }}
+      shell: bash
+      run: |
+        token="$(cat tables-test-fixtures/tables-test-fixtures-iceberg-1.5/src/shared/main/resources/dummy.token)"
+        for auth in "" "Authorization: Bearer $token"; do
+          code="$(curl -s -o iceberg-off.json -w '%{http_code}' ${auth:+-H "$auth"} http://localhost:8000/iceberg/v1/config)"
+          echo "token=${auth:+yes} status=$code body=$(cat iceberg-off.json)"
+          test "$code" = 400
+          grep -q '"message":"The combination of the method \[GET\] and Path \[uri=/iceberg/v1/config\] cannot be resolved by server' iceberg-off.json
+        done
+
     - name: Set up Python
       if: ${{ !cancelled() && steps.oh-only.outcome == 'success' }}
       uses: actions/setup-python@v6
@@ -108,7 +124,8 @@ runs:
     - name: Print the oh-only containers' state and logs
       if: >-
         ${{ !cancelled() && (steps.oh-only.outcome == 'failure' || steps.oh-only-wait.outcome == 'failure'
-        || steps.oh-only-tests.outcome == 'failure' || steps.oh-only-iceberg.outcome == 'failure') }}
+        || steps.oh-only-tests.outcome == 'failure' || steps.oh-only-iceberg.outcome == 'failure'
+        || steps.oh-only-iceberg-off.outcome == 'failure') }}
       shell: bash
       run: |
         compose="docker compose -f infra/recipes/docker-compose/oh-only/docker-compose.yml"

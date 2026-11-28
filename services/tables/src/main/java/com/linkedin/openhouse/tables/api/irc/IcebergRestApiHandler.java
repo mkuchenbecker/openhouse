@@ -90,6 +90,7 @@ import org.springframework.stereotype.Component;
  * </ul>
  */
 @Slf4j
+@ConditionalOnIcebergRest
 @Component
 public class IcebergRestApiHandler {
 

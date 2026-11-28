@@ -17,9 +17,9 @@ import org.springframework.core.env.MapPropertySource;
  * The plan route's start-up check in a real Spring context: the cluster properties bound from the
  * environment as the service binds them, the route's registration conditions, and its start-up
  * callback. With planning on, a bound that is not positive stops the context from starting, naming
- * the property; with planning off the route is not created, so no bound is checked. Only the
- * route's collaborator, the read handler, is a mock: the context has no Spring Boot application, no
- * database and no component scan.
+ * the property; with planning off, or with planning on and the Iceberg REST routes off, the route
+ * is not created, so no bound is checked. Only the route's collaborator, the read handler, is a
+ * mock: the context has no Spring Boot application, no database and no component scan.
  */
 class IcebergRestScanControllerStartupTest {
 
@@ -38,6 +38,7 @@ class IcebergRestScanControllerStartupTest {
 
   private static Map<String, Object> planningOnWith(String property, Object value) {
     Map<String, Object> properties = new HashMap<>();
+    properties.put(ClusterProperties.IRC_ENABLED, "true");
     properties.put(ENABLED, "true");
     if (property != null) {
       properties.put(property, value);
@@ -89,6 +90,25 @@ class IcebergRestScanControllerStartupTest {
     try (AnnotationConfigApplicationContext context = context(properties)) {
       context.refresh();
       assertTrue(context.getBeansOfType(IcebergRestScanController.class).isEmpty());
+    }
+  }
+
+  /** Scan planning is one of the Iceberg REST routes: with those off, its switch has no effect. */
+  @Test
+  void withPlanningOnAndTheIcebergRestRoutesOffTheRouteIsNotCreatedAndNoBoundIsChecked() {
+    for (String routes : new String[] {null, "false"}) {
+      Map<String, Object> properties = planningOnWith(IcebergRestScanController.TIMEOUT_MS, "0");
+      if (routes == null) {
+        properties.remove(ClusterProperties.IRC_ENABLED);
+      } else {
+        properties.put(ClusterProperties.IRC_ENABLED, routes);
+      }
+      try (AnnotationConfigApplicationContext context = context(properties)) {
+        context.refresh();
+        assertTrue(
+            context.getBeansOfType(IcebergRestScanController.class).isEmpty(),
+            String.valueOf(routes));
+      }
     }
   }
 }
