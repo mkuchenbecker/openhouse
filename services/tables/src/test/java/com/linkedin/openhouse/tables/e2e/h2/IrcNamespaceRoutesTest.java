@@ -370,6 +370,10 @@ public class IrcNamespaceRoutesTest {
    */
   private int assertOneExistenceRule(String db, int expectedDrop) throws Exception {
     int head = IrcHttp.head(mvc, "/v1/namespaces/" + db).getResponse().getStatus();
+    assertEquals(
+        expectedDrop == 404,
+        head == 404,
+        db + ": a drop answering " + expectedDrop + " was expected, but HEAD answered " + head);
     MvcResult load = IrcHttp.get(mvc, "/v1/namespaces/" + db);
     if (head == 204) {
       assertEquals(200, load.getResponse().getStatus(), db + ": " + body(load));
@@ -384,7 +388,6 @@ public class IrcNamespaceRoutesTest {
     assertEquals(404, head, db);
     assertIrcError(load, 404, "NoSuchNamespaceException");
     assertIrcError(dropNamespace(mvc, db), 404, "NoSuchNamespaceException");
-    assertEquals(expectedDrop, 404, db);
     namespaces.add(db);
     assertEquals(
         200, createNamespace(mvc, db, Collections.emptyMap()).getResponse().getStatus(), db);
@@ -431,6 +434,47 @@ public class IrcNamespaceRoutesTest {
 
     assertOneExistenceRule("irc_ns_one_none", 404);
     assertTrue(hasRecord("irc_ns_one_none"));
+  }
+
+  /**
+   * The one existence rule ignores letter case, as House Tables' lookups and namespace records do:
+   * a database is the same namespace under any spelling of its name, whether it holds views, holds
+   * tables or has a record. A namespace found only through the database list loads with its stored
+   * spelling.
+   */
+  @Test
+  void theOneExistenceRuleIgnoresLetterCase() throws Exception {
+    // Views in irc_ns_mix_vr and a record created as IRC_NS_MIX_VR: the drop of the upper-case
+    // spelling is "not empty", and the record stays.
+    created("IRC_NS_MIX_VR", Collections.singletonMap("k", "v"));
+    viewOnly("irc_ns_mix_vr");
+    assertOneExistenceRule("IRC_NS_MIX_VR", 409);
+    assertTrue(hasRecord("irc_ns_mix_vr"));
+    assertEquals(
+        Namespace.of("IRC_NS_MIX_VR"),
+        IrcClientParsers.parse(
+                body(IrcHttp.get(mvc, "/v1/namespaces/irc_ns_mix_vr")), GetNamespaceResponse.class)
+            .namespace());
+
+    // Views in irc_ns_mix_v, no record: found under any spelling, with its stored spelling.
+    viewOnly("irc_ns_mix_v");
+    assertOneExistenceRule("IRC_NS_MIX_V", 409);
+    assertFalse(hasRecord("irc_ns_mix_v"));
+    assertEquals(
+        Namespace.of("irc_ns_mix_v"),
+        IrcClientParsers.parse(
+                body(IrcHttp.get(mvc, "/v1/namespaces/IRC_NS_MIX_V")), GetNamespaceResponse.class)
+            .namespace());
+
+    // Tables in irc_ns_mix_t: already true before; pinned.
+    table("irc_ns_mix_t", "t1");
+    assertOneExistenceRule("IRC_NS_MIX_T", 409);
+    assertFalse(hasRecord("irc_ns_mix_t"));
+
+    // A record created as IRC_NS_MIX_R only, through the lower-case spelling.
+    created("IRC_NS_MIX_R", Collections.emptyMap());
+    assertOneExistenceRule("irc_ns_mix_r", 204);
+    assertFalse(hasRecord("irc_ns_mix_r"));
   }
 
   /** The toggle row {@link NativeViewHttp#enableViews} saves for {@code db}. */

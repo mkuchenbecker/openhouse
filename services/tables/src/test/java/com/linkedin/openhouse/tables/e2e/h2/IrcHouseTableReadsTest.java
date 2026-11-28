@@ -84,6 +84,9 @@ public class IrcHouseTableReadsTest {
   private static final Schema SCHEMA =
       IcebergSchemaHelper.getSchemaFromSchemaJson(TableModelConstants.HEALTH_SCHEMA_LITERAL);
 
+  /** Whether the namespace store's record read fails, as a House Tables 5xx. */
+  static volatile boolean failRecordReads;
+
   /** Every House Tables read since the last {@link #reads()}, in order. */
   static final List<String> READS = new CopyOnWriteArrayList<>();
 
@@ -137,6 +140,11 @@ public class IrcHouseTableReadsTest {
         (proxy, method, args) -> {
           String name = method.getName();
           boolean isRead = name.equals("getByName");
+          if (isRead && failRecordReads) {
+            READS.add("getByName[failed]");
+            throw org.springframework.web.reactive.function.client.WebClientResponseException
+                .create(500, "Internal Server Error", null, new byte[0], null);
+          }
           boolean isWrite = name.equals("create") || name.equals("update") || name.equals("delete");
           try {
             Object result = method.invoke(target, args);
@@ -267,6 +275,24 @@ public class IrcHouseTableReadsTest {
     assertEquals(
         list("getByName[key]=0", "findAllByDatabaseId[page0x1]=0", "findAll[all databases]"),
         readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + NONE), 404));
+  }
+
+  /**
+   * While the record store fails, a load of a namespace that holds tables answers from what it
+   * holds, asked once: the failed record read, then the table probe.
+   */
+  @Test
+  void loadNamespaceWhileTheRecordStoreFails() throws Exception {
+    threeTables();
+    reads();
+    failRecordReads = true;
+    try {
+      assertEquals(
+          list("getByName[failed]", "findAllByDatabaseId[page0x1]=1"),
+          readsOf(IrcHttp.get(mvc, "/v1/namespaces/" + DB), 200));
+    } finally {
+      failRecordReads = false;
+    }
   }
 
   /** A namespace with a record: the record alone, for load and exists. */
