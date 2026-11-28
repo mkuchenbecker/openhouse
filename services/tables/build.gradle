@@ -168,7 +168,7 @@ dependencies {
 }
 
 tasks.register('namespaceIntegrationTest', Test) {
-  description = 'Tests namespace operations through the generated HTS client against H2.'
+  description = 'Tests the namespace and table-row repositories through the generated HTS client against a real House Tables service on H2.'
   group = 'verification'
   testClassesDirs = sourceSets.namespaceIntegrationTest.output.classesDirs
   classpath = sourceSets.namespaceIntegrationTest.runtimeClasspath
