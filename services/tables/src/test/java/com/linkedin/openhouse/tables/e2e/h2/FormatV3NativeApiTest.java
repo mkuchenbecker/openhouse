@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.Snapshot;
 import org.apache.iceberg.SnapshotParser;
 import org.apache.iceberg.Table;
@@ -46,6 +47,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
@@ -341,10 +343,18 @@ public class FormatV3NativeApiTest {
    * Returns the staged replace's answer when it is refused.
    */
   private ResultActions replace(String db, String askedVersion) throws Exception {
+    return replace(db, askedVersion, null);
+  }
+
+  /** {@link #replace(String, String)} with the schema {@code schema} when given. */
+  private ResultActions replace(String db, String askedVersion, String schema) throws Exception {
     String current = stored(db);
     CreateUpdateTableRequestBody body = bodyFromGet(current);
     if (askedVersion != null) {
       body = asking(body, askedVersion);
+    }
+    if (schema != null) {
+      body = body.toBuilder().schema(schema).build();
     }
     ResultActions staged = post(mvc, body.toBuilder().stageReplace(true).build());
     if (status(staged) != 201) {
@@ -411,6 +421,36 @@ public class FormatV3NativeApiTest {
   }
 
   /**
+   * A replace that upgrades a v2 table to v3 takes what only v3 allows in its new schema: a column
+   * of a type v3 takes ({@code unknown}) or a column with an initial-default. A type v3 refuses is
+   * refused by the v3 rules, as any v3 write would be, and the table stays v2.
+   */
+  @Test
+  void aReplaceThatUpgradesAV2TableTakesWhatOnlyV3Allows() throws Exception {
+    assumeTrue(IcebergV3.supported());
+    String db = "fv3_replace_up_unknown";
+    String v2 = replaceable(plain(db));
+    ok(replace(db, "3", addColumn(str(v2, "$.schema"), "u", "unknown", null, null)));
+    TableMetadata unknown = metadata(db);
+    assertEquals(3, unknown.formatVersion());
+    assertEquals("unknown", unknown.schema().findField("u").type().toString());
+
+    db = "fv3_replace_up_default";
+    v2 = replaceable(plain(db));
+    ok(replace(db, "3", addColumn(str(v2, "$.schema"), "country", "string", "\"US\"", null)));
+    TableMetadata defaulted = metadata(db);
+    assertEquals(3, defaulted.formatVersion());
+    assertEquals("US", String.valueOf(defaulted.schema().findField("country").initialDefault()));
+
+    db = "fv3_replace_up_nanos";
+    v2 = replaceable(plain(db));
+    refused(
+        replace(db, "3", addColumn(str(v2, "$.schema"), "ts", "timestamp_ns", null, null)),
+        "FORMAT_V3_TYPE_NOT_SUPPORTED");
+    assertEquals(2, metadata(db).formatVersion());
+  }
+
+  /**
    * Turning the switch off again stops new v3 tables, not the ones that exist: a v3 table still
    * takes property changes, snapshots and a replace, and stays v3.
    */
@@ -421,8 +461,55 @@ public class FormatV3NativeApiTest {
     replaceable(asking(plain(db), "3"));
     ok(putSnapshots(mvc, db, "t", append(db, "a")));
     String v2 = make(plain("fv3_switched_off_v2"));
+    // A v3 table with what only v3 allows: an unknown column and a column with an initial-default.
+    String typed = "fv3_switched_off_types";
+    CreateUpdateTableRequestBody typedBody = asking(plain(typed), "3");
+    replaceable(
+        typedBody
+            .toBuilder()
+            .schema(
+                addColumn(
+                    addColumn(typedBody.getSchema(), "u", "unknown", null, null),
+                    "country",
+                    "string",
+                    "\"US\"",
+                    null))
+            .build());
     ReflectionTestUtils.setField(clusterProperties, "clusterIcebergFormatV3Enabled", false);
     try {
+      // It keeps working, on every write path, and keeps both.
+      ok(put(mvc, withProp(stored(typed), "user.note", "x")));
+      ok(putSnapshots(mvc, typed, "t", append(typed, "a")));
+      TableMetadata ircBase = IrcWrite.load(mvc, typed, "t");
+      MvcResult ircCommit =
+          IrcWrite.commit(
+              mvc,
+              typed,
+              "t",
+              IrcWrite.simple(
+                  ircBase,
+                  Collections.singletonList(
+                      new MetadataUpdate.SetProperties(
+                          Collections.singletonMap("user.irc", "y")))));
+      assertEquals(200, ircCommit.getResponse().getStatus(), IrcHttp.body(ircCommit));
+      ok(replace(typed, null));
+      TableMetadata typedKept = metadata(typed);
+      assertEquals(3, typedKept.formatVersion());
+      assertEquals("unknown", typedKept.schema().findField("u").type().toString());
+      assertEquals("US", String.valueOf(typedKept.schema().findField("country").initialDefault()));
+      // A v2 table is held to the answer from before format v3.
+      ResultActions belowV3 =
+          put(
+              mvc,
+              bodyFromGet(v2)
+                  .toBuilder()
+                  .schema(addColumn(str(v2, "$.schema"), "u", "unknown", null, null))
+                  .build());
+      assertEquals(400, status(belowV3), json(belowV3));
+      assertTrue(
+          message(belowV3).startsWith("schema : Cannot parse type string to primitive: unknown"),
+          message(belowV3));
+
       ok(put(mvc, withProp(stored(db), "user.note", "x")));
       ok(putSnapshots(mvc, db, "t", append(db, "b")));
       ok(replace(db, null));
@@ -432,10 +519,12 @@ public class FormatV3NativeApiTest {
       assertEquals(3, kept.formatVersion());
       assertEquals(3, kept.snapshots().size());
       assertEquals(3L, IcebergV3.nextRowId(kept));
-      // No new v3 table, by create or by upgrade.
+      // No new v3 table, by create or by upgrade: with the switch off a create is stored at the
+      // cluster's version and an upgrade gets Iceberg 1.5.2's refusal, as before format v3.
       created.add("fv3_switched_off_new");
-      refused(post(mvc, asking(plain("fv3_switched_off_new"), "3")), FormatVersionRule.REFUSED);
-      refused(put(mvc, asking(bodyFromGet(v2), "3")), FormatVersionRule.REFUSED);
+      assertEquals(201, status(post(mvc, asking(plain("fv3_switched_off_new"), "3"))));
+      assertEquals(2, metadata("fv3_switched_off_new").formatVersion());
+      FormatVersionSwitchOffTest.expectIcebergRefusal(put(mvc, asking(bodyFromGet(v2), "3")), 3);
       assertEquals(2, metadata("fv3_switched_off_v2").formatVersion());
     } finally {
       ReflectionTestUtils.setField(clusterProperties, "clusterIcebergFormatV3Enabled", true);

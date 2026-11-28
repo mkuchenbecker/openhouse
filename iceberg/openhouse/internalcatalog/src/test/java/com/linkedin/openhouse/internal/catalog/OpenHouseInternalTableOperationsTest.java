@@ -253,6 +253,8 @@ public class OpenHouseInternalTableOperationsTest {
    */
   @Test
   void testDoCommitRejectsAMetadataLocationThatWillNotFitBeforeWriting() {
+    openHouseInternalTableOperations.houseTableRowLimits = PRODUCTION_WIDTHS;
+    openHouseInternalTableOperationsWithMockMetrics.houseTableRowLimits = PRODUCTION_WIDTHS;
     TableMetadata fits = tableAt(locationWhereFirstMetadataLocationIs(255));
     openHouseInternalTableOperations.doCommit(null, fits);
     Mockito.verify(mockHouseTableMapper).toHouseTable(tblMetadataCaptor.capture(), Mockito.any());
@@ -289,6 +291,7 @@ public class OpenHouseInternalTableOperationsTest {
    */
   @Test
   void testDoCommitAtVersion100000CanBeTheFirstThatDoesNotFit() throws IOException {
+    openHouseInternalTableOperations.houseTableRowLimits = PRODUCTION_WIDTHS;
     String location = locationWhereFirstMetadataLocationIs(255);
     java.nio.file.Path current =
         java.nio.file.Paths.get(location, "99999-" + UUID.randomUUID() + ".metadata.json");
@@ -319,6 +322,7 @@ public class OpenHouseInternalTableOperationsTest {
   /** A staged create writes its metadata file and no row, so the row's limits do not judge it. */
   @Test
   void testStagedCreateWritesNoRowAndIsNotJudgedByTheRowLimits() {
+    openHouseInternalTableOperations.houseTableRowLimits = PRODUCTION_WIDTHS;
     TableMetadata over = tableAt(locationWhereFirstMetadataLocationIs(256));
     Map<String, String> properties = new HashMap<>(over.properties());
     properties.put(CatalogConstants.IS_STAGE_CREATE_KEY, "true");
@@ -336,6 +340,7 @@ public class OpenHouseInternalTableOperationsTest {
   /** A rename writes the row under the new name, which the row must be able to hold. */
   @Test
   void testDoCommitRejectsANameThatWillNotFitBeforeWriting() {
+    openHouseInternalTableOperations.houseTableRowLimits = PRODUCTION_WIDTHS;
     TableMetadata table = tableAt(locationWhereFirstMetadataLocationIs(200));
     Map<String, String> properties = new HashMap<>(table.properties());
     properties.put(
@@ -355,6 +360,41 @@ public class OpenHouseInternalTableOperationsTest {
     verifyNoInteractions(mockHouseTableRepository);
     Assertions.assertFalse(new java.io.File(table.location()).exists());
   }
+
+  /**
+   * With no width stated, which is the default, neither the location nor the name is checked: the
+   * row goes to House Tables as it did before the check existed, and the store decides.
+   */
+  @Test
+  void testDoCommitChecksNoLengthByDefault() {
+    Assertions.assertEquals(
+        0, openHouseInternalTableOperations.houseTableRowLimits.getMetadataLocationMaxLength());
+    Assertions.assertEquals(
+        0, openHouseInternalTableOperations.houseTableRowLimits.getTableIdMaxLength());
+    TableMetadata longer = tableAt(locationWhereFirstMetadataLocationIs(300));
+    openHouseInternalTableOperations.doCommit(null, longer);
+    Mockito.verify(mockHouseTableMapper).toHouseTable(tblMetadataCaptor.capture(), Mockito.any());
+    Assertions.assertEquals(
+        300,
+        tblMetadataCaptor
+            .getValue()
+            .properties()
+            .get(getCanonicalFieldName("tableLocation"))
+            .length());
+    Mockito.verify(mockHouseTableRepository).save(mockHouseTable);
+    Mockito.clearInvocations(mockHouseTableRepository, mockHouseTableMapper);
+
+    TableMetadata table = tableAt(locationWhereFirstMetadataLocationIs(200));
+    Map<String, String> properties = new HashMap<>(table.properties());
+    properties.put(
+        CatalogConstants.OPENHOUSE_TABLEID_KEY, String.join("", Collections.nCopies(256, "n")));
+    Assertions.assertDoesNotThrow(
+        () ->
+            openHouseInternalTableOperations.doCommit(table, table.replaceProperties(properties)));
+  }
+
+  /** The widths of the production store's row, as a deployment on it states them. */
+  private static final HouseTableRowLimits PRODUCTION_WIDTHS = new HouseTableRowLimits(255, 255);
 
   enum CommitKind {
     SNAPSHOTS,

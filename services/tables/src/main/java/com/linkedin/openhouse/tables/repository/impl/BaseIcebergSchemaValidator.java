@@ -38,10 +38,21 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
    * through the write schema's structs, list elements and map keys and values.
    */
   static Schema normalizeSchemaCasingToTable(Schema writeSchema, Schema tableSchema) {
+    return normalizeSchemaCasingToTable(writeSchema, tableSchema, true);
+  }
+
+  /**
+   * {@link #normalizeSchemaCasingToTable(Schema, Schema)}, where a re-cased field keeps its column
+   * defaults only when {@code keepDefaults}: on a table whose defaults are Iceberg's native ones.
+   * Elsewhere a re-cased field is rebuilt from its id, name, type, optionality and doc, and so
+   * loses a default it carried, as before this service kept native defaults.
+   */
+  static Schema normalizeSchemaCasingToTable(
+      Schema writeSchema, Schema tableSchema, boolean keepDefaults) {
     // One O(n) walk over the full table schema tree; lookup at any depth is then O(1).
     final Map<Integer, Types.NestedField> tableById = TypeUtil.indexById(tableSchema.asStruct());
     Types.StructType normalizedStruct =
-        (Types.StructType) normalizeCasing(writeSchema.asStruct(), tableById);
+        (Types.StructType) normalizeCasing(writeSchema.asStruct(), tableById, keepDefaults);
     return new Schema(
         writeSchema.schemaId(), normalizedStruct.fields(), writeSchema.identifierFieldIds());
   }
@@ -51,7 +62,8 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
    * rather than with Iceberg's schema visitor, whose default refuses a variant: a type that is not
    * a struct, list or map has no names inside it and is returned as it is.
    */
-  private static Type normalizeCasing(Type type, Map<Integer, Types.NestedField> tableById) {
+  private static Type normalizeCasing(
+      Type type, Map<Integer, Types.NestedField> tableById, boolean keepDefaults) {
     if (type.isStructType()) {
       List<Types.NestedField> originals = type.asStructType().fields();
       List<Types.NestedField> rebuilt = new ArrayList<>(originals.size());
@@ -65,11 +77,12 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
             (tableField != null && tableField.name().equalsIgnoreCase(original.name()))
                 ? tableField.name()
                 : original.name();
-        Type fieldType = normalizeCasing(original.type(), tableById);
+        Type fieldType = normalizeCasing(original.type(), tableById, keepDefaults);
         // Reuse the original if nothing changed (cheap reference-equality short-circuit).
         if (name.equals(original.name()) && fieldType == original.type()) {
           rebuilt.add(original);
-        } else if (original.initialDefault() != null || original.writeDefault() != null) {
+        } else if (keepDefaults
+            && (original.initialDefault() != null || original.writeDefault() != null)) {
           // A field with column defaults keeps them: on a format v3 table they are the table's
           // native defaults, stored as committed.
           rebuilt.add(Types.NestedField.from(original).withName(name).ofType(fieldType).build());
@@ -85,7 +98,7 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
     }
     if (type.isListType()) {
       Types.NestedField elem = type.asListType().fields().get(0);
-      Type elementResult = normalizeCasing(elem.type(), tableById);
+      Type elementResult = normalizeCasing(elem.type(), tableById, keepDefaults);
       return elem.isOptional()
           ? Types.ListType.ofOptional(elem.fieldId(), elementResult)
           : Types.ListType.ofRequired(elem.fieldId(), elementResult);
@@ -93,8 +106,8 @@ public class BaseIcebergSchemaValidator implements SchemaValidator {
     if (type.isMapType()) {
       Types.NestedField k = type.asMapType().fields().get(0);
       Types.NestedField v = type.asMapType().fields().get(1);
-      Type keyResult = normalizeCasing(k.type(), tableById);
-      Type valueResult = normalizeCasing(v.type(), tableById);
+      Type keyResult = normalizeCasing(k.type(), tableById, keepDefaults);
+      Type valueResult = normalizeCasing(v.type(), tableById, keepDefaults);
       return v.isOptional()
           ? Types.MapType.ofOptional(k.fieldId(), v.fieldId(), keyResult, valueResult)
           : Types.MapType.ofRequired(k.fieldId(), v.fieldId(), keyResult, valueResult);

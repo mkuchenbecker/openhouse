@@ -41,7 +41,7 @@ public class ApiConfig {
 
   /**
    * A pre-commit check: the format version a commit may leave, and what a format v3 table may
-   * carry. The internal catalog runs it on every table commit.
+   * carry. The internal catalog runs it on every table commit it applies to.
    */
   @Bean
   public FormatVersionCommitPolicy formatVersionCommitPolicy(ClusterProperties clusterProperties) {

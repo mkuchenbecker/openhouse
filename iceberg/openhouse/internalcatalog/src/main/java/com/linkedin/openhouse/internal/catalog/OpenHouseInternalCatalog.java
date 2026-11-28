@@ -72,7 +72,7 @@ public class OpenHouseInternalCatalog extends BaseMetastoreCatalog {
 
   @Autowired PreCommitCheckRunner preCommitCheckRunner;
 
-  /** Absent where a catalog is built without the cluster's configuration: the default widths. */
+  /** Absent where a catalog is built without the cluster's configuration: no limit. */
   @Autowired(required = false)
   HouseTableRowLimits houseTableRowLimits = HouseTableRowLimits.DEFAULT;
 

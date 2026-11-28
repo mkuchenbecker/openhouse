@@ -30,6 +30,15 @@ public interface PreCommitCheck {
   String getName();
 
   /**
+   * Whether this check judges {@code commit} at all. A check that does not apply is not run and not
+   * counted, so a rule that concerns only some tables adds nothing, not even a metric, to the
+   * commits of the others. Every commit by default.
+   */
+  default boolean appliesTo(PendingCommit commit) {
+    return true;
+  }
+
+  /**
    * Accepts {@code commit}, or rejects it by throwing.
    *
    * @throws CommitRejectedException if the commit breaks this check's rule

@@ -96,6 +96,44 @@ class PreCommitCheckRunnerTest {
     Assertions.assertEquals(1, count(meters, "retrying", "error"));
   }
 
+  /** A check that does not apply to a commit is neither run nor counted; the others are. */
+  @Test
+  void aCheckThatDoesNotApplyIsNeitherRunNorCounted() {
+    List<String> ran = new ArrayList<>();
+    MeterRegistry meters = new SimpleMeterRegistry();
+    PreCommitCheckRunner runner =
+        new PreCommitCheckRunner(
+            Arrays.asList(
+                new Named("elsewhere") {
+                  @Override
+                  public boolean appliesTo(PendingCommit commit) {
+                    return false;
+                  }
+
+                  @Override
+                  public void check(PendingCommit commit) {
+                    ran.add(getName());
+                  }
+                },
+                new Named("everywhere") {
+                  @Override
+                  public void check(PendingCommit commit) {
+                    ran.add(getName());
+                  }
+                }),
+            meters);
+
+    runner.checkAll(TABLE, null, null, Collections.emptyMap());
+
+    Assertions.assertEquals(Collections.singletonList("everywhere"), ran);
+    Assertions.assertEquals(1, count(meters, "everywhere", "passed"));
+    Assertions.assertNull(
+        meters
+            .find(PreCommitCheckRunner.METRIC_PREFIX)
+            .tag(PreCommitCheckRunner.TAG_NAME, "elsewhere")
+            .counter());
+  }
+
   private static double count(MeterRegistry meters, String name, String result) {
     return meters
         .get(PreCommitCheckRunner.METRIC_PREFIX)

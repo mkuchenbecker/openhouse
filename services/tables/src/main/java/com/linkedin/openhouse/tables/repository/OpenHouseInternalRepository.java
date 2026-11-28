@@ -32,9 +32,14 @@ public interface OpenHouseInternalRepository
 
   /**
    * Like {@link #findById}, from the same single load of the table, and also returns the Iceberg
-   * table metadata the {@link TableDto} was converted from.
+   * table metadata the {@link TableDto} was converted from. A repository that does not offer it
+   * keeps the default, which refuses.
    */
-  Optional<TableDtoWithMetadata> findWithMetadataById(TableDtoPrimaryKey tableDtoPrimaryKey);
+  default Optional<TableDtoWithMetadata> findWithMetadataById(
+      TableDtoPrimaryKey tableDtoPrimaryKey) {
+    throw new UnsupportedOperationException(
+        "findWithMetadataById is not supported by this repository");
+  }
 
   /**
    * What creating {@code tableDto} would store, computed without writing anything: the create

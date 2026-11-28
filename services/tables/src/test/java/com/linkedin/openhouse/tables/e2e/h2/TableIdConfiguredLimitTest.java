@@ -39,7 +39,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * A rename's target name on a House Tables store narrower than the production one (work item V19).
+ * A rename's target name on a House Tables store narrower than the production one.
  *
  * <p>The store the House Tables service creates from its bootstrap {@code schema.sql} declares
  * {@code user_table_row.table_id VARCHAR(128)}; the production DDL ({@code
@@ -51,8 +51,8 @@ import org.springframework.test.web.servlet.ResultActions;
  * <p>The cluster of this test is such a deployment: the H2 stand-in's {@code TABLE_ID} column is
  * narrowed to 128 for the test, as that store's column is, and it states that width ({@code
  * cluster.housetables.table-id-max-length=128}). A rename to 129 characters is then refused before
- * anything is written. {@link MetadataLocationLimitTest} shows the default, 255: 255 fits and 256
- * is refused.
+ * anything is written. {@link MetadataLocationLimitTest} shows the production widths, 255: 255 fits
+ * and 256 is refused; {@link HouseTableRowLimitsUnsetTest} shows the default, no check.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -167,7 +167,7 @@ public class TableIdConfiguredLimitTest {
   @Test
   void theClusterStatesItsStoresWidth() {
     assertEquals(128, houseTableRowLimits.getTableIdMaxLength());
-    assertEquals(255, houseTableRowLimits.getMetadataLocationMaxLength());
+    assertEquals(0, houseTableRowLimits.getMetadataLocationMaxLength());
   }
 
   /**

@@ -83,10 +83,20 @@ public class TableCommitService {
             context.isReplace(),
             new FormatVersionRule(clusterProperties)
                 .isAllowedUpgrade(base.getMetadata().formatVersion(), candidate.formatVersion()));
+    FormatVersionRule rule = new FormatVersionRule(clusterProperties);
     Supplier<TableDto> candidateView =
-        requested == null
-            ? () -> view
-            : () -> view.toBuilder().policies(policiesSpecMapper.mapPolicies(requested)).build();
+        () -> {
+          if (!context.isReplace()) {
+            // A format-version property these routes cannot store is refused here, after the
+            // write checks, with a 400: a server failure would tell an Iceberg client that the
+            // commit's state is unknown.
+            rule.refuseUpdate(
+                identifier.toString(), base.getMetadata().formatVersion(), candidate.properties());
+          }
+          return requested == null
+              ? view
+              : view.toBuilder().policies(policiesSpecMapper.mapPolicies(requested)).build();
+        };
     return commit(new TableCommit(identifier, baseVersion, stored, candidateView, context));
   }
 
@@ -138,6 +148,7 @@ public class TableCommitService {
         openHouseInternalRepository,
         authorizationUtils,
         clientCapabilityGate,
-        readBridgeStripProtection);
+        readBridgeStripProtection,
+        clusterProperties);
   }
 }

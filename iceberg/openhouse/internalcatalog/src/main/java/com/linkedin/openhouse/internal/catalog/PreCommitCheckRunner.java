@@ -29,7 +29,8 @@ import org.springframework.stereotype.Component;
  *       CommitStateUnknownException} is a bug: Iceberg would retry a rejection that fails the same
  *       way every time, or report that a commit which wrote nothing may have succeeded. The runner
  *       reports it as an {@link IllegalStateException} instead.
- *   <li><b>Uniform observability.</b> Passed / rejected / error counters, tagged by check name.
+ *   <li><b>Uniform observability.</b> Passed / rejected / error counters, tagged by check name, for
+ *       every commit a check {@linkplain PreCommitCheck#appliesTo applies to}.
  * </ul>
  *
  * <p>In OSS/dev deployments no {@link PreCommitCheck} beans exist, so {@link #checkAll} does
@@ -93,7 +94,9 @@ public class PreCommitCheckRunner {
     }
     PendingCommit commit = PendingCommit.of(tableIdentifier, base, metadata, properties, io);
     for (PreCommitCheck check : checks) {
-      run(check, commit);
+      if (check.appliesTo(commit)) {
+        run(check, commit);
+      }
     }
   }
 

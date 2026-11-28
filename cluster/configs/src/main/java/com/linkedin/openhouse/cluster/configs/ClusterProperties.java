@@ -79,34 +79,35 @@ public class ClusterProperties {
 
   /**
    * The width of the House Tables column that holds a table's or view's current metadata location
-   * ({@code user_table_row.metadata_location}). The tables service refuses, before it writes
-   * anything, a write whose location would be longer.
+   * ({@code user_table_row.metadata_location}), where the deployment states it. With a width set,
+   * the tables service refuses, before it writes anything, a write whose location would be longer.
    *
-   * <p>The default, 255, is the column of the production store ({@code
-   * services/housetables/ddl/0000__baseline.sql}) and of every store built from those migrations.
-   * Set it to 512 only where the House Tables service created its own tables from its bootstrap
-   * {@code schema.sql}, which declares {@code VARCHAR(512)}; such a store took locations of up to
-   * 512 characters before this check existed. Never set it above the column's real width: the row
-   * write would then fail after the metadata file is written. A value that is not positive means
-   * the default.
+   * <p>The default, 0, checks nothing: every write goes to House Tables as it always did, and a
+   * location the column cannot hold fails at the row write, after the metadata file is written. Set
+   * it to the column's width to have such writes refused early: 255 on the production store ({@code
+   * services/housetables/ddl/0000__baseline.sql}), 512 where the House Tables service created its
+   * own tables from its bootstrap {@code schema.sql}. Never set it above the column's real width. A
+   * value that is not positive means no check.
    */
-  @Value("${cluster.housetables.metadata-location-max-length:255}")
+  @Value("${cluster.housetables.metadata-location-max-length:0}")
   private int clusterHouseTablesMetadataLocationMaxLength;
 
   /**
    * The width of the House Tables column that holds a table's or view's name ({@code
-   * user_table_row.table_id}). The tables service refuses, before it writes anything, a rename
-   * whose target name would be longer; a create's name is at most 128 characters by request
-   * validation, whatever this says.
+   * user_table_row.table_id}), where the deployment states it. With a width set, the tables service
+   * refuses, before it writes anything, a rename whose target name would be longer; a create's name
+   * is at most 128 characters by request validation, whatever this says.
    *
-   * <p>The default, 255, is the column of the production store ({@code
-   * services/housetables/ddl/0000__baseline.sql}). Set it to 128 where the House Tables service
-   * created its own tables from its bootstrap {@code schema.sql}, which declares {@code
-   * VARCHAR(128)}: there a rename to 129 to 255 characters would otherwise fail after its metadata
-   * file is written. Never set it above the column's real width. A value that is not positive means
-   * the default.
+   * <p>The default, 0, checks nothing: a rename goes to House Tables as it always did, and a name
+   * the column cannot hold fails at the row write, after the metadata file is written. Set it to
+   * have such renames refused early: 128 where the House Tables service created its own tables from
+   * its bootstrap {@code schema.sql}; on the production store ({@code
+   * services/housetables/ddl/0000__baseline.sql}) {@code user_table_row.table_id} is 255 wide, but
+   * {@code soft_deleted_user_table_row.table_id} only 128, so a table renamed to 129 to 255
+   * characters there cannot be soft-deleted, and 128 keeps every name deletable. Never set it above
+   * the column's real width. A value that is not positive means no check.
    */
-  @Value("${cluster.housetables.table-id-max-length:255}")
+  @Value("${cluster.housetables.table-id-max-length:0}")
   private int clusterHouseTablesTableIdMaxLength;
 
   @Value("${cluster.housetables.database.url:jdbc:h2:mem:htsdb;MODE=MYSQL;DB_CLOSE_DELAY=-1}")

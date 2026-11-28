@@ -1,5 +1,6 @@
 package com.linkedin.openhouse.tables.services;
 
+import com.linkedin.openhouse.cluster.configs.ClusterProperties;
 import com.linkedin.openhouse.common.api.spec.TableUri;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.tables.api.spec.v0.request.IcebergSnapshotsRequestBody;
@@ -39,6 +40,9 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
   @Autowired ReadBridgeStripProtection readBridgeStripProtection;
 
   @Autowired ClientCapabilityGate clientCapabilityGate;
+
+  @Autowired(required = false)
+  ClusterProperties clusterProperties;
 
   @Override
   public Pair<TableDto, Boolean> putIcebergSnapshots(
@@ -81,7 +85,8 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
               openHouseInternalRepository,
               authorizationUtils,
               clientCapabilityGate,
-              readBridgeStripProtection)
+              readBridgeStripProtection,
+              clusterProperties)
           .commit(
               new TableCommit(
                   TableIdentifier.of(databaseId, tableId),
@@ -101,7 +106,7 @@ public class IcebergSnapshotsServiceImpl implements IcebergSnapshotsService {
     tableDtoToSave = LockPolicyValidator.prepare(null, tableDtoToSave);
     try {
       // A format v3 table stores its column defaults as committed (see TableCommitCore).
-      if (!FormatVersionRule.writesFormatV3(null, tableDtoToSave)) {
+      if (!FormatVersionRule.writesFormatV3(clusterProperties, null, tableDtoToSave)) {
         tableDtoToSave = readBridgeStripProtection.prepare(tableDtoToSave);
       }
     } catch (ColumnDefaultException e) {
