@@ -97,10 +97,10 @@ public class IcebergRestRoutesBoundaryTest {
 
   /**
    * The config lists the spec routes served under this runtime and the OpenHouse capabilities
-   * registered: the reads, the metrics report, the table writes and the views on every line, scan
-   * the view register on 1.12; never scan planning or credentials, which the default cluster
-   * configuration leaves off. Reporting stays off unless the client's own configuration turns it
-   * on.
+   * registered: the reads, the metrics report, the table and namespace writes and the views on
+   * every line, the view register on 1.12, and scan planning and credentials on 1.12 only where the
+   * cluster turns scan planning on, which the embedded server's default configuration does not.
+   * Reporting stays off unless the client's own configuration turns it on.
    */
   @Test
   public void theConfigAdvertisesWhatThisIcebergRuntimeServes() throws IOException {
@@ -124,21 +124,38 @@ public class IcebergRestRoutesBoundaryTest {
         endpoints.toString());
     Assertions.assertTrue(
         endpoints.contains("POST /v1/{prefix}/transactions/commit"), endpoints.toString());
-    // The scan planning and credentials routes are not served with the default cluster
-    // configuration (cluster.tables.irc.scan-planning.enabled is off), on either line.
-    Assertions.assertFalse(
+    // The scan planning and credentials routes are served where Iceberg has their classes (the
+    // 1.12 line) and the cluster turns scan planning on; the embedded server's default
+    // configuration leaves it off, so here they are served on neither line.
+    boolean planning =
+        classPresent("org.apache.iceberg.rest.requests.PlanTableScanRequest")
+            && Boolean.parseBoolean(
+                context.getEnvironment().getProperty("cluster.tables.irc.scan-planning.enabled"));
+    Assertions.assertFalse(planning, "scan planning is off in the default configuration");
+    Assertions.assertEquals(
+        planning,
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/tables/{table}/plan"),
         endpoints.toString());
-    Assertions.assertFalse(
+    Assertions.assertEquals(
+        planning,
         endpoints.contains("GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials"),
         endpoints.toString());
-    // So is the view register route, which reads Iceberg 1.12's RegisterViewRequest.
+    // The view register route is served where Iceberg has its class, RegisterViewRequest (1.12).
     boolean registerView = classPresent("org.apache.iceberg.rest.requests.RegisterViewRequest");
     Assertions.assertEquals(
         registerView,
         endpoints.contains("POST /v1/{prefix}/namespaces/{namespace}/register-view"),
         endpoints.toString());
-    Assertions.assertEquals(19 + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
+    // The namespace writes, on every line.
+    for (String write :
+        Arrays.asList(
+            "POST /v1/{prefix}/namespaces",
+            "DELETE /v1/{prefix}/namespaces/{namespace}",
+            "POST /v1/{prefix}/namespaces/{namespace}/properties")) {
+      Assertions.assertTrue(endpoints.contains(write), endpoints.toString());
+    }
+    Assertions.assertEquals(
+        22 + (planning ? 2 : 0) + (registerView ? 1 : 0), endpoints.size(), endpoints.toString());
     Assertions.assertEquals("policies,grants,unlock", capabilities);
   }
 

@@ -27,8 +27,10 @@ import org.apache.spark.sql.SparkSession;
  *       the baseline outcome in the engine, and that class is not here.
  * </ul>
  *
- * No statement differs because of Iceberg 1.12 alone (c), and none is a defect of the IRC routes or
- * of the SQL extensions (e).
+ * No statement differs because of Iceberg 1.12 alone (c), and none is a defect of the SQL
+ * extensions (e). Two outcomes of the namespace statements over stored namespace records are known
+ * defects of the namespace model, marked KNOWN DEFECT in their reason (a created namespace is not
+ * listed; a database that holds tables has no record whose properties could be set).
  *
  * <p>A {@code RENAME TO} target that names the catalog (s13b, and the cross-catalog refusal of s29)
  * is not on the list: the OpenHouse catalog class decided those outcomes in the engine too, and the
@@ -44,10 +46,6 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
   private static final String BAD_REQUEST = "org.apache.iceberg.exceptions.BadRequestException";
   private static final String JAVA_CLIENT_FAILURE =
       "com.linkedin.openhouse.javaclient.exception.WebClientResponseWithMessageException";
-  private static final String NAMESPACES_STAY_UNSUPPORTED =
-      "Decision D20: namespace create, update and drop stay unsupported over IRC, as natively."
-          + " Still an UnsupportedOperationException. The wording is the Iceberg 1.12 client's,"
-          + " which refuses a route the service's config does not list before sending anything.";
 
   @Override
   protected SparkSession sparkSession() throws Exception {
@@ -80,11 +78,13 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                 // ---- s19, s24: namespace statements.
                 Difference.on("s19", "CREATE NAMESPACE openhouse.smoke_t1_new_ns")
                     .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-                    .here(
-                        fails(
-                            UNSUPPORTED,
-                            "Server does not support endpoint: POST /v1/{prefix}/namespaces"))
-                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                    .here(succeeds())
+                    .because(
+                        IRC_UNDECIDED,
+                        "The IRC create route stores a namespace record for a name that holds"
+                            + " nothing. KNOWN DEFECT: the namespace is then not listed (SHOW"
+                            + " DATABASES), whose list comes from tables only: House Tables has no"
+                            + " list of records."),
                 // Baseline: refused. Here it answers.
                 Difference.on("s24", "DESCRIBE NAMESPACE " + CAT_DB)
                     .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
@@ -98,17 +98,27 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                     .baseline(fails(UNSUPPORTED, "Set properties on a database is not supported"))
                     .here(
                         fails(
-                            UNSUPPORTED,
-                            "Server does not support endpoint:"
-                                + " POST /v1/{prefix}/namespaces/{namespace}/properties"))
-                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                            "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
+                            "[SCHEMA_NOT_FOUND] The schema `" + DB + "` cannot be found."))
+                    .because(
+                        IRC_UNDECIDED,
+                        "KNOWN DEFECT, a consequence of the two existence rules: the namespace"
+                            + " exists by holding tables, but its properties are those of a"
+                            + " namespace record, and it has none, so the IRC update answers the"
+                            + " namespace service's 404 for a missing record. No record is created"
+                            + " implicitly; nor can one be created for it, since a create of a"
+                            + " namespace that holds tables is a conflict."),
                 Difference.on("s24", "DROP NAMESPACE " + CAT_DB)
                     .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
                     .here(
                         fails(
-                            UNSUPPORTED,
-                            "Server does not support endpoint: DELETE /v1/{prefix}/namespaces/{namespace}"))
-                    .because(DECIDED, NAMESPACES_STAY_UNSUPPORTED),
+                            "org.apache.iceberg.exceptions.NamespaceNotEmptyException",
+                            "Namespace " + DB + " is not empty"))
+                    .because(
+                        IRC_UNDECIDED,
+                        "Still refused, now as the spec's NamespaceNotEmptyException: the IRC drop"
+                            + " refuses a namespace that holds a table or a view, and nothing is"
+                            + " dropped."),
                 // Baseline: refused. Here it answers, with no row.
                 Difference.on("s24", "SHOW NAMESPACES IN " + CAT_DB)
                     .baseline(
@@ -130,13 +140,12 @@ public class Spark42IrcSparkSqlSmokeTest extends SparkSqlSmokeScenarios {
                             + " engine."),
                 Difference.on("s19", "USE openhouse.smoke_t1_new_ns")
                     .baseline(fails(UNSUPPORTED, "Describing database is not supported"))
-                    .here(
-                        fails(
-                            "org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException",
-                            "[SCHEMA_NOT_FOUND] The schema `openhouse`.`smoke_t1_new_ns` cannot"
-                                + " be found."))
+                    .here(succeeds())
                     .because(
-                        DECIDED, NAMESPACES_STAY_UNSUPPORTED + " So the namespace does not exist."),
+                        IRC_UNDECIDED,
+                        "CREATE NAMESPACE stored a record, which the IRC namespace route counts as"
+                            + " existence, so the check passes; OpenHouseCatalog refused it in the"
+                            + " engine."),
 
                 // ---- s22: the snapshot a replace adds. Baseline: an append.
                 Difference.on(

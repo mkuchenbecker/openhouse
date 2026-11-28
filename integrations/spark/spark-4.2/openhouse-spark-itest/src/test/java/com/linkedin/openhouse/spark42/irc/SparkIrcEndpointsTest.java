@@ -211,22 +211,34 @@ public class SparkIrcEndpointsTest {
     awaitRequest("GET /iceberg/v1/namespaces/irc42/views 200");
   }
 
-  // ---------------------------------------------------------------- unserved routes
+  // ---------------------------------------------------------------- namespace writes
 
   /**
-   * Statements for spec routes the service does not serve fail on the client with Iceberg's "does
-   * not support endpoint" error, and send nothing (they used to reach the server and get a 406).
+   * The namespace writes are served and listed, so the statements reach the service (they used to
+   * be refused on the client with "does not support endpoint"): CREATE NAMESPACE of a new name
+   * stores a record (200) and DROP NAMESPACE removes it (204); ALTER NAMESPACE of a database that
+   * only holds tables meets no record to update (404, a missing namespace to Spark).
    */
   @Test
-  void unservedRoutesAreRefusedOnTheClient() throws Exception {
-    assertRefusedLocally(
-        failure("CREATE NAMESPACE irc.irc42_new_ns"), "POST /v1/{prefix}/namespaces");
-    assertRefusedLocally(
-        failure("ALTER NAMESPACE irc." + DB + " SET PROPERTIES ('k'='v')"),
-        "POST /v1/{prefix}/namespaces/{namespace}/properties");
-    for (String path : new String[] {"POST /iceberg/v1/namespaces ", "/properties "}) {
-      Assertions.assertEquals(Collections.emptyList(), requestsFor(path), path);
+  void namespaceWritesReachTheService() throws Exception {
+    rows("CREATE NAMESPACE irc.irc42_new_ns");
+    awaitRequest("POST /iceberg/v1/namespaces 200");
+    try (RESTCatalog catalog = rest(READER)) {
+      Assertions.assertTrue(catalog.namespaceExists(Namespace.of("irc42_new_ns")));
+      // Spark adds its own owner property to the statement, and the record stores it.
+      Assertions.assertEquals(
+          java.util.Collections.singletonMap(
+              "owner", IrcSpark.session().sparkContext().sparkUser()),
+          catalog.loadNamespaceMetadata(Namespace.of("irc42_new_ns")));
     }
+    Throwable alter = failure("ALTER NAMESPACE irc." + DB + " SET PROPERTIES ('k'='v')");
+    Assertions.assertTrue(
+        String.valueOf(alter).contains("NoSuchNamespaceException")
+            || root(alter).getClass().getSimpleName().equals("NoSuchNamespaceException"),
+        String.valueOf(alter));
+    awaitRequest("POST /iceberg/v1/namespaces/" + DB + "/properties 404");
+    rows("DROP NAMESPACE irc.irc42_new_ns");
+    awaitRequest("DELETE /iceberg/v1/namespaces/irc42_new_ns 204");
   }
 
   // ---------------------------------------------------------------- newly served routes

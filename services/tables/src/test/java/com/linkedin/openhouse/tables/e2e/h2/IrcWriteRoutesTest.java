@@ -1444,19 +1444,20 @@ public class IrcWriteRoutesTest {
     assertEquals(before, stored("irc_w_ml"));
   }
 
-  // ---------------------------------------------------------------- still unserved
+  // ---------------------------------------------------------------- namespace writes
 
   /**
-   * Namespace writes. (Metrics reports, register and the multi-table commit route are served now;
-   * for the last see IrcTransactionRouteTest.)
+   * Namespace writes are served (IrcNamespaceRoutesTest), so each answers its route's own refusal
+   * of these requests, no longer the catch-all's 406: an empty create body names no namespace
+   * (400), and a missing namespace has no record to update or drop (404).
    */
   @Test
-  void namespaceWritesStillAnswer406() throws Exception {
+  void namespaceWritesAreServed() throws Exception {
     for (Object[] route :
         new Object[][] {
-          {HttpMethod.POST, "/v1/namespaces"},
-          {HttpMethod.DELETE, "/v1/namespaces/irc_w_ns"},
-          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/properties"}
+          {HttpMethod.POST, "/v1/namespaces", 400, "BadRequestException"},
+          {HttpMethod.DELETE, "/v1/namespaces/irc_w_ns", 404, "NoSuchNamespaceException"},
+          {HttpMethod.POST, "/v1/namespaces/irc_w_ns/properties", 404, "NoSuchNamespaceException"}
         }) {
       assertIrcError(
           IrcHttp.perform(
@@ -1464,8 +1465,8 @@ public class IrcWriteRoutesTest {
               IrcHttp.request((HttpMethod) route[0], (String) route[1])
                   .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                   .content("{}")),
-          406,
-          "UnsupportedOperationException");
+          (Integer) route[2],
+          (String) route[3]);
     }
   }
 
