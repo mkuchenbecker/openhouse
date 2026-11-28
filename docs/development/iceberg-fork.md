@@ -399,7 +399,12 @@ a developer's build):
   not part of the verdict; each project prints `<project>: <files> files, <failures> failures` and
   each failure on its own line): what only another job uses (the Spark 4.2 apps' Jackson JAX-RS
   jars, the Spark 3.5 itest's JUnit Platform suite, the Docker job's OpenTelemetry agent) is then in
-  the cache the next jobs restore.
+  the cache the next jobs restore. The fetch is one Gradle command, so one request Central refuses
+  past the retries disables Central for the rest of it and every file still missing fails ("Repository
+  maven is disabled due to earlier error below", with the refused request as the cause); the cache
+  saved then lacks them until a later writer fetches them. When failures are left the step therefore
+  runs the task once more, a minute later, in a new command, and what still fails is a warning
+  annotation on the run (`The writer's fetch left N resolution failures`).
 
 Each job prints the restored cache's age at the start and ends by listing the dependency files it
 downloaded beyond the restored cache (`scripts/ci/list-downloaded-dependencies.sh`), with a warning
@@ -418,16 +423,16 @@ the download lists of the jobs of a pull request run that started after the writ
 gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id> \
   --jq '.steps[] | select(.name | startswith("Fetch")) | [.conclusion, .started_at, .completed_at] | @tsv'
 gh api repos/mkuchenbecker/openhouse/actions/jobs/<rest job id>/logs \
-  | sed -n '/Run .\/gradlew .*ciResolveDependencies/,/BUILD /p' \
-  | grep -E ' [0-9]+ files, [0-9]+ failures$|could not resolve:|BUILD ' | grep -vE ' 0 failures$'
+  | grep -E 'Fetch left [0-9a-z ]+ failures|Fetch failures left: |could not resolve:' | cut -c1-300
 for j in $(gh api "repos/mkuchenbecker/openhouse/actions/runs/<run id>/jobs?per_page=100" --jq '.jobs[].id'); do
   gh api repos/mkuchenbecker/openhouse/actions/jobs/$j/logs \
     | grep -hE 'beyond the restored Gradle cache|Restored Gradle cache: [0-9]+ days|status code 429|Failed to get resource'
 done
 ```
 
-The second command prints only the `BUILD` line when nothing failed; any project line with failures
-or `could not resolve:` line, or `BUILD FAILED`, is a fetch that did not complete.
+The second command prints `Fetch failures left: 0` when the fetch completed (after a second try,
+also `Fetch left N failures; once more in 60 s`); anything else, or `could not resolve:` lines with
+their cause, is a fetch that left the cache incomplete.
 
 ## Spark 4.2 over the IRC read routes
 

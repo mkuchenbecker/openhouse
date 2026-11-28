@@ -342,13 +342,8 @@ public class IrcNamespaceRoutesTest {
     assertFalse(hasRecord("irc_ns_drop_both"));
   }
 
-  /**
-   * A namespace that holds a view and no table is not empty either, while its views are enabled:
-   * the drop asks the views gate the view routes ask.
-   */
-  @Test
-  void aNamespaceThatHoldsOnlyAViewIsNotDroppedWhileItsViewsAreEnabled() throws Exception {
-    String db = "irc_ns_drop_viewed";
+  /** A database {@code db} that holds view {@code v} and no table, with its views enabled. */
+  private void viewOnly(String db) throws Exception {
     NativeViewHttp.enableViews(toggles, db);
     table(db, "t");
     views.add(new String[] {db, "v"});
@@ -363,21 +358,123 @@ public class IrcNamespaceRoutesTest {
                 Collections.emptyMap()));
     assertEquals(201, NativeViewHttp.code(view), NativeViewHttp.body(view));
     CommitPathHttp.delete(mvc, db, "t").andExpect(status().isNoContent());
-    tables.clear();
-    assertIrcError(dropNamespace(mvc, db), 409, "NamespaceNotEmptyException");
-    assertEquals(200, NativeViewHttp.code(NativeViewHttp.get(mvc, db, "v")));
+    tables.removeIf(key -> key[0].equals(db));
+  }
 
-    // With the database's views disabled it holds no views for these routes (its view list is
-    // empty), so it is empty: a drop meets no record (404), a create stores one, a drop removes it.
-    toggles.delete(viewsToggle(db));
-    try {
-      assertIrcError(dropNamespace(mvc, db), 404, "NoSuchNamespaceException");
-      created(db, Collections.emptyMap());
-      assertEquals(204, dropNamespace(mvc, db).getResponse().getStatus());
-      assertFalse(hasRecord(db));
-    } finally {
-      NativeViewHttp.enableViews(toggles, db);
+  /**
+   * HEAD, load, create and drop of {@code db}, in that order, with the answers expected, and the
+   * rule that ties them: one existence rule for every route. If HEAD finds the namespace, load
+   * finds it, create is the conflict of an existing namespace, and drop never says it is missing;
+   * if HEAD does not, load is 404, drop is 404 and create stores a record. Returns the drop's
+   * status.
+   */
+  private int assertOneExistenceRule(String db, int expectedDrop) throws Exception {
+    int head = IrcHttp.head(mvc, "/v1/namespaces/" + db).getResponse().getStatus();
+    assertEquals(
+        expectedDrop == 404,
+        head == 404,
+        db + ": a drop answering " + expectedDrop + " was expected, but HEAD answered " + head);
+    MvcResult load = IrcHttp.get(mvc, "/v1/namespaces/" + db);
+    if (head == 204) {
+      assertEquals(200, load.getResponse().getStatus(), db + ": " + body(load));
+      assertIrcError(
+          createNamespace(mvc, db, Collections.emptyMap()), 409, "AlreadyExistsException");
+      MvcResult drop = dropNamespace(mvc, db);
+      int dropped = drop.getResponse().getStatus();
+      assertTrue(dropped != 404, db + ": exists, but drop says it does not: " + body(drop));
+      assertEquals(expectedDrop, dropped, db + ": " + body(drop));
+      return dropped;
     }
+    assertEquals(404, head, db);
+    assertIrcError(load, 404, "NoSuchNamespaceException");
+    assertIrcError(dropNamespace(mvc, db), 404, "NoSuchNamespaceException");
+    namespaces.add(db);
+    assertEquals(
+        200, createNamespace(mvc, db, Collections.emptyMap()).getResponse().getStatus(), db);
+    return 404;
+  }
+
+  /**
+   * One existence rule on every route, for each kind of namespace: a database that holds only a
+   * view (views enabled, and views disabled, when its view list is empty but it still holds the
+   * view), one that holds a table, one with a record only, and a name with nothing. A namespace
+   * that holds something is not empty (drop 409) whether or not the caller can list what it holds.
+   */
+  @Test
+  void everyRouteFollowsOneExistenceRule() throws Exception {
+    viewOnly("irc_ns_one_view_on");
+    assertEquals(
+        204, IrcHttp.head(mvc, "/v1/namespaces/irc_ns_one_view_on").getResponse().getStatus());
+    assertOneExistenceRule("irc_ns_one_view_on", 409);
+    assertFalse(hasRecord("irc_ns_one_view_on"));
+
+    viewOnly("irc_ns_one_view_off");
+    toggles.delete(viewsToggle("irc_ns_one_view_off"));
+    try {
+      MvcResult listViews = IrcHttp.get(mvc, IrcViewWrite.views("irc_ns_one_view_off"));
+      assertEquals(200, listViews.getResponse().getStatus(), body(listViews));
+      assertTrue(
+          IrcClientParsers.parse(body(listViews), ListTablesResponse.class)
+              .identifiers()
+              .isEmpty());
+      assertEquals(
+          204, IrcHttp.head(mvc, "/v1/namespaces/irc_ns_one_view_off").getResponse().getStatus());
+      assertOneExistenceRule("irc_ns_one_view_off", 409);
+      assertFalse(hasRecord("irc_ns_one_view_off"));
+    } finally {
+      NativeViewHttp.enableViews(toggles, "irc_ns_one_view_off");
+    }
+
+    table("irc_ns_one_table", "t1");
+    assertOneExistenceRule("irc_ns_one_table", 409);
+
+    created("irc_ns_one_record", Collections.emptyMap());
+    assertOneExistenceRule("irc_ns_one_record", 204);
+    assertFalse(hasRecord("irc_ns_one_record"));
+
+    assertOneExistenceRule("irc_ns_one_none", 404);
+    assertTrue(hasRecord("irc_ns_one_none"));
+  }
+
+  /**
+   * The one existence rule ignores letter case, as House Tables' lookups and namespace records do:
+   * a database is the same namespace under any spelling of its name, whether it holds views, holds
+   * tables or has a record. A namespace found only through the database list loads with its stored
+   * spelling.
+   */
+  @Test
+  void theOneExistenceRuleIgnoresLetterCase() throws Exception {
+    // Views in irc_ns_mix_vr and a record created as IRC_NS_MIX_VR: the drop of the upper-case
+    // spelling is "not empty", and the record stays.
+    created("IRC_NS_MIX_VR", Collections.singletonMap("k", "v"));
+    viewOnly("irc_ns_mix_vr");
+    assertOneExistenceRule("IRC_NS_MIX_VR", 409);
+    assertTrue(hasRecord("irc_ns_mix_vr"));
+    assertEquals(
+        Namespace.of("IRC_NS_MIX_VR"),
+        IrcClientParsers.parse(
+                body(IrcHttp.get(mvc, "/v1/namespaces/irc_ns_mix_vr")), GetNamespaceResponse.class)
+            .namespace());
+
+    // Views in irc_ns_mix_v, no record: found under any spelling, with its stored spelling.
+    viewOnly("irc_ns_mix_v");
+    assertOneExistenceRule("IRC_NS_MIX_V", 409);
+    assertFalse(hasRecord("irc_ns_mix_v"));
+    assertEquals(
+        Namespace.of("irc_ns_mix_v"),
+        IrcClientParsers.parse(
+                body(IrcHttp.get(mvc, "/v1/namespaces/IRC_NS_MIX_V")), GetNamespaceResponse.class)
+            .namespace());
+
+    // Tables in irc_ns_mix_t: already true before; pinned.
+    table("irc_ns_mix_t", "t1");
+    assertOneExistenceRule("IRC_NS_MIX_T", 409);
+    assertFalse(hasRecord("irc_ns_mix_t"));
+
+    // A record created as IRC_NS_MIX_R only, through the lower-case spelling.
+    created("IRC_NS_MIX_R", Collections.emptyMap());
+    assertOneExistenceRule("irc_ns_mix_r", 204);
+    assertFalse(hasRecord("irc_ns_mix_r"));
   }
 
   /** The toggle row {@link NativeViewHttp#enableViews} saves for {@code db}. */
