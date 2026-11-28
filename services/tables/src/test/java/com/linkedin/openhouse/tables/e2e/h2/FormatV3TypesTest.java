@@ -38,8 +38,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 
 /**
- * The column types that exist only from Iceberg format version 3 on (work item X5), type by type,
- * through the native API and the Iceberg REST routes, on a cluster with {@code
+ * The column types that exist only from Iceberg format version 3 on, type by type, through the
+ * native API and the Iceberg REST routes, on a cluster with {@code
  * cluster.iceberg.format-v3.enabled} on: a create with a column of the type, the column added by
  * schema evolution, and the same on a format v2 table. Schemas are written as schema JSON, the way
  * a client sends them, so the native cases compile and run on both Iceberg lines. Variant columns
@@ -221,12 +221,13 @@ public class FormatV3TypesTest {
     assertTrue(answer.message.contains(part), answer.toString());
   }
 
-  /** The refusal of a type OpenHouse does not take on format v3 tables: names it, why and X5. */
+  /** The refusal of a type OpenHouse does not take on format v3 tables: names it and says why. */
   private static void refusedOnV3(String type, Answer answer) {
     refused(answer, 400, "FORMAT_V3_TYPE_NOT_SUPPORTED: column v (");
     assertTrue(answer.message.contains("OpenHouse does not take the type"), answer.toString());
     assertTrue(answer.message.contains(REFUSED.get(type)), answer.toString());
-    assertTrue(answer.message.contains("work item X5"), answer.toString());
+    assertTrue(
+        answer.message.contains(" on format v3 tables: " + REFUSED.get(type)), answer.toString());
   }
 
   /** The refusal of a variant column on a format v3 table that writes ORC. */
@@ -255,8 +256,8 @@ public class FormatV3TypesTest {
 
   /**
    * timestamp_ns, timestamptz_ns, geometry and geography are refused on a v3 table through the
-   * native API, by create and by schema evolution, with a message that names the type, says why and
-   * names X5; nothing is left behind.
+   * native API, by create and by schema evolution, with a message that names the type and says why;
+   * nothing is left behind.
    */
   @Test
   void theRefusedTypesAreRefusedOnAV3TableThroughTheNativeApi() throws Exception {

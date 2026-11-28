@@ -460,9 +460,10 @@ public class MetadataLocationLimitTest {
   }
 
   /**
-   * PINNED DEFECT of the native API, not part of V15 and not changed by it (decision D9): a rename
-   * to a name longer than the create's 128 characters succeeds, and the table can then not be
-   * updated through the native PUT, whose body may not carry such a name.
+   * PINNED DEFECT of the native API, which the limits tested here leave as it is (a defect of
+   * LinkedIn's line is pinned, not fixed): a rename to a name longer than the create's 128
+   * characters succeeds, and the table can then not be updated through the native PUT, whose body
+   * may not carry such a name.
    */
   @Test
   void aTableRenamedToMoreThan128CharactersCanNoLongerBeUpdatedNatively() throws Exception {

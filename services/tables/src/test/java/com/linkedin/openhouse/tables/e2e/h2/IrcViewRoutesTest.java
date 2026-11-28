@@ -366,9 +366,9 @@ public class IrcViewRoutesTest {
   }
 
   /**
-   * The server owns view locations (D30): a create that names a location is created where the
-   * server puts the view, exactly as the same create without one, and the response says where.
-   * Nothing is written at the requested location. Before, such a create was refused with 400.
+   * The server owns view locations: a create that names a location is created where the server puts
+   * the view, exactly as the same create without one, and the response says where. Nothing is
+   * written at the requested location. Before, such a create was refused with 400.
    */
   @Test
   void createThatNamesALocationIsCreatedAtTheServersLocation() throws Exception {
@@ -413,8 +413,8 @@ public class IrcViewRoutesTest {
   }
 
   /**
-   * The keys pull request 96 refuses on IRC table writes, on a view: the OpenHouse client sends a
-   * view's properties raw (it rewrites none of them, unlike a table's policy keys), so the same raw
+   * The policy keys of the IRC table writes, on a view: the OpenHouse client sends a view's
+   * properties raw (it rewrites none of them, unlike a table's policy keys), so the same raw
    * request reaches both APIs. Raw {@code policies} is a reserved view key, refused by the native
    * validator on both; {@code updated.openhouse.policy} is an ordinary view property on both.
    */
@@ -542,9 +542,9 @@ public class IrcViewRoutesTest {
   }
 
   /**
-   * A replace that names a location (D30; {@code RESTViewBuilder.replace} then sends a set-location
-   * with the new version) keeps the view where it is: it stores what the same replace without a
-   * location stores. A commit that only sets the location is still refused ({@link
+   * A replace that names a location ({@code RESTViewBuilder.replace} then sends a set-location with
+   * the new version) keeps the view where it is: it stores what the same replace without a location
+   * stores. A commit that only sets the location is still refused ({@link
    * #aCommitThatSetsTheLocationIsRefusedAndNamesTheField}).
    */
   @Test

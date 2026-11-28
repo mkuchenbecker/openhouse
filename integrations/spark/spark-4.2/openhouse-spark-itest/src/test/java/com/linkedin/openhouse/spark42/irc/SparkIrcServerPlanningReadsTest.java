@@ -23,13 +23,13 @@ import org.junit.jupiter.api.Test;
 
 /**
  * Spark 4.2 reads the same rows with server-side planning as with client-side planning, for the
- * reads {@link SparkIrcScanPlanningTest} does not cover (work item V11b): a join of two planned
- * tables, aggregates with pushed filters, time travel by snapshot id and by timestamp, branch and
- * tag reads (with a column added after them), the {@code files}, {@code snapshots}, {@code entries}
- * and {@code partitions} metadata tables, an incremental read, a table of a few thousand files, and
- * a LIMIT over files whose rows are partly deleted. The same tables are read through two catalogs
- * of one service: {@code pr_client} ({@code scan-planning-mode=client}) and {@code pr_server}
- * ({@code scan-planning-mode=server}).
+ * reads {@link SparkIrcScanPlanningTest} does not cover: a join of two planned tables, aggregates
+ * with pushed filters, time travel by snapshot id and by timestamp, branch and tag reads (with a
+ * column added after them), the {@code files}, {@code snapshots}, {@code entries} and {@code
+ * partitions} metadata tables, an incremental read, a table of a few thousand files, and a LIMIT
+ * over files whose rows are partly deleted. The same tables are read through two catalogs of one
+ * service: {@code pr_client} ({@code scan-planning-mode=client}) and {@code pr_server} ({@code
+ * scan-planning-mode=server}).
  *
  * <p>Some of these reads never plan through the route, whichever catalog: Iceberg 1.12's {@code
  * RESTTable} plans only its own table scans on the server, so metadata tables and incremental reads
@@ -347,14 +347,13 @@ public class SparkIrcServerPlanningReadsTest {
   }
 
   /**
-   * A column added after the snapshot a read pins (V11e). Spark 4.2 pins a read of main to the
-   * current snapshot and projects the table's current schema, so Iceberg 1.12's {@code
-   * RESTTableScan} sends {@code use-snapshot-schema=true} with names the snapshot's schema lacks.
-   * The service now projects the current schema's columns there, as client planning does, so each
-   * statement gives what client planning gives: with no snapshot since the column was added (a
-   * filter true for nulls, one false for nulls, a projection only), with one snapshot written
-   * since, and time travel to the older snapshot naming the newer column. Until V11e the filters
-   * with no snapshot since were a 400 with server planning.
+   * A column added after the snapshot a read pins. Spark 4.2 pins a read of main to the current
+   * snapshot and projects the table's current schema, so Iceberg 1.12's {@code RESTTableScan} sends
+   * {@code use-snapshot-schema=true} with names the snapshot's schema lacks. The service now
+   * projects the current schema's columns there, as client planning does, so each statement gives
+   * what client planning gives: with no snapshot since the column was added (a filter true for
+   * nulls, one false for nulls, a projection only), with one snapshot written since, and time
+   * travel to the older snapshot naming the newer column.
    */
   @Test
   void aColumnAddedAfterTheCurrentSnapshotReadsTheSameAsClientPlanning() throws Exception {

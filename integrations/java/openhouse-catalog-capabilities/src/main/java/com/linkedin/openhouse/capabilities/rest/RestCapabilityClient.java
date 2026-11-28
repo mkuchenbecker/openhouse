@@ -22,8 +22,7 @@ import org.apache.iceberg.rest.ResourcePaths;
 
 /**
  * GRANT, REVOKE, SHOW GRANTS and UNLOCK for a plain Iceberg {@code RESTCatalog}: a small client for
- * the OpenHouse routes under the catalog's IRC base path, which sits beside the unmodified catalog
- * (decision D23).
+ * the OpenHouse routes under the catalog's IRC base path, which sits beside the unmodified catalog.
  *
  * <ul>
  *   <li>{@code POST|GET v1/{prefix}/namespaces/{ns}/tables/{t}/openhouse/acl-policies}

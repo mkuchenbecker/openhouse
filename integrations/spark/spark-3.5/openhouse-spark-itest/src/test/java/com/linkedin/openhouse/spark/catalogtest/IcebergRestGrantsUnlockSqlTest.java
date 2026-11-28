@@ -359,11 +359,11 @@ public class IcebergRestGrantsUnlockSqlTest extends OpenHouseSparkITest {
   private static final String ONLY = "_only";
 
   /**
-   * A grant has an effect (work item T6): {@value GrantStoringAuthorization#ONLY_GRANTED} holds
-   * only the privileges of what is granted to it, so it is refused a read until SELECT is granted,
-   * reads after the grant, and is refused again after the revoke; the grant gives what it names and
-   * not a write. Through the native routes (OpenHouse catalog) and the IRC routes (REST catalog),
-   * with the same outcome and the same stored state.
+   * A grant has an effect: {@value GrantStoringAuthorization#ONLY_GRANTED} holds only the
+   * privileges of what is granted to it, so it is refused a read until SELECT is granted, reads
+   * after the grant, and is refused again after the revoke; the grant gives what it names and not a
+   * write. Through the native routes (OpenHouse catalog) and the IRC routes (REST catalog), with
+   * the same outcome and the same stored state.
    */
   @Test
   void aTableGrantLetsThePrincipalReadAndTheRevokeTakesItAway() {

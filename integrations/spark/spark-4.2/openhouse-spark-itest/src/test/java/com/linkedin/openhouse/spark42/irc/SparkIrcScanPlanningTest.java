@@ -22,9 +22,9 @@ import org.junit.jupiter.api.Test;
  * the default) or on the server (catalog {@code irc_plan}: the same service and token, with the
  * catalog property {@code scan-planning-mode=server}), for SELECTs with filters, projections, a
  * LIMIT and time travel, on a format v2 table with position deletes (merge-on-read DELETE). On the
- * format v3 service, a table with deletion vectors is refused with server planning (V11e). The
- * service's access log shows that the server-planning catalog sent plan requests and the
- * client-planning one sent none.
+ * format v3 service, a table with deletion vectors is refused with server planning. The service's
+ * access log shows that the server-planning catalog sent plan requests and the client-planning one
+ * sent none.
  *
  * <p>Every table is in {@value #DB}, so that {@link SparkIrcNoPlanRequestTest} can tell this test's
  * plan requests from any other.
@@ -188,9 +188,8 @@ public class SparkIrcScanPlanningTest {
   }
 
   /**
-   * The service refuses to plan a format v3 table (V11e): every server-planned read of the table
-   * with deletion vectors fails visibly with the refusal, and client planning reads it. Until V11e
-   * this test compared the rows read either way; a server-planned v3 read is no longer served.
+   * The service refuses to plan a format v3 table: every server-planned read of the table with
+   * deletion vectors fails visibly with the refusal, and client planning reads it.
    */
   @Test
   void aFormatV3TableIsRefusedWithServerPlanning() throws Exception {

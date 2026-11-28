@@ -27,8 +27,8 @@ pluginManagement {
 // Iceberg 1.12 built from the commit pinned in scripts/iceberg-fork/iceberg-fork.properties.
 //
 // -PicebergLinkedIn builds the reference line instead: the Iceberg 1.5 variant against LinkedIn's
-// com.linkedin.iceberg 1.5.2 releases, the behavior the 1.12 line is measured against (decision
-// D8). The modules that need Iceberg 1.12 are not in that build.
+// com.linkedin.iceberg 1.5.2 releases, the behavior the 1.12 line is measured against. The modules
+// that need Iceberg 1.12 are not in that build.
 def icebergLinkedIn = providers.gradleProperty('icebergLinkedIn').present
 // -PicebergFork selected the 1.12 line while it was opt-in. It is accepted for one more cycle so
 // that commands and branches written before the flip do not break, and does nothing.
@@ -53,21 +53,21 @@ include ':client:tableclient'
 include ':client:optimizerclient'
 include ':client:secureclient'
 
-// OpenHouse features as capabilities (D23): plain Java, no Iceberg-line or Scala suffix, shared by
+// OpenHouse features as capabilities: plain Java, no Iceberg-line or Scala suffix, shared by
 // every Spark extensions line.
 include ':integrations:java:openhouse-catalog-capabilities'
 include ':integrations:java:iceberg-1.5:openhouse-java-runtime'
 include ':integrations:java:iceberg-1.5:openhouse-java-itest'
 include ':integrations:spark:spark-3.5:openhouse-spark-runtime'
 include ':integrations:spark:spark-3.5:openhouse-spark-itest'
-// Spark 4.2 on the fork's Iceberg 1.12 runtime (N3): the OpenHouse SQL extensions ported to Spark 4.2
+// Spark 4.2 on the fork's Iceberg 1.12 runtime: the OpenHouse SQL extensions ported to Spark 4.2
 // / Scala 2.13 and the IRC itest. Both need Iceberg 1.12, so they are not in the reference build.
 if (icebergFork) {
   include ':integrations:spark:spark-4.2:openhouse-spark-runtime'
   include ':integrations:spark:spark-4.2:openhouse-spark-itest'
   // The maintenance jobs on Spark 4.2: apps/spark-3.5's sources built for Spark 4.2 / Scala 2.13.
   include ':apps:spark-4.2'
-  // Apache Iceberg's REST compatibility kit against the tables service's IRC routes (V13).
+  // Apache Iceberg's REST compatibility kit against the tables service's IRC routes.
   include ':integrations:java:openhouse-rest-compat-kit'
 }
 

@@ -49,9 +49,9 @@ import org.springframework.context.ConfigurableApplicationContext;
  * The tables service for the Spark 4.2 run of the Spark SQL smoke suite ({@code smokeTest}), in its
  * own JVM. It is the service the Spark 3.5 smoke suite embeds ({@link SpringH2TestApplication} with
  * the cluster defaults: ORC, format version 2, and the authorization backend that stores grants,
- * {@link GrantStoringAuthorization}, work item T6), so that a statement that behaves differently
- * here differs because of the engine or the catalog path and not because of the service. These
- * things are not the Spark 3.5 suite's service's:
+ * {@link GrantStoringAuthorization}), so that a statement that behaves differently here differs
+ * because of the engine or the catalog path and not because of the service. These things are not
+ * the Spark 3.5 suite's service's:
  *
  * <ul>
  *   <li>tables are kept in a directory of this run ({@link ServiceWarehouse}), not in {@code /tmp};

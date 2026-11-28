@@ -42,7 +42,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 /**
  * Native Iceberg column defaults (format v3 {@code initial-default} and {@code write-default})
  * through Spark 3.5 SQL with the OpenHouse catalog (the native API), against a tables service with
- * the format v3 switch on (work items W7 and X4).
+ * the format v3 switch on.
  *
  * <p>The defaulted columns are added through the Iceberg API, after rows were written: Spark SQL's
  * {@code ADD COLUMN ... DEFAULT} is refused by Iceberg's Spark 3.5 integration ({@link

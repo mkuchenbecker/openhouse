@@ -179,7 +179,7 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
                   tableDto.getTableUUID(),
                   tableDto.getTableCreator(),
                   tableProps);
-      // The history of an IRC create transaction, for the commit to keep (V14); never a request's.
+      // The history of an IRC create transaction, for the commit to keep; never a request's.
       tableProps.remove(CreateHistory.KEY);
       CreateHistoryScope.current().ifPresent(h -> tableProps.put(CreateHistory.KEY, h));
       SortOrder sortOrder = getIcebergSortOrder(tableDto, writeSchema);
@@ -332,9 +332,9 @@ public class OpenHouseInternalRepositoryImpl implements OpenHouseInternalReposit
   /**
    * A variant column on a write that leaves the table below format v3 gets the answer it always
    * had: before format v3 types could pass the request validation (a cluster that can have v3
-   * tables lets them through, work item X5), its schema walk refused a variant column with 400
-   * {@code schema : Unsupported type: variant}. Read before anything else of the write, as the
-   * validation was, and only for a schema with a variant column.
+   * tables lets them through), its schema walk refused a variant column with 400 {@code schema :
+   * Unsupported type: variant}. Read before anything else of the write, as the validation was, and
+   * only for a schema with a variant column.
    */
   private void refuseVariantBelowV3(
       TableIdentifier tableIdentifier, boolean exists, Schema writeSchema, TableDto tableDto) {

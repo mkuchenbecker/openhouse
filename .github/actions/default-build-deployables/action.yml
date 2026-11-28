@@ -37,7 +37,10 @@ runs:
           --profile with_jobs_scheduler
       shell: bash
       run: |
-        if unzip -Z1 build/openhouse-spark-apps-1.5_2.12/libs/openhouse-spark-apps-1.5_2.12-uber.jar | grep -x 'log4j2.properties'; then
+        # Listed first, so that a jar that is missing or cannot be read fails the step (under the
+        # runner's `bash -e`) instead of reading as a jar without the file.
+        unzip -Z1 build/openhouse-spark-apps-1.5_2.12/libs/openhouse-spark-apps-1.5_2.12-uber.jar > apps-uber-entries.txt
+        if grep -qx 'log4j2.properties' apps-uber-entries.txt; then
           echo "The apps uber jar carries log4j2.properties"
           exit 1
         fi

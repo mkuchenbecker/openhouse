@@ -9,8 +9,7 @@ import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.types.Types;
 
 /**
- * The Iceberg line this client runs on, which decides how column defaults work (decisions D5 and
- * D11 of the IRC plan).
+ * The Iceberg line this client runs on, which decides how column defaults work.
  *
  * <ul>
  *   <li>{@link #LEGACY}: LinkedIn's Iceberg 1.5.2 release. Tables are format v2 at most, and

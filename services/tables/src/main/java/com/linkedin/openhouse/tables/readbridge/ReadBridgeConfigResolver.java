@@ -33,7 +33,7 @@ public class ReadBridgeConfigResolver {
   /** Client contract: {@code openhouse.read-bridge.column-default.<fieldId>}. */
   public static final String COLUMN_DEFAULT_PREFIX = "openhouse.read-bridge.column-default.";
 
-  /** From this format version on, column defaults are Iceberg's native ones (work item W6). */
+  /** From this format version on, column defaults are Iceberg's native ones. */
   private static final int NATIVE_DEFAULTS_FORMAT_VERSION = 3;
 
   private final ColumnDefaultsSource columnDefaultsSource;

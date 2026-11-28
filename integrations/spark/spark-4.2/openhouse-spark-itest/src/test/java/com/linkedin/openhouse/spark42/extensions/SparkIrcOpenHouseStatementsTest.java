@@ -24,9 +24,8 @@ import org.junit.jupiter.api.TestInstance;
  * Spark 3.5 itest's {@code IcebergRestOpenHouseStatementsTest} pins from Spark 3.5 over the same
  * kind of catalog.
  *
- * <p>GRANT, REVOKE, SHOW GRANTS and UNLOCK reach the server through the REST capability client
- * (C2-3), as on Spark 3.5: these cases flipped from the "does not support" pins they were until the
- * client landed. {@code SparkIrcGrantsUnlockTest} pins every outcome and the stored grants and
+ * <p>GRANT, REVOKE, SHOW GRANTS and UNLOCK reach the server through the REST capability client, as
+ * on Spark 3.5. {@code SparkIrcGrantsUnlockTest} pins every outcome and the stored grants and
  * locks.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -97,8 +96,7 @@ public class SparkIrcOpenHouseStatementsTest {
   /**
    * What the resolver finds on the session's IRC catalogs: Iceberg's REST path, the server's
    * advertised {@code policies,grants,unlock} (its config override wins over {@code irc_adv}'s
-   * client-side claim; grants and unlock since V5-3), and all three usable: grants and unlock
-   * through the capability client (C2-3).
+   * client-side claim), and all three usable: grants and unlock through the capability client.
    */
   @Test
   void theResolverReadsTheServersAdvertisedCapabilities() throws Exception {

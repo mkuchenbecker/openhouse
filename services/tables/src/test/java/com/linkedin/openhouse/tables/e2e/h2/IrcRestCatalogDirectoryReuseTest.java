@@ -156,7 +156,7 @@ class IrcRestCatalogDirectoryReuseTest {
     assertEquals(1, reloaded.currentSnapshot().allManifests(reloaded.io()).size());
   }
 
-  /** The builder's {@code withLocation}: ignored, as on every IRC create (D30). */
+  /** The builder's {@code withLocation}: ignored, as on every IRC create. */
   @Test
   void aCtasNamingALiveTablesLocationIsWrittenAndCreatedInADirectoryOfItsOwn() throws Exception {
     db = "irc_reuse_rest_loc";

@@ -58,7 +58,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * or carrying a snapshot that lies in it), or a create or staged create whose properties carry the
  * first table's {@code openhouse.tableUUID}, which the native create reads the UUID from. The
  * completion is refused and changes nothing; a create is made in a directory of its own (the server
- * owns locations, D30), and its drop leaves the first table as it was.
+ * owns locations), and its drop leaves the first table as it was.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -365,7 +365,7 @@ public class IrcDirectoryReuseRoutesTest {
 
   /**
    * A create, plain or staged, that names the renamed table's directory as its location: the server
-   * owns locations (D30), so the table is created, or staged, in a directory of its own.
+   * owns locations, so the table is created, or staged, in a directory of its own.
    */
   @Test
   void aCreateNamingALiveTablesLocationIsCreatedInADirectoryOfItsOwn() throws Exception {

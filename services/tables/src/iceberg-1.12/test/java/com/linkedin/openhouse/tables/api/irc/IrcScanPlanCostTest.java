@@ -65,10 +65,10 @@ import org.springframework.test.context.ContextConfiguration;
  * written (live objects and garbage). The numbers are printed as {@code PLAN-COST} lines.
  *
  * <p>The sizes are {@code 1000,10000} unless the system property {@value #SIZES} or the environment
- * variable {@code IRC_PLAN_COST_SIZES} names others (the V11c measurement also ran 20,000 and
- * 50,000). Each size asserts that the route answered every task in one answer at or below the
- * default bound of one plan (V11c), and {@code failed} with no task above it, and that the bytes it
- * sent are the bytes the in-JVM measurement wrote.
+ * variable {@code IRC_PLAN_COST_SIZES} names others (a measurement also ran 20,000 and 50,000).
+ * Each size asserts that the route answered every task in one answer at or below the default bound
+ * of one plan, and {@code failed} with no task above it, and that the bytes it sent are the bytes
+ * the in-JVM measurement wrote.
  */
 @SpringBootTest(
     classes = SpringH2Application.class,

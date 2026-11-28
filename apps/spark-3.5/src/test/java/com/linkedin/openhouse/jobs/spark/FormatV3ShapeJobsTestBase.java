@@ -44,10 +44,10 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 /**
- * The maintenance jobs' real app code on one table shape at a time (work item X10: branches and
- * tags, an evolved partition spec, equality deletes), on format v3 and, for comparison, on format
- * v2. A subclass builds the shape ({@link #createShape}) holding data, deletes and several
- * snapshots, and names the ids that must not be live at each ref; every job test here runs on it.
+ * The maintenance jobs' real app code on one table shape at a time (branches and tags, an evolved
+ * partition spec, equality deletes), on format v3 and, for comparison, on format v2. A subclass
+ * builds the shape ({@link #createShape}) holding data, deletes and several snapshots, and names
+ * the ids that must not be live at each ref; every job test here runs on it.
  *
  * <p>Each job runs through {@code runInner} and its post-job validation, as {@link
  * FormatV3MaintenanceTest} does, once with the strict settings (compaction rewriting every file
@@ -354,7 +354,7 @@ abstract class FormatV3ShapeJobsTestBase extends OpenHouseSparkITest {
     app.runValidations(ops);
     Table table = table(formatVersion, shape.fqtn);
     System.out.println(
-        "X10B-COMPACTION-PROD "
+        "COMPACTION-PROD "
             + getClass().getSimpleName()
             + " v"
             + formatVersion

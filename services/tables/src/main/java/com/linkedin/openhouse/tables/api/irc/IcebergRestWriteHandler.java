@@ -78,8 +78,8 @@ import org.springframework.stereotype.Component;
  *
  * <ul>
  *   <li>A create is spelled as the native create request ({@link IcebergCreates}) and sent through
- *       the native create handler (validation, create rules, audit). The server owns the location
- *       (D30): a location the request names is ignored, and so is a table UUID its properties name
+ *       the native create handler (validation, create rules, audit). The server owns the location:
+ *       a location the request names is ignored, and so is a table UUID its properties name
  *       ({@value #TABLE_UUID_KEY}, which the native create would read the table's directory from),
  *       and the table is created, and returned, where the server puts it, as for a request that
  *       names neither.
@@ -93,8 +93,8 @@ import org.springframework.stereotype.Component;
  *       the result to {@link TableCommitService} with the stored table's version as base, so a
  *       commit that landed in between is refused by the core's guards. A replace commit (see {@link
  *       IcebergRestRequirements#isReplace}) is handed over as a replace; a set-location among its
- *       changes, which is how a client's replace that names a location arrives, is ignored (D30).
- *       An ordinary commit that changes the location is refused.
+ *       changes, which is how a client's replace that names a location arrives, is ignored. An
+ *       ordinary commit that changes the location is refused.
  *   <li>A transaction ({@code POST /v1/transactions/commit}) with one table change is that commit,
  *       and never a create; with more than one it is refused whole and nothing is written, since
  *       two tables cannot be committed atomically ({@link #commitTransaction}).
@@ -237,7 +237,7 @@ public class IcebergRestWriteHandler {
   private CreateUpdateTableRequestBody createBody(
       TableIdentifier identifier, CreateTableRequest request) {
     request.validate();
-    // request.location() is not read: the server owns the location (D30), and the native create
+    // request.location() is not read: the server owns the location, and the native create
     // allocates it as for a request that names none.
     Map<String, String> properties = request.properties();
     if (properties != null) {
@@ -488,7 +488,7 @@ public class IcebergRestWriteHandler {
     }
     boolean replace = IcebergRestRequirements.isReplace(request);
     // A replace that names a location sends it as a set-location (RESTSessionCatalog builds the
-    // replacement at the requested location); the server owns the location (D30), so a replace
+    // replacement at the requested location); the server owns the location, so a replace
     // keeps the table's. An ordinary commit's set-location stays, and the commit refuses it.
     List<MetadataUpdate> updates =
         replace
@@ -676,7 +676,7 @@ public class IcebergRestWriteHandler {
    * <p>The native create is spelled from the final schema, spec and order, and every rule judges
    * those. When the transaction changed them before it committed, the table keeps the schemas,
    * specs and orders it went through, with the client's ids, which its snapshots and manifests name
-   * ({@link CreateHistory}, V14); a create without such history is stored as it always was.
+   * ({@link CreateHistory}); a create without such history is stored as it always was.
    */
   private IcebergRestLoadedTable commitCreate(
       TableIdentifier identifier, UpdateTableRequest request, String actingPrincipal) {
@@ -718,7 +718,7 @@ public class IcebergRestWriteHandler {
       refuseADirectoryInUse(CREATE, identifier, storage, directory, tableUUID);
     }
     // The schemas, specs and sort orders the transaction went through, with the client's ids,
-    // which its snapshots name: the create keeps them (V14). Null when the create stores them
+    // which its snapshots name: the create keeps them. Null when the create stores them
     // anyway.
     String history = CreateHistory.of(candidate);
     return CreateHistoryScope.during(
@@ -899,8 +899,8 @@ public class IcebergRestWriteHandler {
    *
    * <ol>
    *   <li>The file must lie directly in the directory OpenHouse allocates to a table of that name
-   *       in that database (the server owns locations, D30), so the storage is only read at a place
-   *       the caller could have been handed, and after the create privilege was checked.
+   *       in that database (the server owns locations), so the storage is only read at a place the
+   *       caller could have been handed, and after the create privilege was checked.
    *   <li>No house-table row, live or soft-deleted, may point into that directory or carry its
    *       UUID. A table renamed away keeps its directory, and a soft-deleted table can be restored
    *       into its own. Two registrations of one directory are for one name, so the house-table key
@@ -909,10 +909,10 @@ public class IcebergRestWriteHandler {
    *       list must lie in it: a file planted there cannot attach another table.
    * </ol>
    *
-   * <p>Metadata a create cannot store as it is refused rather than stored as something else (as D19
-   * refuses on a commit): another format version, a schema or partition spec history, field ids a
-   * create would renumber, statistics files, a replica table. Not kept, as for any create: the
-   * Iceberg table UUID, the metadata log and the snapshot log.
+   * <p>Metadata a create cannot store as it is refused rather than stored as something else (as a
+   * commit refuses a change the update path never stores): another format version, a schema or
+   * partition spec history, field ids a create would renumber, statistics files, a replica table.
+   * Not kept, as for any create: the Iceberg table UUID, the metadata log and the snapshot log.
    *
    * <p>A name that is taken is 409, whatever the request's {@code overwrite} flag (Iceberg 1.12):
    * OpenHouse does not replace a table's metadata by registration.
@@ -1309,8 +1309,8 @@ public class IcebergRestWriteHandler {
   /**
    * Refuses a create or staged create whose {@code format-version} property asks for a version the
    * cluster does not create, as the commit that completes a staged create refuses one (the server
-   * owns the format version: D19, D20). The native create overwrites the property with the
-   * cluster's version, which here would answer, or stage, other metadata than was asked for.
+   * owns the format version). The native create overwrites the property with the cluster's version,
+   * which here would answer, or stage, other metadata than was asked for.
    */
   private void refuseOtherFormatVersion(
       TableIdentifier identifier, Map<String, String> properties) {

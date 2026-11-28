@@ -62,12 +62,12 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * request that succeeds (around the controller method) and for one that fails (around the native
  * exception handler, whose error body carries the message, stack trace and cause).
  *
- * <p>An IRC request is audited as the equivalent native request is (work item V3c): the same event
- * class from the same aspect, with the same fields. One that succeeds always was, by the advice
- * around the controller method. One that fails or is refused is rendered by the IRC exception
- * handler, which the aspect does not advise and whose body is the specification's and not the
- * native one; that handler now hands the audit the status and message it answers and the failure's
- * stack trace and cause, as the native handler's body carries them. Both name the tables service.
+ * <p>An IRC request is audited as the equivalent native request is: the same event class from the
+ * same aspect, with the same fields. One that succeeds always was, by the advice around the
+ * controller method. One that fails or is refused is rendered by the IRC exception handler, which
+ * the aspect does not advise and whose body is the specification's and not the native one; that
+ * handler now hands the audit the status and message it answers and the failure's stack trace and
+ * cause, as the native handler's body carries them. Both name the tables service.
  *
  * <p>What differs is the request itself: the {@code uri} names the IRC route, the payload is the
  * IRC body, and the status is the one IRC answers (a create is 200, where the native one is 201).

@@ -30,9 +30,9 @@ import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.api.TestInstance;
 
 /**
- * The Spark SQL smoke suite (work item T1) as a list of statements with their baseline outcomes,
- * free of any engine version, catalog class or test fixture: it needs only {@code spark.sql} and
- * JUnit. The baseline is what Spark 3.5 does with the OpenHouse catalog on Iceberg 1.5.2, as {@code
+ * The Spark SQL smoke suite as a list of statements with their baseline outcomes, free of any
+ * engine version, catalog class or test fixture: it needs only {@code spark.sql} and JUnit. The
+ * baseline is what Spark 3.5 does with the OpenHouse catalog on Iceberg 1.5.2, as {@code
  * SparkSqlSmokeTest} of the Spark 3.5 itest records it. Every action and every assertion goes
  * through {@code spark.sql}.
  *
@@ -50,7 +50,7 @@ import org.junit.jupiter.api.TestInstance;
  * set, or another file named by {@link #outcomesFile()}, the run writes one line per statement to
  * that file: the statement, the baseline, this platform's outcome and whether they are the same.
  *
- * <p>This is the one list of scenarios (work item N7). It lives in the Spark 3.5 itest ({@code
+ * <p>This is the one list of scenarios. It lives in the Spark 3.5 itest ({@code
  * src/shared/smoke/java}), whose {@code SparkSqlSmokeTest} runs it on each Spark 3.5 catalog path;
  * the Spark 4.2 itest compiles the same file into its smoke source set and runs it over IRC.
  */
@@ -65,8 +65,8 @@ public abstract class SparkSqlSmokeScenarios {
   /**
    * A second catalog of the same path in the session of {@link #sparkSession()}, against the same
    * service, with table caching off, whose table commits call {@link CommitRace#beforeCommit} right
-   * before they reach the service (work items C3 and C4). Every platform configures it: s32 reads
-   * through it what a refused replace left, and s33 commits through it from a stale base.
+   * before they reach the service. Every platform configures it: s32 reads through it what a
+   * refused replace left, and s33 commits through it from a stale base.
    */
   protected static final String SECOND_CATALOG = "openhouse_second";
 
@@ -871,9 +871,9 @@ public abstract class SparkSqlSmokeScenarios {
 
   /**
    * GRANT, SHOW GRANTS and REVOKE, on a table and on a database. The service of every path stores
-   * grants (work item T6: the test services' authorization backend keeps what GRANT hands it), so
-   * SHOW GRANTS lists exactly what was granted and not revoked: each privilege by its SQL name,
-   * each principal as granted, PUBLIC as PUBLIC.
+   * grants (the test services' authorization backend keeps what GRANT hands it), so SHOW GRANTS
+   * lists exactly what was granted and not revoked: each privilege by its SQL name, each principal
+   * as granted, PUBLIC as PUBLIC.
    */
   @Test
   public void s17_grants_grantShowRevoke() throws Exception {
@@ -958,7 +958,7 @@ public abstract class SparkSqlSmokeScenarios {
 
     sql(spark, "SHOW DATABASES IN openhouse", hasRow(DB));
     // Unsupported. The baseline message is Iceberg 1.5.2's; with the OpenHouse catalog on Iceberg
-    // 1.12 it is "Checking if database exists is not supported" (decision D14b): Iceberg 1.12's
+    // 1.12 it is "Checking if database exists is not supported": Iceberg 1.12's
     // SparkCatalog checks existence with catalog.namespaceExists (apache/iceberg#14507), where
     // 1.5.2 left Spark's default, which describes the namespace.
     sql(
@@ -988,7 +988,7 @@ public abstract class SparkSqlSmokeScenarios {
     }
   }
 
-  // ---------- scenarios added with the REST-shaped path (work item C1) ----------
+  // ---------- scenarios for the REST-shaped path ----------
   // Each records the baseline behavior for something the scenarios above do not pin and that a
   // REST client handles differently from the OpenHouse catalog unless the path keeps the baseline
   // behavior.
@@ -1122,8 +1122,8 @@ public abstract class SparkSqlSmokeScenarios {
             "java.lang.UnsupportedOperationException",
             "Set properties on a database is not supported"));
     // As CREATE NAMESPACE in s19: the baseline message is Iceberg 1.5.2's, and with the OpenHouse
-    // catalog on Iceberg 1.12 it is "Checking if database exists is not supported" (decision D14b,
-    // apache/iceberg#14507).
+    // catalog on Iceberg 1.12 it is "Checking if database exists is not supported"
+    // (apache/iceberg#14507).
     sql(
         spark,
         "DROP NAMESPACE " + CAT_DB,
@@ -1261,7 +1261,7 @@ public abstract class SparkSqlSmokeScenarios {
         rows("0,0,0,0,0,0"));
   }
 
-  // ---------- scenarios added with the plain REST path (work item N1-c) ----------
+  // ---------- scenarios for the plain REST path ----------
 
   /**
    * Every form of the OpenHouse policy statements that s16 (retention) and s17 (sharing) do not
@@ -1308,8 +1308,7 @@ public abstract class SparkSqlSmokeScenarios {
         "SHOW TBLPROPERTIES " + t + policies,
         rows("policies,{\n  \"sharingEnabled\": false,\n" + noReplication + history));
     // The service writes a column's tags in the declaration order of its tag enum, PII then HC,
-    // whatever order the statement lists them in (work item N8; before, the order changed from one
-    // service JVM to the next).
+    // whatever order the statement lists them in, so every service JVM writes the same text.
     String bothTags =
         "policies,{\n  \"sharingEnabled\": false,\n  \"columnTags\": {\n    \"name\": {\n"
             + "      \"tags\": [\n        \"PII\",\n        \"HC\"\n      ]\n    }\n  },\n"
@@ -1358,7 +1357,7 @@ public abstract class SparkSqlSmokeScenarios {
                 + "    \"timeZone\": \"America/Los_Angeles\"\n  },\n  \"sharingEnabled\": false\n}"));
   }
 
-  // ---------- s32 (work item C3): a refused replace writes nothing ----------
+  // ---------- s32: a refused replace writes nothing ----------
 
   private static final String BAD_REQUEST = "org.apache.iceberg.exceptions.BadRequestException";
 
@@ -1433,11 +1432,11 @@ public abstract class SparkSqlSmokeScenarios {
   }
 
   /**
-   * Work item C3. A replace of a table that has not opted in ({@code replace.enabled}) is refused,
-   * and the refused statement leaves nothing behind: no data file, no manifest, no metadata file
-   * under the table's location, and the table keeps its rows, snapshots and metadata file. Next to
-   * it, the allowed replace of an opted-in table writes, so the listing would notice a write. What
-   * the table holds afterwards is read through {@value #SECOND_CATALOG}, which caches nothing.
+   * A replace of a table that has not opted in ({@code replace.enabled}) is refused, and the
+   * refused statement leaves nothing behind: no data file, no manifest, no metadata file under the
+   * table's location, and the table keeps its rows, snapshots and metadata file. Next to it, the
+   * allowed replace of an opted-in table writes, so the listing would notice a write. What the
+   * table holds afterwards is read through {@value #SECOND_CATALOG}, which caches nothing.
    */
   @Test
   public void s32_replace_refusedWritesNothing() throws Exception {
@@ -1484,7 +1483,7 @@ public abstract class SparkSqlSmokeScenarios {
     sql(spark, "SELECT * FROM " + second("s32_allowed"), rows("7,z"));
   }
 
-  // ---------- s33 (work item C4): a commit from a stale base keeps the other client's change ----
+  // ---------- s33: a commit from a stale base keeps the other client's change ----
 
   /**
    * The statements s33 runs from a stale base, in order, each with the statement the other client
@@ -1558,12 +1557,12 @@ public abstract class SparkSqlSmokeScenarios {
   private static final String[] DATA_FILE_LEFT = {"checksum of data file,1", "data file,1"};
 
   /**
-   * The differences of a path on which the replace gate refuses only the commit (work item C3): the
-   * two refused forms that write data, CREATE OR REPLACE TABLE ... AS SELECT and REPLACE TABLE ...
-   * AS SELECT, leave the data file Spark wrote (one, for the one row) under the table's location.
-   * The statement still fails with the native refusal, the table is unchanged, and the manifests
-   * the write made are gone (Iceberg's transaction removes them when the commit fails); REPLACE
-   * TABLE without a query writes nothing on every path.
+   * The differences of a path on which the replace gate refuses only the commit: the two refused
+   * forms that write data, CREATE OR REPLACE TABLE ... AS SELECT and REPLACE TABLE ... AS SELECT,
+   * leave the data file Spark wrote (one, for the one row) under the table's location. The
+   * statement still fails with the native refusal, the table is unchanged, and the manifests the
+   * write made are gone (Iceberg's transaction removes them when the commit fails); REPLACE TABLE
+   * without a query writes nothing on every path.
    */
   protected static List<Difference> refusedReplaceLeavesItsDataFile(String kind, String why) {
     List<Difference> differences = new ArrayList<>();
@@ -1583,12 +1582,12 @@ public abstract class SparkSqlSmokeScenarios {
   }
 
   /**
-   * The differences of a path on which a stale property or policy commit meets no conflict (work
-   * item C4): the commit carries only the changed keys (a policy statement's patch is one such key)
-   * and asserts only the table's UUID, as Iceberg's REST client builds it, and the service applies
-   * it onto the table as stored. So the first attempt commits, where the baseline's commit, which
-   * carries its base version and every property, is refused with a conflict and succeeds after a
-   * refresh. The table ends as on the baseline: both changes kept.
+   * The differences of a path on which a stale property or policy commit meets no conflict: the
+   * commit carries only the changed keys (a policy statement's patch is one such key) and asserts
+   * only the table's UUID, as Iceberg's REST client builds it, and the service applies it onto the
+   * table as stored. So the first attempt commits, where the baseline's commit, which carries its
+   * base version and every property, is refused with a conflict and succeeds after a refresh. The
+   * table ends as on the baseline: both changes kept.
    */
   protected static List<Difference> staleCommitMeetsNoConflict(String kind, String why) {
     List<Difference> differences = new ArrayList<>();
@@ -1625,14 +1624,14 @@ public abstract class SparkSqlSmokeScenarios {
   }
 
   /**
-   * Work item C4. A property or policy statement whose commit was built on version N of a table
-   * while another client committed N+1 to it: the commit runs through {@value #SECOND_CATALOG},
-   * whose hook ({@link CommitRace}) runs the other client's statement, through {@code openhouse},
-   * right before the stale commit reaches the service. Each race checks that the other client's
-   * commit landed inside the stale one, how the stale commit's attempts ended, and that the table
-   * then holds both changes, the stale statement's last, as a serial order gives (for the same key,
-   * the stale value). A stale commit that silently replaced the other client's change (a lost
-   * update) fails the readback.
+   * A property or policy statement whose commit was built on version N of a table while another
+   * client committed N+1 to it: the commit runs through {@value #SECOND_CATALOG}, whose hook
+   * ({@link CommitRace}) runs the other client's statement, through {@code openhouse}, right before
+   * the stale commit reaches the service. Each race checks that the other client's commit landed
+   * inside the stale one, how the stale commit's attempts ended, and that the table then holds both
+   * changes, the stale statement's last, as a serial order gives (for the same key, the stale
+   * value). A stale commit that silently replaced the other client's change (a lost update) fails
+   * the readback.
    *
    * <p>A cached Spark table alone is no stale handle at commit: Iceberg's property update refreshes
    * the table before it builds its commit (PropertiesUpdate.apply), on both Iceberg lines, and the

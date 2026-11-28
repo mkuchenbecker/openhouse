@@ -56,8 +56,8 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
  * cluster.iceberg.format-v3.enabled} on: a table is v3 only when its create (or a replace of it)
  * asks for format version 3 or an update asks to upgrade it; it is never lowered; what v3 adds to a
  * metadata file is stored as committed across create, commit, rename and recreate; what the service
- * does not handle on v3 yet is refused with the work item that will; and the column default rules
- * of work item W6 hold.
+ * does not handle on v3 is refused with a message that says so; and the column default rules of
+ * format v3 hold.
  */
 @SpringBootTest(properties = SWITCH_ON)
 @AutoConfigureMockMvc
@@ -548,7 +548,9 @@ public class FormatV3NativeApiTest {
                       .schema(addColumn(body.getSchema(), "v", type, null, null))
                       .build()),
               "FORMAT_V3_TYPE_NOT_SUPPORTED");
-      assertTrue(message.contains("work item X5"), message);
+      assertTrue(
+          message.contains("OpenHouse does not take the type " + type + " on format v3 tables: "),
+          message);
       assertEquals(404, status(get(mvc, db, "t")));
     }
     String v3 = makeV3(db);
@@ -606,7 +608,11 @@ public class FormatV3NativeApiTest {
             .build();
     String message =
         refused(post(mvc, asking(replica, "3")), "FORMAT_V3_REPLICATION_NOT_SUPPORTED");
-    assertTrue(message.contains("work item X7"), message);
+    assertTrue(
+        message.contains(
+            "Replication of format v3 tables is not supported: a replica is rebuilt from the"
+                + " snapshots it is sent"),
+        message);
     assertEquals(404, status(get(mvc, db, "t")));
     // A v2 replica is created as before and cannot be upgraded.
     assertEquals(201, status(post(mvc, replica)));
@@ -643,7 +649,7 @@ public class FormatV3NativeApiTest {
     assertEquals(v3, stored(db));
   }
 
-  // ---------------------------------------------------------------- W6: column defaults
+  // ---------------------------------------------------------------- column defaults
 
   private CreateUpdateTableRequestBody withSchema(String getJson, String schema) {
     return bodyFromGet(getJson).toBuilder().schema(schema).build();
@@ -807,7 +813,12 @@ public class FormatV3NativeApiTest {
                 .content(with(asking(plain(db), "3"), OPT_IN, "true").toJson())
                 .accept(MediaType.APPLICATION_JSON));
     String message = refused(create, "COLUMN_DEFAULTS_OPT_IN_ON_V3");
-    assertTrue(message.contains("work item W8"), message);
+    assertTrue(
+        message.contains(
+            "OpenHouse does not translate a table's stored defaults to native ones. Keep a table"
+                + " that sets it at format version 2, or create the format v3 table without the"
+                + " property."),
+        message);
     assertEquals(404, status(get(mvc, db, "t")));
     // On an update of a v3 table.
     String v3 = makeV3(db);

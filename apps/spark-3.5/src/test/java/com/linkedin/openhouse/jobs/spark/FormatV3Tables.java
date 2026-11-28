@@ -39,7 +39,7 @@ import org.junit.jupiter.api.Assumptions;
  * (v2 tables on the tables service every apps test uses, with the switch off as in production; v3
  * tables on a second service with {@code cluster.iceberg.format-v3.enabled} on), the fixture table,
  * what a table reads, and every file its snapshots reference. Used by {@link
- * FormatV3MaintenanceTest} (work item X6) and {@link FormatV3ConcurrencyTest} (X10).
+ * FormatV3MaintenanceTest} and {@link FormatV3ConcurrencyTest}.
  */
 final class FormatV3Tables implements AutoCloseable {
   static final String CATALOG_PREFIX = "spark.sql.catalog.openhouse";

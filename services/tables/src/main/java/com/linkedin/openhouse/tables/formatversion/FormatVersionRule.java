@@ -127,7 +127,7 @@ public class FormatVersionRule {
   /** The cluster property that allows variant columns on v3 tables. */
   public static final String VARIANT_SWITCH = "cluster.iceberg.format-v3.variant.enabled";
 
-  /** Whether a format v3 table may get a variant column (work item X5); off by default. */
+  /** Whether a format v3 table may get a variant column; off by default. */
   public boolean variantEnabled() {
     return clusterProperties.isClusterIcebergFormatV3VariantEnabled();
   }
