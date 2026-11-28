@@ -64,8 +64,9 @@ Options: `TASKS=spark` or `TASKS=tables` runs one side (the other side's files a
 Each recording's header names, in `# test doubles:`, the House Tables stand-in and the
 authorization backend main ran with. They are not the same for every suite:
 
-- The stored commit-path recording ran on the stand-in `services/tables`' tests had then, copied
-  into main. The branch now runs the fixtures' stand-in; the answers that changed with it are
+- The stored commit-path recording ran main's code with this branch's earlier stand-in of
+  `services/tables`' tests (`e2e/h2/HouseTablesH2Repository` at commit `0fe4678a`), copied into
+  main; not main's own. The branch now runs the fixtures' stand-in; the answers that changed with it are
   declared as stand-in differences (kind "stand-in difference"), apart from the product's.
 - The Spark suites run on main's own stand-in: the Spark itest's service takes it from
   `tables-test-fixtures` (`src/main`), which the recording does not replace. The branch runs its

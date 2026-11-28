@@ -25,8 +25,9 @@
 #
 #     The test doubles are therefore NOT the same for every suite, and each recording's header says
 #     which ran (# test doubles):
-#     - commit-path: the stored recording ran with the stand-in services/tables' tests had then
-#       (e2e/h2/HouseTablesH2Repository at 0fe4678a), copied into main. Since then the branch has
+#     - commit-path: the stored recording ran main's code with this branch's earlier stand-in of
+#       services/tables' tests (e2e/h2/HouseTablesH2Repository at commit 0fe4678a), copied into
+#       main; not main's own. Since then the branch has
 #       one stand-in, in tables-test-fixtures, held to the real store; the answers that changed
 #       with it are declared as stand-in differences in CommitPathLinkedInMainDifferences. A new
 #       recording runs main's own services stand-in unless FIXTURES_STAND_IN=branch also copies the
@@ -71,8 +72,8 @@ RUNS=${RUNS:-2}
 TASKS=${TASKS:-spark tables}
 FIXTURES_STAND_IN=${FIXTURES_STAND_IN:-main}
 # What each recording's header says about the test doubles main ran with.
-DOUBLES_SPARK="House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at $COMMIT), not the branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization"
-DOUBLES_TABLES="House Tables: the stand-in services/tables' tests had before the one held to the real store (e2e/h2/HouseTablesH2Repository as of 0fe4678a, copied into main); the branch now runs tables-test-fixtures' stand-in, and the answers that changed with it are declared as stand-in differences; authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)"
+DOUBLES_SPARK="House Tables: main's own stand-in of tables-test-fixtures (tablestest/HouseTablesH2Repository at $COMMIT), not this branch's; authorization: smoke-scenarios the branch's GrantStoringAuthorization (test code, copied; stores grants), write-statements the fixture's OpaAuthorizationHandler with no OPA server (allows every request), catalog-plugin-contract the same plus the test's own handler in enforcingAuthorization"
+DOUBLES_TABLES="House Tables: this branch's earlier stand-in of services/tables' tests (e2e/h2/HouseTablesH2Repository at commit 0fe4678a, copied into main; not main's own), since replaced on the branch by the one held to the real store; the branch now runs tables-test-fixtures' stand-in, and the answers that changed with it are declared as stand-in differences; authorization: the services tests' own configuration (AuthorizationPropertiesInitializer, and CommitPathAuthorizationTest's handler)"
 # The result of the last FIXTURES_STAND_IN=branch measurement, for the Spark recordings' header.
 STAND_IN_CHECK_SPARK="identical with either stand-in of tables-test-fixtures (main's, or the branch's copied in: the repository and store held to the real House Tables store), checked on 2026-11-28 with one run each, before and after the branch moved to that stand-in"
 

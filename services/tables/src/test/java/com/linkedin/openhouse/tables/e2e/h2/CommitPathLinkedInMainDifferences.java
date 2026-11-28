@@ -18,20 +18,22 @@ final class CommitPathLinkedInMainDifferences {
   private CommitPathLinkedInMainDifferences() {}
 
   /**
-   * The kind of a difference of the test double, not of the product: main's recording ran with the
-   * stand-in for House Tables that this module's tests had then; the tests now run on the one
-   * stand-in of tables-test-fixtures, held to the real store by HouseTableRepositoryContract. The
-   * product code on these paths is LinkedIn main's: TablesServiceImpl.renameTable, restoreTable and
-   * searchSoftDeletedTables, OpenHouseInternalRepositoryImpl.rename, restoreTable and
-   * searchSoftDeletedTables, OpenHouseInternalCatalog.renameTable, restoreTable and
-   * searchSoftDeletedTables, and TablesController's searchSoftDeletedTables (page size 10 by
-   * default), restoreTable and renameTable are the same text at bb8929e1 and here.
+   * The kind of a difference of the test double, not of the product: the commit-path recording ran
+   * main's code with this branch's earlier House Tables stand-in (this module's
+   * e2e/h2/HouseTablesH2Repository at commit 0fe4678a, copied into main by the recording step;
+   * since removed), not main's own; the tests now run on the one stand-in of tables-test-fixtures,
+   * held to the real store by HouseTableRepositoryContract. The product code on these paths is
+   * LinkedIn main's: TablesServiceImpl.renameTable, restoreTable and searchSoftDeletedTables,
+   * OpenHouseInternalRepositoryImpl.rename, restoreTable and searchSoftDeletedTables,
+   * OpenHouseInternalCatalog.renameTable, restoreTable and searchSoftDeletedTables, and
+   * TablesController's searchSoftDeletedTables (page size 10 by default), restoreTable and
+   * renameTable are the same text at bb8929e1 and here.
    */
   static final String STAND_IN = "stand-in difference";
 
   private static final String SOFT_DELETED_PAGE_WHY =
-      "The stand-in main's recording ran with built the soft-deleted page with the number of pages"
-          + " as its page size (pageSize 1, size 1). The real House Tables store pages as asked, and"
+      "Recorded on main's code with this branch's earlier stand-in, which built the soft-deleted"
+          + " page with the number of pages as its page size (pageSize 1, size 1). The real House Tables store pages as asked, and"
           + " the controller asks for its default, 10 (HouseTableRepositoryContract"
           + " theSoftDeletedListingIgnoresCaseSortsAsAskedAndPagesInTheStore). Content and totals"
           + " are as recorded.";
@@ -42,7 +44,7 @@ final class CommitPathLinkedInMainDifferences {
           + " is gone (the empty page).";
 
   private static final String RESTORE_WHY =
-      "The recorded stand-in answered a restore with an unknown deletion time and a second restore"
+      "Recorded on main's code with this branch's earlier stand-in, which answered a restore with an unknown deletion time and a second restore"
           + " of a table restored already the same way, NoSuchUserTable (404). The real store"
           + " answers the first as a missing soft-deleted row (HouseTableRepositoryContract"
           + " aRestoreOfAMissingSoftDeletedRowIsNotFound; the service names it"
@@ -51,7 +53,8 @@ final class CommitPathLinkedInMainDifferences {
 
   private static final String CASE_READ_WHY =
       "House Tables keys ignore letter case (the production tables' collation). The recorded"
-          + " stand-in compared case exactly, so another spelling of a table's name was not found"
+          + " stand-in (this branch's earlier one, on main's code) compared case exactly, so another"
+          + " spelling of a table's name was not found"
           + " (404); the real store reads it as the same table (HouseTableRepositoryContract"
           + " aCreateIsReadBackByAnySpellingWithTheSpellingItWasCreatedWith).";
 
@@ -60,8 +63,8 @@ final class CommitPathLinkedInMainDifferences {
           + "CommitPathStateRulesTest.renameOntoANameDifferingOnlyInCaseFromAnExistingTableSucceeds"
           + " (recorded keys: "
           + "GET /v1/databases/st_ren_exist_case/tables/OTHER; GET /v1/databases/st_ren_exist_case/tables/other; GET /v1/databases/st_ren_exist_case/tables/u; PATCH /v1/databases/st_ren_exist_case/tables/u/rename?toDatabaseId=st_ren_exist_case&toTableId=OTHER; POST /v1/databases/st_ren_exist_case/tables/; verdict"
-          + "), renamed when the stand-in changed. The recorded stand-in compared keys case"
-          + " exactly, so a rename onto another spelling of an existing table's name succeeded"
+          + "), renamed when the stand-in changed. Recorded on main's code with this branch's"
+          + " earlier stand-in, which compared keys case exactly, so a rename onto another spelling of an existing table's name succeeded"
           + " (204) and made a second table; the real store refuses it as a conflict on an"
           + " occupied key (HouseTableRepositoryContract"
           + " aRenameOntoAnOccupiedKeyOfAnySpellingIsAConflictAndChangesNothing, 409). Main never"
