@@ -56,4 +56,15 @@ class HouseTableRepositoryImplContractTest extends HouseTableRepositoryContract 
   protected HouseTableRepository repository() {
     return repository;
   }
+
+  /** The House Tables service here creates its tables from {@code schema.sql}. */
+  @Override
+  protected int idWidth() {
+    return BOOTSTRAP_ID_WIDTH;
+  }
+
+  @Override
+  protected int metadataLocationWidth() {
+    return BOOTSTRAP_METADATA_LOCATION_WIDTH;
+  }
 }

@@ -14,6 +14,7 @@ import com.linkedin.openhouse.internal.catalog.model.HouseTable;
 import com.linkedin.openhouse.internal.catalog.model.HouseTablePrimaryKey;
 import com.linkedin.openhouse.internal.catalog.repository.exception.HouseTableConcurrentUpdateException;
 import com.linkedin.openhouse.tables.toggle.repository.ToggleStatusesRepository;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.Collections;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -50,7 +51,9 @@ public class IrcRegisterViewRaceTest {
   void cleanUp() throws Exception {
     reset(houseTables);
     NativeViewHttp.delete(mvc, DB, "v");
-    houseTables.findEntityById(key("v")).ifPresent(row -> houseTables.deleteById(key("v")));
+    if (!houseTables.deleteViewById(key("v")) && houseTables.findEntityById(key("v")).isPresent()) {
+      houseTables.deleteById(key("v"));
+    }
     CommitPathHttp.delete(mvc, DB, "t");
   }
 
@@ -115,7 +118,10 @@ public class IrcRegisterViewRaceTest {
     assertEquals(
         "View already exists: " + DB + ".v",
         assertIrcError(result, 409, "AlreadyExistsException").message());
-    assertEquals("competitor", houseTables.findEntityById(key("v")).get().getTableCreator());
+    // House Tables keeps no creator; the competitor's own location names its row.
+    assertEquals(
+        location.replace(".metadata.json", "-other.metadata.json"),
+        houseTables.findEntityById(key("v")).get().getTableLocation());
   }
 
   @Test

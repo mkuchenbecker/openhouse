@@ -38,6 +38,7 @@ import com.linkedin.openhouse.tables.model.TableModelConstants;
 import com.linkedin.openhouse.tables.model.ViewModelConstants;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.ViewsFeatureGate;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.util.Collections;
 import java.util.Optional;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;

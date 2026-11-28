@@ -45,9 +45,16 @@ import org.springframework.data.domain.Sort;
 public abstract class HouseTableRepositoryContract {
 
   /** The widths of the House Tables service's bootstrap schema ({@code schema.sql}). */
-  public static final int ID_WIDTH = 128;
+  public static final int BOOTSTRAP_ID_WIDTH = 128;
 
-  public static final int METADATA_LOCATION_WIDTH = 512;
+  public static final int BOOTSTRAP_METADATA_LOCATION_WIDTH = 512;
+
+  /**
+   * The widths of the production tables ({@code ddl/0000__baseline.sql}), which the stand-in has.
+   */
+  public static final int PRODUCTION_ID_WIDTH = 255;
+
+  public static final int PRODUCTION_METADATA_LOCATION_WIDTH = 255;
 
   private static final AtomicInteger TESTS = new AtomicInteger();
 
@@ -55,6 +62,12 @@ public abstract class HouseTableRepositoryContract {
 
   /** The repository under test. */
   protected abstract HouseTableRepository repository();
+
+  /** The width of the store's name columns. */
+  protected abstract int idWidth();
+
+  /** The width of the store's metadata location column. */
+  protected abstract int metadataLocationWidth();
 
   @BeforeEach
   public void nameThisTest() {
@@ -268,16 +281,18 @@ public abstract class HouseTableRepositoryContract {
   }
 
   @Test
-  public void theBootstrapSchemaWidthsBound() {
+  public void theColumnWidthsBoundAndAWiderValueIsAConflict() {
     String db = db("db");
-    String longest = "t" + repeat('x', ID_WIDTH - 1 - 0);
-    createTable(db, longest);
+    String longest = "t" + repeat('x', idWidth() - 1);
+    repository().save(row(db, longest, INITIAL_TABLE_VERSION, "/l"));
     assertTrue(repository().findById(key(db, longest)).isPresent());
-    assertThrows(HouseTableConcurrentUpdateException.class, () -> createTable(db, longest + "x"));
+    assertThrows(
+        HouseTableConcurrentUpdateException.class,
+        () -> repository().save(row(db, longest + "x", INITIAL_TABLE_VERSION, "/l")));
     assertFalse(repository().findEntityById(key(db, longest + "x")).isPresent());
 
-    String widest = "/" + repeat('l', METADATA_LOCATION_WIDTH - 1);
-    String wide = "/" + repeat('l', 299);
+    String widest = "/" + repeat('l', metadataLocationWidth() - 1);
+    String wide = "/" + repeat('w', metadataLocationWidth() - 2);
     repository().save(row(db, "wide", INITIAL_TABLE_VERSION, wide));
     assertEquals(wide, repository().findById(key(db, "wide")).get().getTableLocation());
     repository().save(row(db, "wide", wide, widest));

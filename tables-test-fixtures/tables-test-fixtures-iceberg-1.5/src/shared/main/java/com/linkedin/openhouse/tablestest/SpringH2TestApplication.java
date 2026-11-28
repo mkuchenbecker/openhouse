@@ -14,7 +14,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
 @ComponentScan(
@@ -45,15 +44,16 @@ import org.springframework.context.annotation.PropertySource;
     })
 @EnableAutoConfiguration(
     exclude = {SecurityAutoConfiguration.class, ManagementWebSecurityAutoConfiguration.class})
-// The namespace stand-in, and the namespace routes' error advice, which production scans with all
+// The House Tables stand-in's database, the namespace stand-in, and the namespace routes' error
+// advice, which production scans with all
 // of com.linkedin.openhouse.tables and this application's narrower scan would leave out; it
 // applies to IcebergNamespacesController only.
 @Import({
   SparkItestColumnDefaults.class,
+  HouseTablesH2Configuration.class,
   HouseNamespacesInMemoryRepository.class,
   NamespaceExceptionHandler.class
 })
-@PropertySource("classpath:tables-test-fixtures-h2.properties")
 public class SpringH2TestApplication {
 
   public static void main(String[] args) {

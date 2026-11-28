@@ -38,4 +38,15 @@ public class HouseTablesH2RepositoryContractTest extends HouseTableRepositoryCon
   protected HouseTableRepository repository() {
     return context.getBean(HouseTablesH2Repository.class);
   }
+
+  /** The stand-in's columns are as wide as the production tables' (255). */
+  @Override
+  protected int idWidth() {
+    return PRODUCTION_ID_WIDTH;
+  }
+
+  @Override
+  protected int metadataLocationWidth() {
+    return PRODUCTION_METADATA_LOCATION_WIDTH;
+  }
 }

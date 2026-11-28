@@ -9,6 +9,7 @@ import com.google.common.collect.ImmutableMap;
 import com.linkedin.openhouse.cluster.storage.StorageManager;
 import com.linkedin.openhouse.common.exception.AlreadyExistsException;
 import com.linkedin.openhouse.common.exception.InvalidSchemaEvolutionException;
+import com.linkedin.openhouse.common.exception.NoSuchSoftDeletedUserTableException;
 import com.linkedin.openhouse.common.exception.NoSuchUserTableException;
 import com.linkedin.openhouse.common.exception.UnsupportedClientOperationException;
 import com.linkedin.openhouse.common.test.cluster.PropertyOverrideContextInitializer;
@@ -28,6 +29,7 @@ import com.linkedin.openhouse.tables.model.TableDto;
 import com.linkedin.openhouse.tables.repository.OpenHouseInternalRepository;
 import com.linkedin.openhouse.tables.services.TablesService;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
+import com.linkedin.openhouse.tablestest.HouseTablesH2Repository;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
@@ -53,6 +55,8 @@ import org.springframework.test.context.ContextConfiguration;
 @SpringBootTest(classes = SpringH2Application.class)
 @ContextConfiguration(initializers = PropertyOverrideContextInitializer.class)
 public class TablesServiceTest {
+
+  @Autowired private HouseTablesH2Repository houseTablesH2Store;
 
   @Autowired TablesService tablesService;
 
@@ -972,21 +976,25 @@ public class TablesServiceTest {
             .deletedAtMs(System.currentTimeMillis())
             .build();
 
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(databaseId)
-            .tableId(TABLE_DTO.getTableId())
-            .deletedAtMs(softDeletedTable.getDeletedAtMs())
-            .build(),
-        softDeletedTable);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(databaseId)
+                .tableId(TABLE_DTO.getTableId())
+                .deletedAtMs(softDeletedTable.getDeletedAtMs())
+                .build(),
+            softDeletedTable);
 
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(databaseId + "_2")
-            .tableId(TABLE_DTO.getTableId() + "_2")
-            .deletedAtMs(softDeletedTable2.getDeletedAtMs())
-            .build(),
-        softDeletedTable2);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(databaseId + "_2")
+                .tableId(TABLE_DTO.getTableId() + "_2")
+                .deletedAtMs(softDeletedTable2.getDeletedAtMs())
+                .build(),
+            softDeletedTable2);
 
     Page<SoftDeletedTableDto> result =
         tablesService.searchSoftDeletedTables(databaseId, null, 0, 10, null);
@@ -1014,13 +1022,15 @@ public class TablesServiceTest {
             .purgeAfterMs(System.currentTimeMillis())
             .build();
 
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(purgeDbId)
-            .tableId(TABLE_DTO.getTableId())
-            .deletedAtMs(softDeletedTable.getDeletedAtMs())
-            .build(),
-        softDeletedTable);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(purgeDbId)
+                .tableId(TABLE_DTO.getTableId())
+                .deletedAtMs(softDeletedTable.getDeletedAtMs())
+                .build(),
+            softDeletedTable);
 
     Page<SoftDeletedTableDto> result =
         tablesService.searchSoftDeletedTables(purgeDbId, null, 0, 10, null);
@@ -1056,13 +1066,15 @@ public class TablesServiceTest {
             .purgeAfterMs(System.currentTimeMillis() + 86400000) // 1 day from now
             .build();
 
-    HouseTablesH2Repository.softDeletedTables.put(
-        SoftDeletedTablePrimaryKey.builder()
-            .databaseId(restoreDbId)
-            .tableId(TABLE_DTO.getTableId())
-            .deletedAtMs(deletedAtMs)
-            .build(),
-        softDeletedTable);
+    houseTablesH2Store
+        .softDeletedTables()
+        .put(
+            SoftDeletedTablePrimaryKey.builder()
+                .databaseId(restoreDbId)
+                .tableId(TABLE_DTO.getTableId())
+                .deletedAtMs(deletedAtMs)
+                .build(),
+            softDeletedTable);
 
     Page<SoftDeletedTableDto> result =
         tablesService.searchSoftDeletedTables(restoreDbId, null, 0, 10, null);
@@ -1085,9 +1097,10 @@ public class TablesServiceTest {
     String nonExistentDbId = TABLE_DTO.getDatabaseId() + "_nonexistent";
     long deletedAtMs = System.currentTimeMillis();
 
-    // Try to restore a table that doesn't exist in soft deleted tables
+    // Try to restore a table that doesn't exist in soft deleted tables: House Tables answers 404,
+    // which the catalog reports as a missing soft-deleted table.
     Assertions.assertThrows(
-        NoSuchUserTableException.class,
+        NoSuchSoftDeletedUserTableException.class,
         () ->
             tablesService.restoreTable(
                 nonExistentDbId, "nonexistent_table", deletedAtMs, TEST_USER));
