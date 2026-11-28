@@ -11,3 +11,10 @@ integrations/spark/spark-3.5/openhouse-spark-itest/src/test/java/com/linkedin/op
 # The test's own numbering of its cases, defined in the class.
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F4 | *
 services/tables/src/test/java/com/linkedin/openhouse/tables/e2e/h2/ViewsManagedFailureAuditTest.java | F5 | *
+
+# This branch's own lines.
+# Row values of the test's data (upper-case names of the rows a statement changed).
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N1 | *
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N4 | *
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N6 | *
+integrations/spark/spark-4.2/openhouse-spark-itest/src/test/java/com/linkedin/openhouse/spark42/irc/SparkIrcServerPlanningWritesTest.java | N8 | *
