@@ -39,6 +39,7 @@ import com.linkedin.openhouse.tables.services.IcebergUpdates;
 import com.linkedin.openhouse.tables.services.PolicyPatch;
 import com.linkedin.openhouse.tables.services.TableCommitService;
 import com.linkedin.openhouse.tables.services.TablesService;
+import com.linkedin.openhouse.tables.utils.AllocatedDirectory;
 import com.linkedin.openhouse.tables.utils.AuthorizationUtils;
 import java.util.Collections;
 import java.util.HashMap;
@@ -1079,28 +1080,13 @@ public class IcebergRestWriteHandler {
   }
 
   /**
-   * Whether the directory a metadata file lies in is named for {@code uuid}. OpenHouse allocates a
-   * table or view the directory {@code <database>/<name>-<uuid>} and writes its metadata files
-   * directly in it, and a rename keeps the directory, so this is the UUID a house-table row's
-   * entity carries: House Tables keeps the location, not the UUID. It reads nothing but the
-   * location.
+   * Whether the directory a metadata file lies in is named for {@code uuid} ({@link
+   * AllocatedDirectory}): the UUID a house-table row's entity carries, which House Tables does not
+   * keep. A name that ends in a UUID other than this one, or in none, is not this UUID's: the check
+   * can miss a directory but never refuses one wrongly.
    */
   static boolean namesUuid(String metadataLocation, UUID uuid) {
-    int fileAt = metadataLocation.lastIndexOf('/');
-    if (fileAt <= 0) {
-      return false;
-    }
-    String directory = metadataLocation.substring(0, fileAt);
-    String name = directory.substring(directory.lastIndexOf('/') + 1);
-    int uuidLength = 36;
-    if (name.length() <= uuidLength || name.charAt(name.length() - uuidLength - 1) != '-') {
-      return false;
-    }
-    try {
-      return uuid.equals(UUID.fromString(name.substring(name.length() - uuidLength)));
-    } catch (IllegalArgumentException e) {
-      return false;
-    }
+    return AllocatedDirectory.uuidOf(metadataLocation).map(uuid::equals).orElse(false);
   }
 
   /** Reads the metadata file; a failure is told without the file's content. */
